@@ -1,0 +1,6 @@
+node_modules/
+main.js
+*.map
+.env
+.venv/
+.DS_Store

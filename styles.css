@@ -1,0 +1,280 @@
+/* Grill: match Obsidian's native pane language (backlinks/outline style).
+   Theme variables only; no custom palettes, no boxed cards. */
+
+.grill-wrap {
+  max-width: 40em;
+  margin: 0 auto;
+  padding: 0.5em 0.75em 1.5em;
+}
+.grill-body {
+  margin-top: 0.5em;
+}
+.grill-meta {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+.grill-meta-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5em;
+  margin: 0.75em 0 0.5em;
+}
+.grill-section-label {
+  margin-top: 1.5em;
+  margin-bottom: 0.25em;
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-semibold, 600);
+  color: var(--text-muted);
+}
+.grill-chip {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 55%;
+}
+.grill-chip-link {
+  cursor: var(--cursor-link, pointer);
+  color: var(--text-accent);
+}
+.grill-chip-link:hover {
+  text-decoration: underline;
+}
+
+/* ---------------------------------------------------------------- start */
+.grill-start-btn {
+  margin-top: 0.75em;
+}
+.grill-recent {
+  display: flex;
+  flex-direction: column;
+}
+.grill-recent-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75em;
+  padding: 0.3em 0.4em;
+  border-radius: var(--radius-s, 4px);
+  cursor: var(--cursor-link, pointer);
+  font-size: var(--font-ui-small);
+}
+.grill-recent-row:hover {
+  background: var(--background-modifier-hover);
+}
+
+/* ---------------------------------------------------------------- progress */
+.grill-progress {
+  display: flex;
+  gap: 4px;
+  margin-top: 0.5em;
+}
+.grill-seg {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--background-modifier-border);
+}
+.grill-seg-current { background: var(--interactive-accent); }
+.grill-seg-correct { background: var(--color-green); }
+.grill-seg-partial { background: var(--color-orange); }
+.grill-seg-incorrect { background: var(--color-red); }
+.grill-seg-skipped { background: var(--text-faint); }
+
+/* ---------------------------------------------------------------- question */
+.grill-question {
+  line-height: var(--line-height-normal, 1.5);
+  margin-bottom: 0.75em;
+}
+.grill-question-small {
+  color: var(--text-muted);
+  font-size: var(--font-ui-medium);
+}
+.grill-question p:first-child { margin-top: 0; }
+.grill-question p:last-child { margin-bottom: 0; }
+.grill-answer {
+  width: 100%;
+  font-family: inherit;
+  resize: vertical;
+  margin-bottom: 0.5em;
+}
+.grill-btn-row {
+  display: flex;
+  gap: 0.5em;
+  align-items: center;
+}
+.grill-quiet-btn {
+  margin-left: auto;
+  box-shadow: none;
+  background: transparent;
+  color: var(--text-muted);
+}
+.grill-quiet-btn:hover {
+  color: var(--text-normal);
+}
+.grill-hintbox:not(:empty) {
+  margin-bottom: 0.75em;
+}
+.grill-hint {
+  border-left: 2px solid var(--background-modifier-border);
+  padding: 0.1em 0.75em;
+  margin-bottom: 0.35em;
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+}
+.grill-hint p { margin: 0; }
+
+/* ---------------------------------------------------------------- feedback */
+.grill-verdict {
+  font-weight: var(--font-semibold, 600);
+  margin: 0.75em 0 0.35em;
+}
+.grill-v-correct { color: var(--color-green); }
+.grill-v-partial { color: var(--color-orange); }
+.grill-v-incorrect { color: var(--color-red); }
+.grill-v-skipped { color: var(--text-muted); }
+.grill-your-answer blockquote {
+  margin: 0.25em 0;
+  padding-left: 0.75em;
+  border-left: 2px solid var(--background-modifier-border);
+  color: var(--text-muted);
+}
+.grill-feedback p { margin: 0.25em 0 0; }
+.grill-model-answer {
+  margin: 0.75em 0;
+  font-size: var(--font-ui-medium);
+}
+.grill-model-answer p { margin: 0; }
+
+/* ---------------------------------------------------------------- summary */
+.grill-score {
+  font-weight: var(--font-semibold, 600);
+  font-size: var(--font-ui-large, 1.2em);
+  margin: 0.75em 0 0.5em;
+}
+.grill-summary-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+  margin: 0.5em 0 0.75em;
+}
+.grill-summary-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  font-size: var(--font-ui-small);
+}
+.grill-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+}
+.grill-dot.grill-v-correct { background: var(--color-green); }
+.grill-dot.grill-v-partial { background: var(--color-orange); }
+.grill-dot.grill-v-incorrect { background: var(--color-red); }
+.grill-dot.grill-v-skipped { background: var(--text-faint); }
+.grill-saved { margin: 0.5em 0; }
+
+/* ---------------------------------------------------------------- loading */
+.grill-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 2em 1em;
+}
+.grill-loading-title {
+  font-weight: var(--font-semibold, 600);
+  font-size: var(--font-ui-medium);
+  margin: 0.75em 0 0.1em;
+}
+.grill-spinner {
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--background-modifier-border);
+  border-top-color: var(--interactive-accent);
+  border-radius: 50%;
+  animation: grill-spin 0.8s linear infinite;
+}
+@keyframes grill-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ---------------------------------------------------------------- customization
+   Grill exposes CSS variables so users can restyle it with a CSS snippet or the
+   community Style Settings plugin. Defaults inherit the active theme. */
+body {
+  --grill-max-width: 40em;
+  --grill-progress-height: 3px;
+  --grill-correct: var(--color-green);
+  --grill-partial: var(--color-orange);
+  --grill-incorrect: var(--color-red);
+}
+.grill-wrap { max-width: var(--grill-max-width); }
+.grill-seg { height: var(--grill-progress-height); }
+.grill-seg-correct, .grill-dot.grill-v-correct { background: var(--grill-correct); }
+.grill-seg-partial, .grill-dot.grill-v-partial { background: var(--grill-partial); }
+.grill-seg-incorrect, .grill-dot.grill-v-incorrect { background: var(--grill-incorrect); }
+.grill-v-correct { color: var(--grill-correct); }
+.grill-v-partial { color: var(--grill-partial); }
+.grill-v-incorrect { color: var(--grill-incorrect); }
+
+/* Compact layout: plugin toggle (.grill-compact on the pane) or Style Settings
+   class toggle (body.grill-compact). */
+body.grill-compact .grill-wrap,
+.grill-wrap.grill-compact {
+  font-size: var(--font-ui-small);
+}
+body.grill-compact .grill-wrap .grill-question,
+.grill-wrap.grill-compact .grill-question {
+  font-size: var(--font-ui-medium);
+  margin-bottom: 0.5em;
+}
+body.grill-compact .grill-wrap .grill-body,
+.grill-wrap.grill-compact .grill-body {
+  margin-top: 0.25em;
+}
+body.grill-compact .grill-wrap .grill-answer,
+.grill-wrap.grill-compact .grill-answer {
+  font-size: var(--font-ui-small);
+}
+
+/* @settings
+name: Grill
+id: grill
+settings:
+    -
+        id: grill-max-width
+        title: Content width
+        description: Maximum width of the session panel content
+        type: variable-text
+        default: 40em
+    -
+        id: grill-progress-height
+        title: Progress bar thickness
+        type: variable-text
+        default: 3px
+    -
+        id: grill-correct
+        title: Correct color
+        type: variable-text
+        default: var(--color-green)
+    -
+        id: grill-partial
+        title: Partial-credit color
+        type: variable-text
+        default: var(--color-orange)
+    -
+        id: grill-incorrect
+        title: Incorrect color
+        type: variable-text
+        default: var(--color-red)
+    -
+        id: grill-compact
+        title: Compact layout
+        description: Tighter spacing and smaller text
+        type: class-toggle
+*/

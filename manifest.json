@@ -1,0 +1,11 @@
+{
+	"id": "grill",
+	"name": "Grill",
+	"version": "1.0.0",
+	"minAppVersion": "1.4.0",
+	"description": "Get grilled on your own notes. AI quizzes you straight from your vault, grades your answers, and remembers what you miss, so every session hits your weak spots. Spaced repetition without writing flashcards. Bring your own AI key.",
+	"author": "Adam Danielsson",
+	"authorUrl": "https://github.com/theadamdanielsson",
+	"isDesktopOnly": false,
+	"fundingUrl": "https://buymeacoffee.com/grill"
+}

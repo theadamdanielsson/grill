@@ -1,0 +1,16 @@
+{
+  "name": "grill",
+  "version": "1.0.0",
+  "description": "Get grilled on your own notes: AI active recall with per-note mastery and spaced repetition for Obsidian",
+  "main": "main.js",
+  "scripts": {
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "dev": "node esbuild.config.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "esbuild": "0.24.0",
+    "obsidian": "^1.7.2",
+    "typescript": "^5.7.0"
+  }
+}
