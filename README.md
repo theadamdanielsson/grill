@@ -68,7 +68,9 @@ an Obsidian theme is.
 
 ## Install
 
-Not yet in the community plugin directory. Until then:
+In Obsidian, go to Settings → Community plugins → Browse, and search for "Grill".
+
+To build from source instead:
 
 ```sh
 npm install
