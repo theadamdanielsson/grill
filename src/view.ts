@@ -292,7 +292,9 @@ export class SessionView extends ItemView {
 			const names = pickCandidates([...byName.keys()], this.plugin.mastery, s.maxNotesPerSession);
 			this.noteText = {};
 			for (const n of names) {
-				const raw = await this.app.vault.cachedRead(byName.get(n) as TFile);
+				const file = byName.get(n);
+				if (!file) continue;
+				const raw = await this.app.vault.cachedRead(file);
 				this.noteText[n] = raw.length > NOTE_CHAR_CAP ? raw.slice(0, NOTE_CHAR_CAP) + "\n[truncated]" : raw;
 			}
 			const notesText = names.map((n) => `=== NOTE: ${n} ===\n${this.noteText[n].trim()}`).join("\n\n");

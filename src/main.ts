@@ -52,9 +52,9 @@ export default class GrillPlugin extends Plugin {
 	mastery: MasteryMap = {};
 
 	async onload(): Promise<void> {
-		const stored = (await this.loadData()) as any;
+		const stored = (await this.loadData()) as Partial<PluginData> | null;
 		const settings = defaultSettings();
-		const s = stored?.settings ?? {};
+		const s: Partial<GrillSettings> = stored?.settings ?? {};
 		if (s.provider && s.provider in PROVIDERS) settings.provider = s.provider;
 		if (s.apiKeys) settings.apiKeys = { ...settings.apiKeys, ...s.apiKeys };
 		if (s.models) settings.models = { ...settings.models, ...s.models };
@@ -79,8 +79,8 @@ export default class GrillPlugin extends Plugin {
 			callback: () => void this.activateView(),
 		});
 		this.addCommand({
-			id: "grill-current-note",
-			name: "Grill the current note",
+			id: "current-note",
+			name: "Study the current note",
 			checkCallback: (checking) => {
 				const f = this.app.workspace.getActiveFile();
 				if (!f || f.extension !== "md") return false;
@@ -196,13 +196,13 @@ export default class GrillPlugin extends Plugin {
 	async activateView(): Promise<void> {
 		const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE);
 		if (existing.length > 0) {
-			this.app.workspace.revealLeaf(existing[0]);
+			await this.app.workspace.revealLeaf(existing[0]);
 			return;
 		}
 		const leaf = this.app.workspace.getRightLeaf(false);
 		if (!leaf) return;
 		await leaf.setViewState({ type: VIEW_TYPE, active: true });
-		this.app.workspace.revealLeaf(leaf);
+		await this.app.workspace.revealLeaf(leaf);
 	}
 }
 
@@ -365,7 +365,6 @@ class GrillSettingTab extends PluginSettingTab {
 			sl
 				.setLimits(3, 10, 1)
 				.setValue(s.questionsPerSession)
-				.setDynamicTooltip()
 				.onChange(async (v) => {
 					s.questionsPerSession = v;
 					await this.plugin.persist();
@@ -379,7 +378,6 @@ class GrillSettingTab extends PluginSettingTab {
 				sl
 					.setLimits(5, 40, 1)
 					.setValue(s.maxNotesPerSession)
-					.setDynamicTooltip()
 					.onChange(async (v) => {
 						s.maxNotesPerSession = v;
 						await this.plugin.persist();

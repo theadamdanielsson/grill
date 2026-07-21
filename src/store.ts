@@ -51,7 +51,8 @@ export class GrillStore {
 		const path = this.masteryPath();
 		if (await this.app.vault.adapter.exists(path)) {
 			try {
-				return normalizeMastery(JSON.parse(await this.app.vault.adapter.read(path)));
+				const parsed = JSON.parse(await this.app.vault.adapter.read(path)) as MasteryMap;
+				return normalizeMastery(parsed);
 			} catch {
 				return {};
 			}
@@ -67,10 +68,11 @@ export class GrillStore {
 	/** Opt-in: mirror a note's mastery into its frontmatter so graph groups,
 	 * Dataview, and Bases can use it. */
 	async writeNoteStatus(file: TFile, m: NoteMastery | undefined): Promise<void> {
-		await this.app.fileManager.processFrontMatter(file, (fm) => {
-			fm["grill-status"] = statusOf(m);
-			if (m?.dueAt) fm["grill-due"] = m.dueAt.slice(0, 10);
-			else delete fm["grill-due"];
+		await this.app.fileManager.processFrontMatter(file, (fm: unknown) => {
+			const frontmatter = fm as Record<string, unknown>;
+			frontmatter["grill-status"] = statusOf(m);
+			if (m?.dueAt) frontmatter["grill-due"] = m.dueAt.slice(0, 10);
+			else delete frontmatter["grill-due"];
 		});
 	}
 

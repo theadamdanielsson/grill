@@ -94,22 +94,26 @@ interface HttpCall {
 	url: string;
 	headers: Record<string, string>;
 	body: Record<string, unknown>;
-	extract: (json: any) => string | undefined;
+	extract: (json: unknown) => string | undefined;
 }
 
-function apiError(status: number, json: any, text: string): Error {
-	const detail =
-		json?.error?.message ?? json?.error?.status ?? (typeof text === "string" ? text.slice(0, 200) : "");
+interface ApiErrorBody {
+	error?: { message?: string; status?: string };
+}
+
+function apiError(status: number, json: unknown, text: string): Error {
+	const body = json as ApiErrorBody | null;
+	const detail = body?.error?.message ?? body?.error?.status ?? text.slice(0, 200);
 	return new Error(`API error ${status}${detail ? `: ${detail}` : ""}`);
 }
 
 /** Gemini's responseSchema is an OpenAPI-style subset: uppercase type enums,
  * no additionalProperties. Convert a JSON Schema recursively. */
-function toGeminiSchema(schema: any): any {
+function toGeminiSchema(schema: unknown): unknown {
 	if (Array.isArray(schema)) return schema.map(toGeminiSchema);
 	if (schema && typeof schema === "object") {
 		const out: Record<string, unknown> = {};
-		for (const [k, v] of Object.entries(schema)) {
+		for (const [k, v] of Object.entries(schema as Record<string, unknown>)) {
 			if (k === "additionalProperties") continue;
 			if (k === "type" && typeof v === "string") out[k] = v.toUpperCase();
 			else out[k] = toGeminiSchema(v);
@@ -117,6 +121,20 @@ function toGeminiSchema(schema: any): any {
 		return out;
 	}
 	return schema;
+}
+
+interface AnthropicMessageResponse {
+	stop_reason?: string;
+	content?: Array<{ type: string; text?: string }>;
+}
+interface ChatCompletionResponse {
+	choices?: Array<{ message?: { content?: string } }>;
+}
+interface GeminiGenerateResponse {
+	candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+}
+interface OllamaChatResponse {
+	message?: { content?: string };
 }
 
 function buildCall(
@@ -142,9 +160,10 @@ function buildCall(
 					messages: [{ role: "user", content: user }],
 					output_config: { format: { type: "json_schema", schema } },
 				},
-				extract: (j) => {
+				extract: (json) => {
+					const j = json as AnthropicMessageResponse;
 					if (j.stop_reason === "refusal") throw new Error("The model declined this request (safety refusal).");
-					return j.content?.find((b: any) => b.type === "text")?.text;
+					return j.content?.find((b) => b.type === "text")?.text;
 				},
 			};
 		case "openai": {
@@ -166,7 +185,7 @@ function buildCall(
 				url: "https://api.openai.com/v1/chat/completions",
 				headers: { "content-type": "application/json", authorization: `Bearer ${cfg.apiKey}` },
 				body,
-				extract: (j) => j.choices?.[0]?.message?.content,
+				extract: (json) => (json as ChatCompletionResponse).choices?.[0]?.message?.content,
 			};
 		}
 		case "gemini":
@@ -182,7 +201,7 @@ function buildCall(
 						responseSchema: toGeminiSchema(schema),
 					},
 				},
-				extract: (j) => j.candidates?.[0]?.content?.parts?.map((p: any) => p.text ?? "").join(""),
+				extract: (json) => (json as GeminiGenerateResponse).candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join(""),
 			};
 		case "ollama":
 			return {
@@ -198,7 +217,7 @@ function buildCall(
 					format: schema,
 					options: { num_predict: maxTokens },
 				},
-				extract: (j) => j.message?.content,
+				extract: (json) => (json as OllamaChatResponse).message?.content,
 			};
 		case "deepseek":
 			return {
@@ -219,7 +238,7 @@ function buildCall(
 					],
 					response_format: { type: "json_object" },
 				},
-				extract: (j) => j.choices?.[0]?.message?.content,
+				extract: (json) => (json as ChatCompletionResponse).choices?.[0]?.message?.content,
 			};
 	}
 }
@@ -239,9 +258,9 @@ async function callJSON(
 		headers: call.headers,
 		body: JSON.stringify(call.body),
 	});
-	let json: any = null;
+	let json: unknown = null;
 	try {
-		json = resp.json;
+		json = resp.json as unknown;
 	} catch {
 		/* non-JSON error body */
 	}
@@ -249,11 +268,11 @@ async function callJSON(
 	const text = call.extract(json);
 	if (!text) throw new Error("Empty model response");
 	try {
-		return JSON.parse(text);
+		return JSON.parse(text) as unknown;
 	} catch {
 		// Some models wrap JSON in a code fence despite instructions.
 		const m = text.match(/\{[\s\S]*\}/);
-		if (m) return JSON.parse(m[0]);
+		if (m) return JSON.parse(m[0]) as unknown;
 		throw new Error("Model returned unparseable output");
 	}
 }
@@ -261,6 +280,19 @@ async function callJSON(
 /** Belt-and-suspenders: strip em/en dashes from model output regardless of prompt compliance. */
 function cleanText(t: string): string {
 	return t.replace(/\s*[—–]\s*/g, ", ");
+}
+
+interface AnthropicModelListResponse {
+	data?: Array<{ id: string; capabilities?: { structured_outputs?: { supported?: boolean } } }>;
+}
+interface OpenAIModelListResponse {
+	data?: Array<{ id: string }>;
+}
+interface GeminiModelListResponse {
+	models?: Array<{ name?: string; supportedGenerationMethods?: string[] }>;
+}
+interface OllamaTagsResponse {
+	models?: Array<{ name: string }>;
 }
 
 /** Fetch the live model list from a provider. Returns [] on any failure;
@@ -274,8 +306,9 @@ export async function listModels(provider: ProviderId, apiKey: string, baseUrl?:
 					throw: false,
 					headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
 				});
-				return ((r.json?.data ?? []) as any[])
-					.filter((m) => m?.capabilities?.structured_outputs?.supported !== false)
+				const anthropicModels = (r.json as AnthropicModelListResponse | undefined)?.data ?? [];
+				return anthropicModels
+					.filter((m) => m.capabilities?.structured_outputs?.supported !== false)
 					.map((m) => m.id)
 					.filter(Boolean);
 			}
@@ -286,8 +319,9 @@ export async function listModels(provider: ProviderId, apiKey: string, baseUrl?:
 					headers: { authorization: `Bearer ${apiKey}` },
 				});
 				const bad = /(audio|realtime|tts|transcribe|whisper|image|embed|moderation|dall-e|davinci|babbage|search|computer-use|codex|chat-latest|gpt-3\.5|o1-mini|o1-preview)/;
-				return ((r.json?.data ?? []) as any[])
-					.map((m) => m.id as string)
+				const openaiModels = (r.json as OpenAIModelListResponse | undefined)?.data ?? [];
+				return openaiModels
+					.map((m) => m.id)
 					.filter((id) => /^(gpt-|o[0-9])/.test(id) && !bad.test(id))
 					.sort()
 					.reverse();
@@ -298,9 +332,10 @@ export async function listModels(provider: ProviderId, apiKey: string, baseUrl?:
 					throw: false,
 					headers: { "x-goog-api-key": apiKey },
 				});
-				return ((r.json?.models ?? []) as any[])
-					.filter((m) => ((m.supportedGenerationMethods ?? []) as string[]).includes("generateContent"))
-					.map((m) => ((m.name ?? "") as string).replace(/^models\//, ""))
+				const geminiModels = (r.json as GeminiModelListResponse | undefined)?.models ?? [];
+				return geminiModels
+					.filter((m) => (m.supportedGenerationMethods ?? []).includes("generateContent"))
+					.map((m) => (m.name ?? "").replace(/^models\//, ""))
 					.filter((n) => n.startsWith("gemini") && !/(image|tts|live|audio|embedding|aqa|learnlm|thinking-exp)/.test(n));
 			}
 			case "deepseek": {
@@ -309,14 +344,16 @@ export async function listModels(provider: ProviderId, apiKey: string, baseUrl?:
 					throw: false,
 					headers: { authorization: `Bearer ${apiKey}` },
 				});
-				return ((r.json?.data ?? []) as any[]).map((m) => m.id).filter(Boolean);
+				const deepseekModels = (r.json as OpenAIModelListResponse | undefined)?.data ?? [];
+				return deepseekModels.map((m) => m.id).filter(Boolean);
 			}
 			case "ollama": {
 				const r = await requestUrl({
 					url: `${(baseUrl ?? "http://localhost:11434").replace(/\/$/, "")}/api/tags`,
 					throw: false,
 				});
-				return ((r.json?.models ?? []) as any[]).map((m) => m.name).filter(Boolean);
+				const ollamaModels = (r.json as OllamaTagsResponse | undefined)?.models ?? [];
+				return ollamaModels.map((m) => m.name).filter(Boolean);
 			}
 		}
 	} catch {
