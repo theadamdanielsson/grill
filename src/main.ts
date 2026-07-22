@@ -12,6 +12,7 @@ import {
 } from "obsidian";
 import { MasteryMap, statusOf } from "./mastery";
 import { LLMConfig, PROVIDERS, ProviderId, listModels, testModel } from "./llm";
+import { dueFiles } from "./scope";
 import { GrillStore } from "./store";
 import { SessionView, VIEW_TYPE } from "./view";
 
@@ -112,6 +113,16 @@ export default class GrillPlugin extends Plugin {
 			callback: () => void this.activateView(),
 		});
 		this.addCommand({
+			id: "review-due",
+			name: "Review due notes",
+			callback: () => void this.startDueSession(),
+		});
+		this.addCommand({
+			id: "open-dashboard",
+			name: "Open progress dashboard",
+			callback: () => void this.openDashboard(),
+		});
+		this.addCommand({
 			id: "current-note",
 			name: "Study the current note",
 			checkCallback: (checking) => {
@@ -159,7 +170,8 @@ export default class GrillPlugin extends Plugin {
 		if (!Platform.isMobile) {
 			this.statusBar = this.addStatusBarItem();
 			this.statusBar.addClass("mod-clickable");
-			this.statusBar.onClickEvent(() => void this.activateView());
+			// Click goes straight into the due queue when something's due, else opens the panel.
+			this.statusBar.onClickEvent(() => void (this.dueCount() > 0 ? this.startDueSession() : this.activateView()));
 		}
 		this.addSettingTab(new GrillSettingTab(this.app, this));
 
@@ -218,6 +230,26 @@ export default class GrillPlugin extends Plugin {
 		const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
 		const view = leaf?.view;
 		if (view instanceof SessionView) await view.startScopedSession(files);
+	}
+
+	/** Start a session on exactly the notes that are due or struggling. */
+	async startDueSession(): Promise<void> {
+		const eligible = this.app.vault.getMarkdownFiles().filter((f) => !this.isExcluded(f.path));
+		const due = dueFiles(eligible, this.mastery);
+		if (!due.length) {
+			new Notice("Grill: nothing due right now. Nice work.");
+			await this.activateView();
+			return;
+		}
+		await this.startScoped(due);
+	}
+
+	/** Open the progress dashboard in the Grill panel. */
+	async openDashboard(): Promise<void> {
+		await this.activateView();
+		const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
+		const view = leaf?.view;
+		if (view instanceof SessionView) view.showDashboard();
 	}
 
 	/** One-time backfill: write grill-status/grill-due for every tracked note. */

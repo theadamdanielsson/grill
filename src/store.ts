@@ -179,6 +179,13 @@ export class GrillStore {
 		if (debrief) {
 			lines.push("> [!summary] Debrief", `> ${debrief.headline}`);
 			if (debrief.pattern) lines.push(">", `> **Recurring pattern:** ${debrief.pattern}`);
+			if (debrief.gaps.length) {
+				lines.push(">", "> **To review:**");
+				for (const g of debrief.gaps) {
+					const noteRef = link ? `[[${g.note}]]` : g.note;
+					lines.push(`> - **${g.concept}** (${noteRef}): ${g.why}`);
+				}
+			}
 			if (debrief.nextFocus.length) {
 				const focus = debrief.nextFocus.map((n) => (link ? `[[${n}]]` : n)).join(", ");
 				lines.push(">", `> **Study next:** ${focus}`);

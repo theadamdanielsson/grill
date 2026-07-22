@@ -209,9 +209,11 @@
 body {
   --grill-max-width: 40em;
   --grill-progress-height: 3px;
-  --grill-correct: var(--color-green);
-  --grill-partial: var(--color-orange);
-  --grill-incorrect: var(--color-red);
+  /* Hex fallbacks: some themes don't define --color-green etc., which would
+     otherwise blank the indicator (e.g. correct segments rendering gray). */
+  --grill-correct: var(--color-green, #3aa675);
+  --grill-partial: var(--color-orange, #e08a3c);
+  --grill-incorrect: var(--color-red, #e5484d);
 }
 .grill-wrap { max-width: var(--grill-max-width); }
 .grill-seg { height: var(--grill-progress-height); }
@@ -306,7 +308,7 @@ settings:
 .grill-rate-easy { border-top-color: var(--color-blue); }
 
 .grill-nokey-note {
-  border-left: 2px solid var(--color-green);
+  border-left: 2px solid var(--grill-correct);
   padding-left: 0.75em;
 }
 
@@ -346,3 +348,107 @@ settings:
   flex: 1;
   min-width: 0;
 }
+
+/* ---------------------------------------------------------------- retention core */
+.grill-due-cta {
+  width: 100%;
+  margin: 0.4em 0 0.8em;
+}
+.grill-dash-link {
+  margin-top: 0.75em;
+}
+.grill-debrief-gaps {
+  margin-top: 0.5em;
+}
+.grill-debrief-label {
+  font-weight: var(--font-semibold, 600);
+  margin-bottom: 0.2em;
+}
+.grill-debrief-gap {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4em;
+  margin-bottom: 0.25em;
+}
+.grill-debrief-gap-text {
+  flex: 1;
+  min-width: 0;
+}
+.grill-debrief-gap-text p { margin: 0; font-size: var(--font-ui-small); }
+.grill-debrief-strengths {
+  margin-top: 0.5em;
+}
+
+/* dashboard stats */
+.grill-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.5em;
+  margin: 0.75em 0 1em;
+}
+.grill-stat {
+  text-align: center;
+  padding: 0.5em 0.25em;
+  background: var(--background-secondary);
+  border-radius: var(--radius-s, 4px);
+}
+.grill-stat-value {
+  font-size: var(--font-ui-large, 1.2em);
+  font-weight: var(--font-semibold, 600);
+}
+.grill-stat-label {
+  font-size: var(--font-ui-smaller, 0.8em);
+}
+
+/* misconception list */
+.grill-misc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+  margin: 0.4em 0 0.75em;
+}
+.grill-misc-row {
+  border-left: 2px solid var(--grill-incorrect);
+  padding-left: 0.6em;
+}
+.grill-misc-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5em;
+}
+.grill-misc-label {
+  font-weight: var(--font-semibold, 600);
+  font-size: var(--font-ui-small);
+}
+.grill-misc-notes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3em;
+  margin-top: 0.2em;
+}
+.grill-misc-beaten {
+  border-left: 2px solid var(--grill-correct);
+  padding-left: 0.6em;
+  margin-bottom: 0.75em;
+}
+
+/* heatmap */
+.grill-heatmap {
+  display: grid;
+  grid-template-rows: repeat(7, 1fr);
+  grid-auto-flow: column;
+  gap: 2px;
+  margin: 0.4em 0 0.5em;
+}
+.grill-hm-cell {
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  background: var(--background-modifier-border);
+}
+.grill-hm-0 { background: var(--background-modifier-border); }
+.grill-hm-1 { background: color-mix(in srgb, var(--grill-correct) 30%, var(--background-modifier-border)); }
+.grill-hm-2 { background: color-mix(in srgb, var(--grill-correct) 55%, var(--background-modifier-border)); }
+.grill-hm-3 { background: color-mix(in srgb, var(--grill-correct) 78%, var(--background-modifier-border)); }
+.grill-hm-4 { background: var(--grill-correct); }

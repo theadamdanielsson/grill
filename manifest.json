@@ -1,7 +1,7 @@
 {
 	"id": "grill",
 	"name": "Grill",
-	"version": "1.5.0",
+	"version": "1.6.0",
 	"minAppVersion": "1.8.0",
 	"description": "Quizzes you on your own notes, marks your answers, and keeps track of what you keep getting wrong so it can focus there. Uses your own key: Claude, GPT, Gemini, DeepSeek, or a local Ollama model.",
 	"author": "Adam Danielsson",

@@ -1,6 +1,6 @@
 {
   "name": "grill",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Get grilled on your own notes: AI active recall with per-note mastery and spaced repetition for Obsidian",
   "main": "main.js",
   "scripts": {

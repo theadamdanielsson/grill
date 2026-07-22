@@ -4,8 +4,9 @@
  */
 
 import { App, TFile, getAllTags } from "obsidian";
+import { MasteryMap, statusOf } from "./mastery";
 
-export type ScopeKind = "all" | "folder" | "tag" | "note";
+export type ScopeKind = "all" | "due" | "folder" | "tag" | "note";
 
 export interface Scope {
 	kind: ScopeKind;
@@ -52,11 +53,22 @@ export function listTags(app: App, limit = 40): { tag: string; count: number }[]
 		.slice(0, limit);
 }
 
+/** Notes that are struggling or past their review date. */
+export function dueFiles(eligible: TFile[], mastery: MasteryMap, now = new Date()): TFile[] {
+	return eligible.filter((f) => {
+		const m = mastery[f.basename];
+		if (!m) return false;
+		return statusOf(m) === "struggling" || (!!m.dueAt && new Date(m.dueAt) <= now);
+	});
+}
+
 /** Resolve a scope to the eligible notes it covers. */
-export function filesForScope(app: App, scope: Scope, eligible: TFile[]): TFile[] {
+export function filesForScope(app: App, scope: Scope, eligible: TFile[], mastery: MasteryMap = {}): TFile[] {
 	switch (scope.kind) {
 		case "all":
 			return eligible;
+		case "due":
+			return dueFiles(eligible, mastery);
 		case "note":
 			return eligible.filter((f) => f.path === scope.id);
 		case "folder":

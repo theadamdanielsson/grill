@@ -14,8 +14,9 @@ import {
 	MisconceptionRegistry,
 	resolveMisconception,
 	SessionDebrief,
+	topMisconceptions,
 } from "./debrief";
-import { decodeScope, encodeScope, filesForScope, listFolders, listTags } from "./scope";
+import { decodeScope, dueFiles, encodeScope, filesForScope, listFolders, listTags } from "./scope";
 import { SessionEntry } from "./store";
 
 export const VIEW_TYPE = "grill-session";
@@ -129,11 +130,26 @@ export class SessionView extends ItemView {
 		};
 		showCounts(eligible);
 
+		// Highest-intent action first: one tap straight into the due queue. Mobile
+		// has no status bar, so this is the due signal there too.
+		const due = dueFiles(eligible, map);
+		if (due.length) {
+			const cta = wrap.createEl("button", { text: `Review ${due.length} due now`, cls: "mod-cta grill-due-cta" });
+			cta.onclick = () => {
+				this.sessionScope = due;
+				void this.startSession();
+			};
+		}
+
 		// Scope selector: whole vault / current note / a folder / a tag.
 		const scopeRow = wrap.createDiv({ cls: "grill-scope" });
 		scopeRow.createSpan({ cls: "grill-meta", text: "Study" });
 		const sel = scopeRow.createEl("select", { cls: "dropdown grill-scope-select" });
 		sel.createEl("option", { value: "all", text: "Whole vault" });
+
+		if (due.length) {
+			sel.createEl("option", { value: encodeScope({ kind: "due", id: "" }), text: `Due cards only (${due.length})` });
+		}
 
 		const active = this.app.workspace.getActiveFile();
 		if (active && active.extension === "md" && !this.plugin.isExcluded(active.path)) {
@@ -159,7 +175,7 @@ export class SessionView extends ItemView {
 				this.pendingScope = null;
 				showCounts(eligible);
 			} else {
-				const files = filesForScope(this.app, scope, eligible);
+				const files = filesForScope(this.app, scope, eligible, map);
 				this.pendingScope = files;
 				showCounts(files);
 			}
@@ -170,6 +186,10 @@ export class SessionView extends ItemView {
 			this.sessionScope = this.pendingScope;
 			void this.startSession();
 		};
+
+		const dash = wrap.createDiv({ cls: "grill-meta grill-dash-link" });
+		const dashLink = dash.createSpan({ cls: "grill-chip-link", text: "View your progress" });
+		dashLink.onclick = () => this.showDashboard();
 
 		const recent = this.recentSessions();
 		if (recent.length) {
@@ -192,6 +212,117 @@ export class SessionView extends ItemView {
 			.filter((f) => f.path.startsWith(dir))
 			.sort((a, b) => b.stat.ctime - a.stat.ctime)
 			.slice(0, 5);
+	}
+
+	// ------------------------------------------------------------ dashboard
+
+	/** Open the progress dashboard (called by the command and start-screen link). */
+	showDashboard(): void {
+		void this.renderDashboard();
+	}
+
+	private async renderDashboard(): Promise<void> {
+		const wrap = this.root();
+		const map = this.plugin.mastery;
+		const eligible = this.allEligible();
+
+		const head = wrap.createDiv({ cls: "grill-meta-row" });
+		head.createSpan({ cls: "grill-score", text: "Your progress" });
+		const back = head.createSpan({ cls: "grill-chip-link", text: "Back" });
+		back.onclick = () => this.renderStart();
+
+		// Stats derived from mastery.json.
+		const counts = { untested: 0, struggling: 0, known: 0 };
+		let correct = 0, answered = 0, dueWeek = 0;
+		const now = Date.now();
+		const weekMs = 7 * 86400_000;
+		for (const f of eligible) {
+			const m = map[f.basename];
+			counts[statusOf(m)]++;
+			if (m) {
+				correct += m.correct;
+				answered += m.correct + m.partial + m.incorrect;
+				if (m.dueAt) {
+					const d = new Date(m.dueAt).getTime();
+					if (d > now && d <= now + weekMs) dueWeek++;
+				}
+			}
+		}
+		const dueNow = dueFiles(eligible, map).length;
+		const accuracy = answered ? Math.round((100 * correct) / answered) : 0;
+
+		const stats = wrap.createDiv({ cls: "grill-stats" });
+		const stat = (label: string, value: string): void => {
+			const s = stats.createDiv({ cls: "grill-stat" });
+			s.createDiv({ cls: "grill-stat-value", text: value });
+			s.createDiv({ cls: "grill-stat-label grill-meta", text: label });
+		};
+		stat("due now", String(dueNow));
+		stat("due this week", String(dueWeek));
+		stat("known", String(counts.known));
+		stat("accuracy", answered ? `${accuracy}%` : "—");
+
+		// What you keep getting wrong.
+		const reg = await this.plugin.store.loadRegistry();
+		const top = topMisconceptions(reg, 100);
+		const active = top.filter((c) => c.status === "active");
+		const beaten = top.filter((c) => c.status === "resolved");
+
+		wrap.createDiv({ cls: "grill-section-label", text: "What you keep getting wrong" });
+		if (!active.length) {
+			wrap.createDiv({ cls: "grill-meta", text: "Nothing recurring yet. It builds up as the grader spots patterns." });
+		} else {
+			const list = wrap.createDiv({ cls: "grill-misc-list" });
+			for (const c of active) {
+				const row = list.createDiv({ cls: "grill-misc-row" });
+				const rowHead = row.createDiv({ cls: "grill-misc-head" });
+				rowHead.createSpan({ cls: "grill-misc-label", text: c.label });
+				rowHead.createSpan({ cls: "grill-meta", text: `${c.count}×` });
+				if (c.notes.length) {
+					const notes = row.createDiv({ cls: "grill-misc-notes" });
+					for (const n of c.notes.slice(0, 6)) {
+						const chip = notes.createSpan({ cls: "grill-chip grill-chip-link", text: n });
+						chip.onclick = () => this.openNote(n);
+					}
+				}
+			}
+		}
+		if (beaten.length) {
+			wrap.createDiv({ cls: "grill-meta grill-misc-beaten", text: `Beaten: ${beaten.map((c) => c.label).join(", ")}` });
+		}
+
+		this.renderHeatmap(wrap);
+	}
+
+	/** GitHub-style grid of reviews done per day, from session-note frontmatter. */
+	private renderHeatmap(wrap: HTMLElement): void {
+		const pad = (n: number): string => String(n).padStart(2, "0");
+		const key = (d: Date): string => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+		const dir = `${this.plugin.data.settings.folder}/Sessions/`;
+		const perDay = new Map<string, number>();
+		for (const f of this.app.vault.getMarkdownFiles()) {
+			if (!f.path.startsWith(dir)) continue;
+			const fm = this.app.metadataCache.getFileCache(f)?.frontmatter;
+			const date = typeof fm?.date === "string" ? fm.date : null;
+			if (!date) continue;
+			const score = typeof fm?.score === "string" ? fm.score : "";
+			const total = score.includes("/") ? parseInt(score.split("/")[1], 10) : 1;
+			perDay.set(date, (perDay.get(date) ?? 0) + (Number.isNaN(total) ? 1 : total));
+		}
+
+		wrap.createDiv({ cls: "grill-section-label", text: "Reviews (last 12 weeks)" });
+		const grid = wrap.createDiv({ cls: "grill-heatmap" });
+		const today = new Date();
+		const level = (c: number): number => (c === 0 ? 0 : c < 3 ? 1 : c < 6 ? 2 : c < 10 ? 3 : 4);
+		for (let i = 83; i >= 0; i--) {
+			const d = new Date(today.getTime() - i * 86400_000);
+			const k = key(d);
+			const count = perDay.get(k) ?? 0;
+			const cell = grid.createDiv({ cls: `grill-hm-cell grill-hm-${level(count)}` });
+			cell.setAttr("aria-label", `${k}: ${count} review${count === 1 ? "" : "s"}`);
+			cell.setAttr("title", `${k}: ${count} review${count === 1 ? "" : "s"}`);
+		}
 	}
 
 	private renderLoading(title: string, detail: string): void {
@@ -351,8 +482,8 @@ export class SessionView extends ItemView {
 		const note = await this.plugin.store.writeSessionNote(
 			this.results,
 			{
-				provider: cfg?.provider ?? (s.questionSource === "local" ? "local" : "unknown"),
-				model: cfg?.model ?? (s.gradingMode === "self" ? "self-graded" : "unknown"),
+				provider: usedAI && cfg ? cfg.provider : "local",
+				model: usedAI && cfg ? cfg.model : "deterministic",
 				startedAt: this.sessionStart,
 			},
 			s.linkSessions,
@@ -367,6 +498,21 @@ export class SessionView extends ItemView {
 		if (debrief.pattern) {
 			const p = box.createDiv({ cls: "grill-debrief-pattern" });
 			this.md(`**Recurring pattern:** ${debrief.pattern}`, p);
+		}
+		if (debrief.gaps.length) {
+			const gaps = box.createDiv({ cls: "grill-debrief-gaps" });
+			gaps.createDiv({ cls: "grill-meta grill-debrief-label", text: "To review" });
+			for (const g of debrief.gaps) {
+				const row = gaps.createDiv({ cls: "grill-debrief-gap" });
+				this.md(`**${g.concept}** — ${g.why}`, row.createDiv({ cls: "grill-debrief-gap-text" }));
+				const chip = row.createSpan({ cls: "grill-chip grill-chip-link", text: g.note });
+				chip.onclick = () => this.openNote(g.note);
+			}
+		}
+		if (debrief.strengths.length) {
+			const st = box.createDiv({ cls: "grill-debrief-strengths grill-meta" });
+			st.createSpan({ text: "Solid: " });
+			st.appendText(debrief.strengths.join(", "));
 		}
 		if (debrief.nextFocus.length) {
 			const nf = box.createDiv({ cls: "grill-debrief-next" });
@@ -405,8 +551,14 @@ export class SessionView extends ItemView {
 			cls: "grill-meta",
 			text: "Missed and skipped notes come back next session; correct ones return on expanding intervals.",
 		});
-		const btn = card.createEl("button", { text: "Study again", cls: "mod-cta grill-start-btn" });
-		btn.onclick = () => void this.startSession();
+		const btnRow = card.createDiv({ cls: "grill-btn-row grill-start-btn" });
+		const again = btnRow.createEl("button", { text: "Study again", cls: "mod-cta" });
+		again.onclick = () => void this.startSession();
+		const menu = btnRow.createEl("button", { text: "Back to menu" });
+		menu.onclick = () => {
+			this.sessionScope = null;
+			this.renderStart();
+		};
 	}
 
 	// ------------------------------------------------------------ session logic
