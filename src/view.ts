@@ -3,8 +3,9 @@
 import { ItemView, MarkdownRenderer, Notice, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
 import { generateQuestions, gradeAnswer, Question, supportsVision, Verdict } from "./llm";
+import { generateLocalQuestions } from "./generate-local";
 import { collectNoteImages, ImageInput } from "./images";
-import { masteryPromptBlock, pickCandidates, recordAnswer, statusOf } from "./mastery";
+import { masteryPromptBlock, pickCandidates, Rating, recordAnswer, recordRating, statusOf } from "./mastery";
 import { SessionEntry } from "./store";
 
 export const VIEW_TYPE = "grill-session";
@@ -161,32 +162,44 @@ export class SessionView extends ItemView {
 		const qEl = card.createDiv({ cls: "grill-question" });
 		this.md(q.question, qEl);
 
+		const selfGrade = this.plugin.data.settings.gradingMode === "self";
 		const hintBox = card.createDiv({ cls: "grill-hintbox" });
 		let hintsUsed = 0;
 		const hints = [q.hints.tier1, q.hints.tier2, q.hints.tier3].filter(Boolean);
 
 		const ta = card.createEl("textarea", {
 			cls: "grill-answer",
-			attr: { rows: "5", placeholder: "Answer from memory... (Cmd/Ctrl+Enter to submit)" },
+			attr: {
+				rows: "5",
+				placeholder: selfGrade
+					? "Answer from memory, or just think it through, then reveal... (Cmd/Ctrl+Enter)"
+					: "Answer from memory... (Cmd/Ctrl+Enter to submit)",
+			},
 		});
 		const row = card.createDiv({ cls: "grill-btn-row" });
-		const submit = row.createEl("button", { text: "Submit", cls: "mod-cta" });
-		const hintBtn = row.createEl("button", { text: "Hint" });
+		const submit = row.createEl("button", { text: selfGrade ? "Show answer" : "Submit", cls: "mod-cta" });
+		if (hints.length) {
+			const hintBtn = row.createEl("button", { text: "Hint" });
+			hintBtn.onclick = () => {
+				if (hintsUsed < hints.length) {
+					const h = hintBox.createDiv({ cls: "grill-hint" });
+					this.md(`*Hint ${hintsUsed + 1}:* ${hints[hintsUsed]}`, h);
+					hintsUsed += 1;
+					if (hintsUsed >= hints.length) hintBtn.disabled = true;
+				}
+			};
+		}
 		const skip = row.createEl("button", { text: "I don't know", cls: "grill-quiet-btn" });
 
-		hintBtn.onclick = () => {
-			if (hintsUsed < hints.length) {
-				const h = hintBox.createDiv({ cls: "grill-hint" });
-				this.md(`*Hint ${hintsUsed + 1}:* ${hints[hintsUsed]}`, h);
-				hintsUsed += 1;
-				if (hintsUsed >= hints.length) hintBtn.disabled = true;
-			}
+		const doAction = (giveUp: boolean) => {
+			const answer = giveUp ? "" : ta.value.trim();
+			if (selfGrade) this.revealForSelfGrade(answer, giveUp, hintsUsed);
+			else void this.submitAnswer(answer, giveUp, hintsUsed);
 		};
-		const doSubmit = (giveUp: boolean) => void this.submitAnswer(giveUp ? "" : ta.value.trim(), giveUp, hintsUsed);
-		submit.onclick = () => doSubmit(false);
-		skip.onclick = () => doSubmit(true);
+		submit.onclick = () => doAction(false);
+		skip.onclick = () => doAction(true);
 		ta.addEventListener("keydown", (e) => {
-			if ((e.metaKey || e.ctrlKey) && e.key === "Enter") doSubmit(false);
+			if ((e.metaKey || e.ctrlKey) && e.key === "Enter") doAction(false);
 		});
 		ta.focus();
 	}
@@ -239,8 +252,8 @@ export class SessionView extends ItemView {
 		const note = await this.plugin.store.writeSessionNote(
 			this.results,
 			{
-				provider: cfg?.provider ?? "unknown",
-				model: cfg?.model ?? "unknown",
+				provider: cfg?.provider ?? (this.plugin.data.settings.questionSource === "local" ? "local" : "unknown"),
+				model: cfg?.model ?? (this.plugin.data.settings.gradingMode === "self" ? "self-graded" : "unknown"),
 				startedAt: this.sessionStart,
 			},
 			this.plugin.data.settings.linkSessions,
@@ -352,12 +365,16 @@ export class SessionView extends ItemView {
 	}
 
 	private async startSession(): Promise<void> {
+		const s = this.plugin.data.settings;
+		const needsKey = s.questionSource === "ai" || s.gradingMode === "ai";
 		const cfg = this.plugin.llmConfig();
-		if (!cfg) {
-			new Notice("Grill: set an API key for your provider in plugin settings first.");
+		if (needsKey && !cfg) {
+			new Notice(
+				"Grill: set an API key in settings, or switch questions and grading to the no-key options.",
+				8000,
+			);
 			return;
 		}
-		const s = this.plugin.data.settings;
 		const files = this.mdFiles();
 		if (files.length === 0) {
 			new Notice("Grill: no markdown notes in this vault.");
@@ -371,7 +388,7 @@ export class SessionView extends ItemView {
 			this.byName = new Map(files.map((f) => [f.basename, f]));
 			const byName = this.byName;
 			const names = pickCandidates([...byName.keys()], this.plugin.mastery, s.maxNotesPerSession);
-			const vision = s.sendImages && supportsVision(cfg.provider, cfg.model);
+			const vision = !!cfg && s.questionSource === "ai" && s.sendImages && supportsVision(cfg.provider, cfg.model);
 			this.noteText = {};
 			this.noteImages = {};
 			this.contextImages = [];
@@ -395,7 +412,7 @@ export class SessionView extends ItemView {
 
 			this.candidateNames = names;
 			this.notesConcat = names.map((n) => `=== NOTE: ${n} ===\n${this.noteText[n].trim()}`).join("\n\n");
-			if (!vision && notesWithImages > 0) {
+			if (!vision && notesWithImages > 0 && s.questionSource === "ai") {
 				this.notesConcat +=
 					"\n\nNote: some of these notes embed images that cannot be shown to this model. " +
 					"Do not write questions that depend on reading an image; quiz only on the text above.";
@@ -408,7 +425,26 @@ export class SessionView extends ItemView {
 			this.pending = null;
 			this.targetCount = Math.max(1, s.questionsPerSession);
 
-			this.renderLoading("Writing your questions", `${cfg.model} is reading ${names.length} notes. This usually takes a few seconds.`);
+			if (s.questionSource === "local") {
+				// No model: build every question up front from the notes' structure.
+				const pool = names.map((n) => ({ name: n, text: this.noteText[n] ?? "" }));
+				this.questions = generateLocalQuestions(pool, this.targetCount);
+				if (this.questions.length === 0) {
+					new Notice(
+						"Grill: couldn't build questions from these notes' structure. Add some bold terms, " +
+							"headings, definitions or formulas, or switch questions to AI.",
+						10000,
+					);
+					this.renderStart();
+					return;
+				}
+				this.targetCount = Math.min(this.targetCount, this.questions.length);
+				for (const q of this.questions) this.askedNodes.add(q.node);
+				this.renderQuestion();
+				return;
+			}
+
+			this.renderLoading("Writing your questions", `${cfg!.model} is reading ${names.length} notes. This usually takes a few seconds.`);
 			await this.loadNextBatch();
 			if (this.questions.length === 0) {
 				new Notice("Grill: the model returned no usable questions.", 8000);
@@ -473,5 +509,67 @@ export class SessionView extends ItemView {
 		};
 		this.results.push(r);
 		this.renderFeedback(r);
+	}
+
+	/** Self-grade path: reveal the answer, then let the user rate their own recall. */
+	private revealForSelfGrade(answer: string, gaveUp: boolean, hintsUsed: number): void {
+		const wrap = this.root();
+		this.progressBar(wrap);
+		const q = this.questions[this.idx];
+		const card = wrap.createDiv({ cls: "grill-body" });
+		const meta = card.createDiv({ cls: "grill-meta-row" });
+		meta.createSpan({ cls: "grill-meta", text: `Question ${this.idx + 1} of ${this.targetCount}` });
+		const chip = meta.createSpan({ cls: "grill-chip grill-chip-link", text: q.node });
+		chip.onclick = () => this.openNote(q.node);
+		chip.setAttr("aria-label", "Open note");
+
+		const qEl = card.createDiv({ cls: "grill-question grill-question-small" });
+		this.md(q.question, qEl);
+
+		if (!gaveUp && answer) {
+			const ans = card.createDiv({ cls: "grill-your-answer" });
+			this.md(`> ${answer.split("\n").join("\n> ")}`, ans);
+		}
+
+		const ma = card.createDiv({ cls: "grill-model-answer" });
+		this.md(`**Answer:** ${q.modelAnswer}`, ma);
+
+		card.createDiv({ cls: "grill-meta grill-selfgrade-prompt", text: "How did you do?" });
+		const rateRow = card.createDiv({ cls: "grill-btn-row grill-selfgrade-row" });
+		const buttons: { label: string; rating: Rating; cls: string }[] = [
+			{ label: "Again", rating: 1, cls: "grill-rate-again" },
+			{ label: "Hard", rating: 2, cls: "grill-rate-hard" },
+			{ label: "Good", rating: 3, cls: "grill-rate-good" },
+			{ label: "Easy", rating: 4, cls: "grill-rate-easy" },
+		];
+		// If they gave up, nudge toward Again but leave the choice to them.
+		for (const b of buttons) {
+			const el = rateRow.createEl("button", { text: b.label, cls: `grill-rate-btn ${b.cls}` });
+			if (gaveUp && b.rating === 1) el.addClass("mod-cta");
+			el.onclick = () => void this.recordSelfGrade(b.rating, answer, gaveUp, hintsUsed);
+		}
+	}
+
+	private async recordSelfGrade(rating: Rating, answer: string, gaveUp: boolean, hintsUsed: number): Promise<void> {
+		const q = this.questions[this.idx];
+		const verdict: Verdict = rating === 1 ? "incorrect" : rating === 2 ? "partial" : "correct";
+		recordRating(this.plugin.mastery, q.node, rating);
+		await this.plugin.store.saveMastery(this.plugin.mastery);
+		if (this.plugin.data.settings.writeStatus) {
+			const f = this.byName.get(q.node);
+			if (f) await this.plugin.store.writeNoteStatus(f, this.plugin.mastery[q.node]);
+		}
+		this.plugin.refreshStatusBar();
+		this.results.push({
+			node: q.node,
+			question: q.question,
+			answer,
+			verdict,
+			gaveUp,
+			feedback: "",
+			modelAnswer: q.modelAnswer,
+			hintsUsed,
+		});
+		await this.goToQuestion(this.idx + 1);
 	}
 }

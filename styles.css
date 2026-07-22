@@ -286,3 +286,26 @@ settings:
   text-align: right;
   margin-right: 0.75em;
 }
+
+/* Self-grade rating buttons */
+.grill-selfgrade-prompt {
+  margin-top: 1em;
+  margin-bottom: 0.4em;
+}
+.grill-selfgrade-row {
+  display: flex;
+  gap: 0.4em;
+}
+.grill-rate-btn {
+  flex: 1;
+  border-top: 2px solid transparent;
+}
+.grill-rate-again { border-top-color: var(--grill-incorrect, var(--color-red)); }
+.grill-rate-hard { border-top-color: var(--grill-partial, var(--color-orange)); }
+.grill-rate-good { border-top-color: var(--grill-correct, var(--color-green)); }
+.grill-rate-easy { border-top-color: var(--color-blue); }
+
+.grill-nokey-note {
+  border-left: 2px solid var(--color-green);
+  padding-left: 0.75em;
+}

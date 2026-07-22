@@ -35,6 +35,10 @@ interface GrillSettings {
 	excludedFolders: string[];
 	/** Send embedded images to the model when it supports vision. */
 	sendImages: boolean;
+	/** Where questions come from: an LLM, or the note's own structure (no key). */
+	questionSource: "ai" | "local";
+	/** How answers are graded: an LLM, or the user grades themselves (no key). */
+	gradingMode: "ai" | "self";
 }
 
 interface PluginData {
@@ -59,6 +63,8 @@ function defaultSettings(): GrillSettings {
 		linkSessions: true,
 		excludedFolders: [],
 		sendImages: true,
+		questionSource: "ai",
+		gradingMode: "ai",
 	};
 }
 
@@ -87,6 +93,8 @@ export default class GrillPlugin extends Plugin {
 		if (Array.isArray(s.excludedFolders))
 			settings.excludedFolders = s.excludedFolders.filter((v): v is string => typeof v === "string");
 		if (typeof s.sendImages === "boolean") settings.sendImages = s.sendImages;
+		if (s.questionSource === "ai" || s.questionSource === "local") settings.questionSource = s.questionSource;
+		if (s.gradingMode === "ai" || s.gradingMode === "self") settings.gradingMode = s.gradingMode;
 		this.data = { settings };
 
 		this.store = new GrillStore(this.app, () => this.data.settings.folder);
@@ -356,6 +364,49 @@ class GrillSettingTab extends PluginSettingTab {
 
 		// ------------------------------------------------------------ AI
 		new Setting(containerEl).setName("AI").setHeading();
+
+		new Setting(containerEl)
+			.setName("Where questions come from")
+			.setDesc(
+				"AI writes questions from your notes (needs a key), or Grill builds them from your notes' own " +
+					"structure: definitions, bold terms, headings and formulas (no key, no cost).",
+			)
+			.addDropdown((d) =>
+				d
+					.addOption("ai", "AI writes them")
+					.addOption("local", "From my notes (no key)")
+					.setValue(s.questionSource)
+					.onChange(async (v) => {
+						s.questionSource = v === "local" ? "local" : "ai";
+						await this.plugin.persist();
+						this.display();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Grading")
+			.setDesc(
+				"AI marks your written answer against the note (needs a key), or you reveal the answer and grade " +
+					"yourself Again / Hard / Good / Easy (no key, no cost).",
+			)
+			.addDropdown((d) =>
+				d
+					.addOption("ai", "AI marks me")
+					.addOption("self", "I mark myself (no key)")
+					.setValue(s.gradingMode)
+					.onChange(async (v) => {
+						s.gradingMode = v === "self" ? "self" : "ai";
+						await this.plugin.persist();
+						this.display();
+					}),
+			);
+
+		if (s.questionSource === "local" && s.gradingMode === "self") {
+			containerEl.createEl("p", {
+				cls: "setting-item-description grill-nokey-note",
+				text: "No-key mode: Grill runs entirely on your machine, nothing is sent anywhere, and there's nothing to pay. A model key is only needed for AI questions or AI grading.",
+			});
+		}
 
 		new Setting(containerEl)
 			.setName("Provider")

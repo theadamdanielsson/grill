@@ -5,6 +5,9 @@
 
 export type Verdict = "correct" | "partial" | "incorrect";
 
+/** FSRS grade the user gives themselves: 1=again, 2=hard, 3=good, 4=easy. */
+export type Rating = 1 | 2 | 3 | 4;
+
 export interface NoteMastery {
 	correct: number;
 	partial: number;
@@ -85,7 +88,8 @@ function initialDifficulty(rating: number): number {
 
 function nextStabilityAfterSuccess(stability: number, difficulty: number, r: number, rating: number): number {
 	const sinFactor = Math.exp(W[8]) * (11 - difficulty) * Math.pow(stability, -W[9]) * (Math.exp(W[10] * (1 - r)) - 1);
-	const ratingBonus = rating === 2 ? W[15] : 1;
+	// Hard (2) shrinks the gain; Easy (4) enlarges it. Good (3) is neutral.
+	const ratingBonus = rating === 2 ? W[15] : rating === 4 ? W[16] : 1;
 	return Math.max(MIN_STABILITY, stability * (1 + sinFactor * ratingBonus));
 }
 
@@ -116,16 +120,9 @@ export function fuzzInterval(days: number): number {
 
 // ---------------------------------------------------------------- updates
 
-export function recordAnswer(
-	map: MasteryMap,
-	note: string,
-	verdict: Verdict,
-	misconceptionTag?: string,
-	now = new Date(),
-): void {
-	const m = map[note] ?? emptyMastery();
-	const rating = toRating(verdict);
-
+/** Apply one FSRS rating (1-4) to a note's record, updating stability, difficulty,
+ * counters, streak and due date. Shared by the AI-graded and self-graded paths. */
+function applyRating(m: NoteMastery, rating: number, now: Date, misconceptionTag?: string): void {
 	const elapsedDays = m.lastSeen ? (now.getTime() - new Date(m.lastSeen).getTime()) / 86400_000 : 0;
 	if (m.stability === null || m.difficulty === null) {
 		m.stability = initialStability(rating);
@@ -139,10 +136,12 @@ export function recordAnswer(
 				: nextStabilityAfterSuccess(m.stability, m.difficulty, r, rating);
 	}
 
-	if (verdict === "correct") {
+	// Again (1) counts wrong and breaks the streak; Hard (2) is a partial;
+	// Good (3) and Easy (4) both count as a correct recall.
+	if (rating >= 3) {
 		m.correct += 1;
 		m.streak += 1;
-	} else if (verdict === "partial") {
+	} else if (rating === 2) {
 		m.partial += 1;
 	} else {
 		m.incorrect += 1;
@@ -161,6 +160,24 @@ export function recordAnswer(
 	}
 
 	m.lastSeen = now.toISOString();
+}
+
+export function recordAnswer(
+	map: MasteryMap,
+	note: string,
+	verdict: Verdict,
+	misconceptionTag?: string,
+	now = new Date(),
+): void {
+	const m = map[note] ?? emptyMastery();
+	applyRating(m, toRating(verdict), now, misconceptionTag);
+	map[note] = m;
+}
+
+/** Record a self-graded review (no LLM): the user's own Again/Hard/Good/Easy rating. */
+export function recordRating(map: MasteryMap, note: string, rating: Rating, now = new Date()): void {
+	const m = map[note] ?? emptyMastery();
+	applyRating(m, rating, now);
 	map[note] = m;
 }
 
