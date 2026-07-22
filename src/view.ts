@@ -270,8 +270,17 @@ export class SessionView extends ItemView {
 
 	private mdFiles(): TFile[] {
 		const folder = this.plugin.data.settings.folder;
+		const excluded = this.plugin.data.settings.excludedFolders ?? [];
 		const all = this.sessionScope ?? this.app.vault.getMarkdownFiles();
-		return all.filter((f) => !f.path.startsWith(`${folder}/`));
+		return all.filter((f) => {
+			if (f.path.startsWith(`${folder}/`)) return false;
+			for (const ef of excluded) {
+				const e = ef.trim();
+				if (!e) continue;
+				if (f.path === e || f.path.startsWith(`${e}/`)) return false;
+			}
+			return true;
+		});
 	}
 
 	/** Entry point for "Grill this note/folder": scope the session and start. */
