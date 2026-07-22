@@ -2,7 +2,8 @@
 
 import { ItemView, MarkdownRenderer, Notice, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
-import { generateQuestions, gradeAnswer, Question, Verdict } from "./llm";
+import { generateQuestions, gradeAnswer, Question, supportsVision, Verdict } from "./llm";
+import { collectNoteImages, ImageInput } from "./images";
 import { masteryPromptBlock, pickCandidates, recordAnswer, statusOf } from "./mastery";
 import { SessionEntry } from "./store";
 
@@ -12,6 +13,10 @@ const NOTE_CHAR_CAP = 4000;
 /** Questions generated per model call. Small batches cut the wait before the
  * first question and let the next batch prefetch while the user answers. */
 const BATCH = 2;
+/** Most images to pull from a single note, and across a whole session's context,
+ * so a screenshot-heavy vault doesn't run up a huge image-token bill. */
+const IMAGES_PER_NOTE_CAP = 4;
+const CONTEXT_IMAGE_CAP = 12;
 
 interface QuestionResult extends SessionEntry {
 	hintsUsed: number;
@@ -35,6 +40,10 @@ export class SessionView extends ItemView {
 	private candidateNames: string[] = [];
 	private notesConcat = "";
 	private masteryBlock = "";
+	/** Images per note, resolved once when a vision model is in use. */
+	private noteImages: Record<string, ImageInput[]> = {};
+	/** Flat image list for question generation (all notes in the session). */
+	private contextImages: ImageInput[] = [];
 	/** In-flight batch generation, if any. */
 	private pending: Promise<void> | null = null;
 
@@ -269,18 +278,8 @@ export class SessionView extends ItemView {
 	// ------------------------------------------------------------ session logic
 
 	private mdFiles(): TFile[] {
-		const folder = this.plugin.data.settings.folder;
-		const excluded = this.plugin.data.settings.excludedFolders ?? [];
 		const all = this.sessionScope ?? this.app.vault.getMarkdownFiles();
-		return all.filter((f) => {
-			if (f.path.startsWith(`${folder}/`)) return false;
-			for (const ef of excluded) {
-				const e = ef.trim();
-				if (!e) continue;
-				if (f.path === e || f.path.startsWith(`${e}/`)) return false;
-			}
-			return true;
-		});
+		return all.filter((f) => !this.plugin.isExcluded(f.path));
 	}
 
 	/** Entry point for "Grill this note/folder": scope the session and start. */
@@ -301,7 +300,7 @@ export class SessionView extends ItemView {
 		const pool = fresh.length >= count ? fresh : this.candidateNames;
 		const run = async (): Promise<void> => {
 			try {
-				const qs = await generateQuestions(cfg, this.notesConcat, this.masteryBlock, pool, count);
+				const qs = await generateQuestions(cfg, this.notesConcat, this.masteryBlock, pool, count, this.contextImages);
 				for (const q of qs) {
 					this.questions.push(q);
 					this.askedNodes.add(q.node);
@@ -361,16 +360,35 @@ export class SessionView extends ItemView {
 			this.byName = new Map(files.map((f) => [f.basename, f]));
 			const byName = this.byName;
 			const names = pickCandidates([...byName.keys()], this.plugin.mastery, s.maxNotesPerSession);
+			const vision = s.sendImages && supportsVision(cfg.provider, cfg.model);
 			this.noteText = {};
+			this.noteImages = {};
+			this.contextImages = [];
+			let notesWithImages = 0;
 			for (const n of names) {
 				const file = byName.get(n);
 				if (!file) continue;
 				const raw = await this.app.vault.cachedRead(file);
 				this.noteText[n] = raw.length > NOTE_CHAR_CAP ? raw.slice(0, NOTE_CHAR_CAP) + "\n[truncated]" : raw;
+				if (vision) {
+					const imgs = await collectNoteImages(this.app, file, IMAGES_PER_NOTE_CAP);
+					if (imgs.length) {
+						notesWithImages++;
+						this.noteImages[n] = imgs;
+						this.contextImages.push(...imgs.slice(0, Math.max(0, CONTEXT_IMAGE_CAP - this.contextImages.length)));
+					}
+				} else if (this.app.metadataCache.getFileCache(file)?.embeds?.length) {
+					notesWithImages++;
+				}
 			}
 
 			this.candidateNames = names;
 			this.notesConcat = names.map((n) => `=== NOTE: ${n} ===\n${this.noteText[n].trim()}`).join("\n\n");
+			if (!vision && notesWithImages > 0) {
+				this.notesConcat +=
+					"\n\nNote: some of these notes embed images that cannot be shown to this model. " +
+					"Do not write questions that depend on reading an image; quiz only on the text above.";
+			}
 			this.masteryBlock = masteryPromptBlock(this.plugin.mastery, names);
 			this.questions = [];
 			this.askedNodes = new Set();
@@ -408,7 +426,7 @@ export class SessionView extends ItemView {
 		} else {
 			this.renderLoading("Grading your answer", "Checking it against your note and the rubric.");
 			try {
-				const g = await gradeAnswer(cfg, q, this.noteText[q.node] ?? "", answer);
+				const g = await gradeAnswer(cfg, q, this.noteText[q.node] ?? "", answer, this.noteImages[q.node] ?? []);
 				verdict = g.verdict;
 				feedback = g.feedback;
 				misconceptionTag = g.misconceptionTag;

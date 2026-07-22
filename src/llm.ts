@@ -6,6 +6,7 @@
  */
 
 import { requestUrl } from "obsidian";
+import type { ImageInput } from "./images";
 
 export type ProviderId = "anthropic" | "openai" | "gemini" | "deepseek" | "ollama";
 
@@ -88,6 +89,21 @@ export interface Grade {
 	misconceptionTag: string;
 }
 
+/** Whether this provider and model can read image inputs. */
+export function supportsVision(provider: ProviderId, model: string): boolean {
+	switch (provider) {
+		case "anthropic":
+		case "gemini":
+			return true;
+		case "openai":
+			return /^(gpt-4o|gpt-4\.1|gpt-5|chatgpt|o[0-9])/i.test(model);
+		case "ollama":
+			return /(llava|vision|-vl\b|moondream|bakllava|minicpm-v|gemma3|llama3\.2-vision|qwen2(\.5)?-?vl)/i.test(model);
+		case "deepseek":
+			return false;
+	}
+}
+
 // ------------------------------------------------------------------ transport
 
 interface HttpCall {
@@ -143,9 +159,19 @@ function buildCall(
 	user: string,
 	schema: Record<string, unknown>,
 	maxTokens: number,
+	images: ImageInput[],
 ): HttpCall {
 	switch (cfg.provider) {
-		case "anthropic":
+		case "anthropic": {
+			const content: unknown = images.length
+				? [
+						...images.map((im) => ({
+							type: "image",
+							source: { type: "base64", media_type: im.mediaType, data: im.dataBase64 },
+						})),
+						{ type: "text", text: user },
+					]
+				: user;
 			return {
 				url: "https://api.anthropic.com/v1/messages",
 				headers: {
@@ -157,7 +183,7 @@ function buildCall(
 					model: cfg.model,
 					max_tokens: maxTokens,
 					system,
-					messages: [{ role: "user", content: user }],
+					messages: [{ role: "user", content }],
 					output_config: { format: { type: "json_schema", schema } },
 				},
 				extract: (json) => {
@@ -166,13 +192,23 @@ function buildCall(
 					return j.content?.find((b) => b.type === "text")?.text;
 				},
 			};
+		}
 		case "openai": {
+			const content: unknown = images.length
+				? [
+						{ type: "text", text: user },
+						...images.map((im) => ({
+							type: "image_url",
+							image_url: { url: `data:${im.mediaType};base64,${im.dataBase64}` },
+						})),
+					]
+				: user;
 			const body: Record<string, unknown> = {
 				model: cfg.model,
 				max_completion_tokens: maxTokens,
 				messages: [
 					{ role: "system", content: system },
-					{ role: "user", content: user },
+					{ role: "user", content },
 				],
 				response_format: {
 					type: "json_schema",
@@ -194,7 +230,15 @@ function buildCall(
 				headers: { "content-type": "application/json", "x-goog-api-key": cfg.apiKey },
 				body: {
 					systemInstruction: { parts: [{ text: system }] },
-					contents: [{ role: "user", parts: [{ text: user }] }],
+					contents: [
+						{
+							role: "user",
+							parts: [
+								{ text: user },
+								...images.map((im) => ({ inlineData: { mimeType: im.mediaType, data: im.dataBase64 } })),
+							],
+						},
+					],
 					generationConfig: {
 						maxOutputTokens: maxTokens,
 						responseMimeType: "application/json",
@@ -203,22 +247,22 @@ function buildCall(
 				},
 				extract: (json) => (json as GeminiGenerateResponse).candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join(""),
 			};
-		case "ollama":
+		case "ollama": {
+			const userMessage: Record<string, unknown> = { role: "user", content: user };
+			if (images.length) userMessage.images = images.map((im) => im.dataBase64);
 			return {
 				url: `${(cfg.baseUrl ?? "http://localhost:11434").replace(/\/$/, "")}/api/chat`,
 				headers: { "content-type": "application/json" },
 				body: {
 					model: cfg.model,
 					stream: false,
-					messages: [
-						{ role: "system", content: system },
-						{ role: "user", content: user },
-					],
+					messages: [{ role: "system", content: system }, userMessage],
 					format: schema,
 					options: { num_predict: maxTokens },
 				},
 				extract: (json) => (json as OllamaChatResponse).message?.content,
 			};
+		}
 		case "deepseek":
 			return {
 				url: "https://api.deepseek.com/chat/completions",
@@ -249,8 +293,9 @@ async function callJSON(
 	user: string,
 	schema: Record<string, unknown>,
 	maxTokens: number,
+	images: ImageInput[] = [],
 ): Promise<unknown> {
-	const call = buildCall(cfg, system, user, schema, maxTokens);
+	const call = buildCall(cfg, system, user, schema, maxTokens, images);
 	const resp = await requestUrl({
 		url: call.url,
 		method: "POST",
@@ -464,12 +509,13 @@ export async function generateQuestions(
 	masteryBlock: string,
 	nodeNames: string[],
 	count: number,
+	images: ImageInput[] = [],
 ): Promise<Question[]> {
 	const user =
 		`Below are the student's notes for this session.\n\n${notesText}\n\n` +
 		`Per-note mastery state from all previous sessions:\n${masteryBlock}\n\n` +
 		`Generate exactly ${count} recall questions. Each question targets exactly one note, named in 'node'.`;
-	const data = (await callJSON(cfg, TUTOR_SYSTEM, user, questionsSchema(nodeNames), 8000)) as {
+	const data = (await callJSON(cfg, TUTOR_SYSTEM, user, questionsSchema(nodeNames), 8000, images)) as {
 		questions: Question[];
 	};
 	const valid = new Set(nodeNames);
@@ -516,7 +562,13 @@ const GRADE_SCHEMA = {
 	additionalProperties: false,
 };
 
-export async function gradeAnswer(cfg: LLMConfig, q: Question, noteText: string, answer: string): Promise<Grade> {
+export async function gradeAnswer(
+	cfg: LLMConfig,
+	q: Question,
+	noteText: string,
+	answer: string,
+	images: ImageInput[] = [],
+): Promise<Grade> {
 	const rubric = {
 		modelAnswer: q.modelAnswer,
 		acceptableAnswers: q.acceptableAnswers,
@@ -526,7 +578,7 @@ export async function gradeAnswer(cfg: LLMConfig, q: Question, noteText: string,
 		`NOTE '${q.node}':\n${noteText}\n\nQUESTION: ${q.question}\n\n` +
 		`GRADING RUBRIC (written with the question):\n${JSON.stringify(rubric, null, 1)}\n\n` +
 		`STUDENT'S ANSWER: ${answer}\n\nGrade it.`;
-	const g = (await callJSON(cfg, GRADER_SYSTEM, user, GRADE_SCHEMA, 2000)) as Grade;
+	const g = (await callJSON(cfg, GRADER_SYSTEM, user, GRADE_SCHEMA, 2000, images)) as Grade;
 	const verdict: Verdict = g.verdict === "correct" || g.verdict === "partial" ? g.verdict : "incorrect";
 	return {
 		verdict,
