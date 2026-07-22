@@ -39,6 +39,10 @@ their own questions), you answer, reveal, and grade yourself Again / Hard / Good
 rating feeds the same spaced-repetition schedule the AI mode uses. Nothing gets sent
 anywhere, and there's nothing to pay.
 
+If you've already got flashcards written in your notes, Grill uses them as-is: Spaced
+Repetition's `==cloze==` and `::`/`?` question separators, and Anki's `{{c1::…}}` clozes
+(hints and grouped deletions included) all become questions directly.
+
 It's only as good as your notes are structured: definition-heavy, well-headed notes make
 sharp questions; a wall of prose makes weak ones. When you want questions written about your
 notes rather than pulled from them, or you want your actual writing marked, point Grill at a
