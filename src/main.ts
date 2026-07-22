@@ -20,6 +20,8 @@ interface GrillSettings {
 	writeStatus: boolean;
 	/** Wiki-link session transcripts to the quizzed notes. */
 	linkSessions: boolean;
+	/** Vault folders to exclude from global note searches (relative paths). */
+	excludedFolders: string[];
 }
 
 interface PluginData {
@@ -41,7 +43,8 @@ function defaultSettings(): GrillSettings {
 		showProgress: true,
 		hideNoteName: false,
 		writeStatus: false,
-		linkSessions: true,
+			linkSessions: true,
+			excludedFolders: [],
 	};
 }
 
@@ -67,6 +70,12 @@ export default class GrillPlugin extends Plugin {
 		if (typeof s.hideNoteName === "boolean") settings.hideNoteName = s.hideNoteName;
 		if (typeof s.writeStatus === "boolean") settings.writeStatus = s.writeStatus;
 		if (typeof s.linkSessions === "boolean") settings.linkSessions = s.linkSessions;
+		if (Array.isArray(s.excludedFolders)) settings.excludedFolders = s.excludedFolders;
+		else if (typeof (s as any).excludedFolders === "string" && (s as any).excludedFolders.trim())
+			settings.excludedFolders = (s as any).excludedFolders
+				.split(",")
+				.map((v: string) => v.trim())
+				.filter(Boolean);
 		this.data = { settings };
 
 		this.store = new GrillStore(this.app, () => this.data.settings.folder);
@@ -141,7 +150,17 @@ export default class GrillPlugin extends Plugin {
 		const now = new Date();
 		let n = 0;
 		for (const f of this.app.vault.getMarkdownFiles()) {
-			if (f.path.startsWith(`${folder}/`)) continue;
+				let skip = false;
+				if (f.path.startsWith(`${folder}/`)) skip = true;
+				for (const ef of this.data.settings.excludedFolders) {
+					const e = ef.trim();
+					if (!e) continue;
+					if (f.path === e || f.path.startsWith(`${e}/`)) {
+						skip = true;
+						break;
+					}
+				}
+				if (skip) continue;
 			const m = this.mastery[f.basename];
 			if (!m) continue;
 			const s = statusOf(m);
@@ -167,7 +186,18 @@ export default class GrillPlugin extends Plugin {
 	async backfillStatus(): Promise<void> {
 		let n = 0;
 		for (const f of this.app.vault.getMarkdownFiles()) {
-			const m = this.mastery[f.basename];
+				let skip = false;
+				if (f.path.startsWith(`${this.data.settings.folder}/`)) skip = true;
+				for (const ef of this.data.settings.excludedFolders) {
+					const e = ef.trim();
+					if (!e) continue;
+					if (f.path === e || f.path.startsWith(`${e}/`)) {
+						skip = true;
+						break;
+					}
+				}
+				if (skip) continue;
+				const m = this.mastery[f.basename];
 			if (!m) continue;
 			await this.store.writeNoteStatus(f, m);
 			n += 1;
@@ -462,6 +492,25 @@ class GrillSettingTab extends PluginSettingTab {
 					.setValue(s.folder)
 					.onChange(async (v) => {
 						s.folder = v.trim() || "Grill";
+						await this.plugin.persist();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Excluded folders from search")
+			.setDesc(
+				"Comma-separated list of vault folders to exclude from Grill's global note searches. " +
+				"Use relative paths like 'Inbox, Templates, Archive'.",
+			)
+			.addText((t) =>
+				 t
+					.setPlaceholder("Inbox, Templates")
+					.setValue((s.excludedFolders || []).join(", "))
+					.onChange(async (v) => {
+						s.excludedFolders = v
+							.split(",")
+							.map((x) => x.trim())
+							.filter(Boolean);
 						await this.plugin.persist();
 					}),
 			);
