@@ -44,6 +44,8 @@ export class SessionView extends ItemView {
 	private noteImages: Record<string, ImageInput[]> = {};
 	/** Flat image list for question generation (all notes in the session). */
 	private contextImages: ImageInput[] = [];
+	/** The user's question/grading preferences (Grill/Instructions.md), if any. */
+	private sessionInstructions = "";
 	/** In-flight batch generation, if any. */
 	private pending: Promise<void> | null = null;
 
@@ -300,7 +302,15 @@ export class SessionView extends ItemView {
 		const pool = fresh.length >= count ? fresh : this.candidateNames;
 		const run = async (): Promise<void> => {
 			try {
-				const qs = await generateQuestions(cfg, this.notesConcat, this.masteryBlock, pool, count, this.contextImages);
+				const qs = await generateQuestions(
+					cfg,
+					this.notesConcat,
+					this.masteryBlock,
+					pool,
+					count,
+					this.contextImages,
+					this.sessionInstructions,
+				);
 				for (const q of qs) {
 					this.questions.push(q);
 					this.askedNodes.add(q.node);
@@ -357,6 +367,7 @@ export class SessionView extends ItemView {
 		this.renderLoading("Preparing your session", "Choosing which notes to quiz you on.");
 		try {
 			this.plugin.mastery = await this.plugin.store.loadMastery();
+			this.sessionInstructions = await this.plugin.store.loadInstructions();
 			this.byName = new Map(files.map((f) => [f.basename, f]));
 			const byName = this.byName;
 			const names = pickCandidates([...byName.keys()], this.plugin.mastery, s.maxNotesPerSession);
@@ -426,7 +437,14 @@ export class SessionView extends ItemView {
 		} else {
 			this.renderLoading("Grading your answer", "Checking it against your note and the rubric.");
 			try {
-				const g = await gradeAnswer(cfg, q, this.noteText[q.node] ?? "", answer, this.noteImages[q.node] ?? []);
+				const g = await gradeAnswer(
+					cfg,
+					q,
+					this.noteText[q.node] ?? "",
+					answer,
+					this.noteImages[q.node] ?? [],
+					this.sessionInstructions,
+				);
 				verdict = g.verdict;
 				feedback = g.feedback;
 				misconceptionTag = g.misconceptionTag;

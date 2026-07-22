@@ -41,6 +41,56 @@ export class GrillStore {
 		return normalizePath(`${this.folder()}/mastery.json`);
 	}
 
+	private instructionsPath(): string {
+		return normalizePath(`${this.folder()}/Instructions.md`);
+	}
+
+	private static readonly INSTRUCTIONS_CAP = 2000;
+
+	private static readonly INSTRUCTIONS_TEMPLATE = [
+		"<!-- Grill reads this file and follows what you write here when it makes and marks",
+		"     your questions. Write plain sentences. Delete this comment or leave it: the",
+		"     commented part is ignored, only your own text below is sent to the model.",
+		"",
+		"     Examples you might write:",
+		'       "Prefer short numeric problems over definitions."',
+		'       "Ask me to explain concepts in my own words."',
+		'       "Be strict on exact terminology."',
+		'       "Accept bullet-point answers, do not mark me down for phrasing."',
+		"     Keep it under a page; long instructions cost more tokens every session. -->",
+		"",
+		"",
+	].join("\n");
+
+	/** The user's question/grading preferences, with the how-to comments stripped and
+	 * length-capped. Empty when the file is absent or only the template comment remains. */
+	async loadInstructions(): Promise<string> {
+		const path = this.instructionsPath();
+		if (!(await this.app.vault.adapter.exists(path))) return "";
+		try {
+			const raw = await this.app.vault.adapter.read(path);
+			const stripped = raw.replace(/<!--[\s\S]*?-->/g, "").trim();
+			return stripped.slice(0, GrillStore.INSTRUCTIONS_CAP);
+		} catch {
+			return "";
+		}
+	}
+
+	/** Create the instructions file with a commented template if it does not exist,
+	 * and return it as a TFile so the caller can open it. */
+	async createInstructions(): Promise<TFile | null> {
+		await this.ensureFolder(this.folder());
+		const path = this.instructionsPath();
+		const existing = this.app.vault.getAbstractFileByPath(path);
+		if (existing instanceof TFile) return existing;
+		try {
+			return await this.app.vault.create(path, GrillStore.INSTRUCTIONS_TEMPLATE);
+		} catch {
+			const after = this.app.vault.getAbstractFileByPath(path);
+			return after instanceof TFile ? after : null;
+		}
+	}
+
 	private async ensureFolder(path: string): Promise<void> {
 		if (!(await this.app.vault.adapter.exists(path))) {
 			await this.app.vault.createFolder(path).catch(() => {});

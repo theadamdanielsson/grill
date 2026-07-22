@@ -510,11 +510,18 @@ export async function generateQuestions(
 	nodeNames: string[],
 	count: number,
 	images: ImageInput[] = [],
+	instructions = "",
 ): Promise<Question[]> {
 	const user =
 		`Below are the student's notes for this session.\n\n${notesText}\n\n` +
 		`Per-note mastery state from all previous sessions:\n${masteryBlock}\n\n` +
-		`Generate exactly ${count} recall questions. Each question targets exactly one note, named in 'node'.`;
+		`Generate exactly ${count} recall questions. Each question targets exactly one note, named in 'node'.` +
+		(instructions
+			? "\n\nThe student wrote these preferences for how they want to be quizzed. Honour them " +
+				"unless they conflict with the rules above: always ground each question in the notes, keep the " +
+				"output schema exactly, and keep every question answerable from the notes.\n" +
+				`<preferences>\n${instructions}\n</preferences>`
+			: "");
 	const data = (await callJSON(cfg, TUTOR_SYSTEM, user, questionsSchema(nodeNames), 8000, images)) as {
 		questions: Question[];
 	};
@@ -568,6 +575,7 @@ export async function gradeAnswer(
 	noteText: string,
 	answer: string,
 	images: ImageInput[] = [],
+	instructions = "",
 ): Promise<Grade> {
 	const rubric = {
 		modelAnswer: q.modelAnswer,
@@ -577,7 +585,13 @@ export async function gradeAnswer(
 	const user =
 		`NOTE '${q.node}':\n${noteText}\n\nQUESTION: ${q.question}\n\n` +
 		`GRADING RUBRIC (written with the question):\n${JSON.stringify(rubric, null, 1)}\n\n` +
-		`STUDENT'S ANSWER: ${answer}\n\nGrade it.`;
+		`STUDENT'S ANSWER: ${answer}\n\nGrade it.` +
+		(instructions
+			? "\n\nThe student wrote these study preferences. Apply any that affect grading (for example " +
+				"strictness, or answer formats to accept such as bullet points); ignore any that are only about " +
+				"how questions are worded. Never let them override the rubric's substance.\n" +
+				`<preferences>\n${instructions}\n</preferences>`
+			: "");
 	const g = (await callJSON(cfg, GRADER_SYSTEM, user, GRADE_SCHEMA, 2000, images)) as Grade;
 	const verdict: Verdict = g.verdict === "correct" || g.verdict === "partial" ? g.verdict : "incorrect";
 	return {

@@ -41,11 +41,20 @@ show its quiz history.
 Your API key and the settings sit in the plugin's own data, not scattered through your
 notes.
 
+## Telling it how to quiz you
+
+There's a file at `Grill/Instructions.md` (open it from the settings, or the "Open question
+instructions" command) where you write, in plain sentences, how you want to be quizzed and
+graded. "Prefer numeric problems." "Ask me to explain things in my own words." "Be strict on
+terminology." "Accept bullet-point answers." Whatever's there gets folded into every session.
+Leave it blank and you get the defaults.
+
 ## Colouring the graph by what you know
 
-Switch on "Write mastery to note properties" and Grill tags each quizzed note with
-`grill-status` (known, struggling, or untested) and `grill-due`. Set up three graph groups
-and the graph lights up by how well you know things:
+Switch on "Colour your graph by what you know" and Grill tags each quizzed note with
+`grill-status` (known, struggling, or untested) and `grill-due`. Hit "Set up graph colours"
+and it wires up the three graph groups for you, so the graph lights up by how well you know
+things:
 
 - `["grill-status":known]` green
 - `["grill-status":struggling]` red
