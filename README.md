@@ -1,84 +1,99 @@
 # Grill
 
-Get grilled on your own notes.
+Grill quizzes you on your own notes and keeps track of what you get wrong.
 
-Every AI plugin for Obsidian is a chatbot over your vault: ask it something, it answers,
-it forgets. That's fine for lookup, but it's not studying — a tutor that doesn't track
-what you already know just re-asks the same things forever. Grill tracks it. It writes
-quiz questions from your notes, grades what you type back, and remembers the result per
-note, so sessions concentrate on what you actually get wrong instead of drifting.
+It reads the notes in your vault, has a model you pick (Claude, GPT, Gemini, DeepSeek,
+or a local Ollama model) write questions about them, and grades what you type back. After
+each answer it records how you did on that note, so the next session spends its questions
+on the material you're shakiest on rather than the things you already know. There are no
+flashcards to write. Your notes are the source.
 
 ![Grill: open it, start a session, answer, get graded with specific feedback](docs/grill-demo.gif)
 
-## How it works
+## What a session looks like
 
-Grill picks the notes most worth quizzing — struggling first, then due for review, then
-untested — and has your model write a handful of questions, each with a grading rubric
-and three tiers of hints generated alongside it. You answer from memory. Hints never give
-away the answer; giving up costs nothing and shows the expected answer immediately.
-Grading is strict on substance and generous on wording, gives explicit partial credit, and
-won't invent an error it can't point to in your answer. A miss is tagged with the specific
-misconception behind it, and that tag gets fed into the next question that targets the
-same note.
+Open the panel and start a session. Grill picks a handful of notes (the ones you've been
+getting wrong, then the ones due for review, then ones you haven't seen) and writes
+questions from them two at a time, so the first one shows up in a few seconds instead of
+after the whole set is ready. You answer from memory and submit.
 
-Scheduling is FSRS-4.5: each note has a stability and difficulty estimate that determines
-when it comes back, not a fixed interval. A correct answer pushes the note further out; a
-miss brings it back immediately.
+![A question drawn from a note, with the vault's graph alongside it](docs/screenshot-question.png)
 
-Works with Anthropic, OpenAI, Gemini, DeepSeek, or a local Ollama model — bring your own
-key, model lists are fetched live from whichever provider you pick.
+Grading is done by the same model against a short rubric it wrote alongside the question.
+It gives partial credit, and it won't claim you made a mistake it can't point to in your
+answer. When you get something wrong it names the specific misconception, and that gets
+handed to the next question about that note so the same confusion comes up again. If
+you're stuck there are three hints that stop short of the answer, and "I don't know" shows
+you the expected answer and moves on.
 
-## Mastery on your graph
+![A partially correct answer, graded with specific feedback and the expected answer](docs/screenshot-feedback.png)
 
-Turn on "Write mastery to note properties" and Grill mirrors each quizzed note's state
-into frontmatter (`grill-status: known | struggling | untested`, `grill-due`). Three graph
-view groups turn that into a heatmap of what you actually know:
+## What it remembers
 
-- `["grill-status":known]` in green
-- `["grill-status":struggling]` in red
-- `["grill-status":untested]` in gray
+Each note carries a review schedule. Grill uses FSRS-4.5, the algorithm Anki's newer
+scheduler is built on: a stability and difficulty estimate per note rather than a fixed
+interval. Answer correctly and the note comes back later; miss it and it comes back next
+session. The counts, the schedule, and the misconception tags live in `Grill/mastery.json`
+in your vault. Each session is also written out as an ordinary note under
+`Grill/Sessions/`, wiki-linked to the notes it covered, so a note's backlinks show its quiz
+history.
 
-The same properties are queryable from Dataview and Bases. Session transcripts wiki-link
-the notes they quizzed, so a note's backlinks show its quiz history; add
-`-path:"Grill/"` to the graph filter if you'd rather keep sessions out of the graph.
+Your API keys and the plugin's settings stay in the plugin's local data, not in your notes.
 
-## Storage
+## Mastery in the graph
 
-Two kinds of state, kept separately:
+Turn on "Write mastery to note properties" and Grill adds `grill-status` (known,
+struggling, or untested) and `grill-due` to the frontmatter of notes it has quizzed. Add
+three graph groups and the graph colours itself by what you know:
 
-- API keys and UI settings live in the plugin's own local data, never in your notes.
-- Mastery (`Grill/mastery.json`) and session transcripts (`Grill/Sessions/*.md`) are plain
-  files in your vault — read them, edit them, sync them like any note.
+- `["grill-status":known]` green
+- `["grill-status":struggling]` red
+- `["grill-status":untested]` grey
 
-## Network use and privacy
+Dataview and Bases can read the same properties. To keep session transcripts out of the
+graph, add `-path:"Grill/"` to the graph filter.
 
-Grill sends requests only to the provider you configure, on your own key: the selected
-notes' text, the generated questions, and your answers, so it can generate and grade
-questions. With Ollama, requests go only to your local server and nothing leaves your
-machine — at the cost of slower sessions and weaker questions from small local models.
-There's no telemetry, no account, and no server of ours in the loop.
+## Providers and cost
+
+Grill calls whichever provider you set a key for. Nothing goes anywhere else, and there's
+no account or server of ours in between. The notes it selects, the questions, and your
+answers are sent to that provider so it can write and grade questions, so it costs API
+tokens; how much depends on how many notes you send as context and how many questions you
+ask for, both of which are settings.
+
+Ollama is the exception. It runs on your own machine, so nothing leaves it. The trade is
+speed and quality: small local models write noticeably weaker questions than the cloud
+ones. 8B and up is usable.
+
+## Limits worth knowing
+
+- It needs an API key, or a local Ollama install. There is no free hosted option.
+- Question quality tracks your notes. Thin or messy notes make thin or messy questions.
+- Grading is a model's judgement, not an answer key. It is usually fair but can be wrong;
+  the expected answer is always shown, so you can overrule it in your head.
+- Local models are the weak point. Use them for privacy, not for the best questions.
 
 ## Appearance
 
-Grill follows your theme by default. Beyond the built-in Appearance settings (compact
-layout, progress bar, hiding the note name during questions), it exposes CSS variables
-(`--grill-max-width`, `--grill-progress-height`, `--grill-correct`, `--grill-partial`,
-`--grill-incorrect`) and a Style Settings block, so its look is configurable the same way
-an Obsidian theme is.
+Grill uses your theme's colours and spacing. The settings cover the common tweaks (compact
+layout, progress bar, hiding the note name while you answer). For finer control it exposes
+CSS variables (`--grill-max-width`, `--grill-progress-height`, and the three verdict
+colours) and a Style Settings block, so you can restyle it from a snippet or the Style
+Settings plugin.
 
 ## Install
 
-In Obsidian, go to Settings → Community plugins → Browse, and search for "Grill".
+Search for "Grill" in Settings, Community plugins, Browse.
 
-To build from source instead:
+To build from source:
 
 ```sh
 npm install
-npm run build        # typecheck + bundle to main.js
+npm run build
 ```
 
-Copy `main.js`, `manifest.json`, `styles.css` into
-`<vault>/.obsidian/plugins/grill/` and enable it under Community plugins.
+Then copy `main.js`, `manifest.json`, and `styles.css` into
+`<vault>/.obsidian/plugins/grill/`.
 
 ## License
 

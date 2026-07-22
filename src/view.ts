@@ -9,6 +9,9 @@ import { SessionEntry } from "./store";
 export const VIEW_TYPE = "grill-session";
 
 const NOTE_CHAR_CAP = 4000;
+/** Questions generated per model call. Small batches cut the wait before the
+ * first question and let the next batch prefetch while the user answers. */
+const BATCH = 2;
 
 interface QuestionResult extends SessionEntry {
 	hintsUsed: number;
@@ -20,10 +23,20 @@ export class SessionView extends ItemView {
 	private byName = new Map<string, TFile>();
 	/** When set, sessions draw only from these files (Grill this note/folder). */
 	sessionScope: TFile[] | null = null;
-	private questions: Question[] = [];
+
 	private results: QuestionResult[] = [];
 	private idx = 0;
 	private sessionStart = new Date();
+
+	// Streaming generation state.
+	private questions: Question[] = [];
+	private targetCount = 0;
+	private askedNodes = new Set<string>();
+	private candidateNames: string[] = [];
+	private notesConcat = "";
+	private masteryBlock = "";
+	/** In-flight batch generation, if any. */
+	private pending: Promise<void> | null = null;
 
 	constructor(leaf: WorkspaceLeaf, plugin: GrillPlugin) {
 		super(leaf);
@@ -113,7 +126,7 @@ export class SessionView extends ItemView {
 	private progressBar(wrap: HTMLElement): void {
 		if (!this.plugin.data.settings.showProgress) return;
 		const bar = wrap.createDiv({ cls: "grill-progress" });
-		for (let i = 0; i < this.questions.length; i++) {
+		for (let i = 0; i < this.targetCount; i++) {
 			const seg = bar.createDiv({ cls: "grill-seg" });
 			const r = this.results[i];
 			if (r) {
@@ -132,7 +145,7 @@ export class SessionView extends ItemView {
 		const q = this.questions[this.idx];
 		const card = wrap.createDiv({ cls: "grill-body" });
 		const meta = card.createDiv({ cls: "grill-meta-row" });
-		meta.createSpan({ cls: "grill-meta", text: `Question ${this.idx + 1} of ${this.questions.length}` });
+		meta.createSpan({ cls: "grill-meta", text: `Question ${this.idx + 1} of ${this.targetCount}` });
 		if (!this.plugin.data.settings.hideNoteName) meta.createSpan({ cls: "grill-chip", text: q.node });
 		const qEl = card.createDiv({ cls: "grill-question" });
 		this.md(q.question, qEl);
@@ -179,7 +192,7 @@ export class SessionView extends ItemView {
 		this.progressBar(wrap);
 		const card = wrap.createDiv({ cls: "grill-body" });
 		const meta = card.createDiv({ cls: "grill-meta-row" });
-		meta.createSpan({ cls: "grill-meta", text: `Question ${this.idx + 1} of ${this.questions.length}` });
+		meta.createSpan({ cls: "grill-meta", text: `Question ${this.idx + 1} of ${this.targetCount}` });
 		const chip = meta.createSpan({ cls: "grill-chip grill-chip-link", text: r.node });
 		chip.onclick = () => this.openNote(r.node);
 		chip.setAttr("aria-label", "Open note");
@@ -203,14 +216,10 @@ export class SessionView extends ItemView {
 		}
 
 		const btn = card.createEl("button", {
-			text: this.idx + 1 < this.questions.length ? "Next question" : "Finish session",
+			text: this.idx + 1 < this.targetCount ? "Next question" : "Finish session",
 			cls: "mod-cta",
 		});
-		btn.onclick = () => {
-			this.idx += 1;
-			if (this.idx < this.questions.length) this.renderQuestion();
-			else void this.finishSession();
-		};
+		btn.onclick = () => void this.goToQuestion(this.idx + 1);
 		btn.focus();
 	}
 
@@ -271,6 +280,59 @@ export class SessionView extends ItemView {
 		await this.startSession();
 	}
 
+	/** Generate the next batch of questions and append them. At most one batch
+	 * runs at a time; concurrent callers share the same in-flight promise. */
+	private loadNextBatch(): Promise<void> {
+		if (this.pending) return this.pending;
+		if (this.questions.length >= this.targetCount) return Promise.resolve();
+		const cfg = this.plugin.llmConfig();
+		if (!cfg) return Promise.resolve();
+		const count = Math.min(BATCH, this.targetCount - this.questions.length);
+		const fresh = this.candidateNames.filter((n) => !this.askedNodes.has(n));
+		const pool = fresh.length >= count ? fresh : this.candidateNames;
+		const run = async (): Promise<void> => {
+			try {
+				const qs = await generateQuestions(cfg, this.notesConcat, this.masteryBlock, pool, count);
+				for (const q of qs) {
+					this.questions.push(q);
+					this.askedNodes.add(q.node);
+				}
+			} finally {
+				this.pending = null;
+			}
+		};
+		this.pending = run();
+		return this.pending;
+	}
+
+	/** Move to question `idx`, generating it (and prefetching the next) as needed. */
+	private async goToQuestion(idx: number): Promise<void> {
+		if (idx >= this.targetCount) {
+			await this.finishSession();
+			return;
+		}
+		this.idx = idx;
+		while (this.questions.length <= idx) {
+			const before = this.questions.length;
+			this.renderLoading("Writing your next question", "Just a moment.");
+			try {
+				await this.loadNextBatch();
+			} catch (e) {
+				new Notice(`Grill: ${(e as Error).message}`, 8000);
+				this.renderStart();
+				return;
+			}
+			if (this.questions.length === before) break; // model produced nothing more
+		}
+		if (idx >= this.questions.length) {
+			// Could not generate enough questions; finish with what we have.
+			await this.finishSession();
+			return;
+		}
+		this.renderQuestion();
+		if (this.questions.length < this.targetCount) void this.loadNextBatch().catch(() => undefined);
+	}
+
 	private async startSession(): Promise<void> {
 		const cfg = this.plugin.llmConfig();
 		if (!cfg) {
@@ -297,16 +359,26 @@ export class SessionView extends ItemView {
 				const raw = await this.app.vault.cachedRead(file);
 				this.noteText[n] = raw.length > NOTE_CHAR_CAP ? raw.slice(0, NOTE_CHAR_CAP) + "\n[truncated]" : raw;
 			}
-			const notesText = names.map((n) => `=== NOTE: ${n} ===\n${this.noteText[n].trim()}`).join("\n\n");
-			const masteryBlock = masteryPromptBlock(this.plugin.mastery, names);
-			this.renderLoading(
-				"Writing your questions",
-				`${cfg.model} is reading ${names.length} notes. This usually takes 10-30 seconds.`,
-			);
-			this.questions = await generateQuestions(cfg, notesText, masteryBlock, names, s.questionsPerSession);
+
+			this.candidateNames = names;
+			this.notesConcat = names.map((n) => `=== NOTE: ${n} ===\n${this.noteText[n].trim()}`).join("\n\n");
+			this.masteryBlock = masteryPromptBlock(this.plugin.mastery, names);
+			this.questions = [];
+			this.askedNodes = new Set();
 			this.results = [];
 			this.idx = 0;
+			this.pending = null;
+			this.targetCount = Math.max(1, s.questionsPerSession);
+
+			this.renderLoading("Writing your questions", `${cfg.model} is reading ${names.length} notes. This usually takes a few seconds.`);
+			await this.loadNextBatch();
+			if (this.questions.length === 0) {
+				new Notice("Grill: the model returned no usable questions.", 8000);
+				this.renderStart();
+				return;
+			}
 			this.renderQuestion();
+			if (this.questions.length < this.targetCount) void this.loadNextBatch().catch(() => undefined);
 		} catch (e) {
 			new Notice(`Grill: ${(e as Error).message}`, 8000);
 			this.renderStart();

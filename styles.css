@@ -278,3 +278,11 @@ settings:
         description: Tighter spacing and smaller text
         type: class-toggle
 */
+
+.grill-slider-value {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  min-width: 2.5em;
+  text-align: right;
+  margin-right: 0.75em;
+}

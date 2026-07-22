@@ -207,6 +207,9 @@ export default class GrillPlugin extends Plugin {
 }
 
 const CUSTOM = "__custom__";
+/** Sentinel stored for maxNotesPerSession meaning "every note", so it stays
+ * "All" as the vault grows rather than freezing at the count when it was set. */
+const ALL_NOTES = 1_000_000;
 
 class GrillSettingTab extends PluginSettingTab {
 	plugin: GrillPlugin;
@@ -218,6 +221,32 @@ class GrillSettingTab extends PluginSettingTab {
 	constructor(app: App, plugin: GrillPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
+	}
+
+	/** A slider whose current value is shown inline (Obsidian only shows it on
+	 * drag before 1.13.0, and we support 1.8.0+). */
+	private sliderSetting(
+		containerEl: HTMLElement,
+		name: string,
+		desc: string,
+		min: number,
+		max: number,
+		value: number,
+		format: (v: number) => string,
+		onChange: (v: number) => Promise<void>,
+	): void {
+		const setting = new Setting(containerEl).setName(name);
+		if (desc) setting.setDesc(desc);
+		const valueEl = setting.controlEl.createSpan({ cls: "grill-slider-value", text: format(value) });
+		setting.addSlider((sl) =>
+			sl
+				.setLimits(min, max, 1)
+				.setValue(value)
+				.onChange(async (v) => {
+					valueEl.setText(format(v));
+					await onChange(v);
+				}),
+		);
 	}
 
 	private async refreshModels(p: ProviderId): Promise<void> {
@@ -361,28 +390,39 @@ class GrillSettingTab extends PluginSettingTab {
 		// ------------------------------------------------------------ Sessions
 		new Setting(containerEl).setName("Sessions").setHeading();
 
-		new Setting(containerEl).setName("Questions per session").addSlider((sl) =>
-			sl
-				.setLimits(3, 10, 1)
-				.setValue(s.questionsPerSession)
-				.onChange(async (v) => {
-					s.questionsPerSession = v;
-					await this.plugin.persist();
-				}),
+		this.sliderSetting(
+			containerEl,
+			"Questions per session",
+			"",
+			1,
+			50,
+			Math.min(Math.max(s.questionsPerSession, 1), 50),
+			(v) => String(v),
+			async (v) => {
+				s.questionsPerSession = v;
+				await this.plugin.persist();
+			},
 		);
 
-		new Setting(containerEl)
-			.setName("Notes considered per session")
-			.setDesc("How many notes (chosen by due date and weakness) are sent as context.")
-			.addSlider((sl) =>
-				sl
-					.setLimits(5, 40, 1)
-					.setValue(s.maxNotesPerSession)
-					.onChange(async (v) => {
-						s.maxNotesPerSession = v;
-						await this.plugin.persist();
-					}),
-			);
+		const totalNotes = Math.max(
+			1,
+			this.app.vault.getMarkdownFiles().filter((f) => !f.path.startsWith(`${s.folder}/`)).length,
+		);
+		const notesValue = s.maxNotesPerSession >= totalNotes ? totalNotes : Math.max(1, s.maxNotesPerSession);
+		this.sliderSetting(
+			containerEl,
+			"Notes considered per session",
+			"How many notes (chosen by due date and weakness) are sent as context. Fewer is faster and cheaper; more gives the questions greater variety. Default suits most vaults.",
+			1,
+			totalNotes,
+			notesValue,
+			(v) => (v >= totalNotes ? "All" : String(v)),
+			async (v) => {
+				// Store a large sentinel for "All" so it stays All as the vault grows.
+				s.maxNotesPerSession = v >= totalNotes ? ALL_NOTES : v;
+				await this.plugin.persist();
+			},
+		);
 
 		// ------------------------------------------------------------ Appearance
 		new Setting(containerEl).setName("Appearance").setHeading();
