@@ -39,6 +39,9 @@ interface GrillSettings {
 	questionSource: "ai" | "local";
 	/** How answers are graded: an LLM, or the user grades themselves (no key). */
 	gradingMode: "ai" | "self";
+	/** End-of-session AI debrief (one extra call per session). Off falls back to
+	 * a deterministic summary. Ignored for no-key sessions (always deterministic). */
+	sessionDebrief: boolean;
 }
 
 interface PluginData {
@@ -65,6 +68,7 @@ function defaultSettings(): GrillSettings {
 		sendImages: true,
 		questionSource: "ai",
 		gradingMode: "ai",
+		sessionDebrief: true,
 	};
 }
 
@@ -95,6 +99,7 @@ export default class GrillPlugin extends Plugin {
 		if (typeof s.sendImages === "boolean") settings.sendImages = s.sendImages;
 		if (s.questionSource === "ai" || s.questionSource === "local") settings.questionSource = s.questionSource;
 		if (s.gradingMode === "ai" || s.gradingMode === "self") settings.gradingMode = s.gradingMode;
+		if (typeof s.sessionDebrief === "boolean") settings.sessionDebrief = s.sessionDebrief;
 		this.data = { settings };
 
 		this.store = new GrillStore(this.app, () => this.data.settings.folder);
@@ -587,6 +592,20 @@ class GrillSettingTab extends PluginSettingTab {
 				await this.plugin.persist();
 			},
 		);
+
+		new Setting(containerEl)
+			.setName("End-of-session debrief")
+			.setDesc(
+				"When a session uses AI, spend one extra call at the end to summarise how you did, name any " +
+					"recurring confusion, and point you at what to study next. Off: a plain summary, no extra cost. " +
+					"No-key sessions always get the plain summary.",
+			)
+			.addToggle((t) =>
+				t.setValue(s.sessionDebrief).onChange(async (v) => {
+					s.sessionDebrief = v;
+					await this.plugin.persist();
+				}),
+			);
 
 		// ------------------------------------------------------------ Appearance
 		new Setting(containerEl).setName("Appearance").setHeading();

@@ -10,6 +10,7 @@
 
 import { App, TFile, normalizePath } from "obsidian";
 import { MasteryMap, NoteMastery, Verdict, normalizeMastery, statusOf } from "./mastery";
+import { MisconceptionRegistry, SessionDebrief } from "./debrief";
 
 export interface SessionEntry {
 	node: string;
@@ -43,6 +44,10 @@ export class GrillStore {
 
 	private instructionsPath(): string {
 		return normalizePath(`${this.folder()}/Instructions.md`);
+	}
+
+	private registryPath(): string {
+		return normalizePath(`${this.folder()}/misconceptions.json`);
 	}
 
 	private static readonly INSTRUCTIONS_CAP = 2000;
@@ -115,6 +120,24 @@ export class GrillStore {
 		await this.app.vault.adapter.write(this.masteryPath(), JSON.stringify(map, null, 1));
 	}
 
+	/** The canonical misconception registry (recomputable projection over raw tags). */
+	async loadRegistry(): Promise<MisconceptionRegistry> {
+		const path = this.registryPath();
+		if (await this.app.vault.adapter.exists(path)) {
+			try {
+				return JSON.parse(await this.app.vault.adapter.read(path)) as MisconceptionRegistry;
+			} catch {
+				return {};
+			}
+		}
+		return {};
+	}
+
+	async saveRegistry(reg: MisconceptionRegistry): Promise<void> {
+		await this.ensureFolder(this.folder());
+		await this.app.vault.adapter.write(this.registryPath(), JSON.stringify(reg, null, 1));
+	}
+
 	/** Opt-in: mirror a note's mastery into its frontmatter so graph groups,
 	 * Dataview, and Bases can use it. */
 	async writeNoteStatus(file: TFile, m: NoteMastery | undefined): Promise<void> {
@@ -126,7 +149,12 @@ export class GrillStore {
 		});
 	}
 
-	async writeSessionNote(entries: SessionEntry[], meta: SessionMeta, link = true): Promise<TFile | null> {
+	async writeSessionNote(
+		entries: SessionEntry[],
+		meta: SessionMeta,
+		link = true,
+		debrief?: SessionDebrief,
+	): Promise<TFile | null> {
 		const dir = normalizePath(`${this.folder()}/Sessions`);
 		await this.ensureFolder(this.folder());
 		await this.ensureFolder(dir);
@@ -147,6 +175,16 @@ export class GrillStore {
 			`# Grill session ${stamp}`,
 			"",
 		];
+
+		if (debrief) {
+			lines.push("> [!summary] Debrief", `> ${debrief.headline}`);
+			if (debrief.pattern) lines.push(">", `> **Recurring pattern:** ${debrief.pattern}`);
+			if (debrief.nextFocus.length) {
+				const focus = debrief.nextFocus.map((n) => (link ? `[[${n}]]` : n)).join(", ");
+				lines.push(">", `> **Study next:** ${focus}`);
+			}
+			lines.push("");
+		}
 		for (const e of entries) {
 			const label = e.gaveUp ? "Skipped" : e.verdict === "correct" ? "Correct" : e.verdict === "partial" ? "Partially correct" : "Incorrect";
 			lines.push(link ? `## [[${e.node}]]` : `## ${e.node}`, "", e.question, "");

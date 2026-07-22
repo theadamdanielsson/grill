@@ -7,6 +7,7 @@
 
 import { requestUrl } from "obsidian";
 import type { ImageInput } from "./images";
+import type { SessionDebrief, TagAssignment } from "./debrief";
 
 export type ProviderId = "anthropic" | "openai" | "gemini" | "deepseek" | "ollama";
 
@@ -79,6 +80,9 @@ export interface Question {
 	acceptableAnswers: string[];
 	commonErrors: { pattern: string; misconception: string }[];
 	hints: { tier1: string; tier2: string; tier3: string };
+	/** Canonical misconception tag this question deliberately re-probes, or "".
+	 * Answering it correctly resolves that misconception. */
+	targetsMisconception?: string;
 }
 
 export type Verdict = "correct" | "partial" | "incorrect";
@@ -450,11 +454,16 @@ Question craft:
 - Math is welcome: use $...$ or $$...$$ LaTeX where it helps.
 - Use plain punctuation and never use em dashes.
 
+Using note relationships:
+- When a LINKS section is provided, treat it as prerequisite structure: quiz a foundational note before the notes that build on it, and prefer probing a weak prerequisite before a shakier note that depends on it.
+- For a 'hard' question you may write a synthesis question that connects two linked notes, provided both are grounded in the notes above and answerable from them. Set 'node' to the note the question is primarily about.
+
 For every question also produce, in the same object:
 - modelAnswer: the answer you would accept as fully correct, 1-3 sentences.
 - acceptableAnswers: up to 3 short alternative phrasings that also count as correct.
 - commonErrors: up to 3 likely wrong answers, each with a short 'pattern' (what the student might say) and a snake_case 'misconception' tag naming the underlying confusion.
-- hints: tier1 a one-sentence conceptual nudge, tier2 the underlying concept, tier3 a partial step toward the answer. No tier may reveal the answer.`;
+- hints: tier1 a one-sentence conceptual nudge, tier2 the underlying concept, tier3 a partial step toward the answer. No tier may reveal the answer.
+- targetsMisconception: if an ACTIVE MISCONCEPTIONS list is provided and this question is written to deliberately re-test one of the listed confusions for its note, set this to that exact canonical tag. Otherwise set it to an empty string.`;
 
 function questionsSchema(nodeNames: string[]): Record<string, unknown> {
 	return {
@@ -492,8 +501,18 @@ function questionsSchema(nodeNames: string[]): Record<string, unknown> {
 							required: ["tier1", "tier2", "tier3"],
 							additionalProperties: false,
 						},
+						targetsMisconception: { type: "string" },
 					},
-					required: ["node", "question", "difficulty", "modelAnswer", "acceptableAnswers", "commonErrors", "hints"],
+					required: [
+						"node",
+						"question",
+						"difficulty",
+						"modelAnswer",
+						"acceptableAnswers",
+						"commonErrors",
+						"hints",
+						"targetsMisconception",
+					],
 					additionalProperties: false,
 				},
 			},
@@ -511,10 +530,14 @@ export async function generateQuestions(
 	count: number,
 	images: ImageInput[] = [],
 	instructions = "",
+	linksBlock = "",
+	misconceptionsBlock = "",
 ): Promise<Question[]> {
 	const user =
 		`Below are the student's notes for this session.\n\n${notesText}\n\n` +
 		`Per-note mastery state from all previous sessions:\n${masteryBlock}\n\n` +
+		(linksBlock ? `LINKS\n${linksBlock}\n\n` : "") +
+		(misconceptionsBlock ? `ACTIVE MISCONCEPTIONS\n${misconceptionsBlock}\n\n` : "") +
 		`Generate exactly ${count} recall questions. Each question targets exactly one note, named in 'node'.` +
 		(instructions
 			? "\n\nThe student wrote these preferences for how they want to be quizzed. Honour them " +
@@ -539,6 +562,7 @@ export async function generateQuestions(
 			tier2: cleanText(q.hints?.tier2 ?? ""),
 			tier3: cleanText(q.hints?.tier3 ?? ""),
 		},
+		targetsMisconception: (q.targetsMisconception ?? "").trim(),
 	}));
 }
 
@@ -598,5 +622,100 @@ export async function gradeAnswer(
 		verdict,
 		feedback: cleanText(g.feedback ?? ""),
 		misconceptionTag: verdict === "correct" ? "" : (g.misconceptionTag ?? "").trim(),
+	};
+}
+
+// ------------------------------------------------------------------ session debrief
+
+const DEBRIEF_SYSTEM = `You are a study coach who just watched a student's active-recall session. Write a short, specific debrief, and where the session recorded misconceptions, map each to a canonical label so repeated confusions cluster over time.
+
+Debrief rules:
+- headline: one plain sentence naming the shape of the session, what is solid and what is shaky.
+- strengths: notes the student clearly knows (graded correct). Empty if none.
+- gaps: for each note missed or partial, name the specific concept to review and a one-line 'why', grounded in the transcript. Never generic.
+- pattern: if one underlying confusion recurred across notes, name it in one sentence. Empty string if there is no clear single pattern.
+- nextFocus: the notes to study next session, chosen only from the session's notes.
+- Plain punctuation, never em dashes. Be specific; no praise filler.
+
+Misconception canonicalization:
+- You are given the raw misconception tags recorded this session and the student's existing canonical misconceptions.
+- Output one assignment per recorded raw tag. Reuse an existing canonical tag and label when it names the same underlying confusion; otherwise propose a concise new snake_case canonTag and a short human-readable canonLabel.
+- If no raw tags were recorded, return an empty assignments array.`;
+
+function debriefSchema(noteNames: string[]): Record<string, unknown> {
+	const noteEnum = { type: "string", enum: [...noteNames].sort() };
+	return {
+		type: "object",
+		properties: {
+			debrief: {
+				type: "object",
+				properties: {
+					headline: { type: "string" },
+					strengths: { type: "array", items: noteEnum },
+					gaps: {
+						type: "array",
+						items: {
+							type: "object",
+							properties: { concept: { type: "string" }, note: noteEnum, why: { type: "string" } },
+							required: ["concept", "note", "why"],
+							additionalProperties: false,
+						},
+					},
+					pattern: { type: "string" },
+					nextFocus: { type: "array", items: noteEnum },
+				},
+				required: ["headline", "strengths", "gaps", "pattern", "nextFocus"],
+				additionalProperties: false,
+			},
+			assignments: {
+				type: "array",
+				items: {
+					type: "object",
+					properties: {
+						rawTag: { type: "string" },
+						canonTag: { type: "string" },
+						canonLabel: { type: "string" },
+						note: noteEnum,
+					},
+					required: ["rawTag", "canonTag", "canonLabel", "note"],
+					additionalProperties: false,
+				},
+			},
+		},
+		required: ["debrief", "assignments"],
+		additionalProperties: false,
+	};
+}
+
+export async function debriefSession(
+	cfg: LLMConfig,
+	transcript: string,
+	noteNames: string[],
+	existingCanon: { tag: string; label: string }[],
+	rawTags: { note: string; tag: string }[],
+): Promise<{ debrief: SessionDebrief; assignments: TagAssignment[] }> {
+	const canonList = existingCanon.length
+		? existingCanon.map((c) => `- ${c.tag}: "${c.label}"`).join("\n")
+		: "none yet";
+	const tagList = rawTags.length ? rawTags.map((t) => `- ${t.note} -> ${t.tag}`).join("\n") : "none";
+	const user =
+		`SESSION TRANSCRIPT:\n${transcript}\n\n` +
+		`NOTES IN THIS SESSION: ${noteNames.join(", ")}\n\n` +
+		`RAW MISCONCEPTION TAGS RECORDED THIS SESSION (note -> tag):\n${tagList}\n\n` +
+		`EXISTING CANONICAL MISCONCEPTIONS (reuse these when a raw tag means the same thing):\n${canonList}`;
+	const data = (await callJSON(cfg, DEBRIEF_SYSTEM, user, debriefSchema(noteNames), 2000)) as {
+		debrief: SessionDebrief;
+		assignments: TagAssignment[];
+	};
+	const d = data.debrief;
+	return {
+		debrief: {
+			headline: cleanText(d?.headline ?? ""),
+			strengths: d?.strengths ?? [],
+			gaps: (d?.gaps ?? []).map((g) => ({ concept: g.concept, note: g.note, why: cleanText(g.why ?? "") })),
+			pattern: cleanText(d?.pattern ?? ""),
+			nextFocus: d?.nextFocus ?? [],
+		},
+		assignments: data?.assignments ?? [],
 	};
 }

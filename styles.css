@@ -309,3 +309,40 @@ settings:
   border-left: 2px solid var(--color-green);
   padding-left: 0.75em;
 }
+
+/* ---------------------------------------------------------------- debrief */
+.grill-debrief {
+  margin: 0.75em 0 1em;
+  padding: 0.6em 0.85em;
+  border-left: 2px solid var(--interactive-accent);
+  background: var(--background-secondary);
+  border-radius: var(--radius-s, 4px);
+}
+.grill-debrief-headline p {
+  margin: 0;
+  font-weight: var(--font-semibold, 600);
+}
+.grill-debrief-pattern p {
+  margin: 0.4em 0 0;
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+}
+.grill-debrief-next {
+  margin-top: 0.5em;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35em;
+}
+
+/* ---------------------------------------------------------------- scope picker */
+.grill-scope {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  margin: 0.6em 0 0.9em;
+}
+.grill-scope-select {
+  flex: 1;
+  min-width: 0;
+}

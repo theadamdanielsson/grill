@@ -2,10 +2,20 @@
 
 import { ItemView, MarkdownRenderer, Notice, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
-import { generateQuestions, gradeAnswer, Question, supportsVision, Verdict } from "./llm";
+import { debriefSession, generateQuestions, gradeAnswer, Question, supportsVision, Verdict } from "./llm";
 import { generateLocalQuestions } from "./generate-local";
 import { collectNoteImages, ImageInput } from "./images";
 import { masteryPromptBlock, pickCandidates, Rating, recordAnswer, recordRating, statusOf } from "./mastery";
+import { buildSessionGraph, expandSelectionWithLinks, formatLinksBlock } from "./links";
+import {
+	activeMisconceptionsByNote,
+	deterministicDebrief,
+	mergeAssignments,
+	MisconceptionRegistry,
+	resolveMisconception,
+	SessionDebrief,
+} from "./debrief";
+import { decodeScope, encodeScope, filesForScope, listFolders, listTags } from "./scope";
 import { SessionEntry } from "./store";
 
 export const VIEW_TYPE = "grill-session";
@@ -21,6 +31,8 @@ const CONTEXT_IMAGE_CAP = 12;
 
 interface QuestionResult extends SessionEntry {
 	hintsUsed: number;
+	/** Raw grader misconception tag, if any; consumed by the end-of-session debrief. */
+	misconceptionTag?: string;
 }
 
 export class SessionView extends ItemView {
@@ -29,6 +41,8 @@ export class SessionView extends ItemView {
 	private byName = new Map<string, TFile>();
 	/** When set, sessions draw only from these files (Grill this note/folder). */
 	sessionScope: TFile[] | null = null;
+	/** Scope chosen on the start screen; null means the whole vault. */
+	private pendingScope: TFile[] | null = null;
 
 	private results: QuestionResult[] = [];
 	private idx = 0;
@@ -41,6 +55,12 @@ export class SessionView extends ItemView {
 	private candidateNames: string[] = [];
 	private notesConcat = "";
 	private masteryBlock = "";
+	/** Relationships between the session's notes, from their links. */
+	private linksBlock = "";
+	/** Active canonical misconceptions to re-probe this session. */
+	private misconceptionsBlock = "";
+	/** Canonical misconception registry, held for the session (re-probe + resolve). */
+	private registry: MisconceptionRegistry = {};
 	/** Images per note, resolved once when a vision model is in use. */
 	private noteImages: Record<string, ImageInput[]> = {};
 	/** Flat image list for question generation (all notes in the session). */
@@ -88,19 +108,66 @@ export class SessionView extends ItemView {
 
 	// ------------------------------------------------------------ screens
 
+	/** All notes eligible for quizzing, ignoring the current session scope. */
+	private allEligible(): TFile[] {
+		return this.app.vault.getMarkdownFiles().filter((f) => !this.plugin.isExcluded(f.path));
+	}
+
 	private renderStart(): void {
 		const wrap = this.root();
 		const map = this.plugin.mastery;
-		const files = this.mdFiles();
-		const counts = { untested: 0, struggling: 0, known: 0 };
-		for (const f of files) counts[statusOf(map[f.basename])]++;
-		wrap.createDiv({
-			cls: "grill-meta",
-			text: `${files.length} notes: ${counts.known} known, ${counts.struggling} struggling, ${counts.untested} untested`,
-		});
+		const eligible = this.allEligible();
+		this.pendingScope = null;
+
+		const countsEl = wrap.createDiv({ cls: "grill-meta" });
+		const showCounts = (files: TFile[]): void => {
+			const counts = { untested: 0, struggling: 0, known: 0 };
+			for (const f of files) counts[statusOf(map[f.basename])]++;
+			countsEl.setText(
+				`${files.length} notes: ${counts.known} known, ${counts.struggling} struggling, ${counts.untested} untested`,
+			);
+		};
+		showCounts(eligible);
+
+		// Scope selector: whole vault / current note / a folder / a tag.
+		const scopeRow = wrap.createDiv({ cls: "grill-scope" });
+		scopeRow.createSpan({ cls: "grill-meta", text: "Study" });
+		const sel = scopeRow.createEl("select", { cls: "dropdown grill-scope-select" });
+		sel.createEl("option", { value: "all", text: "Whole vault" });
+
+		const active = this.app.workspace.getActiveFile();
+		if (active && active.extension === "md" && !this.plugin.isExcluded(active.path)) {
+			sel.createEl("option", { value: encodeScope({ kind: "note", id: active.path }), text: `Current note: ${active.basename}` });
+		}
+
+		const folders = listFolders(eligible);
+		if (folders.length) {
+			const g = sel.createEl("optgroup");
+			g.label = "Folders";
+			for (const path of folders) g.createEl("option", { value: encodeScope({ kind: "folder", id: path }), text: path });
+		}
+		const tags = listTags(this.app);
+		if (tags.length) {
+			const g = sel.createEl("optgroup");
+			g.label = "Tags";
+			for (const t of tags) g.createEl("option", { value: encodeScope({ kind: "tag", id: t.tag }), text: `${t.tag} (${t.count})` });
+		}
+
+		sel.onchange = () => {
+			const scope = decodeScope(sel.value);
+			if (scope.kind === "all") {
+				this.pendingScope = null;
+				showCounts(eligible);
+			} else {
+				const files = filesForScope(this.app, scope, eligible);
+				this.pendingScope = files;
+				showCounts(files);
+			}
+		};
+
 		const btn = wrap.createEl("button", { text: "Start session", cls: "mod-cta grill-start-btn" });
 		btn.onclick = () => {
-			this.sessionScope = null;
+			this.sessionScope = this.pendingScope;
 			void this.startSession();
 		};
 
@@ -248,25 +315,77 @@ export class SessionView extends ItemView {
 	}
 
 	private async finishSession(): Promise<void> {
+		const s = this.plugin.data.settings;
 		const cfg = this.plugin.llmConfig();
+		const usedAI = s.questionSource === "ai" || s.gradingMode === "ai";
+		const sessionNodes = [...new Set(this.results.map((r) => r.node))];
+
+		let debrief = deterministicDebrief(this.results);
+		if (cfg && usedAI && s.sessionDebrief && sessionNodes.length > 0) {
+			this.renderLoading("Writing your debrief", "Summarising how the session went.");
+			try {
+				const reg = this.registry;
+				const rawTags = this.results
+					.filter((r) => r.misconceptionTag)
+					.map((r) => ({ note: r.node, tag: r.misconceptionTag as string }));
+				const transcript = this.results
+					.map((r, i) => {
+						const verdict = r.gaveUp ? "skipped" : r.verdict;
+						const fb = r.feedback ? `\n  feedback: ${r.feedback}` : "";
+						return `Q${i + 1} [${r.node}] (${verdict}): ${r.question}\n  answer: ${r.answer || "(none)"}${fb}`;
+					})
+					.join("\n");
+				const existingCanon = Object.values(reg).map((c) => ({ tag: c.tag, label: c.label }));
+				const out = await debriefSession(cfg, transcript, sessionNodes, existingCanon, rawTags);
+				debrief = out.debrief;
+				if (out.assignments.length) {
+					mergeAssignments(reg, out.assignments);
+					await this.plugin.store.saveRegistry(reg);
+				}
+			} catch (e) {
+				new Notice(`Grill: debrief unavailable, showing a plain summary. ${(e as Error).message}`, 6000);
+				debrief = deterministicDebrief(this.results);
+			}
+		}
+
 		const note = await this.plugin.store.writeSessionNote(
 			this.results,
 			{
-				provider: cfg?.provider ?? (this.plugin.data.settings.questionSource === "local" ? "local" : "unknown"),
-				model: cfg?.model ?? (this.plugin.data.settings.gradingMode === "self" ? "self-graded" : "unknown"),
+				provider: cfg?.provider ?? (s.questionSource === "local" ? "local" : "unknown"),
+				model: cfg?.model ?? (s.gradingMode === "self" ? "self-graded" : "unknown"),
 				startedAt: this.sessionStart,
 			},
-			this.plugin.data.settings.linkSessions,
+			s.linkSessions,
+			debrief,
 		);
-		this.renderSummary(note);
+		this.renderSummary(note, debrief);
 	}
 
-	private renderSummary(note: TFile | null): void {
+	private renderDebrief(card: HTMLElement, debrief: SessionDebrief): void {
+		const box = card.createDiv({ cls: "grill-debrief" });
+		if (debrief.headline) this.md(debrief.headline, box.createDiv({ cls: "grill-debrief-headline" }));
+		if (debrief.pattern) {
+			const p = box.createDiv({ cls: "grill-debrief-pattern" });
+			this.md(`**Recurring pattern:** ${debrief.pattern}`, p);
+		}
+		if (debrief.nextFocus.length) {
+			const nf = box.createDiv({ cls: "grill-debrief-next" });
+			nf.createSpan({ cls: "grill-meta", text: "Study next: " });
+			for (const name of debrief.nextFocus) {
+				const chip = nf.createSpan({ cls: "grill-chip grill-chip-link", text: name });
+				chip.onclick = () => this.openNote(name);
+			}
+		}
+	}
+
+	private renderSummary(note: TFile | null, debrief?: SessionDebrief): void {
 		const wrap = this.root();
 		this.progressBar(wrap);
 		const card = wrap.createDiv({ cls: "grill-body" });
 		const right = this.results.filter((r) => r.verdict === "correct").length;
 		card.createDiv({ cls: "grill-score", text: `${right} of ${this.results.length} correct` });
+
+		if (debrief) this.renderDebrief(card, debrief);
 
 		const list = card.createDiv({ cls: "grill-summary-list" });
 		for (const r of this.results) {
@@ -303,6 +422,25 @@ export class SessionView extends ItemView {
 		await this.startSession();
 	}
 
+	/** Prompt block listing active misconceptions per note, so the tutor can
+	 * re-probe them and tag the question for resolution. Empty when none. */
+	private formatMisconceptionsBlock(names: string[]): string {
+		const byNote = activeMisconceptionsByNote(this.registry, names);
+		const lines: string[] = [];
+		for (const note of names) {
+			const items = byNote[note];
+			if (items?.length) {
+				lines.push(`- "${note}": ${items.map((m) => `${m.tag} ("${m.label}")`).join(", ")}`);
+			}
+		}
+		if (!lines.length) return "";
+		return (
+			"Confusions this student has shown before on these notes. Where it fits, write a question that " +
+			"re-tests one of them, and set that question's 'targetsMisconception' to the exact canonical tag.\n" +
+			lines.join("\n")
+		);
+	}
+
 	/** Generate the next batch of questions and append them. At most one batch
 	 * runs at a time; concurrent callers share the same in-flight promise. */
 	private loadNextBatch(): Promise<void> {
@@ -323,6 +461,8 @@ export class SessionView extends ItemView {
 					count,
 					this.contextImages,
 					this.sessionInstructions,
+					this.linksBlock,
+					this.misconceptionsBlock,
 				);
 				for (const q of qs) {
 					this.questions.push(q);
@@ -384,10 +524,12 @@ export class SessionView extends ItemView {
 		this.renderLoading("Preparing your session", "Choosing which notes to quiz you on.");
 		try {
 			this.plugin.mastery = await this.plugin.store.loadMastery();
+			this.registry = await this.plugin.store.loadRegistry();
 			this.sessionInstructions = await this.plugin.store.loadInstructions();
 			this.byName = new Map(files.map((f) => [f.basename, f]));
 			const byName = this.byName;
-			const names = pickCandidates([...byName.keys()], this.plugin.mastery, s.maxNotesPerSession);
+			const seed = pickCandidates([...byName.keys()], this.plugin.mastery, s.maxNotesPerSession);
+			const names = expandSelectionWithLinks(this.app, seed, byName, this.plugin.mastery, s.maxNotesPerSession);
 			const vision = !!cfg && s.questionSource === "ai" && s.sendImages && supportsVision(cfg.provider, cfg.model);
 			this.noteText = {};
 			this.noteImages = {};
@@ -418,6 +560,9 @@ export class SessionView extends ItemView {
 					"Do not write questions that depend on reading an image; quiz only on the text above.";
 			}
 			this.masteryBlock = masteryPromptBlock(this.plugin.mastery, names);
+			const selectedFiles = names.map((n) => byName.get(n)).filter((f): f is TFile => !!f);
+			this.linksBlock = formatLinksBlock(buildSessionGraph(this.app, selectedFiles), this.plugin.mastery);
+			this.misconceptionsBlock = this.formatMisconceptionsBlock(names);
 			this.questions = [];
 			this.askedNodes = new Set();
 			this.results = [];
@@ -492,6 +637,11 @@ export class SessionView extends ItemView {
 		}
 		recordAnswer(this.plugin.mastery, q.node, verdict, misconceptionTag || undefined);
 		await this.plugin.store.saveMastery(this.plugin.mastery);
+		// Re-probed a known confusion and got it right: mark it resolved.
+		if (q.targetsMisconception && verdict === "correct" && this.registry[q.targetsMisconception]) {
+			resolveMisconception(this.registry, q.targetsMisconception);
+			await this.plugin.store.saveRegistry(this.registry);
+		}
 		if (this.plugin.data.settings.writeStatus) {
 			const f = this.byName.get(q.node);
 			if (f) await this.plugin.store.writeNoteStatus(f, this.plugin.mastery[q.node]);
@@ -506,6 +656,7 @@ export class SessionView extends ItemView {
 			feedback,
 			modelAnswer: q.modelAnswer,
 			hintsUsed,
+			misconceptionTag: misconceptionTag || undefined,
 		};
 		this.results.push(r);
 		this.renderFeedback(r);
@@ -555,6 +706,10 @@ export class SessionView extends ItemView {
 		const verdict: Verdict = rating === 1 ? "incorrect" : rating === 2 ? "partial" : "correct";
 		recordRating(this.plugin.mastery, q.node, rating);
 		await this.plugin.store.saveMastery(this.plugin.mastery);
+		if (q.targetsMisconception && verdict === "correct" && this.registry[q.targetsMisconception]) {
+			resolveMisconception(this.registry, q.targetsMisconception);
+			await this.plugin.store.saveRegistry(this.registry);
+		}
 		if (this.plugin.data.settings.writeStatus) {
 			const f = this.byName.get(q.node);
 			if (f) await this.plugin.store.writeNoteStatus(f, this.plugin.mastery[q.node]);
