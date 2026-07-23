@@ -12,6 +12,7 @@ import {
 } from "obsidian";
 import { MasteryMap, statusOf } from "./mastery";
 import { LLMConfig, PROVIDERS, ProviderId, listModels, testModel } from "./llm";
+import { migrateResetScheduling } from "./concepts";
 import { dueFiles } from "./scope";
 import { GrillStore } from "./store";
 import { SessionView, VIEW_TYPE } from "./view";
@@ -43,6 +44,8 @@ interface GrillSettings {
 	/** End-of-session AI debrief (one extra call per session). Off falls back to
 	 * a deterministic summary. Ignored for no-key sessions (always deterministic). */
 	sessionDebrief: boolean;
+	/** One-time flag: the note→concept scheduling reset has run. */
+	conceptsMigrated: boolean;
 }
 
 interface PluginData {
@@ -70,6 +73,7 @@ function defaultSettings(): GrillSettings {
 		questionSource: "ai",
 		gradingMode: "ai",
 		sessionDebrief: true,
+		conceptsMigrated: false,
 	};
 }
 
@@ -101,6 +105,7 @@ export default class GrillPlugin extends Plugin {
 		if (s.questionSource === "ai" || s.questionSource === "local") settings.questionSource = s.questionSource;
 		if (s.gradingMode === "ai" || s.gradingMode === "self") settings.gradingMode = s.gradingMode;
 		if (typeof s.sessionDebrief === "boolean") settings.sessionDebrief = s.sessionDebrief;
+		if (typeof s.conceptsMigrated === "boolean") settings.conceptsMigrated = s.conceptsMigrated;
 		this.data = { settings };
 
 		this.store = new GrillStore(this.app, () => this.data.settings.folder);
@@ -178,6 +183,13 @@ export default class GrillPlugin extends Plugin {
 		this.app.workspace.onLayoutReady(() => {
 			void (async () => {
 				this.mastery = await this.store.loadMastery();
+				// One-time move to concept-level scheduling: keep stats, reset scheduling.
+				if (!this.data.settings.conceptsMigrated) {
+					migrateResetScheduling(this.mastery);
+					await this.store.saveMastery(this.mastery);
+					this.data.settings.conceptsMigrated = true;
+					await this.persist();
+				}
 				this.refreshStatusBar();
 			})();
 		});

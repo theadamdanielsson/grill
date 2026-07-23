@@ -19,12 +19,35 @@
 
 import { Question } from "./llm";
 
+/** The kind of structural element a concept was pulled from. */
+export type ConceptKind = "heading" | "term" | "definition" | "formula" | "card" | "note";
+
+/** A deterministically-identified unit of knowledge within a note. Concept ids
+ * are stable across sessions (no model inference), so both the scheduler and
+ * either question path (AI or no-key) key off the same set. */
+export interface Concept {
+	id: string;
+	note: string;
+	label: string;
+	kind: ConceptKind;
+	/** Hash of the concept's source text; a change re-opens its recall. */
+	sourceHash: string;
+	/** Material the AI needs to write a fresh question about this concept. */
+	context: string;
+	/** The deterministic question for no-key mode. Absent for the note fallback. */
+	local?: { question: string; answer: string; hint?: string };
+}
+
 interface LocalItem {
 	question: string;
 	/** Revealed for self-grading: the source line, term, or formula. */
 	answer: string;
 	/** Optional hint carried from an Anki/SR cloze (::hint / ;;hint). */
 	hint?: string;
+	/** What produced this item, for concept identity. */
+	kind: ConceptKind;
+	/** The structural anchor (heading text, term, front...) — the concept label. */
+	label: string;
 }
 
 const BLANK = "\\_\\_\\_\\_\\_"; // renders as literal underscores, not emphasis
@@ -151,6 +174,8 @@ function clozeCards(line: string): LocalItem[] {
 			question: `Fill in the blank: ${q.trim()}`,
 			answer: `**${termText}** — ${display.trim()}`,
 			hint: group.find((g) => g.hint)?.hint,
+			kind: auto ? "term" : "card",
+			label: termText,
 		});
 	}
 	return out;
@@ -167,8 +192,8 @@ function qaCards(line: string): LocalItem[] {
 	const front = line.slice(0, i).trim();
 	const back = line.slice(i + sep.length).trim();
 	if (!front || back.length < 2 || wordCount(front) > 25) return [];
-	const cards: LocalItem[] = [{ question: front, answer: back }];
-	if (rev) cards.push({ question: back, answer: front });
+	const cards: LocalItem[] = [{ question: front, answer: back, kind: "card", label: front }];
+	if (rev) cards.push({ question: back, answer: front, kind: "card", label: back });
 	return cards;
 }
 
@@ -178,7 +203,7 @@ function definitionCard(line: string): LocalItem | null {
 	if (colon && !line.includes("http")) {
 		const term = colon[1].trim();
 		if (goodTerm(term) && wordCount(colon[2]) >= 3) {
-			return { question: `Define **${term}**.`, answer: `**${term}:** ${colon[2].trim()}` };
+			return { question: `Define **${term}**.`, answer: `**${term}:** ${colon[2].trim()}`, kind: "definition", label: term };
 		}
 	}
 	const verb = DEFINITION_VERB.exec(line);
@@ -186,7 +211,7 @@ function definitionCard(line: string): LocalItem | null {
 		const term = line.slice(0, verb.index).replace(/^(?:the|an?)\s+/i, "").trim();
 		const def = line.slice(verb.index + verb[0].length).trim();
 		if (goodTerm(term) && wordCount(def) >= 3) {
-			return { question: `Define **${term}**.`, answer: line.trim() };
+			return { question: `Define **${term}**.`, answer: line.trim(), kind: "definition", label: term };
 		}
 	}
 	return null;
@@ -201,12 +226,12 @@ function formulaCard(line: string, context: string): LocalItem | null {
 	const math = mm[0];
 	if (math.replace(/\$/g, "").trim().length < 3) return null;
 	const surrounding = line.replace(MATH_RE, " ").trim();
+	const label = context || "this note";
 	if (wordCount(surrounding) >= 3) {
 		const q = line.slice(0, mm.index) + BLANK + line.slice(mm.index + math.length);
-		return { question: `Fill in the blank: ${q.trim()}`, answer: math };
+		return { question: `Fill in the blank: ${q.trim()}`, answer: math, kind: "formula", label };
 	}
-	const label = context || "this note";
-	return { question: `Recall the formula from **${label}**.`, answer: math };
+	return { question: `Recall the formula from **${label}**.`, answer: math, kind: "formula", label };
 }
 
 function headingCard(heading: string, body: string): LocalItem | null {
@@ -215,7 +240,7 @@ function headingCard(heading: string, body: string): LocalItem | null {
 	const trimmed = body.trim();
 	if (trimmed.length < 25) return null;
 	const answer = trimmed.length > 500 ? trimmed.slice(0, 500).trim() + "…" : trimmed;
-	return { question: `Recall what you know about **${h}**.`, answer };
+	return { question: `Recall what you know about **${h}**.`, answer, kind: "heading", label: h };
 }
 
 // ------------------------------------------------------------ per-note walk
@@ -269,8 +294,8 @@ function itemsForNote(text: string, cap: number): LocalItem[] {
 			}
 			const back = ans.join("\n").trim();
 			if (front && back) {
-				push({ question: front, answer: back });
-				if (line === "??") push({ question: back, answer: front });
+				push({ question: front, answer: back, kind: "card", label: front });
+				if (line === "??") push({ question: back, answer: front, kind: "card", label: back });
 			}
 			block = [];
 			i = j - 1;
@@ -297,29 +322,89 @@ function itemsForNote(text: string, cap: number): LocalItem[] {
 	return items.slice(0, cap);
 }
 
-/** Build up to `count` questions from the given notes with no model call. Questions
- * are spread across notes round-robin, so a session samples breadth before depth. */
-export function generateLocalQuestions(notes: { name: string; text: string }[], count: number): Question[] {
-	const perNote = notes.map((n) => ({ name: n.name, items: itemsForNote(n.text, ITEM_CAP_PER_NOTE) }));
-	const out: Question[] = [];
-	let progressed = true;
-	for (let round = 0; progressed && out.length < count; round++) {
-		progressed = false;
-		for (const n of perNote) {
-			if (out.length >= count) break;
-			const it = n.items[round];
-			if (!it) continue;
-			progressed = true;
-			out.push({
-				node: n.name,
-				question: it.question,
-				difficulty: "medium",
-				modelAnswer: it.answer,
-				acceptableAnswers: [],
-				commonErrors: [],
-				hints: { tier1: it.hint ?? "", tier2: "", tier3: "" },
-			});
+// ------------------------------------------------------------ concept extraction
+
+/** Stable, url-ish slug for a concept id. */
+function slug(s: string): string {
+	return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "x";
+}
+
+/** Cheap deterministic hash (djb2) → base36. Used to notice a concept's source changed. */
+function hashStr(s: string): string {
+	let h = 5381;
+	for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+	return h.toString(36);
+}
+
+const MIN_CONCEPTS_BEFORE_FALLBACK = 2;
+
+/** Deterministically decompose a note into concepts. Same set feeds both the
+ * scheduler and either question path, so concept ids never depend on the model. */
+export function extractConcepts(note: string, text: string): Concept[] {
+	const items = itemsForNote(text, ITEM_CAP_PER_NOTE);
+	const concepts: Concept[] = [];
+	const usedIds = new Set<string>();
+	for (const it of items) {
+		// Same note+kind+label is treated as the same concept (first wins), so ids
+		// are position-independent and stable across edits — a later dedup can't
+		// reassign one concept's history to another.
+		const id = `${note}::${it.kind}:${slug(it.label)}`;
+		if (usedIds.has(id)) continue;
+		usedIds.add(id);
+		concepts.push({
+			id,
+			note,
+			label: it.label,
+			kind: it.kind,
+			sourceHash: hashStr(it.answer),
+			context: it.answer,
+			local: { question: it.question, answer: it.answer, hint: it.hint },
+		});
+	}
+	// A sparse or prose-heavy note still gets one schedulable concept the AI can
+	// range over. It has no `local` question (nothing deterministic to show).
+	if (concepts.length < MIN_CONCEPTS_BEFORE_FALLBACK) {
+		const body = stripFrontmatter(text).replace(/<!--[\s\S]*?-->/g, "").trim();
+		if (body.length >= 40) {
+			const id = `${note}::note:whole`;
+			if (!usedIds.has(id)) {
+				concepts.push({
+					id,
+					note,
+					label: note,
+					kind: "note",
+					sourceHash: hashStr(body.slice(0, 2000)),
+					context: body.slice(0, 2000),
+				});
+			}
 		}
+	}
+	return concepts;
+}
+
+/** The no-key question for a concept (its deterministic card), tagged with the
+ * concept id. Null for the note fallback, which has no fixed question. */
+export function localQuestionForConcept(c: Concept): Question | null {
+	if (!c.local) return null;
+	return {
+		node: c.note,
+		conceptId: c.id,
+		question: c.local.question,
+		difficulty: "medium",
+		modelAnswer: c.local.answer,
+		acceptableAnswers: [],
+		commonErrors: [],
+		hints: { tier1: c.local.hint ?? "", tier2: "", tier3: "" },
+	};
+}
+
+/** Render no-key questions for already-selected concepts, in order, up to count. */
+export function localQuestions(concepts: Concept[], count: number): Question[] {
+	const out: Question[] = [];
+	for (const c of concepts) {
+		if (out.length >= count) break;
+		const q = localQuestionForConcept(c);
+		if (q) out.push(q);
 	}
 	return out;
 }

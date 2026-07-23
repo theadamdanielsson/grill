@@ -83,6 +83,9 @@ export interface Question {
 	/** Canonical misconception tag this question deliberately re-probes, or "".
 	 * Answering it correctly resolves that misconception. */
 	targetsMisconception?: string;
+	/** The concept this question tests, assigned by construction (not inferred).
+	 * Drives concept-level scheduling. */
+	conceptId?: string;
 }
 
 export type Verdict = "correct" | "partial" | "incorrect";
@@ -438,9 +441,9 @@ export async function testModel(cfg: LLMConfig): Promise<string | null> {
 const TUTOR_SYSTEM = `You are a tutor running an active-recall session over a student's personal notes.
 
 Targeting rules:
-- Concentrate questions on material the student has NOT yet demonstrated they know (status 'untested' or 'struggling', or 'known' notes listed as due for review).
-- Respect prerequisite order where the notes imply it: quiz foundations before material that builds on them.
-- Each note's mastery entry includes 'target_difficulty'; match it. If it lists 'recurring_misconceptions', write a question that deliberately re-probes that exact confusion.
+- You are given a specific list of CONCEPTS to test, one question each, in the given order. Write a question that tests exactly that concept, grounded in the student's notes.
+- Aim for each concept's stated difficulty.
+- When a concept is marked to re-probe a known confusion, deliberately write the question so that confusion would trip a student who still holds it.
 
 Difficulty tiers:
 - easy: recall and recognition. A student who read the note once should be able to answer.
@@ -455,17 +458,28 @@ Question craft:
 - Use plain punctuation and never use em dashes.
 
 Using note relationships:
-- When a LINKS section is provided, treat it as prerequisite structure: quiz a foundational note before the notes that build on it, and prefer probing a weak prerequisite before a shakier note that depends on it.
-- For a 'hard' question you may write a synthesis question that connects two linked notes, provided both are grounded in the notes above and answerable from them. Set 'node' to the note the question is primarily about.
+- When a LINKS section is provided, treat it as prerequisite structure. For a 'hard' concept you may write a synthesis question that connects it to a linked note, provided both are grounded in the notes above and answerable from them.
 
-For every question also produce, in the same object:
+Return exactly one question per concept, in the same order as the concept list. For every question also produce, in the same object:
 - modelAnswer: the answer you would accept as fully correct, 1-3 sentences.
 - acceptableAnswers: up to 3 short alternative phrasings that also count as correct.
 - commonErrors: up to 3 likely wrong answers, each with a short 'pattern' (what the student might say) and a snake_case 'misconception' tag naming the underlying confusion.
 - hints: tier1 a one-sentence conceptual nudge, tier2 the underlying concept, tier3 a partial step toward the answer. No tier may reveal the answer.
-- targetsMisconception: if an ACTIVE MISCONCEPTIONS list is provided and this question is written to deliberately re-test one of the listed confusions for its note, set this to that exact canonical tag. Otherwise set it to an empty string.`;
+- targetsMisconception: if the concept was marked to re-probe a confusion, set this to that exact canonical tag. Otherwise set it to an empty string.`;
 
-function questionsSchema(nodeNames: string[]): Record<string, unknown> {
+/** One concept the scheduler picked for this session; the LLM writes a question
+ * for it. The concept id is assigned by construction, never inferred. */
+export interface ConceptTarget {
+	conceptId: string;
+	note: string;
+	label: string;
+	context: string;
+	targetDifficulty: "easy" | "medium" | "hard";
+	/** Canonical misconception tag to deliberately re-probe, if any. */
+	activeMisconception?: string;
+}
+
+function questionsSchema(): Record<string, unknown> {
 	return {
 		type: "object",
 		properties: {
@@ -474,7 +488,7 @@ function questionsSchema(nodeNames: string[]): Record<string, unknown> {
 				items: {
 					type: "object",
 					properties: {
-						node: { type: "string", enum: [...nodeNames].sort() },
+						n: { type: "integer" },
 						question: { type: "string" },
 						difficulty: { type: "string", enum: ["easy", "medium", "hard"] },
 						modelAnswer: { type: "string" },
@@ -504,7 +518,7 @@ function questionsSchema(nodeNames: string[]): Record<string, unknown> {
 						targetsMisconception: { type: "string" },
 					},
 					required: [
-						"node",
+						"n",
 						"question",
 						"difficulty",
 						"modelAnswer",
@@ -525,45 +539,63 @@ function questionsSchema(nodeNames: string[]): Record<string, unknown> {
 export async function generateQuestions(
 	cfg: LLMConfig,
 	notesText: string,
-	masteryBlock: string,
-	nodeNames: string[],
-	count: number,
+	targets: ConceptTarget[],
 	images: ImageInput[] = [],
 	instructions = "",
 	linksBlock = "",
-	misconceptionsBlock = "",
 ): Promise<Question[]> {
+	const conceptList = targets
+		.map((t, i) => {
+			const reprobe = t.activeMisconception ? ` [re-probe confusion: ${t.activeMisconception}]` : "";
+			return `${i + 1}. [note "${t.note}"] concept: "${t.label}" (aim: ${t.targetDifficulty})${reprobe}\n   source: ${t.context.slice(0, 500)}`;
+		})
+		.join("\n");
 	const user =
-		`Below are the student's notes for this session.\n\n${notesText}\n\n` +
-		`Per-note mastery state from all previous sessions:\n${masteryBlock}\n\n` +
+		`Below are the student's notes for this session, for grounding.\n\n${notesText}\n\n` +
 		(linksBlock ? `LINKS\n${linksBlock}\n\n` : "") +
-		(misconceptionsBlock ? `ACTIVE MISCONCEPTIONS\n${misconceptionsBlock}\n\n` : "") +
-		`Generate exactly ${count} recall questions. Each question targets exactly one note, named in 'node'.` +
+		`Write exactly one recall question for each of these ${targets.length} concepts. ` +
+		`In each question object set 'n' to the concept's number below. ` +
+		`Test that specific concept, aim for its stated difficulty, and ground every question in the notes above.\n\n` +
+		`CONCEPTS:\n${conceptList}` +
 		(instructions
-			? "\n\nThe student wrote these preferences for how they want to be quizzed. Honour them " +
-				"unless they conflict with the rules above: always ground each question in the notes, keep the " +
-				"output schema exactly, and keep every question answerable from the notes.\n" +
+			? "\n\nThe student wrote these preferences for how they want to be quizzed. Honour them unless they " +
+				"conflict with the rules above.\n" +
 				`<preferences>\n${instructions}\n</preferences>`
 			: "");
-	const data = (await callJSON(cfg, TUTOR_SYSTEM, user, questionsSchema(nodeNames), 8000, images)) as {
-		questions: Question[];
-	};
-	const valid = new Set(nodeNames);
-	const qs = (data.questions ?? []).filter((q) => valid.has(q.node));
-	if (!qs.length) throw new Error("Model returned no usable questions");
-	return qs.slice(0, count).map((q) => ({
-		...q,
-		question: cleanText(q.question ?? ""),
-		modelAnswer: cleanText(q.modelAnswer ?? ""),
-		acceptableAnswers: q.acceptableAnswers ?? [],
-		commonErrors: q.commonErrors ?? [],
-		hints: {
-			tier1: cleanText(q.hints?.tier1 ?? ""),
-			tier2: cleanText(q.hints?.tier2 ?? ""),
-			tier3: cleanText(q.hints?.tier3 ?? ""),
-		},
-		targetsMisconception: (q.targetsMisconception ?? "").trim(),
-	}));
+	type RawQ = Omit<Question, "node" | "conceptId"> & { n?: number };
+	const data = (await callJSON(cfg, TUTOR_SYSTEM, user, questionsSchema(), 8000, images)) as { questions: RawQ[] };
+	const raw = data.questions ?? [];
+	const out: Question[] = [];
+	const used = new Set<number>();
+	for (let i = 0; i < raw.length; i++) {
+		const q = raw[i];
+		if (!q?.question) continue;
+		// Map by the echoed concept number; fall back to position. This guards
+		// against the model reordering questions vs the concept list, and dedups.
+		let idx = typeof q.n === "number" && q.n >= 1 && q.n <= targets.length ? q.n - 1 : i;
+		if (idx >= targets.length || used.has(idx)) idx = i;
+		if (idx >= targets.length || used.has(idx)) continue;
+		used.add(idx);
+		const t = targets[idx];
+		out.push({
+			node: t.note,
+			conceptId: t.conceptId,
+			question: cleanText(q.question ?? ""),
+			// Grade against the difficulty we asked for, not the model's self-report.
+			difficulty: t.targetDifficulty,
+			modelAnswer: cleanText(q.modelAnswer ?? ""),
+			acceptableAnswers: q.acceptableAnswers ?? [],
+			commonErrors: q.commonErrors ?? [],
+			hints: {
+				tier1: cleanText(q.hints?.tier1 ?? ""),
+				tier2: cleanText(q.hints?.tier2 ?? ""),
+				tier3: cleanText(q.hints?.tier3 ?? ""),
+			},
+			targetsMisconception: (q.targetsMisconception ?? "").trim() || (t.activeMisconception ?? ""),
+		});
+	}
+	if (!out.length) throw new Error("Model returned no usable questions");
+	return out;
 }
 
 // ------------------------------------------------------------------ grading

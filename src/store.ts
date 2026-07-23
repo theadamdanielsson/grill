@@ -11,6 +11,7 @@
 import { App, TFile, normalizePath } from "obsidian";
 import { MasteryMap, NoteMastery, Verdict, normalizeMastery, statusOf } from "./mastery";
 import { MisconceptionRegistry, SessionDebrief } from "./debrief";
+import { ConceptMap } from "./concepts";
 
 export interface SessionEntry {
 	node: string;
@@ -48,6 +49,10 @@ export class GrillStore {
 
 	private registryPath(): string {
 		return normalizePath(`${this.folder()}/misconceptions.json`);
+	}
+
+	private conceptsPath(): string {
+		return normalizePath(`${this.folder()}/concepts.json`);
 	}
 
 	private static readonly INSTRUCTIONS_CAP = 2000;
@@ -136,6 +141,24 @@ export class GrillStore {
 	async saveRegistry(reg: MisconceptionRegistry): Promise<void> {
 		await this.ensureFolder(this.folder());
 		await this.app.vault.adapter.write(this.registryPath(), JSON.stringify(reg, null, 1));
+	}
+
+	/** Per-concept scheduling state (the source of truth for scheduling). */
+	async loadConcepts(): Promise<ConceptMap> {
+		const path = this.conceptsPath();
+		if (await this.app.vault.adapter.exists(path)) {
+			try {
+				return JSON.parse(await this.app.vault.adapter.read(path)) as ConceptMap;
+			} catch {
+				return {};
+			}
+		}
+		return {};
+	}
+
+	async saveConcepts(map: ConceptMap): Promise<void> {
+		await this.ensureFolder(this.folder());
+		await this.app.vault.adapter.write(this.conceptsPath(), JSON.stringify(map, null, 1));
 	}
 
 	/** Opt-in: mirror a note's mastery into its frontmatter so graph groups,

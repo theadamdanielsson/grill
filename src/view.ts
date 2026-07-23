@@ -2,11 +2,20 @@
 
 import { ItemView, MarkdownRenderer, Notice, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
-import { debriefSession, generateQuestions, gradeAnswer, Question, supportsVision, Verdict } from "./llm";
-import { generateLocalQuestions } from "./generate-local";
+import { ConceptTarget, debriefSession, generateQuestions, gradeAnswer, Question, supportsVision, Verdict } from "./llm";
+import { Concept, extractConcepts, localQuestions } from "./generate-local";
+import {
+	ConceptMap,
+	conceptTargetDifficulty,
+	noteAggregate,
+	pickConcepts,
+	recordConceptAnswer,
+	recordConceptRating,
+	reconcileConcepts,
+} from "./concepts";
 import { collectNoteImages, ImageInput } from "./images";
-import { masteryPromptBlock, pickCandidates, Rating, recordAnswer, recordRating, statusOf } from "./mastery";
-import { buildSessionGraph, expandSelectionWithLinks, formatLinksBlock } from "./links";
+import { NoteMastery, pickCandidates, Rating, recordNoteStats, statusOf } from "./mastery";
+import { buildSessionGraph, expandSelectionWithLinks, formatLinksBlock, outgoingBasenames } from "./links";
 import {
 	activeMisconceptionsByNote,
 	deterministicDebrief,
@@ -52,16 +61,22 @@ export class SessionView extends ItemView {
 	// Streaming generation state.
 	private questions: Question[] = [];
 	private targetCount = 0;
-	private askedNodes = new Set<string>();
-	private candidateNames: string[] = [];
 	private notesConcat = "";
-	private masteryBlock = "";
 	/** Relationships between the session's notes, from their links. */
 	private linksBlock = "";
-	/** Active canonical misconceptions to re-probe this session. */
-	private misconceptionsBlock = "";
 	/** Canonical misconception registry, held for the session (re-probe + resolve). */
 	private registry: MisconceptionRegistry = {};
+	/** Per-concept scheduling state (the source of truth for scheduling). */
+	private concepts: ConceptMap = {};
+	/** Each selected note's current concepts, for recomputing its aggregate. */
+	private conceptsByNote = new Map<string, Concept[]>();
+	/** The concepts this session tests, in order. */
+	private sessionConcepts: Concept[] = [];
+	/** Concept targets for the AI generator (one question each, by construction). */
+	private targets: ConceptTarget[] = [];
+	/** Session state changed in memory and needs flushing to disk. Writes are
+	 * batched to session end / pane close to avoid a per-answer sync storm. */
+	private dirty = false;
 	/** Images per note, resolved once when a vision model is in use. */
 	private noteImages: Record<string, ImageInput[]> = {};
 	/** Flat image list for question generation (all notes in the session). */
@@ -291,6 +306,36 @@ export class SessionView extends ItemView {
 			wrap.createDiv({ cls: "grill-meta grill-misc-beaten", text: `Beaten: ${beaten.map((c) => c.label).join(", ")}` });
 		}
 
+		// Concept coverage: honest counts from the per-concept scheduler.
+		const cmap = await this.plugin.store.loadConcepts();
+		const tested = Object.values(cmap).filter((c) => c.correct + c.partial + c.incorrect > 0);
+		if (tested.length) {
+			const known = tested.filter((c) => statusOf(c) === "known").length;
+			wrap.createDiv({ cls: "grill-section-label", text: "Concept coverage" });
+			wrap.createDiv({
+				cls: "grill-meta",
+				text: `${tested.length} concepts tested · ${known} solid · ${tested.length - known} shaky`,
+			});
+			const byNote = new Map<string, { tested: number; known: number }>();
+			for (const c of tested) {
+				const e = byNote.get(c.note) ?? { tested: 0, known: 0 };
+				e.tested++;
+				if (statusOf(c) === "known") e.known++;
+				byNote.set(c.note, e);
+			}
+			const rows = [...byNote.entries()]
+				.map(([note, e]) => ({ note, ...e, shaky: e.tested - e.known }))
+				.sort((a, b) => b.shaky - a.shaky)
+				.slice(0, 6);
+			const list = wrap.createDiv({ cls: "grill-summary-list" });
+			for (const r of rows) {
+				const row = list.createDiv({ cls: "grill-summary-row" });
+				const link = row.createSpan({ cls: "grill-chip-link", text: r.note });
+				link.onclick = () => this.openNote(r.note);
+				row.createSpan({ cls: "grill-meta", text: `${r.known}/${r.tested} solid` });
+			}
+		}
+
 		this.renderHeatmap(wrap);
 	}
 
@@ -471,7 +516,7 @@ export class SessionView extends ItemView {
 				debrief = out.debrief;
 				if (out.assignments.length) {
 					mergeAssignments(reg, out.assignments);
-					await this.plugin.store.saveRegistry(reg);
+					this.dirty = true;
 				}
 			} catch (e) {
 				new Notice(`Grill: debrief unavailable, showing a plain summary. ${(e as Error).message}`, 6000);
@@ -479,6 +524,7 @@ export class SessionView extends ItemView {
 			}
 		}
 
+		await this.flush();
 		const note = await this.plugin.store.writeSessionNote(
 			this.results,
 			{
@@ -574,25 +620,6 @@ export class SessionView extends ItemView {
 		await this.startSession();
 	}
 
-	/** Prompt block listing active misconceptions per note, so the tutor can
-	 * re-probe them and tag the question for resolution. Empty when none. */
-	private formatMisconceptionsBlock(names: string[]): string {
-		const byNote = activeMisconceptionsByNote(this.registry, names);
-		const lines: string[] = [];
-		for (const note of names) {
-			const items = byNote[note];
-			if (items?.length) {
-				lines.push(`- "${note}": ${items.map((m) => `${m.tag} ("${m.label}")`).join(", ")}`);
-			}
-		}
-		if (!lines.length) return "";
-		return (
-			"Confusions this student has shown before on these notes. Where it fits, write a question that " +
-			"re-tests one of them, and set that question's 'targetsMisconception' to the exact canonical tag.\n" +
-			lines.join("\n")
-		);
-	}
-
 	/** Generate the next batch of questions and append them. At most one batch
 	 * runs at a time; concurrent callers share the same in-flight promise. */
 	private loadNextBatch(): Promise<void> {
@@ -600,26 +627,20 @@ export class SessionView extends ItemView {
 		if (this.questions.length >= this.targetCount) return Promise.resolve();
 		const cfg = this.plugin.llmConfig();
 		if (!cfg) return Promise.resolve();
-		const count = Math.min(BATCH, this.targetCount - this.questions.length);
-		const fresh = this.candidateNames.filter((n) => !this.askedNodes.has(n));
-		const pool = fresh.length >= count ? fresh : this.candidateNames;
+		// The scheduler already picked the concepts; generate the next slice of them.
+		const batch = this.targets.slice(this.questions.length, this.questions.length + BATCH);
+		if (!batch.length) return Promise.resolve();
 		const run = async (): Promise<void> => {
 			try {
 				const qs = await generateQuestions(
 					cfg,
 					this.notesConcat,
-					this.masteryBlock,
-					pool,
-					count,
+					batch,
 					this.contextImages,
 					this.sessionInstructions,
 					this.linksBlock,
-					this.misconceptionsBlock,
 				);
-				for (const q of qs) {
-					this.questions.push(q);
-					this.askedNodes.add(q.node);
-				}
+				for (const q of qs) this.questions.push(q);
 			} finally {
 				this.pending = null;
 			}
@@ -686,11 +707,14 @@ export class SessionView extends ItemView {
 			this.noteText = {};
 			this.noteImages = {};
 			this.contextImages = [];
+			this.conceptsByNote = new Map();
 			let notesWithImages = 0;
 			for (const n of names) {
 				const file = byName.get(n);
 				if (!file) continue;
 				const raw = await this.app.vault.cachedRead(file);
+				// Extract concepts from the FULL note; only the prompt context is truncated.
+				this.conceptsByNote.set(n, extractConcepts(n, raw));
 				this.noteText[n] = raw.length > NOTE_CHAR_CAP ? raw.slice(0, NOTE_CHAR_CAP) + "\n[truncated]" : raw;
 				if (vision) {
 					const imgs = await collectNoteImages(this.app, file, IMAGES_PER_NOTE_CAP);
@@ -704,39 +728,65 @@ export class SessionView extends ItemView {
 				}
 			}
 
-			this.candidateNames = names;
 			this.notesConcat = names.map((n) => `=== NOTE: ${n} ===\n${this.noteText[n].trim()}`).join("\n\n");
 			if (!vision && notesWithImages > 0 && s.questionSource === "ai") {
 				this.notesConcat +=
 					"\n\nNote: some of these notes embed images that cannot be shown to this model. " +
 					"Do not write questions that depend on reading an image; quiz only on the text above.";
 			}
-			this.masteryBlock = masteryPromptBlock(this.plugin.mastery, names);
 			const selectedFiles = names.map((n) => byName.get(n)).filter((f): f is TFile => !!f);
 			this.linksBlock = formatLinksBlock(buildSessionGraph(this.app, selectedFiles), this.plugin.mastery);
-			this.misconceptionsBlock = this.formatMisconceptionsBlock(names);
+
+			// Concept layer: reconcile the extracted concepts (create new ones,
+			// re-open any whose source text changed), then pick which to test.
+			this.concepts = await this.plugin.store.loadConcepts();
+			const allConcepts: Concept[] = [];
+			for (const cs of this.conceptsByNote.values()) allConcepts.push(...cs);
+			reconcileConcepts(this.concepts, allConcepts);
+
 			this.questions = [];
-			this.askedNodes = new Set();
 			this.results = [];
 			this.idx = 0;
 			this.pending = null;
-			this.targetCount = Math.max(1, s.questionsPerSession);
+			const want = Math.max(1, s.questionsPerSession);
+
+			// No-key mode can only use concepts that carry a deterministic question.
+			const pickable = s.questionSource === "local" ? allConcepts.filter((c) => c.local) : allConcepts;
+			this.sessionConcepts = pickConcepts(pickable, this.concepts, want);
+			if (this.sessionConcepts.length === 0) {
+				new Notice(
+					s.questionSource === "local"
+						? "Grill: couldn't build questions from these notes' structure. Add some bold terms, headings, definitions or formulas, or switch questions to AI."
+						: "Grill: couldn't find concepts to quiz in these notes.",
+					10000,
+				);
+				this.renderStart();
+				return;
+			}
+			this.targetCount = Math.min(want, this.sessionConcepts.length);
+
+			// Concept targets: difficulty tuned to retrievability. Re-probe an active
+			// misconception on at most ONE concept per note, so it isn't over-asked.
+			const activeByNote = activeMisconceptionsByNote(this.registry, names);
+			const misconceptionUsed = new Set<string>();
+			this.targets = this.sessionConcepts.slice(0, this.targetCount).map((c) => {
+				let activeMisconception: string | undefined;
+				if (!misconceptionUsed.has(c.note)) {
+					activeMisconception = activeByNote[c.note]?.[0]?.tag;
+					if (activeMisconception) misconceptionUsed.add(c.note);
+				}
+				return {
+					conceptId: c.id,
+					note: c.note,
+					label: c.label,
+					context: c.context,
+					targetDifficulty: conceptTargetDifficulty(this.concepts[c.id]),
+					activeMisconception,
+				};
+			});
 
 			if (s.questionSource === "local") {
-				// No model: build every question up front from the notes' structure.
-				const pool = names.map((n) => ({ name: n, text: this.noteText[n] ?? "" }));
-				this.questions = generateLocalQuestions(pool, this.targetCount);
-				if (this.questions.length === 0) {
-					new Notice(
-						"Grill: couldn't build questions from these notes' structure. Add some bold terms, " +
-							"headings, definitions or formulas, or switch questions to AI.",
-						10000,
-					);
-					this.renderStart();
-					return;
-				}
-				this.targetCount = Math.min(this.targetCount, this.questions.length);
-				for (const q of this.questions) this.askedNodes.add(q.node);
+				this.questions = localQuestions(this.sessionConcepts, this.targetCount);
 				this.renderQuestion();
 				return;
 			}
@@ -787,12 +837,11 @@ export class SessionView extends ItemView {
 				return;
 			}
 		}
-		recordAnswer(this.plugin.mastery, q.node, verdict, misconceptionTag || undefined);
-		await this.plugin.store.saveMastery(this.plugin.mastery);
+		await this.applyGrade(q, verdict, null, misconceptionTag || undefined);
 		// Re-probed a known confusion and got it right: mark it resolved.
 		if (q.targetsMisconception && verdict === "correct" && this.registry[q.targetsMisconception]) {
 			resolveMisconception(this.registry, q.targetsMisconception);
-			await this.plugin.store.saveRegistry(this.registry);
+			this.dirty = true;
 		}
 		if (this.plugin.data.settings.writeStatus) {
 			const f = this.byName.get(q.node);
@@ -853,14 +902,73 @@ export class SessionView extends ItemView {
 		}
 	}
 
+	/** Record one graded answer: update the concept's schedule, bump the note's
+	 * stats, recompute the note aggregate, and persist. `rating` is set for the
+	 * self-grade path (its Again/Hard/Good/Easy is the signal); null for AI grading
+	 * (verdict + question difficulty drive a difficulty-aware rating). */
+	private async applyGrade(
+		q: Question,
+		verdict: Verdict,
+		rating: Rating | null,
+		misconceptionTag: string | undefined,
+	): Promise<void> {
+		const cid = q.conceptId;
+		if (cid && this.concepts[cid]) {
+			if (rating !== null) recordConceptRating(this.concepts, cid, rating);
+			else recordConceptAnswer(this.concepts, cid, verdict, q.difficulty ?? "medium");
+		}
+		recordNoteStats(this.plugin.mastery, q.node, verdict, misconceptionTag);
+		this.recomputeAggregate(q.node);
+		this.dirty = true; // flushed at session end / pane close
+	}
+
+	/** Persist all session state at once (concepts, mastery, registry). Called at
+	 * session end and on pane close, not per answer, to avoid sync churn. */
+	private async flush(): Promise<void> {
+		if (!this.dirty) return;
+		this.dirty = false;
+		await this.plugin.store.saveConcepts(this.concepts);
+		await this.plugin.store.saveMastery(this.plugin.mastery);
+		await this.plugin.store.saveRegistry(this.registry);
+	}
+
+	async onClose(): Promise<void> {
+		await this.flush();
+	}
+
+	/** Project the note's concept states back into its note-level status + due date,
+	 * then apply the graph-aware prerequisite penalty. */
+	private recomputeAggregate(note: string): void {
+		const m = this.plugin.mastery[note];
+		if (!m) return;
+		const agg = noteAggregate(this.conceptsByNote.get(note) ?? [], this.concepts);
+		m.aggStatus = agg.aggStatus;
+		m.dueAt = agg.dueAt;
+		this.applyPrereqPenalty(note, m);
+	}
+
+	/** A note can't read as "known" while a tested prerequisite it links to is
+	 * struggling. Bounded: only tested-weak prerequisites count. */
+	private applyPrereqPenalty(note: string, m: NoteMastery): void {
+		if (m.aggStatus !== "known") return;
+		const file = this.byName.get(note);
+		if (!file) return;
+		for (const pre of outgoingBasenames(this.app, file)) {
+			const pm = this.plugin.mastery[pre];
+			if (pm && statusOf(pm) === "struggling") {
+				m.aggStatus = "struggling";
+				return;
+			}
+		}
+	}
+
 	private async recordSelfGrade(rating: Rating, answer: string, gaveUp: boolean, hintsUsed: number): Promise<void> {
 		const q = this.questions[this.idx];
 		const verdict: Verdict = rating === 1 ? "incorrect" : rating === 2 ? "partial" : "correct";
-		recordRating(this.plugin.mastery, q.node, rating);
-		await this.plugin.store.saveMastery(this.plugin.mastery);
+		await this.applyGrade(q, verdict, rating, undefined);
 		if (q.targetsMisconception && verdict === "correct" && this.registry[q.targetsMisconception]) {
 			resolveMisconception(this.registry, q.targetsMisconception);
-			await this.plugin.store.saveRegistry(this.registry);
+			this.dirty = true;
 		}
 		if (this.plugin.data.settings.writeStatus) {
 			const f = this.byName.get(q.node);

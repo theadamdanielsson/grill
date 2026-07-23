@@ -22,6 +22,8 @@ export interface NoteMastery {
 	dueAt: string | null; // ISO date; null = never tested
 	/** canonical snake_case misconception tag -> times observed */
 	misconceptions: Record<string, number>;
+	/** Concept-derived note status, set by the aggregate; preferred by statusOf. */
+	aggStatus?: NoteStatus;
 }
 
 export type MasteryMap = Record<string, NoteMastery>;
@@ -50,8 +52,28 @@ export function normalizeMastery(map: MasteryMap): MasteryMap {
 	return map;
 }
 
-export function statusOf(m: NoteMastery | undefined): NoteStatus {
-	if (!m || (m.correct === 0 && m.incorrect === 0 && m.partial === 0)) return "untested";
+/** The FSRS fields shared by note-level and concept-level records, so the
+ * scheduler can run on either. */
+export interface Schedulable {
+	correct: number;
+	partial: number;
+	incorrect: number;
+	streak: number;
+	stability: number | null;
+	difficulty: number | null;
+	lastSeen: string | null;
+	dueAt: string | null;
+}
+
+/** Question difficulty tier, used to make grading difficulty-aware. */
+export type QDifficulty = "easy" | "medium" | "hard";
+
+/** Status of a note or concept. Notes prefer a concept-derived `aggStatus` when
+ * present (set by the concept aggregate); otherwise fall back to the counters. */
+export function statusOf(m: (Schedulable & { aggStatus?: NoteStatus }) | undefined): NoteStatus {
+	if (!m) return "untested";
+	if (m.aggStatus) return m.aggStatus;
+	if (m.correct === 0 && m.incorrect === 0 && m.partial === 0) return "untested";
 	return m.streak >= 1 ? "known" : "struggling";
 }
 
@@ -71,11 +93,15 @@ export function retrievability(stability: number, elapsedDays: number): number {
 	return Math.pow(1 + elapsedDays / (9 * stability), -1);
 }
 
-/** FSRS rating: 1=again, 2=hard, 3=good. (No confidence signal, so no 4.) */
-function toRating(verdict: Verdict): number {
+/** Verdict → FSRS rating (1=again, 2=hard, 3=good, 4=easy), difficulty-aware on
+ * the reward side only: a hard question answered right is stronger evidence, so
+ * it earns a longer interval (rating 4). A miss or partial is never upgraded into
+ * a success — doing so would extend the interval on a wrong answer, which the
+ * 4-point scale can't avoid, so failures always re-show soon. */
+export function toRating(verdict: Verdict, difficulty: QDifficulty = "medium"): number {
 	if (verdict === "incorrect") return 1;
 	if (verdict === "partial") return 2;
-	return 3;
+	return difficulty === "hard" ? 4 : 3;
 }
 
 function initialStability(rating: number): number {
@@ -120,9 +146,9 @@ export function fuzzInterval(days: number): number {
 
 // ---------------------------------------------------------------- updates
 
-/** Apply one FSRS rating (1-4) to a note's record, updating stability, difficulty,
- * counters, streak and due date. Shared by the AI-graded and self-graded paths. */
-function applyRating(m: NoteMastery, rating: number, now: Date, misconceptionTag?: string): void {
+/** Apply one FSRS rating (1-4) to any schedulable record, updating stability,
+ * difficulty, counters, streak and due date. Runs at note or concept level. */
+export function applyRating(m: Schedulable, rating: number, now: Date): void {
 	const elapsedDays = m.lastSeen ? (now.getTime() - new Date(m.lastSeen).getTime()) / 86400_000 : 0;
 	if (m.stability === null || m.difficulty === null) {
 		m.stability = initialStability(rating);
@@ -155,11 +181,25 @@ function applyRating(m: NoteMastery, rating: number, now: Date, misconceptionTag
 		m.dueAt = new Date(now.getTime() + days * 86400_000).toISOString();
 	}
 
+	m.lastSeen = now.toISOString();
+}
+
+/** Bump a note's cumulative counters and misconception tally (stats + registry).
+ * Note scheduling (status/dueAt) is derived from concepts, not set here. */
+export function recordNoteStats(
+	map: MasteryMap,
+	note: string,
+	verdict: Verdict,
+	misconceptionTag?: string,
+): void {
+	const m = map[note] ?? emptyMastery();
+	if (verdict === "correct") m.correct += 1;
+	else if (verdict === "partial") m.partial += 1;
+	else m.incorrect += 1;
 	if (misconceptionTag) {
 		m.misconceptions[misconceptionTag] = (m.misconceptions[misconceptionTag] ?? 0) + 1;
 	}
-
-	m.lastSeen = now.toISOString();
+	map[note] = m;
 }
 
 export function recordAnswer(
@@ -170,7 +210,8 @@ export function recordAnswer(
 	now = new Date(),
 ): void {
 	const m = map[note] ?? emptyMastery();
-	applyRating(m, toRating(verdict), now, misconceptionTag);
+	applyRating(m, toRating(verdict), now);
+	if (misconceptionTag) m.misconceptions[misconceptionTag] = (m.misconceptions[misconceptionTag] ?? 0) + 1;
 	map[note] = m;
 }
 

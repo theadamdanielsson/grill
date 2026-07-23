@@ -13,10 +13,13 @@ you keep missing.
 
 ## Using it
 
-Hit the flame icon and start a session. Grill grabs a few notes to quiz you on, weighted
-toward the ones you've been getting wrong and the ones due for review. It writes the
-questions two at a time so you're not stuck watching a spinner while it makes all of them.
-Answer from memory and submit.
+Hit the flame icon and start a session. Grill grabs a few things to quiz you on, weighted
+toward what you've been getting wrong and what's due for review, and mixes them across
+different notes so you're not drilling one to death. It writes the questions two at a time
+so you're not stuck watching a spinner while it makes all of them. Answer from memory and
+submit. Once you've built up some history there's a "Review N due" button, and a count in
+the status bar, to drop straight into what's ready; "Open progress dashboard" shows how
+you're doing overall.
 
 ![A question drawn from a note, with the vault's graph alongside it](docs/screenshot-question.png)
 
@@ -51,12 +54,22 @@ what a session costs.
 
 ## What it keeps track of
 
-Every note gets its own review schedule. This uses FSRS, the spaced-repetition algorithm
-Anki switched to a while back: get a note right and it won't come up again for a while, get
-it wrong and it's back next time. All of that (the schedule, your history, the misconception
-notes) lives in `Grill/mastery.json` in your vault. Each session also gets saved as a normal
-note under `Grill/Sessions/`, linked to whatever it quizzed you on, so a note's backlinks
-show its quiz history.
+Grill schedules you per concept, not per note. It pulls the concepts out of a note (its
+headings, definitions, bold terms, formulas, and any flashcards you've already written) and
+tracks each one on its own. That matters for anything bigger than a one-idea note: a chapter
+note doesn't count as "known" because you got one lucky question right, it keeps coming back
+until you've actually been tested across its parts. Each concept rides FSRS, the
+spaced-repetition algorithm Anki switched to: get it right and it won't come up again for a
+while, get it wrong and it's back next time. The questions climb in difficulty as you go,
+easy while a concept is new, harder once you've recalled it a few times spaced out. And if
+you edit a note, only the concepts you actually changed re-open for review; the rest stay
+put.
+
+The schedule lives in `Grill/concepts.json`, and your per-note history and the misconception
+notes in `Grill/mastery.json`, both plain files in your vault. Each session also gets saved
+as a normal note under `Grill/Sessions/`, linked to whatever it quizzed you on, so a note's
+backlinks show its quiz history. The "Open progress dashboard" command puts it together: what
+you keep getting wrong, your coverage per note, and a heatmap of your reviews.
 
 Your API key and the settings sit in the plugin's own data, not scattered through your
 notes.
