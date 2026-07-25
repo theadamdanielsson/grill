@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.8.1
+
+- Shorten the plugin description to fit Obsidian's 250-character manifest limit.
+
 ## 1.8.0
 
 - **Custom (OpenAI-compatible) provider.** Point Grill at any OpenAI-compatible endpoint:
