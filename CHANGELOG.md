@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.9.0
+
+- **Connections review.** A new session mode that quizzes you on how your linked notes
+  relate, bridging concepts across `[[wikilinks]]` instead of one note at a time. Grill
+  picks notes that are joined by links, pairs each concept with a linked neighbour
+  (favouring a weak one), and asks questions that test the relationship between the two,
+  not either note alone. Start it from the "Connections review" button on the start
+  screen or the command of the same name; it respects the study-scope dropdown.
+- Each connection question shows an "A to B" bridge badge (hidden note names are still
+  honoured), and the end-of-session summary recaps the note-pairs you were tested on.
+- Scheduling is unchanged: every question is still anchored to a single concept on the
+  same FSRS schedule.
+
 ## 1.8.2
 
 - Drop the clipboard fallback in graph-colour setup (shows manual instructions instead),
