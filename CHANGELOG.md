@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.8.2
+
+- Drop the clipboard fallback in graph-colour setup (shows manual instructions instead),
+  removing an unnecessary clipboard-access capability.
+- List vault tags via the public metadata API instead of an undocumented internal call.
+
 ## 1.8.1
 
 - Shorten the plugin description to fit Obsidian's 250-character manifest limit.

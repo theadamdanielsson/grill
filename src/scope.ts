@@ -42,13 +42,20 @@ export function listFolders(eligible: TFile[]): string[] {
 	return [...set].sort((a, b) => a.localeCompare(b));
 }
 
-/** Vault tags with counts, most-used first, capped so the dropdown stays short.
- * getTags() exists at runtime but isn't in the public MetadataCache typings. */
+/** Vault tags with note counts, most-used first, capped so the dropdown stays short.
+ * Built from the public metadata API (getAllTags per file) rather than the
+ * undocumented metadataCache.getTags(). */
 export function listTags(app: App, limit = 40): { tag: string; count: number }[] {
-	const cache = app.metadataCache as unknown as { getTags?: () => Record<string, number> };
-	const all = cache.getTags?.() ?? {};
-	return Object.entries(all)
-		.map(([tag, count]) => ({ tag, count: Number(count) }))
+	const counts = new Map<string, number>();
+	for (const f of app.vault.getMarkdownFiles()) {
+		const cache = app.metadataCache.getFileCache(f);
+		if (!cache) continue;
+		for (const tag of getAllTags(cache) ?? []) {
+			counts.set(tag, (counts.get(tag) ?? 0) + 1);
+		}
+	}
+	return [...counts.entries()]
+		.map(([tag, count]) => ({ tag, count }))
 		.sort((a, b) => b.count - a.count)
 		.slice(0, limit);
 }

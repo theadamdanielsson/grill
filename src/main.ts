@@ -364,7 +364,7 @@ class GrillSettingTab extends PluginSettingTab {
 	];
 
 	/** Add Grill's colour-groups to the graph config, without disturbing the user's own
-	 * groups. Falls back to the clipboard if the config can't be edited. */
+	 * groups. Shows manual setup instructions if the config can't be edited. */
 	private async setUpGraphColours(): Promise<void> {
 		const path = normalizePath(`${this.app.vault.configDir}/graph.json`);
 		try {
@@ -389,12 +389,12 @@ class GrillSettingTab extends PluginSettingTab {
 					: "Grill: graph colours were already set up.",
 			);
 		} catch {
-			try {
-				await navigator.clipboard.writeText(JSON.stringify(GrillSettingTab.GRAPH_GROUPS, null, 2));
-				new Notice("Grill: couldn't edit the graph automatically; the colour groups are on your clipboard.", 8000);
-			} catch {
-				new Notice("Grill: couldn't set up graph colours. Add three colour groups in Graph view settings.", 8000);
-			}
+			new Notice(
+				"Grill: couldn't set up graph colours automatically. In Graph view settings, add three colour " +
+					"groups with the queries [\"grill-status\":known], [\"grill-status\":struggling] and " +
+					"[\"grill-status\":untested].",
+				10000,
+			);
 		}
 	}
 
