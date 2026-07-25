@@ -1,12 +1,14 @@
 # Grill
 
+*Spaced repetition and active recall on your own notes: AI writes flashcard-style questions, grades your answers, and focuses on what you keep getting wrong.*
+
 I take a lot of notes and almost never go back to them. Re-reading a note isn't the same
 as actually remembering it, and I couldn't be bothered to turn everything into flashcards.
 So Grill quizzes you on the notes you've already got.
 
 It reads your vault, gets whichever model you point it at (Claude, GPT, Gemini, DeepSeek,
-or Ollama on your own machine) to write questions from your notes, and marks what you type
-back. It remembers how you did on each note and steers the next session toward the things
+Ollama on your own machine, or any OpenAI-compatible endpoint such as OpenRouter, Groq or
+LM Studio) to write questions from your notes, and marks what you type back. It remembers how you did on each note and steers the next session toward the things
 you keep missing.
 
 ![Grill: open it, start a session, answer, get graded with specific feedback](docs/grill-demo.gif)

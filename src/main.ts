@@ -22,6 +22,8 @@ interface GrillSettings {
 	apiKeys: Record<ProviderId, string>;
 	models: Record<ProviderId, string>;
 	ollamaUrl: string;
+	/** Base URL for the custom OpenAI-compatible provider, e.g. https://openrouter.ai/api/v1 */
+	customBaseUrl: string;
 	questionsPerSession: number;
 	maxNotesPerSession: number;
 	/** Vault folder holding mastery.json and session notes. */
@@ -55,11 +57,12 @@ interface PluginData {
 function defaultSettings(): GrillSettings {
 	return {
 		provider: "anthropic",
-		apiKeys: { anthropic: "", openai: "", gemini: "", deepseek: "", ollama: "" },
+		apiKeys: { anthropic: "", openai: "", gemini: "", deepseek: "", ollama: "", custom: "" },
 		models: Object.fromEntries(
 			(Object.keys(PROVIDERS) as ProviderId[]).map((p) => [p, PROVIDERS[p].defaultModel]),
 		) as Record<ProviderId, string>,
 		ollamaUrl: "http://localhost:11434",
+		customBaseUrl: "",
 		questionsPerSession: 5,
 		maxNotesPerSession: 15,
 		folder: "Grill",
@@ -91,6 +94,7 @@ export default class GrillPlugin extends Plugin {
 		if (s.apiKeys) settings.apiKeys = { ...settings.apiKeys, ...s.apiKeys };
 		if (s.models) settings.models = { ...settings.models, ...s.models };
 		if (typeof s.ollamaUrl === "string" && s.ollamaUrl.trim()) settings.ollamaUrl = s.ollamaUrl.trim();
+		if (typeof s.customBaseUrl === "string") settings.customBaseUrl = s.customBaseUrl.trim();
 		if (typeof s.questionsPerSession === "number") settings.questionsPerSession = s.questionsPerSession;
 		if (typeof s.maxNotesPerSession === "number") settings.maxNotesPerSession = s.maxNotesPerSession;
 		if (typeof s.folder === "string" && s.folder.trim()) settings.folder = s.folder.trim();
@@ -283,11 +287,13 @@ export default class GrillPlugin extends Plugin {
 		const info = PROVIDERS[s.provider];
 		const apiKey = s.apiKeys[s.provider];
 		if (info.needsKey && !apiKey) return null;
+		// Custom provider needs both an endpoint and a model to be usable.
+		if (s.provider === "custom" && (!s.customBaseUrl || !s.models.custom)) return null;
 		return {
 			provider: s.provider,
 			apiKey,
 			model: s.models[s.provider] || info.defaultModel,
-			baseUrl: s.provider === "ollama" ? s.ollamaUrl : undefined,
+			baseUrl: s.provider === "ollama" ? s.ollamaUrl : s.provider === "custom" ? s.customBaseUrl : undefined,
 		};
 	}
 
@@ -396,7 +402,7 @@ class GrillSettingTab extends PluginSettingTab {
 		if (this.fetching[p]) return;
 		this.fetching[p] = true;
 		const s = this.plugin.data.settings;
-		const models = await listModels(p, s.apiKeys[p], s.ollamaUrl);
+		const models = await listModels(p, s.apiKeys[p], p === "custom" ? s.customBaseUrl : s.ollamaUrl);
 		this.fetching[p] = false;
 		if (models.length) {
 			this.modelLists[p] = models;
@@ -474,7 +480,37 @@ class GrillSettingTab extends PluginSettingTab {
 				});
 			});
 
-		if (info.needsKey) {
+		if (p === "custom") {
+			new Setting(containerEl)
+				.setName("Base URL")
+				.setDesc(
+					"Any OpenAI-compatible endpoint, for example https://openrouter.ai/api/v1, " +
+						"https://api.groq.com/openai/v1, or http://localhost:1234/v1 for LM Studio.",
+				)
+				.addText((t) =>
+					t
+						.setPlaceholder("https://openrouter.ai/api/v1")
+						.setValue(s.customBaseUrl)
+						.onChange(async (v) => {
+							s.customBaseUrl = v.trim();
+							delete this.modelLists.custom;
+							await this.plugin.persist();
+						}),
+				);
+			new Setting(containerEl)
+				.setName("API key")
+				.setDesc("Sent as a Bearer token. Leave blank for local servers that don't require one.")
+				.addText((t) => {
+					t.setPlaceholder(info.keyPlaceholder)
+						.setValue(s.apiKeys.custom)
+						.onChange(async (v) => {
+							s.apiKeys.custom = v.trim();
+							delete this.modelLists.custom;
+							await this.plugin.persist();
+						});
+					t.inputEl.type = "password";
+				});
+		} else if (info.needsKey) {
 			new Setting(containerEl)
 				.setName("API key")
 				.setDesc(`Stored locally in this vault's plugin data, never in your notes. Get one at ${info.keyUrl}.`)
@@ -525,7 +561,8 @@ class GrillSettingTab extends PluginSettingTab {
 		if (staleCurrent) modelSetting.descEl.addClass("mod-warning");
 		modelSetting.addDropdown((d) => {
 			for (const m of options) d.addOption(m, m);
-			if (!options.includes(current) && !this.showCustomModel) d.addOption(current, `${current} (not found)`);
+			if (current && !options.includes(current) && !this.showCustomModel)
+				d.addOption(current, `${current} (not found)`);
 			d.addOption(CUSTOM, "Custom model ID...");
 			d.setValue(this.showCustomModel ? CUSTOM : current);
 			d.onChange(async (v) => {
@@ -767,6 +804,7 @@ class GrillSettingTab extends PluginSettingTab {
 			);
 
 		// Kick off a background model-list fetch the first time the tab opens.
-		if (!this.modelLists[p] && (s.apiKeys[p] || p === "ollama")) void this.refreshModels(p);
+		if (!this.modelLists[p] && (s.apiKeys[p] || p === "ollama" || (p === "custom" && s.customBaseUrl)))
+			void this.refreshModels(p);
 	}
 }

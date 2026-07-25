@@ -9,7 +9,7 @@ import { requestUrl } from "obsidian";
 import type { ImageInput } from "./images";
 import type { SessionDebrief, TagAssignment } from "./debrief";
 
-export type ProviderId = "anthropic" | "openai" | "gemini" | "deepseek" | "ollama";
+export type ProviderId = "anthropic" | "openai" | "gemini" | "deepseek" | "ollama" | "custom";
 
 export interface ProviderInfo {
 	label: string;
@@ -62,6 +62,16 @@ export const PROVIDERS: Record<ProviderId, ProviderInfo> = {
 		needsKey: false,
 		fallbackModels: [],
 	},
+	custom: {
+		label: "Custom (OpenAI-compatible)",
+		defaultModel: "",
+		keyPlaceholder: "sk-...",
+		keyUrl: "",
+		// Base URL is the binding requirement (enforced in llmConfig); a blank key
+		// is allowed so local servers like LM Studio work without one.
+		needsKey: false,
+		fallbackModels: [],
+	},
 };
 
 export interface LLMConfig {
@@ -107,6 +117,7 @@ export function supportsVision(provider: ProviderId, model: string): boolean {
 		case "ollama":
 			return /(llava|vision|-vl\b|moondream|bakllava|minicpm-v|gemma3|llama3\.2-vision|qwen2(\.5)?-?vl)/i.test(model);
 		case "deepseek":
+		case "custom":
 			return false;
 	}
 }
@@ -291,6 +302,32 @@ function buildCall(
 				},
 				extract: (json) => (json as ChatCompletionResponse).choices?.[0]?.message?.content,
 			};
+		case "custom":
+			// Any OpenAI-compatible endpoint. Use the widest-compatibility shape:
+			// json_object mode + schema in the prompt (strict json_schema is not
+			// universally supported), and max_tokens (compat layers rarely accept
+			// max_completion_tokens). Vision is off (supportsVision === false), so no
+			// image parts are ever passed here.
+			return {
+				url: `${(cfg.baseUrl ?? "").replace(/\/$/, "")}/chat/completions`,
+				headers: { "content-type": "application/json", authorization: `Bearer ${cfg.apiKey}` },
+				body: {
+					model: cfg.model,
+					max_tokens: maxTokens,
+					messages: [
+						{ role: "system", content: system },
+						{
+							role: "user",
+							content:
+								user +
+								"\n\nRespond ONLY with a json object matching this JSON Schema exactly:\n" +
+								JSON.stringify(schema),
+						},
+					],
+					response_format: { type: "json_object" },
+				},
+				extract: (json) => (json as ChatCompletionResponse).choices?.[0]?.message?.content,
+			};
 	}
 }
 
@@ -406,6 +443,17 @@ export async function listModels(provider: ProviderId, apiKey: string, baseUrl?:
 				});
 				const ollamaModels = (r.json as OllamaTagsResponse | undefined)?.models ?? [];
 				return ollamaModels.map((m) => m.name).filter(Boolean);
+			}
+			case "custom": {
+				if (!baseUrl) return [];
+				const r = await requestUrl({
+					url: `${baseUrl.replace(/\/$/, "")}/models`,
+					throw: false,
+					headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
+				});
+				// OpenAI-compatible {data:[{id}]}; endpoints vary, so don't filter.
+				const customModels = (r.json as OpenAIModelListResponse | undefined)?.data ?? [];
+				return customModels.map((m) => m.id).filter(Boolean).sort();
 			}
 		}
 	} catch {
