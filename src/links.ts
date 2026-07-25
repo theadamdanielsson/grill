@@ -112,6 +112,66 @@ export function expandSelectionWithLinks(
 	return ordered.slice(0, cap);
 }
 
+/** Weakness rank for ordering: struggling first, then untested, then known. */
+function weakness(mastery: MasteryMap, n: string): number {
+	const s = statusOf(mastery[n]);
+	return s === "struggling" ? 0 : s === "untested" ? 1 : 2;
+}
+
+/** Select a set of notes for a CONNECTIONS session: only notes that are joined
+ * by links, so every question can bridge two related ideas. Walks the
+ * priority-ordered seed (weak/due first), skips islands with no in-scope
+ * neighbour, and pulls each kept note's neighbours in alongside it (weak ones
+ * first) so both ends of an edge are present. Returns basenames, capped.
+ * Empty when nothing in scope links to anything else. */
+export function pickConnectedNotes(
+	app: App,
+	seed: string[],
+	byName: Map<string, TFile>,
+	mastery: MasteryMap,
+	cap: number,
+): string[] {
+	const files = seed.map((n) => byName.get(n)).filter((f): f is TFile => !!f);
+	const graph = buildSessionGraph(app, files);
+	const neighbours = (n: string): string[] => {
+		const a = graph.adjacency[n];
+		if (!a) return [];
+		return [...new Set([...a.linksTo, ...a.linkedFrom])]
+			.filter((m) => byName.has(m))
+			.sort((x, y) => weakness(mastery, x) - weakness(mastery, y));
+	};
+	const chosen = new Set<string>();
+	const order: string[] = [];
+	const add = (n: string): void => {
+		if (byName.has(n) && !chosen.has(n)) {
+			chosen.add(n);
+			order.push(n);
+		}
+	};
+	for (const n of seed) {
+		if (order.length >= cap) break;
+		const nb = neighbours(n);
+		if (!nb.length) continue; // island: a connections session needs an edge
+		add(n);
+		for (const m of nb) {
+			if (order.length >= cap) break;
+			add(m);
+		}
+	}
+	return order.slice(0, cap);
+}
+
+/** The best in-session note to bridge `note` to: a linked neighbour, preferring
+ * a weak one (more worth shoring up), else any. Undefined when the note has no
+ * in-session links. */
+export function neighbourFor(graph: SessionGraph, note: string, mastery: MasteryMap): string | undefined {
+	const adj = graph.adjacency[note];
+	if (!adj) return undefined;
+	const cands = [...new Set([...adj.linksTo, ...adj.linkedFrom])];
+	if (!cands.length) return undefined;
+	return cands.sort((a, b) => weakness(mastery, a) - weakness(mastery, b))[0];
+}
+
 /** A compact, model-readable description of how the session's notes relate,
  * annotated with each prerequisite's mastery status. Empty when there are no
  * links between the selected notes. */

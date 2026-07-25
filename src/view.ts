@@ -15,7 +15,14 @@ import {
 } from "./concepts";
 import { collectNoteImages, ImageInput } from "./images";
 import { NoteMastery, pickCandidates, Rating, recordNoteStats, statusOf } from "./mastery";
-import { buildSessionGraph, expandSelectionWithLinks, formatLinksBlock, outgoingBasenames } from "./links";
+import {
+	buildSessionGraph,
+	expandSelectionWithLinks,
+	formatLinksBlock,
+	neighbourFor,
+	outgoingBasenames,
+	pickConnectedNotes,
+} from "./links";
 import {
 	activeMisconceptionsByNote,
 	deterministicDebrief,
@@ -53,6 +60,9 @@ export class SessionView extends ItemView {
 	sessionScope: TFile[] | null = null;
 	/** Scope chosen on the start screen; null means the whole vault. */
 	private pendingScope: TFile[] | null = null;
+	/** "connections" biases selection to linked notes and asks the tutor to
+	 * bridge concepts across their links; "standard" is the normal session. */
+	private sessionMode: "standard" | "connections" = "standard";
 
 	private results: QuestionResult[] = [];
 	private idx = 0;
@@ -200,6 +210,14 @@ export class SessionView extends ItemView {
 		btn.onclick = () => {
 			this.sessionScope = this.pendingScope;
 			void this.startSession();
+		};
+
+		// The differentiated mode: quiz across linked notes, not one at a time.
+		const conn = wrap.createEl("button", { text: "Connections review", cls: "grill-start-btn grill-connections-btn" });
+		conn.setAttr("aria-label", "Quiz across notes that link to each other");
+		conn.onclick = () => {
+			this.sessionScope = this.pendingScope;
+			void this.startSession("connections");
 		};
 
 		const dash = wrap.createDiv({ cls: "grill-meta grill-dash-link" });
@@ -402,6 +420,21 @@ export class SessionView extends ItemView {
 		const meta = card.createDiv({ cls: "grill-meta-row" });
 		meta.createSpan({ cls: "grill-meta", text: `Question ${this.idx + 1} of ${this.targetCount}` });
 		if (!this.plugin.data.settings.hideNoteName) meta.createSpan({ cls: "grill-chip", text: q.node });
+
+		// Connections mode: make the bridge legible. Names are the point of the mode,
+		// but honour "hide note name" so we never leak the answer.
+		if (q.connectTo) {
+			const bridge = card.createDiv({ cls: "grill-bridge" });
+			if (this.plugin.data.settings.hideNoteName) {
+				bridge.createSpan({ cls: "grill-meta", text: "Connecting two of your linked notes" });
+			} else {
+				bridge.createSpan({ cls: "grill-meta", text: "Bridging" });
+				bridge.createSpan({ cls: "grill-chip", text: q.node });
+				bridge.createSpan({ cls: "grill-bridge-arrow", text: "↔" });
+				bridge.createSpan({ cls: "grill-chip", text: q.connectTo });
+			}
+		}
+
 		const qEl = card.createDiv({ cls: "grill-question" });
 		this.md(q.question, qEl);
 
@@ -588,6 +621,33 @@ export class SessionView extends ItemView {
 			link.onclick = () => this.openNote(r.node);
 		}
 
+		// Connections mode: recap the note-pairs you were bridged across.
+		if (this.sessionMode === "connections") {
+			const seen = new Set<string>();
+			const pairs = this.questions
+				.slice(0, this.results.length)
+				.filter((q) => q.connectTo)
+				.map((q) => ({ from: q.node, to: q.connectTo as string }))
+				.filter((p) => {
+					const key = [p.from, p.to].sort().join(" ");
+					if (seen.has(key)) return false;
+					seen.add(key);
+					return true;
+				});
+			if (pairs.length) {
+				card.createDiv({ cls: "grill-section-label", text: "Connections you were tested on" });
+				const conns = card.createDiv({ cls: "grill-conn-list" });
+				for (const p of pairs) {
+					const row = conns.createDiv({ cls: "grill-conn-row" });
+					const a = row.createSpan({ cls: "grill-chip-link", text: p.from });
+					a.onclick = () => this.openNote(p.from);
+					row.createSpan({ cls: "grill-bridge-arrow", text: "↔" });
+					const b = row.createSpan({ cls: "grill-chip-link", text: p.to });
+					b.onclick = () => this.openNote(p.to);
+				}
+			}
+		}
+
 		if (note) {
 			const saved = card.createDiv({ cls: "grill-meta grill-saved" });
 			const a = saved.createSpan({ cls: "grill-chip-link", text: "Open session transcript" });
@@ -599,7 +659,7 @@ export class SessionView extends ItemView {
 		});
 		const btnRow = card.createDiv({ cls: "grill-btn-row grill-start-btn" });
 		const again = btnRow.createEl("button", { text: "Study again", cls: "mod-cta" });
-		again.onclick = () => void this.startSession();
+		again.onclick = () => void this.startSession(this.sessionMode);
 		const menu = btnRow.createEl("button", { text: "Back to menu" });
 		menu.onclick = () => {
 			this.sessionScope = null;
@@ -618,6 +678,12 @@ export class SessionView extends ItemView {
 	async startScopedSession(files: TFile[]): Promise<void> {
 		this.sessionScope = files;
 		await this.startSession();
+	}
+
+	/** Entry point for the "Connections review" command: bridge linked notes. */
+	async startConnectionsSession(files: TFile[] | null = null): Promise<void> {
+		this.sessionScope = files;
+		await this.startSession("connections");
 	}
 
 	/** Generate the next batch of questions and append them. At most one batch
@@ -639,6 +705,7 @@ export class SessionView extends ItemView {
 					this.contextImages,
 					this.sessionInstructions,
 					this.linksBlock,
+					this.sessionMode,
 				);
 				for (const q of qs) this.questions.push(q);
 			} finally {
@@ -677,7 +744,8 @@ export class SessionView extends ItemView {
 		if (this.questions.length < this.targetCount) void this.loadNextBatch().catch(() => undefined);
 	}
 
-	private async startSession(): Promise<void> {
+	private async startSession(mode: "standard" | "connections" = "standard"): Promise<void> {
+		this.sessionMode = mode;
 		const s = this.plugin.data.settings;
 		const needsKey = s.questionSource === "ai" || s.gradingMode === "ai";
 		const cfg = this.plugin.llmConfig();
@@ -694,15 +762,35 @@ export class SessionView extends ItemView {
 			return;
 		}
 		this.sessionStart = new Date();
-		this.renderLoading("Preparing your session", "Choosing which notes to quiz you on.");
+		this.renderLoading(
+			this.sessionMode === "connections" ? "Preparing a connections review" : "Preparing your session",
+			this.sessionMode === "connections"
+				? "Finding notes that link to each other."
+				: "Choosing which notes to quiz you on.",
+		);
 		try {
 			this.plugin.mastery = await this.plugin.store.loadMastery();
 			this.registry = await this.plugin.store.loadRegistry();
 			this.sessionInstructions = await this.plugin.store.loadInstructions();
 			this.byName = new Map(files.map((f) => [f.basename, f]));
 			const byName = this.byName;
-			const seed = pickCandidates([...byName.keys()], this.plugin.mastery, s.maxNotesPerSession);
-			const names = expandSelectionWithLinks(this.app, seed, byName, this.plugin.mastery, s.maxNotesPerSession);
+			let names: string[];
+			if (this.sessionMode === "connections") {
+				// Seed from the full priority order so we can walk the link graph freely.
+				const seed = pickCandidates([...byName.keys()], this.plugin.mastery, byName.size);
+				names = pickConnectedNotes(this.app, seed, byName, this.plugin.mastery, s.maxNotesPerSession);
+				if (names.length === 0) {
+					new Notice(
+						"Grill: a Connections review needs notes joined by [[links]], and none in this scope link to each other. Add some links, or run a standard session.",
+						10000,
+					);
+					this.renderStart();
+					return;
+				}
+			} else {
+				const seed = pickCandidates([...byName.keys()], this.plugin.mastery, s.maxNotesPerSession);
+				names = expandSelectionWithLinks(this.app, seed, byName, this.plugin.mastery, s.maxNotesPerSession);
+			}
 			const vision = !!cfg && s.questionSource === "ai" && s.sendImages && supportsVision(cfg.provider, cfg.model);
 			this.noteText = {};
 			this.noteImages = {};
@@ -735,7 +823,8 @@ export class SessionView extends ItemView {
 					"Do not write questions that depend on reading an image; quiz only on the text above.";
 			}
 			const selectedFiles = names.map((n) => byName.get(n)).filter((f): f is TFile => !!f);
-			this.linksBlock = formatLinksBlock(buildSessionGraph(this.app, selectedFiles), this.plugin.mastery);
+			const graph = buildSessionGraph(this.app, selectedFiles);
+			this.linksBlock = formatLinksBlock(graph, this.plugin.mastery);
 
 			// Concept layer: reconcile the extracted concepts (create new ones,
 			// re-open any whose source text changed), then pick which to test.
@@ -782,6 +871,7 @@ export class SessionView extends ItemView {
 					context: c.context,
 					targetDifficulty: conceptTargetDifficulty(this.concepts[c.id]),
 					activeMisconception,
+					connectTo: this.sessionMode === "connections" ? neighbourFor(graph, c.note, this.plugin.mastery) : undefined,
 				};
 			});
 
@@ -791,7 +881,10 @@ export class SessionView extends ItemView {
 				return;
 			}
 
-			this.renderLoading("Writing your questions", `${cfg!.model} is reading ${names.length} notes. This usually takes a few seconds.`);
+			this.renderLoading(
+				this.sessionMode === "connections" ? "Writing questions across your links" : "Writing your questions",
+				`${cfg!.model} is reading ${names.length} notes. This usually takes a few seconds.`,
+			);
 			await this.loadNextBatch();
 			if (this.questions.length === 0) {
 				new Notice("Grill: the model returned no usable questions.", 8000);

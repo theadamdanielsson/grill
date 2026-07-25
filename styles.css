@@ -47,6 +47,43 @@
 .grill-start-btn {
   margin-top: 0.75em;
 }
+/* Secondary CTA: the connections mode, offered beside the primary start button. */
+.grill-connections-btn {
+  width: 100%;
+  margin-top: 0.5em;
+  background: transparent;
+  border: 1px solid var(--interactive-accent);
+  color: var(--interactive-accent);
+}
+.grill-connections-btn:hover {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+/* Connections mode: the "A ↔ B" bridge badge on a question. */
+.grill-bridge {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  flex-wrap: wrap;
+  margin-bottom: 0.6em;
+}
+.grill-bridge-arrow {
+  color: var(--interactive-accent);
+  font-weight: var(--font-bold, 600);
+}
+/* End-of-session recap of the note-pairs bridged. */
+.grill-conn-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25em;
+}
+.grill-conn-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  flex-wrap: wrap;
+  font-size: var(--font-ui-small);
+}
 .grill-recent {
   display: flex;
   flex-direction: column;

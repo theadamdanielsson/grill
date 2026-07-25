@@ -96,6 +96,9 @@ export interface Question {
 	/** The concept this question tests, assigned by construction (not inferred).
 	 * Drives concept-level scheduling. */
 	conceptId?: string;
+	/** In a connections session, the linked note this question bridges to. Shown
+	 * to the student so the connection is legible; empty in a standard session. */
+	connectTo?: string;
 }
 
 export type Verdict = "correct" | "partial" | "incorrect";
@@ -525,6 +528,8 @@ export interface ConceptTarget {
 	targetDifficulty: "easy" | "medium" | "hard";
 	/** Canonical misconception tag to deliberately re-probe, if any. */
 	activeMisconception?: string;
+	/** In a connections session, the linked note to bridge this concept to. */
+	connectTo?: string;
 }
 
 function questionsSchema(): Record<string, unknown> {
@@ -591,11 +596,13 @@ export async function generateQuestions(
 	images: ImageInput[] = [],
 	instructions = "",
 	linksBlock = "",
+	mode: "standard" | "connections" = "standard",
 ): Promise<Question[]> {
 	const conceptList = targets
 		.map((t, i) => {
 			const reprobe = t.activeMisconception ? ` [re-probe confusion: ${t.activeMisconception}]` : "";
-			return `${i + 1}. [note "${t.note}"] concept: "${t.label}" (aim: ${t.targetDifficulty})${reprobe}\n   source: ${t.context.slice(0, 500)}`;
+			const connect = t.connectTo ? ` [connect to note "${t.connectTo}"]` : "";
+			return `${i + 1}. [note "${t.note}"] concept: "${t.label}" (aim: ${t.targetDifficulty})${reprobe}${connect}\n   source: ${t.context.slice(0, 500)}`;
 		})
 		.join("\n");
 	const user =
@@ -605,6 +612,12 @@ export async function generateQuestions(
 		`In each question object set 'n' to the concept's number below. ` +
 		`Test that specific concept, aim for its stated difficulty, and ground every question in the notes above.\n\n` +
 		`CONCEPTS:\n${conceptList}` +
+		(mode === "connections"
+			? "\n\nThis is a CONNECTIONS session. Where a concept names a linked note to connect to, write a question " +
+				"that tests the RELATIONSHIP between them: how one builds on, explains, contrasts with, causes, or depends " +
+				"on the other. A correct answer must require understanding how the two connect, not either note alone. Keep " +
+				"it a single focused question, and keep both sides grounded in and answerable from the notes above."
+			: "") +
 		(instructions
 			? "\n\nThe student wrote these preferences for how they want to be quizzed. Honour them unless they " +
 				"conflict with the rules above.\n" +
@@ -640,6 +653,7 @@ export async function generateQuestions(
 				tier3: cleanText(q.hints?.tier3 ?? ""),
 			},
 			targetsMisconception: (q.targetsMisconception ?? "").trim() || (t.activeMisconception ?? ""),
+			connectTo: t.connectTo,
 		});
 	}
 	if (!out.length) throw new Error("Model returned no usable questions");
