@@ -67,6 +67,29 @@
   flex-wrap: wrap;
   margin-bottom: 0.6em;
 }
+.grill-routed {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  flex-wrap: wrap;
+  margin-bottom: 0.6em;
+  padding-left: 0.6em;
+  border-left: 2px solid var(--interactive-accent);
+}
+.grill-confidence {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  flex-wrap: wrap;
+  margin: 0.2em 0 0.6em;
+}
+.grill-conf-btn {
+  font-size: 0.85em;
+  padding: 0.2em 0.6em;
+}
+.grill-debrief-calibration {
+  margin-top: 0.6em;
+}
 .grill-bridge-arrow {
   color: var(--interactive-accent);
   font-weight: var(--font-bold, 600);

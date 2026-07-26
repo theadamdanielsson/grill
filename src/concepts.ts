@@ -158,13 +158,24 @@ export function pickConcepts(concepts: Concept[], map: ConceptMap, cap: number, 
 export function noteAggregate(concepts: Concept[], map: ConceptMap): { aggStatus: NoteStatus; dueAt: string | null } {
 	const tested = concepts.filter((c) => conceptTested(map[c.id]));
 	if (tested.length === 0) return { aggStatus: "untested", dueAt: null };
-	const anyStruggling = tested.some((c) => statusOf(map[c.id]) === "struggling");
-	const coverage = tested.length / Math.max(1, concepts.length);
-	// "struggling" only when a tested concept is genuinely shaky; "known" only at
-	// high coverage; otherwise the tested parts are solid but the note is
-	// incomplete, so it reads "untested" (grey, not red) — its untested concepts
-	// still surface through selection. This avoids painting well-known-but-partly-
-	// -covered notes as struggling and flooding the due queue with coverage debt.
+	// A note is genuinely "struggling" (red) only when a tested concept has actually
+	// been missed — a broken streak with a recorded incorrect/partial — not merely
+	// because a concept is provisionally known after a single correct. Provisional
+	// concepts read as in-progress (grey), never red.
+	const anyStruggling = tested.some((c) => {
+		const cm = map[c.id];
+		// Genuinely shaky: the concept has been missed and is not yet re-confirmed as
+		// known. A clean provisional (one correct, never missed) stays grey, not red.
+		return !!cm && cm.incorrect + cm.partial > 0 && statusOf(cm) !== "known";
+	});
+	// Coverage counts CONFIRMED-known concepts (streak >= KNOWN_MIN_STREAK), not merely
+	// answered ones, so a note can't read "known" off one lucky answer per concept.
+	const known = concepts.filter((c) => statusOf(map[c.id]) === "known").length;
+	const coverage = known / Math.max(1, concepts.length);
+	// "known" only at high confirmed coverage; otherwise the tested parts are solid
+	// but the note is incomplete, so it reads "untested" (grey, not red) — its
+	// unconfirmed concepts still surface through selection. This avoids painting
+	// well-known-but-partly-covered notes as struggling and flooding the due queue.
 	const aggStatus: NoteStatus = anyStruggling ? "struggling" : coverage >= COVERAGE_KNOWN ? "known" : "untested";
 	let dueAt: string | null = null;
 	for (const c of tested) {

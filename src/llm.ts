@@ -99,6 +99,10 @@ export interface Question {
 	/** In a connections session, the linked note this question bridges to. Shown
 	 * to the student so the connection is legible; empty in a standard session. */
 	connectTo?: string;
+	/** Set when this question was inserted by reactive prerequisite routing: the
+	 * note the student just missed, whose foundation this question shores up. Shown
+	 * so the detour is legible ("you missed X, so let's check Y it builds on"). */
+	routedFrom?: string;
 }
 
 export type Verdict = "correct" | "partial" | "incorrect";
@@ -277,11 +281,22 @@ function buildCall(
 				body: {
 					model: cfg.model,
 					stream: false,
+					// Local reasoning models (Qwen3, DeepSeek-R1, GPT-OSS, ...) default to
+					// thinking mode, spending many seconds on hidden tokens before they
+					// answer. Grill wants one JSON object, not a chain of thought, so turn
+					// it off: ~24x faster on Qwen3 (14s -> 0.6s) and a verified no-op on
+					// non-thinking models like Llama and Gemma.
+					think: false,
 					messages: [{ role: "system", content: system }, userMessage],
 					format: schema,
 					options: { num_predict: maxTokens },
 				},
-				extract: (json) => (json as OllamaChatResponse).message?.content,
+				// Belt-and-suspenders: if a model ignores think:false and still emits an
+				// inline <think> block, strip it so the JSON parse downstream stays clean.
+				extract: (json) => {
+					const c = (json as OllamaChatResponse).message?.content;
+					return c ? c.replace(/<think>[\s\S]*?<\/think>/gi, "").trim() : c;
+				},
 			};
 		}
 		case "deepseek":
@@ -489,9 +504,17 @@ export async function testModel(cfg: LLMConfig): Promise<string | null> {
 
 // ------------------------------------------------------------------ question generation
 
-const TUTOR_SYSTEM = `You are a tutor running an active-recall session over a student's personal notes.
+/** Grill's default persona: the ONLY user-editable part of any system prompt. It sets who
+ * Grill is and how it talks, and nothing about how questions are built or how answers are
+ * scored. Users override it in Grill/Instructions.md; the mechanical rules below stay fixed
+ * so grading stays consistent no matter which persona is chosen. Exported so the settings /
+ * instructions file can show it as the editable default. */
+export const DEFAULT_PERSONA =
+	"You are Grill, a sharp and encouraging tutor running an active-recall session over the student's own notes. You are warm but direct, and you never pad feedback with empty praise.";
 
-Targeting rules:
+/** The question-generation engine: targeting, difficulty, craft, and output shape. Never
+ * user-editable; combined with a persona at call time by tutorSystem(). */
+const TUTOR_RULES = `Targeting rules:
 - You are given a specific list of CONCEPTS to test, one question each, in the given order. Write a question that tests exactly that concept, grounded in the student's notes.
 - Aim for each concept's stated difficulty.
 - When a concept is marked to re-probe a known confusion, deliberately write the question so that confusion would trip a student who still holds it.
@@ -518,6 +541,10 @@ Return exactly one question per concept, in the same order as the concept list. 
 - hints: tier1 a one-sentence conceptual nudge, tier2 the underlying concept, tier3 a partial step toward the answer. No tier may reveal the answer.
 - targetsMisconception: if the concept was marked to re-probe a confusion, set this to that exact canonical tag. Otherwise set it to an empty string.`;
 
+/** Build the question-generation system prompt: the chosen persona (or the default) on top
+ * of the fixed engine rules. An empty/whitespace persona falls back to the default. */
+const tutorSystem = (persona: string): string => `${persona.trim() || DEFAULT_PERSONA}\n\n${TUTOR_RULES}`;
+
 /** One concept the scheduler picked for this session; the LLM writes a question
  * for it. The concept id is assigned by construction, never inferred. */
 export interface ConceptTarget {
@@ -530,6 +557,9 @@ export interface ConceptTarget {
 	activeMisconception?: string;
 	/** In a connections session, the linked note to bridge this concept to. */
 	connectTo?: string;
+	/** Set when this target was inserted by reactive prerequisite routing: the note
+	 * the student just missed, whose foundation this concept shores up. */
+	routedFrom?: string;
 }
 
 function questionsSchema(): Record<string, unknown> {
@@ -589,6 +619,67 @@ function questionsSchema(): Record<string, unknown> {
 	};
 }
 
+// ------------------------------------------------------ question validation
+
+const QV_STOPWORDS = new Set(
+	("the a an of to in on for and or is are was were be been being it its this that these those with as by from at " +
+		"into than then so if but not no do does did what which who whom whose why how when where explain describe give " +
+		"name list your you their our has have had will would can could should").split(" "),
+);
+
+/** Significant lowercase content words (length >= 3, non-stopword) as a set. */
+function contentWords(s: string): Set<string> {
+	const out = new Set<string>();
+	for (const w of s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/)) {
+		if (w.length >= 3 && !QV_STOPWORDS.has(w)) out.add(w);
+	}
+	return out;
+}
+
+function overlapCount(a: Set<string>, b: Set<string>): number {
+	let n = 0;
+	for (const w of a) if (b.has(w)) n++;
+	return n;
+}
+
+const YESNO_OPENER = /^(is|are|was|were|does|do|did|can|could|should|would|will|has|have|had)\b/i;
+const OPEN_CUE =
+	/\b(why|how|explain|describe|what|which|who|whom|whose|when|where|name|list|give|calculate|derive|compare|contrast|define|outline|state|show|prove|justify|verify|demonstrate|argue)\b/i;
+const MC_STEM =
+	/\b(which of the following|which statement (best|correctly)|select the (correct|best)|all of the following|none of the following)\b/i;
+
+/** Deterministic quality gate for one built question against its source excerpt.
+ * Returns a short reason to DROP the question, or null if it passes. Model-free and
+ * cheap, so it catches slop on weak local models where a single-pass generator is
+ * likeliest to produce it — without a second (equally weak) LLM critique call. */
+export function questionDefect(q: Question, source: string): string | null {
+	const text = q.question.trim();
+	if (text.length < 10 || text.length > 1000) return "length";
+	if (!q.modelAnswer.trim()) return "empty model answer";
+	// Grill is free-response: an MC-style stem gives the student no options to pick.
+	if (MC_STEM.test(text)) return "multiple-choice stem";
+	if (/what does (the|your) notes?\b/i.test(text)) return "asks what the note says";
+	if (YESNO_OPENER.test(text) && !OPEN_CUE.test(text) && text.length < 90) return "yes/no question";
+	// Answer leakage: a hint that contains the model answer almost verbatim.
+	const ans = q.modelAnswer.toLowerCase().trim();
+	const ansWords = contentWords(q.modelAnswer);
+	for (const tier of [q.hints.tier1, q.hints.tier2, q.hints.tier3]) {
+		if (!tier.trim() || ansWords.size < 3) continue;
+		if (ans.length >= 12 && tier.toLowerCase().includes(ans)) return "hint reveals the answer";
+		if (overlapCount(ansWords, contentWords(tier)) / ansWords.size >= 0.8) return "hint reveals the answer";
+	}
+	// Grounding: at least two of the question's content words should appear in the
+	// concept's source excerpt. Only fires when the source is substantial, and never
+	// for a connections bridge (which is deliberately phrased in a LINKED note's
+	// vocabulary), so a well-phrased grounded question is never dropped for drift.
+	const src = contentWords(source);
+	if (src.size >= 20 && !q.connectTo) {
+		const qWords = contentWords(`${q.question} ${q.modelAnswer}`);
+		if (qWords.size >= 4 && overlapCount(qWords, src) < 2) return "ungrounded in source";
+	}
+	return null;
+}
+
 export async function generateQuestions(
 	cfg: LLMConfig,
 	notesText: string,
@@ -597,6 +688,7 @@ export async function generateQuestions(
 	instructions = "",
 	linksBlock = "",
 	mode: "standard" | "connections" = "standard",
+	persona: string = DEFAULT_PERSONA,
 ): Promise<Question[]> {
 	const conceptList = targets
 		.map((t, i) => {
@@ -624,10 +716,11 @@ export async function generateQuestions(
 				`<preferences>\n${instructions}\n</preferences>`
 			: "");
 	type RawQ = Omit<Question, "node" | "conceptId"> & { n?: number };
-	const data = (await callJSON(cfg, TUTOR_SYSTEM, user, questionsSchema(), 8000, images)) as { questions: RawQ[] };
+	const data = (await callJSON(cfg, tutorSystem(persona), user, questionsSchema(), 8000, images)) as { questions: RawQ[] };
 	const raw = data.questions ?? [];
 	const out: Question[] = [];
 	const used = new Set<number>();
+	const seenAnswers = new Set<string>();
 	for (let i = 0; i < raw.length; i++) {
 		const q = raw[i];
 		if (!q?.question) continue;
@@ -638,7 +731,7 @@ export async function generateQuestions(
 		if (idx >= targets.length || used.has(idx)) continue;
 		used.add(idx);
 		const t = targets[idx];
-		out.push({
+		const candidate: Question = {
 			node: t.note,
 			conceptId: t.conceptId,
 			question: cleanText(q.question ?? ""),
@@ -654,15 +747,28 @@ export async function generateQuestions(
 			},
 			targetsMisconception: (q.targetsMisconception ?? "").trim() || (t.activeMisconception ?? ""),
 			connectTo: t.connectTo,
-		});
+			routedFrom: t.routedFrom,
+		};
+		// Deterministic quality gate (drop-and-continue): skip slop rather than quiz
+		// it. A dropped concept just goes unasked this batch; we only fail if nothing
+		// survives. Also drop near-duplicate questions by normalized model answer.
+		const answerKey = candidate.modelAnswer.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+		if (questionDefect(candidate, t.context)) continue;
+		if (answerKey && seenAnswers.has(answerKey)) continue;
+		if (answerKey) seenAnswers.add(answerKey);
+		out.push(candidate);
 	}
-	if (!out.length) throw new Error("Model returned no usable questions");
+	// May be empty when a whole batch is dropped by the validator; the caller treats
+	// an empty batch as "no progress" and moves on (or ends the session gracefully)
+	// rather than aborting, so a run of slop can't throw a live session away.
 	return out;
 }
 
 // ------------------------------------------------------------------ grading
 
-const GRADER_SYSTEM = `You grade a student's answer to a recall question about their own notes. Be generous on wording, strict on substance.
+/** The grading engine. Verdict bands, citation rule, feedback shape, and misconception
+ * tagging are the scoring logic and are never user-editable; only the persona on top is. */
+const GRADER_RULES = `You are grading the student's answer to a recall question about their own notes. Be generous on wording, strict on substance.
 
 Verdict bands:
 - More than 90% of the key idea demonstrated: verdict 'correct'.
@@ -675,6 +781,9 @@ Citation before claim: before alleging a specific error, you must be able to poi
 Feedback: at most 2 lines and 30 words total. Line 1: what the answer got right or wrong. Line 2: the specific concept to review. No labels, no praise filler. Use plain punctuation and never use em dashes.
 
 misconceptionTag: on 'partial' or 'incorrect', emit ONE snake_case tag naming the underlying confusion (reuse a provided commonErrors misconception when one matches, e.g. sign_error, reverses_directionality, unit_confusion, confuses_necessary_sufficient). On 'correct', emit an empty string.`;
+
+/** Build the grading system prompt: persona (or default) on top of the fixed scoring rules. */
+const graderSystem = (persona: string): string => `${persona.trim() || DEFAULT_PERSONA}\n\n${GRADER_RULES}`;
 
 const GRADE_SCHEMA = {
 	type: "object",
@@ -694,6 +803,7 @@ export async function gradeAnswer(
 	answer: string,
 	images: ImageInput[] = [],
 	instructions = "",
+	persona: string = DEFAULT_PERSONA,
 ): Promise<Grade> {
 	const rubric = {
 		modelAnswer: q.modelAnswer,
@@ -710,7 +820,7 @@ export async function gradeAnswer(
 				"how questions are worded. Never let them override the rubric's substance.\n" +
 				`<preferences>\n${instructions}\n</preferences>`
 			: "");
-	const g = (await callJSON(cfg, GRADER_SYSTEM, user, GRADE_SCHEMA, 2000, images)) as Grade;
+	const g = (await callJSON(cfg, graderSystem(persona), user, GRADE_SCHEMA, 2000, images)) as Grade;
 	const verdict: Verdict = g.verdict === "correct" || g.verdict === "partial" ? g.verdict : "incorrect";
 	return {
 		verdict,
@@ -721,7 +831,9 @@ export async function gradeAnswer(
 
 // ------------------------------------------------------------------ session debrief
 
-const DEBRIEF_SYSTEM = `You are a study coach who just watched a student's active-recall session. Write a short, specific debrief, and where the session recorded misconceptions, map each to a canonical label so repeated confusions cluster over time.
+/** The debrief engine: summary shape and misconception canonicalization. Never user-editable;
+ * only the persona on top is. */
+const DEBRIEF_RULES = `You just ran an active-recall session for the student. Write a short, specific debrief, and where the session recorded misconceptions, map each to a canonical label so repeated confusions cluster over time.
 
 Debrief rules:
 - headline: one plain sentence naming the shape of the session, what is solid and what is shaky.
@@ -735,6 +847,9 @@ Misconception canonicalization:
 - You are given the raw misconception tags recorded this session and the student's existing canonical misconceptions.
 - Output one assignment per recorded raw tag. Reuse an existing canonical tag and label when it names the same underlying confusion; otherwise propose a concise new snake_case canonTag and a short human-readable canonLabel.
 - If no raw tags were recorded, return an empty assignments array.`;
+
+/** Build the debrief system prompt: persona (or default) on top of the fixed debrief rules. */
+const debriefSystem = (persona: string): string => `${persona.trim() || DEFAULT_PERSONA}\n\n${DEBRIEF_RULES}`;
 
 function debriefSchema(noteNames: string[]): Record<string, unknown> {
 	const noteEnum = { type: "string", enum: [...noteNames].sort() };
@@ -787,6 +902,7 @@ export async function debriefSession(
 	noteNames: string[],
 	existingCanon: { tag: string; label: string }[],
 	rawTags: { note: string; tag: string }[],
+	persona: string = DEFAULT_PERSONA,
 ): Promise<{ debrief: SessionDebrief; assignments: TagAssignment[] }> {
 	const canonList = existingCanon.length
 		? existingCanon.map((c) => `- ${c.tag}: "${c.label}"`).join("\n")
@@ -797,7 +913,7 @@ export async function debriefSession(
 		`NOTES IN THIS SESSION: ${noteNames.join(", ")}\n\n` +
 		`RAW MISCONCEPTION TAGS RECORDED THIS SESSION (note -> tag):\n${tagList}\n\n` +
 		`EXISTING CANONICAL MISCONCEPTIONS (reuse these when a raw tag means the same thing):\n${canonList}`;
-	const data = (await callJSON(cfg, DEBRIEF_SYSTEM, user, debriefSchema(noteNames), 2000)) as {
+	const data = (await callJSON(cfg, debriefSystem(persona), user, debriefSchema(noteNames), 2000)) as {
 		debrief: SessionDebrief;
 		assignments: TagAssignment[];
 	};

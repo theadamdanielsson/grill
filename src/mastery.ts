@@ -30,6 +30,12 @@ export type MasteryMap = Record<string, NoteMastery>;
 
 export type NoteStatus = "untested" | "struggling" | "known";
 
+/** Anti-luck: a concept is only "known" once it has been recalled correctly this
+ * many times in a row. One lucky answer on a stochastically-generated question is
+ * not mastery, so a single correct leaves the concept provisional (still in
+ * rotation) until a second recall corroborates it. */
+export const KNOWN_MIN_STREAK = 2;
+
 export function emptyMastery(): NoteMastery {
 	return {
 		correct: 0,
@@ -74,7 +80,8 @@ export function statusOf(m: (Schedulable & { aggStatus?: NoteStatus }) | undefin
 	if (!m) return "untested";
 	if (m.aggStatus) return m.aggStatus;
 	if (m.correct === 0 && m.incorrect === 0 && m.partial === 0) return "untested";
-	return m.streak >= 1 ? "known" : "struggling";
+	// Corroboration required: one correct answer is provisional, not mastery.
+	return m.streak >= KNOWN_MIN_STREAK ? "known" : "struggling";
 }
 
 // ---------------------------------------------------------------- FSRS-4.5

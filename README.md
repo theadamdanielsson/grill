@@ -76,13 +76,31 @@ you keep getting wrong, your coverage per note, and a heatmap of your reviews.
 Your API key and the settings sit in the plugin's own data, not scattered through your
 notes.
 
+## How it adapts
+
+Miss a question and Grill doesn't just mark it wrong and move on. If the note you missed
+builds on another through your `[[links]]`, and you're shaky on that foundation, Grill pulls
+it in next, quizzes you on it, and tells you why you were sent there, then carries on where
+you left off. A wrong answer is a signal about what you're missing underneath, not just a
+score.
+
+It's also fussy about its own questions. Before one reaches you it's checked for the usual
+model slop, yes/no questions, hints that give the game away, questions that aren't actually
+grounded in your note, and quietly dropped if it fails. No extra model call, so it works the
+same on a local model as on a paid one.
+
 ## Telling it how to quiz you
 
-There's a file at `Grill/Instructions.md` (open it from the settings, or the "Open question
-instructions" command) where you write, in plain sentences, how you want to be quizzed and
-graded. "Prefer numeric problems." "Ask me to explain things in my own words." "Be strict on
-terminology." "Accept bullet-point answers." Whatever's there gets folded into every session.
-Leave it blank and you get the defaults.
+There's a file at `Grill/Instructions.md` (open it from the settings, or the "Open persona &
+instructions" command) with two parts. **Persona** is who Grill is and how it talks: the
+default is shown there, editable, so you can turn it into a strict examiner, a gentle Socratic
+guide, a blunt drill sergeant, whatever you like. **Instructions** is how you want to be
+quizzed and graded, in plain sentences: "Prefer numeric problems." "Ask me to explain things
+in my own words." "Be strict on terminology." "Accept bullet-point answers." Both get folded
+into every session; leave them blank for the defaults.
+
+Changing the persona only changes Grill's voice. How questions are built and how answers are
+scored is fixed by the engine, so your grades stay consistent no matter what you write.
 
 ## Colouring the graph by what you know
 
@@ -107,6 +125,9 @@ questions, both of which you set.
 
 Ollama is the exception. It runs on your machine, so nothing leaves it. The catch is that
 small local models write worse questions than the paid ones. 8B or bigger is fine.
+
+Not sure which model to use, with a key or without? See [docs/models.md](docs/models.md) for
+recommendations by budget and by how much RAM your machine has.
 
 ## Worth knowing before you install
 

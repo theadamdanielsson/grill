@@ -10,6 +10,7 @@
 
 import { App, TFile, normalizePath } from "obsidian";
 import { MasteryMap, NoteMastery, Verdict, normalizeMastery, statusOf } from "./mastery";
+import { DEFAULT_PERSONA } from "./llm";
 import { MisconceptionRegistry, SessionDebrief } from "./debrief";
 import { ConceptMap } from "./concepts";
 
@@ -58,31 +59,61 @@ export class GrillStore {
 	private static readonly INSTRUCTIONS_CAP = 2000;
 
 	private static readonly INSTRUCTIONS_TEMPLATE = [
-		"<!-- Grill reads this file and follows what you write here when it makes and marks",
-		"     your questions. Write plain sentences. Delete this comment or leave it: the",
-		"     commented part is ignored, only your own text below is sent to the model.",
+		"## Persona",
+		"<!-- This is who Grill is and how it talks to you. Rewrite the line below to change",
+		"     Grill's character: a strict examiner, a gentle Socratic guide, a blunt drill",
+		"     sergeant, whatever suits you. This changes only Grill's voice. How questions are",
+		"     built and how your answers are scored is fixed by the engine, so your grades stay",
+		"     consistent no matter what you write here. Leave it blank to use the default. -->",
+		"",
+		DEFAULT_PERSONA,
+		"",
+		"## Preferences",
+		"<!-- Plain sentences telling Grill how you want to be quizzed and graded: question",
+		"     style, format, difficulty, strictness. Leave blank for the defaults.",
 		"",
 		"     Examples you might write:",
 		'       "Prefer short numeric problems over definitions."',
 		'       "Ask me to explain concepts in my own words."',
 		'       "Be strict on exact terminology."',
 		'       "Accept bullet-point answers, do not mark me down for phrasing."',
-		"     Keep it under a page; long instructions cost more tokens every session. -->",
+		"     Keep it short; long text costs more tokens every session. -->",
 		"",
 		"",
 	].join("\n");
 
-	/** The user's question/grading preferences, with the how-to comments stripped and
-	 * length-capped. Empty when the file is absent or only the template comment remains. */
-	async loadInstructions(): Promise<string> {
+	/** The user's persona override and question/grading preferences, parsed from the two
+	 * "## Persona" / "## Preferences" sections, with how-to comments stripped and each section
+	 * length-capped. An empty persona means "use the engine default". Files written before this
+	 * format (no headings) are read as all-preferences, preserving old behavior. */
+	async loadInstructions(): Promise<{ persona: string; preferences: string }> {
+		const empty = { persona: "", preferences: "" };
 		const path = this.instructionsPath();
-		if (!(await this.app.vault.adapter.exists(path))) return "";
+		if (!(await this.app.vault.adapter.exists(path))) return empty;
 		try {
 			const raw = await this.app.vault.adapter.read(path);
-			const stripped = raw.replace(/<!--[\s\S]*?-->/g, "").trim();
-			return stripped.slice(0, GrillStore.INSTRUCTIONS_CAP);
+			const cap = GrillStore.INSTRUCTIONS_CAP;
+			const strip = (s: string) => s.replace(/<!--[\s\S]*?-->/g, "").trim();
+			const lower = raw.toLowerCase();
+			const pIdx = lower.indexOf("## persona");
+			const fIdx = lower.indexOf("## preferences");
+			// Legacy file with no section headings: treat the whole thing as preferences.
+			if (pIdx === -1 && fIdx === -1) {
+				return { persona: "", preferences: strip(raw).slice(0, cap) };
+			}
+			let persona = "";
+			let preferences = "";
+			if (pIdx !== -1) {
+				const end = fIdx > pIdx ? fIdx : raw.length;
+				persona = strip(raw.slice(pIdx + "## persona".length, end));
+			}
+			if (fIdx !== -1) {
+				const end = pIdx > fIdx ? pIdx : raw.length;
+				preferences = strip(raw.slice(fIdx + "## preferences".length, end));
+			}
+			return { persona: persona.slice(0, cap), preferences: preferences.slice(0, cap) };
 		} catch {
-			return "";
+			return empty;
 		}
 	}
 

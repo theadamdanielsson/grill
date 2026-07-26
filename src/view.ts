@@ -6,7 +6,9 @@ import { ConceptTarget, debriefSession, generateQuestions, gradeAnswer, Question
 import { Concept, extractConcepts, localQuestions } from "./generate-local";
 import {
 	ConceptMap,
+	ConceptMastery,
 	conceptTargetDifficulty,
+	conceptTested,
 	noteAggregate,
 	pickConcepts,
 	recordConceptAnswer,
@@ -14,7 +16,7 @@ import {
 	reconcileConcepts,
 } from "./concepts";
 import { collectNoteImages, ImageInput } from "./images";
-import { NoteMastery, pickCandidates, Rating, recordNoteStats, statusOf } from "./mastery";
+import { NoteMastery, pickCandidates, QDifficulty, Rating, recordNoteStats, statusOf } from "./mastery";
 import {
 	buildSessionGraph,
 	expandSelectionWithLinks,
@@ -22,6 +24,7 @@ import {
 	neighbourFor,
 	outgoingBasenames,
 	pickConnectedNotes,
+	SessionGraph,
 } from "./links";
 import {
 	activeMisconceptionsByNote,
@@ -33,6 +36,7 @@ import {
 	topMisconceptions,
 } from "./debrief";
 import { decodeScope, dueFiles, encodeScope, filesForScope, listFolders, listTags } from "./scope";
+import { CONFIDENCE_LEVELS, calibrationLine, pushCalibration } from "./calibration";
 import { SessionEntry } from "./store";
 
 export const VIEW_TYPE = "grill-session";
@@ -45,6 +49,9 @@ const BATCH = 2;
  * so a screenshot-heavy vault doesn't run up a huge image-token bill. */
 const IMAGES_PER_NOTE_CAP = 4;
 const CONTEXT_IMAGE_CAP = 12;
+/** Reactive prerequisite routing: most detours inserted per session, so a run of
+ * wrong answers can't balloon the session or chain endlessly down the link graph. */
+const MAX_ROUTES = 3;
 
 interface QuestionResult extends SessionEntry {
 	hintsUsed: number;
@@ -91,10 +98,26 @@ export class SessionView extends ItemView {
 	private noteImages: Record<string, ImageInput[]> = {};
 	/** Flat image list for question generation (all notes in the session). */
 	private contextImages: ImageInput[] = [];
+	/** The user's persona override (Grill/Instructions.md), or "" to use the engine default. */
+	private sessionPersona = "";
 	/** The user's question/grading preferences (Grill/Instructions.md), if any. */
 	private sessionInstructions = "";
 	/** In-flight batch generation, if any. */
 	private pending: Promise<void> | null = null;
+	/** Reactive routing budget: detours spent, and prerequisites already routed to
+	 * (so the same foundation isn't inserted twice in one session). */
+	private routesUsed = 0;
+	private routedNotes = new Set<string>();
+	/** How many of `targets` have been handed to generation so far. Tracked separately
+	 * from `questions.length` because the quality validator can drop a generated
+	 * question, so one target need not yield exactly one question — keying the next
+	 * batch off questions.length would re-generate (and duplicate) already-tried
+	 * concepts. `questions` is just the delivered queue; it is NOT positionally
+	 * coupled to `targets`. */
+	private planCursor = 0;
+	/** The confidence the user picked for the current question (0..1), or null. Only
+	 * used when the confidence check is on; captured into calibration on grade. */
+	private pendingConfidence: number | null = null;
 
 	constructor(leaf: WorkspaceLeaf, plugin: GrillPlugin) {
 		super(leaf);
@@ -415,6 +438,7 @@ export class SessionView extends ItemView {
 	private renderQuestion(): void {
 		const wrap = this.root();
 		this.progressBar(wrap);
+		this.pendingConfidence = null;
 		const q = this.questions[this.idx];
 		const card = wrap.createDiv({ cls: "grill-body" });
 		const meta = card.createDiv({ cls: "grill-meta-row" });
@@ -435,6 +459,19 @@ export class SessionView extends ItemView {
 			}
 		}
 
+		// Reactive routing: make the detour legible ("you missed X, so here's a
+		// foundation it builds on"). Honour "hide note name" so we never leak it.
+		if (q.routedFrom) {
+			const routed = card.createDiv({ cls: "grill-routed" });
+			if (this.plugin.data.settings.hideNoteName) {
+				routed.createSpan({ cls: "grill-meta", text: "Shoring up a foundation of the note you just missed" });
+			} else {
+				routed.createSpan({ cls: "grill-meta", text: "You missed" });
+				routed.createSpan({ cls: "grill-chip", text: q.routedFrom });
+				routed.createSpan({ cls: "grill-meta", text: "— checking a foundation it builds on" });
+			}
+		}
+
 		const qEl = card.createDiv({ cls: "grill-question" });
 		this.md(q.question, qEl);
 
@@ -452,6 +489,23 @@ export class SessionView extends ItemView {
 					: "Answer from memory... (Cmd/Ctrl+Enter to submit)",
 			},
 		});
+		// Confidence check (opt-in, AI grading only): predict how sure you are before
+		// the grade lands, so calibration compares your confidence to an objective mark.
+		if (this.plugin.data.settings.confidenceCheck && !selfGrade) {
+			const conf = card.createDiv({ cls: "grill-confidence" });
+			conf.createSpan({ cls: "grill-meta", text: "How sure are you?" });
+			const btns: HTMLButtonElement[] = [];
+			for (const lvl of CONFIDENCE_LEVELS) {
+				const b = conf.createEl("button", { text: lvl.label, cls: "grill-conf-btn" });
+				b.onclick = () => {
+					this.pendingConfidence = lvl.value;
+					for (const other of btns) other.removeClass("mod-cta");
+					b.addClass("mod-cta");
+				};
+				btns.push(b);
+			}
+		}
+
 		const row = card.createDiv({ cls: "grill-btn-row" });
 		const submit = row.createEl("button", { text: selfGrade ? "Show answer" : "Submit", cls: "mod-cta" });
 		if (hints.length) {
@@ -545,7 +599,7 @@ export class SessionView extends ItemView {
 					})
 					.join("\n");
 				const existingCanon = Object.values(reg).map((c) => ({ tag: c.tag, label: c.label }));
-				const out = await debriefSession(cfg, transcript, sessionNodes, existingCanon, rawTags);
+				const out = await debriefSession(cfg, transcript, sessionNodes, existingCanon, rawTags, this.sessionPersona);
 				debrief = out.debrief;
 				if (out.assignments.length) {
 					mergeAssignments(reg, out.assignments);
@@ -600,6 +654,11 @@ export class SessionView extends ItemView {
 				const chip = nf.createSpan({ cls: "grill-chip grill-chip-link", text: name });
 				chip.onclick = () => this.openNote(name);
 			}
+		}
+		// Metacognitive calibration (opt-in): over/underconfidence across recent answers.
+		if (this.plugin.data.settings.confidenceCheck) {
+			const line = calibrationLine(this.plugin.data.calibration);
+			if (line) this.md(line, box.createDiv({ cls: "grill-debrief-calibration grill-meta" }));
 		}
 	}
 
@@ -691,23 +750,33 @@ export class SessionView extends ItemView {
 	private loadNextBatch(): Promise<void> {
 		if (this.pending) return this.pending;
 		if (this.questions.length >= this.targetCount) return Promise.resolve();
+		if (this.planCursor >= this.targets.length) return Promise.resolve();
 		const cfg = this.plugin.llmConfig();
 		if (!cfg) return Promise.resolve();
-		// The scheduler already picked the concepts; generate the next slice of them.
-		const batch = this.targets.slice(this.questions.length, this.questions.length + BATCH);
-		if (!batch.length) return Promise.resolve();
 		const run = async (): Promise<void> => {
 			try {
-				const qs = await generateQuestions(
-					cfg,
-					this.notesConcat,
-					batch,
-					this.contextImages,
-					this.sessionInstructions,
-					this.linksBlock,
-					this.sessionMode,
-				);
-				for (const q of qs) this.questions.push(q);
+				// Pull plan batches from the cursor until at least one question is
+				// produced (a batch can be fully dropped by the validator) or the plan is
+				// exhausted. Advance the cursor by targets consumed, not questions
+				// produced, so drops never cause a concept to be generated twice.
+				while (this.planCursor < this.targets.length && this.questions.length < this.targetCount) {
+					const batch = this.targets.slice(this.planCursor, this.planCursor + BATCH);
+					this.planCursor += batch.length;
+					const qs = await generateQuestions(
+						cfg,
+						this.notesConcat,
+						batch,
+						this.contextImages,
+						this.sessionInstructions,
+						this.linksBlock,
+						this.sessionMode,
+						this.sessionPersona,
+					);
+					if (qs.length) {
+						for (const q of qs) this.questions.push(q);
+						break;
+					}
+				}
 			} finally {
 				this.pending = null;
 			}
@@ -771,7 +840,9 @@ export class SessionView extends ItemView {
 		try {
 			this.plugin.mastery = await this.plugin.store.loadMastery();
 			this.registry = await this.plugin.store.loadRegistry();
-			this.sessionInstructions = await this.plugin.store.loadInstructions();
+			const instr = await this.plugin.store.loadInstructions();
+			this.sessionPersona = instr.persona;
+			this.sessionInstructions = instr.preferences;
 			this.byName = new Map(files.map((f) => [f.basename, f]));
 			const byName = this.byName;
 			let names: string[];
@@ -837,6 +908,9 @@ export class SessionView extends ItemView {
 			this.results = [];
 			this.idx = 0;
 			this.pending = null;
+			this.routesUsed = 0;
+			this.routedNotes.clear();
+			this.planCursor = 0;
 			const want = Math.max(1, s.questionsPerSession);
 
 			// No-key mode can only use concepts that carry a deterministic question.
@@ -869,7 +943,7 @@ export class SessionView extends ItemView {
 					note: c.note,
 					label: c.label,
 					context: c.context,
-					targetDifficulty: conceptTargetDifficulty(this.concepts[c.id]),
+					targetDifficulty: this.seedDifficulty(this.concepts[c.id], c.note, graph),
 					activeMisconception,
 					connectTo: this.sessionMode === "connections" ? neighbourFor(graph, c.note, this.plugin.mastery) : undefined,
 				};
@@ -920,6 +994,7 @@ export class SessionView extends ItemView {
 					answer,
 					this.noteImages[q.node] ?? [],
 					this.sessionInstructions,
+					this.sessionPersona,
 				);
 				verdict = g.verdict;
 				feedback = g.feedback;
@@ -931,6 +1006,9 @@ export class SessionView extends ItemView {
 			}
 		}
 		await this.applyGrade(q, verdict, null, misconceptionTag || undefined);
+		this.captureConfidence(verdict);
+		// Missed it: route to a weak prerequisite next, if this note builds on one.
+		if (verdict === "incorrect") this.maybeRouteToPrerequisite(q.node);
 		// Re-probed a known confusion and got it right: mark it resolved.
 		if (q.targetsMisconception && verdict === "correct" && this.registry[q.targetsMisconception]) {
 			resolveMisconception(this.registry, q.targetsMisconception);
@@ -1055,10 +1133,100 @@ export class SessionView extends ItemView {
 		}
 	}
 
+	/** Structural difficulty seed: a brand-new (untested) concept starts one rung up
+	 * (medium, not easy) when its note builds only on foundations the student has
+	 * already confirmed. No point lobbing the easiest possible question at an advanced
+	 * note whose prerequisites are solid. Seeds DIFFICULTY only, never mastery, so it
+	 * can't create a coverage illusion; any shaky prerequisite keeps it easy. */
+	private seedDifficulty(cm: ConceptMastery | undefined, note: string, graph: SessionGraph): QDifficulty {
+		const base = conceptTargetDifficulty(cm);
+		if (base !== "easy" || conceptTested(cm)) return base; // only seed the first exposure
+		const prereqs = graph.adjacency[note]?.linksTo ?? [];
+		if (!prereqs.length) return base;
+		const statuses = prereqs.map((p) => statusOf(this.plugin.mastery[p]));
+		if (statuses.some((s) => s === "struggling")) return "easy"; // shaky foundation: stay easy
+		return statuses.some((s) => s === "known") ? "medium" : base; // a solid foundation: start up
+	}
+
+	/** Record the current question's confidence-vs-outcome point, if the confidence
+	 * check is on and the user picked a level. Persists immediately so it survives a
+	 * mid-session close. */
+	private captureConfidence(verdict: Verdict): void {
+		if (!this.plugin.data.settings.confidenceCheck || this.pendingConfidence === null) return;
+		const ok = verdict === "correct" ? 1 : verdict === "partial" ? 0.5 : 0;
+		pushCalibration(this.plugin.data.calibration, this.pendingConfidence, ok);
+		this.pendingConfidence = null;
+		void this.plugin.persist();
+	}
+
+	/** Weakness rank for a note: struggling (0) before untested (1) before known (2). */
+	private noteWeakness(note: string): number {
+		const st = statusOf(this.plugin.mastery[note]);
+		return st === "struggling" ? 0 : st === "untested" ? 1 : 2;
+	}
+
+	/** Reactive DOWN-on-failure routing: after a wrong answer, if the missed note
+	 * builds on a prerequisite the student is weak on, insert a question about that
+	 * prerequisite next so they shore up the foundation before moving on. Bounded to
+	 * MAX_ROUTES per session, never the same prerequisite twice, and only when the
+	 * prerequisite is in this session with a weak, not-already-planned concept. */
+	private maybeRouteToPrerequisite(fromNote: string): void {
+		if (this.routesUsed >= MAX_ROUTES) return;
+		const file = this.byName.get(fromNote);
+		if (!file) return;
+		const local = this.plugin.data.settings.questionSource === "local";
+		const planned = new Set(this.targets.map((t) => t.conceptId));
+		const prereqs = outgoingBasenames(this.app, file)
+			.filter((p) => p !== fromNote && this.byName.has(p) && !this.routedNotes.has(p))
+			.sort((a, b) => this.noteWeakness(a) - this.noteWeakness(b));
+		for (const p of prereqs) {
+			if (this.noteWeakness(p) === 2) break; // sorted weakest-first: the rest are known
+			const concept = (this.conceptsByNote.get(p) ?? []).find(
+				(c) => !planned.has(c.id) && (!local || c.local) && statusOf(this.concepts[c.id]) !== "known",
+			);
+			if (!concept) continue;
+			if (this.insertRoutedTarget(concept, fromNote, local)) {
+				this.routedNotes.add(p);
+				this.routesUsed += 1;
+				return;
+			}
+			// Couldn't build a question for this prerequisite; try the next one.
+		}
+	}
+
+	/** Splice a routed prerequisite concept in as the next question, preserving the
+	 * targets<->questions position coupling. Returns false if it couldn't build one. */
+	private insertRoutedTarget(concept: Concept, fromNote: string, local: boolean): boolean {
+		const target: ConceptTarget = {
+			conceptId: concept.id,
+			note: concept.note,
+			label: concept.label,
+			context: concept.context,
+			targetDifficulty: "easy", // a shaky foundation: plain recall
+			routedFrom: fromNote,
+		};
+		if (local) {
+			// No lazy generation in no-key mode: build the deterministic question now
+			// and splice it in as the very next question.
+			const built = localQuestions([concept], 1);
+			if (!built.length) return false; // no deterministic question for this concept
+			built[0].routedFrom = fromNote;
+			this.questions.splice(this.idx + 1, 0, built[0]);
+		} else {
+			// AI mode: put the prerequisite at the front of the not-yet-generated plan
+			// so it is the next question written. `questions` is not positionally coupled
+			// to `targets`, so this cannot desync a prefetch that is already in flight.
+			this.targets.splice(this.planCursor, 0, target);
+		}
+		this.targetCount += 1;
+		return true;
+	}
+
 	private async recordSelfGrade(rating: Rating, answer: string, gaveUp: boolean, hintsUsed: number): Promise<void> {
 		const q = this.questions[this.idx];
 		const verdict: Verdict = rating === 1 ? "incorrect" : rating === 2 ? "partial" : "correct";
 		await this.applyGrade(q, verdict, rating, undefined);
+		if (verdict === "incorrect") this.maybeRouteToPrerequisite(q.node);
 		if (q.targetsMisconception && verdict === "correct" && this.registry[q.targetsMisconception]) {
 			resolveMisconception(this.registry, q.targetsMisconception);
 			this.dirty = true;

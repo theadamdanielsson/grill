@@ -11,6 +11,7 @@ import {
 	normalizePath,
 } from "obsidian";
 import { MasteryMap, statusOf } from "./mastery";
+import { CalPoint, isCalPoint } from "./calibration";
 import { LLMConfig, PROVIDERS, ProviderId, listModels, testModel } from "./llm";
 import { migrateResetScheduling } from "./concepts";
 import { dueFiles } from "./scope";
@@ -46,12 +47,17 @@ interface GrillSettings {
 	/** End-of-session AI debrief (one extra call per session). Off falls back to
 	 * a deterministic summary. Ignored for no-key sessions (always deterministic). */
 	sessionDebrief: boolean;
+	/** Ask "how sure are you?" after each answer and track calibration (Brier score).
+	 * Off by default; surfaces an over/underconfidence line in the session debrief. */
+	confidenceCheck: boolean;
 	/** One-time flag: the note→concept scheduling reset has run. */
 	conceptsMigrated: boolean;
 }
 
 interface PluginData {
 	settings: GrillSettings;
+	/** Rolling metacognitive-calibration buffer (confidence vs outcome). */
+	calibration: CalPoint[];
 }
 
 function defaultSettings(): GrillSettings {
@@ -76,12 +82,13 @@ function defaultSettings(): GrillSettings {
 		questionSource: "ai",
 		gradingMode: "ai",
 		sessionDebrief: true,
+		confidenceCheck: false,
 		conceptsMigrated: false,
 	};
 }
 
 export default class GrillPlugin extends Plugin {
-	data: PluginData = { settings: defaultSettings() };
+	data: PluginData = { settings: defaultSettings(), calibration: [] };
 	store!: GrillStore;
 	/** In-memory mastery cache; source of truth is <folder>/mastery.json. */
 	mastery: MasteryMap = {};
@@ -109,8 +116,10 @@ export default class GrillPlugin extends Plugin {
 		if (s.questionSource === "ai" || s.questionSource === "local") settings.questionSource = s.questionSource;
 		if (s.gradingMode === "ai" || s.gradingMode === "self") settings.gradingMode = s.gradingMode;
 		if (typeof s.sessionDebrief === "boolean") settings.sessionDebrief = s.sessionDebrief;
+		if (typeof s.confidenceCheck === "boolean") settings.confidenceCheck = s.confidenceCheck;
 		if (typeof s.conceptsMigrated === "boolean") settings.conceptsMigrated = s.conceptsMigrated;
-		this.data = { settings };
+		const calibration = Array.isArray(stored?.calibration) ? stored!.calibration.filter(isCalPoint) : [];
+		this.data = { settings, calibration };
 
 		this.store = new GrillStore(this.app, () => this.data.settings.folder);
 
@@ -153,7 +162,7 @@ export default class GrillPlugin extends Plugin {
 		});
 		this.addCommand({
 			id: "open-instructions",
-			name: "Open question instructions",
+			name: "Open persona & instructions",
 			callback: () => void this.openInstructions(),
 		});
 		this.registerEvent(
@@ -638,10 +647,12 @@ class GrillSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("Question & grading instructions")
+			.setName("Persona & instructions")
 			.setDesc(
-				"A plain-text file in your Grill folder where you tell Grill how you want to be quizzed and " +
-					"graded: question style, format, difficulty, strictness. Leave it blank for the defaults.",
+				"A file in your Grill folder with two parts. Persona: Grill's default character is shown " +
+					"there, editable, so you can make it a strict examiner, a gentle guide, whatever you like. " +
+					"Instructions: how you want to be quizzed and graded. Scoring itself is fixed by the engine, " +
+					"so grades stay consistent whatever you write. Leave it blank for the defaults.",
 			)
 			.addButton((b) =>
 				b
@@ -697,6 +708,20 @@ class GrillSettingTab extends PluginSettingTab {
 			.addToggle((t) =>
 				t.setValue(s.sessionDebrief).onChange(async (v) => {
 					s.sessionDebrief = v;
+					await this.plugin.persist();
+				}),
+			);
+
+		new Setting(containerEl)
+			.setName("Confidence check")
+			.setDesc(
+				"After each answer, ask how sure you were (Sure / Think so / Guessing). Grill tracks how well " +
+					"your confidence matches your accuracy and tells you in the debrief when you lean over- or " +
+					"underconfident. Off by default; no extra model cost.",
+			)
+			.addToggle((t) =>
+				t.setValue(s.confidenceCheck).onChange(async (v) => {
+					s.confidenceCheck = v;
 					await this.plugin.persist();
 				}),
 			);
