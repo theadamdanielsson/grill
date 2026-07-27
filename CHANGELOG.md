@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.1
+
+- Dashboard accuracy now reads "0%" on a fresh vault instead of a lone dash, so it
+  lines up with the other stats (which already show 0 when you haven't studied yet).
+
 ## 2.0.0
 
 Grill 2.0 turns your link graph and your answer history into a real tutor, not just a

@@ -316,7 +316,9 @@ export class SessionView extends ItemView {
 		stat("due now", String(dueNow));
 		stat("due this week", String(dueWeek));
 		stat("known", String(counts.known));
-		stat("accuracy", answered ? `${accuracy}%` : "—");
+		// 0% when nothing's been answered, so it reads consistently with the other
+		// stats (due/known all show 0 on a fresh vault) rather than a lone dash.
+		stat("accuracy", `${accuracy}%`);
 
 		// What you keep getting wrong.
 		const reg = await this.plugin.store.loadRegistry();

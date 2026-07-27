@@ -1,7 +1,7 @@
 {
 	"id": "grill",
 	"name": "Grill",
-	"version": "2.0.0",
+	"version": "2.0.1",
 	"minAppVersion": "1.8.0",
 	"description": "Spaced repetition and active recall on your own notes: AI writes flashcard-style questions, grades your answers, and targets what you keep getting wrong. Use your own key, run offline with Ollama, or any OpenAI-compatible endpoint.",
 	"author": "Adam Danielsson",
