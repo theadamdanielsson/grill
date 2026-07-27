@@ -12,7 +12,8 @@
  * Everything here is keyed by note basename, matching the mastery map.
  */
 
-import type { App, TFile } from "obsidian";
+import { TFile } from "obsidian";
+import type { App } from "obsidian";
 import { MasteryMap, statusOf } from "./mastery";
 
 export interface NoteLinks {
@@ -35,8 +36,7 @@ export function outgoingBasenames(app: App, file: TFile): string[] {
 	const out: string[] = [];
 	for (const path of Object.keys(targets)) {
 		const dest = app.vault.getAbstractFileByPath(path);
-		// TFile is imported only as a type; check by shape to avoid a value import.
-		if (dest && "extension" in dest && (dest as TFile).extension === "md") out.push((dest as TFile).basename);
+		if (dest instanceof TFile && dest.extension === "md") out.push(dest.basename);
 	}
 	return out;
 }

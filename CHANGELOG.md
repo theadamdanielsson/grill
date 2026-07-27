@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.4
+
+- Housekeeping for the plugin safety scorecard: the confetti canvas now uses
+  Obsidian's element helpers and a CSS class instead of raw DOM and inline styles,
+  the image-resize canvas uses the same helper, and a couple of type casts are
+  replaced with proper `instanceof` checks. No behaviour change.
+
 ## 2.0.3
 
 - **Sound and celebration.** Grill now plays a short cue on every answer (a bright

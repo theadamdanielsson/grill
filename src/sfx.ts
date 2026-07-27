@@ -96,11 +96,11 @@ export function playSfx(kind: Sfx): void {
  * session view's document so it lands in the right window when popped out. */
 export function celebrate(doc: Document = document): void {
 	const win = doc.defaultView ?? window;
-	const canvas = doc.createElement("canvas");
-	canvas.style.cssText = "position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:9999;";
+	// Obsidian's createEl helper + a CSS class (no inline styles), appended to the
+	// session's own document so it lands in the right window when popped out.
+	const canvas = doc.body.createEl("canvas", { cls: "grill-confetti" });
 	const w = (canvas.width = win.innerWidth);
 	const h = (canvas.height = win.innerHeight);
-	doc.body.appendChild(canvas);
 	const c = canvas.getContext("2d");
 	if (!c) {
 		canvas.remove();
