@@ -58,6 +58,11 @@ export class GrillStore {
 
 	private static readonly INSTRUCTIONS_CAP = 2000;
 
+	/** Total characters of referenced-note text that [[wikilinks]] in the
+	 * instructions may inline, shared across the whole file, so a linked style guide
+	 * can't inflate every session's prompt without bound. */
+	private static readonly INSTRUCTIONS_CONTEXT_CAP = 4000;
+
 	private static readonly INSTRUCTIONS_TEMPLATE = [
 		"## Persona",
 		"<!-- This is who Grill is and how it talks to you. Rewrite the line below to change",
@@ -77,7 +82,11 @@ export class GrillStore {
 		'       "Ask me to explain concepts in my own words."',
 		'       "Be strict on exact terminology."',
 		'       "Accept bullet-point answers, do not mark me down for phrasing."',
-		"     Keep it short; long text costs more tokens every session. -->",
+		"",
+		"     You can point at another note with [[links]] and Grill reads it in, so a",
+		"     longer style guide or marking rubric can live in its own note. Referenced",
+		"     notes are capped, and everything here rides along in every session, so keep",
+		"     it short; long text costs more tokens every session. -->",
 		"",
 		"",
 	].join("\n");
@@ -97,24 +106,65 @@ export class GrillStore {
 			const lower = raw.toLowerCase();
 			const pIdx = lower.indexOf("## persona");
 			const fIdx = lower.indexOf("## preferences");
-			// Legacy file with no section headings: treat the whole thing as preferences.
-			if (pIdx === -1 && fIdx === -1) {
-				return { persona: "", preferences: strip(raw).slice(0, cap) };
-			}
 			let persona = "";
 			let preferences = "";
-			if (pIdx !== -1) {
-				const end = fIdx > pIdx ? fIdx : raw.length;
-				persona = strip(raw.slice(pIdx + "## persona".length, end));
+			// Legacy file with no section headings: treat the whole thing as preferences.
+			if (pIdx === -1 && fIdx === -1) {
+				preferences = strip(raw).slice(0, cap);
+			} else {
+				if (pIdx !== -1) {
+					const end = fIdx > pIdx ? fIdx : raw.length;
+					persona = strip(raw.slice(pIdx + "## persona".length, end)).slice(0, cap);
+				}
+				if (fIdx !== -1) {
+					const end = pIdx > fIdx ? pIdx : raw.length;
+					preferences = strip(raw.slice(fIdx + "## preferences".length, end)).slice(0, cap);
+				}
 			}
-			if (fIdx !== -1) {
-				const end = pIdx > fIdx ? pIdx : raw.length;
-				preferences = strip(raw.slice(fIdx + "## preferences".length, end));
-			}
-			return { persona: persona.slice(0, cap), preferences: preferences.slice(0, cap) };
+			// Expand any [[wikilinks]] by inlining the referenced notes, under one shared
+			// budget across the file, so a longer style guide can live in its own note.
+			const budget = { left: GrillStore.INSTRUCTIONS_CONTEXT_CAP };
+			persona = await this.inlineLinks(persona, path, budget);
+			preferences = await this.inlineLinks(preferences, path, budget);
+			return { persona, preferences };
 		} catch {
 			return empty;
 		}
+	}
+
+	/** Append the body of any [[wikilinks]] a section references (one level only, no
+	 * recursion), under a labelled block. Shares `budget` across the whole file, skips
+	 * non-markdown targets and the instructions note itself, and truncates so
+	 * referenced docs can never blow up the prompt. */
+	private async inlineLinks(text: string, sourcePath: string, budget: { left: number }): Promise<string> {
+		if (!text || budget.left <= 0) return text;
+		const seen = new Set<string>();
+		const re = /\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]/g;
+		let out = text;
+		let m: RegExpExecArray | null;
+		while ((m = re.exec(text)) !== null) {
+			if (budget.left <= 0) break;
+			const linkpath = m[1].trim();
+			if (!linkpath || seen.has(linkpath.toLowerCase())) continue;
+			seen.add(linkpath.toLowerCase());
+			const dest = this.app.metadataCache.getFirstLinkpathDest(linkpath, sourcePath);
+			if (!dest || dest.extension !== "md" || dest.path === sourcePath) continue;
+			let body: string;
+			try {
+				body = await this.app.vault.cachedRead(dest);
+			} catch {
+				continue;
+			}
+			body = body
+				.replace(/^---\n[\s\S]*?\n---\n/, "")
+				.replace(/<!--[\s\S]*?-->/g, "")
+				.trim();
+			if (!body) continue;
+			const slice = body.slice(0, budget.left);
+			budget.left -= slice.length;
+			out += `\n\nReferenced note "${linkpath}":\n${slice}${slice.length < body.length ? "\n[truncated]" : ""}`;
+		}
+		return out;
 	}
 
 	/** Create the instructions file with a commented template if it does not exist,

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.0.2
+
+- **Persona can't touch your grades.** The grader now applies its verdict bands
+  regardless of the persona you set, so a "lenient" (or hostile, in a shared vault)
+  persona can only change the wording of feedback, never whether an answer is marked
+  correct. Scoring stays fixed, as promised.
+- **Reference notes from your instructions with `[[links]]`.** Point at another note
+  in `Grill/Instructions.md` and Grill reads it in, so a longer style guide or marking
+  rubric can live in its own note. Referenced text is capped (and rides along in every
+  session), so keep it lean.
+
 ## 2.0.1
 
 - Dashboard accuracy now reads "0%" on a fresh vault instead of a lone dash, so it
