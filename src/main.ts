@@ -50,6 +50,9 @@ interface GrillSettings {
 	/** Ask "how sure are you?" after each answer and track calibration (Brier score).
 	 * Off by default; surfaces an over/underconfidence line in the session debrief. */
 	confidenceCheck: boolean;
+	/** Play short synthesized sound cues on each answer + at session end, with a
+	 * confetti burst on a perfect session. On by default. */
+	sounds: boolean;
 	/** One-time flag: the note→concept scheduling reset has run. */
 	conceptsMigrated: boolean;
 }
@@ -83,6 +86,7 @@ function defaultSettings(): GrillSettings {
 		gradingMode: "ai",
 		sessionDebrief: true,
 		confidenceCheck: false,
+		sounds: true,
 		conceptsMigrated: false,
 	};
 }
@@ -117,6 +121,7 @@ export default class GrillPlugin extends Plugin {
 		if (s.gradingMode === "ai" || s.gradingMode === "self") settings.gradingMode = s.gradingMode;
 		if (typeof s.sessionDebrief === "boolean") settings.sessionDebrief = s.sessionDebrief;
 		if (typeof s.confidenceCheck === "boolean") settings.confidenceCheck = s.confidenceCheck;
+		if (typeof s.sounds === "boolean") settings.sounds = s.sounds;
 		if (typeof s.conceptsMigrated === "boolean") settings.conceptsMigrated = s.conceptsMigrated;
 		const calibration = Array.isArray(stored?.calibration) ? stored!.calibration.filter(isCalPoint) : [];
 		this.data = { settings, calibration };
@@ -722,6 +727,19 @@ class GrillSettingTab extends PluginSettingTab {
 			.addToggle((t) =>
 				t.setValue(s.confidenceCheck).onChange(async (v) => {
 					s.confidenceCheck = v;
+					await this.plugin.persist();
+				}),
+			);
+
+		new Setting(containerEl)
+			.setName("Sound & celebration")
+			.setDesc(
+				"Short sound cues on each answer and at the end of a session, plus a confetti burst when " +
+					"you get a whole session right. Synthesized on the fly (no files), gentle, and silent when off.",
+			)
+			.addToggle((t) =>
+				t.setValue(s.sounds).onChange(async (v) => {
+					s.sounds = v;
 					await this.plugin.persist();
 				}),
 			);

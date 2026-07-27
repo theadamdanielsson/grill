@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.3
+
+- **Sound and celebration.** Grill now plays a short cue on every answer (a bright
+  ding for correct, a soft tone for partial, a gentle low blip for wrong), a finish
+  cue at the end of a session, and a triumphant fanfare with a confetti burst when
+  you get a whole session right. All synthesized on the fly, so no audio files ship
+  with the plugin, and it's off with a single toggle ("Sound & celebration") if you'd
+  rather study in silence.
+
 ## 2.0.2
 
 - **Persona can't touch your grades.** The grader now applies its verdict bands

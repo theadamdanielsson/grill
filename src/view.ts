@@ -37,6 +37,7 @@ import {
 } from "./debrief";
 import { decodeScope, dueFiles, encodeScope, filesForScope, listFolders, listTags } from "./scope";
 import { CONFIDENCE_LEVELS, calibrationLine, pushCalibration } from "./calibration";
+import { celebrate, playSfx } from "./sfx";
 import { SessionEntry } from "./store";
 
 export const VIEW_TYPE = "grill-session";
@@ -544,6 +545,7 @@ export class SessionView extends ItemView {
 	}
 
 	private renderFeedback(r: QuestionResult): void {
+		if (this.plugin.data.settings.sounds) playSfx(r.verdict); // correct / partial / incorrect
 		const wrap = this.root();
 		this.progressBar(wrap);
 		const card = wrap.createDiv({ cls: "grill-body" });
@@ -624,6 +626,11 @@ export class SessionView extends ItemView {
 			s.linkSessions,
 			debrief,
 		);
+		// A perfect run (every question correct, nothing given up) gets a fanfare and
+		// confetti; any other completed session gets a gentle finish cue.
+		const perfect = this.results.length > 0 && this.results.every((r) => r.verdict === "correct" && !r.gaveUp);
+		if (s.sounds) playSfx(perfect ? "perfect" : "complete");
+		if (perfect && s.sounds) celebrate(this.contentEl.ownerDocument);
 		this.renderSummary(note, debrief);
 	}
 
@@ -1227,6 +1234,7 @@ export class SessionView extends ItemView {
 	private async recordSelfGrade(rating: Rating, answer: string, gaveUp: boolean, hintsUsed: number): Promise<void> {
 		const q = this.questions[this.idx];
 		const verdict: Verdict = rating === 1 ? "incorrect" : rating === 2 ? "partial" : "correct";
+		if (this.plugin.data.settings.sounds) playSfx(verdict);
 		await this.applyGrade(q, verdict, rating, undefined);
 		if (verdict === "incorrect") this.maybeRouteToPrerequisite(q.node);
 		if (q.targetsMisconception && verdict === "correct" && this.registry[q.targetsMisconception]) {
