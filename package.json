@@ -1,7 +1,7 @@
 {
   "name": "grill",
-  "version": "2.3.1",
-  "description": "Your notes as a living knowledge graph you build by proving you've learned them: Grill quizzes you on your own notes and colours in your map as you go. For Obsidian.",
+  "version": "2.3.2",
+  "description": "Learn what's in your Obsidian notes: Grill quizzes you on your own notes, marks your answers, and colours in a live map of them as you prove what you know. For Obsidian.",
   "main": "main.js",
   "scripts": {
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",

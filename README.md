@@ -2,21 +2,31 @@
 
 # Grill
 
-*Grill turns your notes into a living knowledge graph you build by proving you've learned them. It quizzes you on what you wrote, and colours in your map as you go.*
+*Grill is an active-recall tutor for your Obsidian notes. It quizzes you on what you wrote so you actually learn it, and colours in a live map of your notes as you prove what you know.*
 
-I take a lot of notes and almost never go back to them. Re-reading a note isn't the same as actually remembering it, and I couldn't be bothered to turn everything into flashcards. So Grill quizzes you on the notes you've already got — and, because they live in a graph, on how they fit together.
-
-It reads your vault, gets whichever model you point it at (Claude, GPT, Gemini, DeepSeek, Ollama on your own machine, or any OpenAI-compatible endpoint such as OpenRouter, Groq or LM Studio) to write questions from your notes, and marks what you type back. It turns your link graph and your answer history into a real tutor, not just a question generator: it remembers how you did on each concept, quizzes you across your `[[links]]`, finds notes you should have linked but didn't, and steers each session toward what you keep missing.
+I take a lot of notes and almost never go back to them. Re-reading a note isn't the same as remembering it, and I couldn't be bothered to turn everything into flashcards — so Grill quizzes me on the notes I've already got.
 
 ![Grill: open it, start a session, answer, get graded with specific feedback](docs/grill-demo.gif)
 
-## Using it
+## How to use it
 
-Hit the flame icon and start a session. Grill grabs a few things to quiz you on, weighted toward what you've been getting wrong and what's due for review, and mixes them across different notes so you're not drilling one to death. It writes the questions two at a time so you're not stuck watching a spinner while it makes all of them. Answer from memory and submit. Once you've built up some history there's a "Review N due" button, and a count in the status bar, to drop straight into what's ready; "Open progress dashboard" shows how you're doing overall.
+1. **Pick what Grill studies.** On first run, tick which folders it should cover — or leave them blank for your whole vault.
+2. **Get grilled.** Hit the flame (or **Get grilled**). Grill writes questions from your notes and marks what you type back, with partial credit and specific feedback.
+3. **Watch your map fill in.** Every note you've learned colours in on the graph — green for solid, amber for shaky — so you can see your knowledge light up.
 
-![A question drawn from a note, with the vault's graph alongside it](docs/screenshot-question.png)
+Focus a session on a folder or tag from the **Study** dropdown; Grill weights it toward what you keep getting wrong and what's due, and a **Review N due** button drops you straight into what's ready.
 
-The same model marks your answer against a little rubric it wrote when it made the question. Partial credit is a thing. It's told not to accuse you of a mistake it can't actually point to, which keeps it from being confidently wrong. When you miss something it notes down what the misunderstanding was and works that back into a later question on the same note. Stuck? There are three hints that stop short of the answer, and "I don't know" just shows you the answer and moves on.
+![A question drawn from a note, with your knowledge graph alongside it](docs/screenshot-question.png)
+
+## What you get
+
+- **Questions from your own notes** — the AI writes recall questions from what you actually wrote (or, with no key, straight from your notes' structure).
+- **A live map of what you know** — your notes as a graph, coloured and grown by how well you know each. A *learning* graph (what you've proven), distinct from Obsidian's link graph.
+- **Fair grading** — answers are marked against a rubric written with the question: partial credit, three hints, and no confidently-wrong nitpicks.
+- **Finds links you're missing** — spots notes that belong together but aren't linked, and adds the `[[link]]` for you.
+- **Your own questions** — drop a `> [!grill]` callout into any note and Grill asks it verbatim.
+- **Real spaced repetition** — FSRS scheduling per concept resurfaces what's due; edit a note and only the changed parts re-open.
+- **Your key, or fully offline** — Claude, GPT, Gemini, DeepSeek, any OpenAI-compatible endpoint (OpenRouter, Groq, LM Studio), local Ollama, or a no-key deterministic mode.
 
 ![A partially correct answer, graded with specific feedback and the expected answer](docs/screenshot-feedback.png)
 

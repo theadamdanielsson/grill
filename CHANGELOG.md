@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.3.2
+
+- Clearer, more accurate description and README: Grill *colours in* your knowledge graph as
+  you learn (it doesn't build it), and it's for learning what's in your own Obsidian notes.
+  Rewrote the README opening around a "How to use it" walkthrough and a scannable feature list.
+
 ## 2.3.1
 
 - Removed the separate "Connections review" mode (its button and command). Relationship
