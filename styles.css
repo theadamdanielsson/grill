@@ -102,6 +102,29 @@
   color: var(--interactive-accent);
   font-weight: var(--font-bold, 600);
 }
+/* Brand: an orange rule between each section on Grill's settings page. */
+.grill-settings .setting-item-heading {
+  border-top: 2px solid #ff7a45;
+  margin-top: 1.4em;
+  padding-top: 1.1em;
+}
+.grill-settings .setting-item-heading:first-child {
+  border-top: none;
+  margin-top: 0;
+  padding-top: 0;
+}
+
+/* "Redo this quiz" button rendered from a session note's grill-redo code block. */
+.grill-redo-block {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5em 0.8em;
+  margin: 0.5em 0;
+}
+.grill-redo-note {
+  font-size: 0.85em;
+}
 /* Offer to write a missing [[link]] into the note, on a bridge question's feedback. */
 .grill-bridge-link {
   display: flex;

@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.2.0
+
+- **Redo this quiz.** Every session note now ends with a "Redo this quiz" button. It re-serves
+  the exact same questions with no model call to regenerate them (grading still follows your
+  setting: AI marks your answers, or you mark yourself). It's practice, so it doesn't change
+  your schedule or stats. There's a "Redo these" button on the end-of-session summary too.
+- **A proper look.** New retro-arcade hero banner, and the settings page now has an orange rule
+  between each section. The README was also reflowed so it reads cleanly inside Obsidian (the
+  old hard wrapping showed up as mid-sentence line breaks in reading view).
+
 ## 2.1.1
 
 - Shortened the plugin description to fit Obsidian's 250-character limit so the 2.1.0

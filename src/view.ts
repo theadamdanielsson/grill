@@ -107,6 +107,10 @@ export class SessionView extends ItemView {
 	 * `dirty`, which flushes concepts/mastery/registry). */
 	private bankDirty = false;
 	private bridgesDirty = false;
+	/** Replay ("Redo this quiz") of a saved session's questions: same questions, no
+	 * generation, and practice-only — grading and feedback run, but nothing is written to
+	 * the schedule, stats, or misconception registry. */
+	private replayMode = false;
 	/** The concepts this session tests, in order. */
 	private sessionConcepts: Concept[] = [];
 	/** Concept targets for the AI generator (one question each, by construction). */
@@ -651,6 +655,16 @@ export class SessionView extends ItemView {
 	}
 
 	private async finishSession(): Promise<void> {
+		// A replay writes nothing: no new session note, no AI debrief, just a plain summary.
+		if (this.replayMode) {
+			const s = this.plugin.data.settings;
+			const debrief = deterministicDebrief(this.results);
+			const perfect = this.results.length > 0 && this.results.every((r) => r.verdict === "correct" && !r.gaveUp);
+			if (s.sounds) playSfx(perfect ? "perfect" : "complete");
+			if (perfect && s.sounds) celebrate(this.contentEl.ownerDocument);
+			this.renderSummary(null, debrief);
+			return;
+		}
 		const s = this.plugin.data.settings;
 		const cfg = this.plugin.llmConfig();
 		const usedAI = s.questionSource === "ai" || s.gradingMode === "ai";
@@ -694,6 +708,7 @@ export class SessionView extends ItemView {
 			},
 			s.linkSessions,
 			debrief,
+			this.questions.slice(0, this.results.length),
 		);
 		// A perfect run (every question correct, nothing given up) gets a fanfare and
 		// confetti; any other completed session gets a gentle finish cue.
@@ -797,6 +812,13 @@ export class SessionView extends ItemView {
 		const btnRow = card.createDiv({ cls: "grill-btn-row grill-start-btn" });
 		const again = btnRow.createEl("button", { text: "Study again", cls: "mod-cta" });
 		again.onclick = () => void this.startSession(this.sessionMode);
+		// Redo the exact same questions with no generation (grading still per the setting).
+		const redoable = this.questions.slice(0, this.results.length).filter((q) => !q.missingLink);
+		if (redoable.length) {
+			const redo = btnRow.createEl("button", { text: "Redo these" });
+			redo.setAttr("aria-label", "Redo the same questions with no AI generation");
+			redo.onclick = () => void this.startReplay(redoable);
+		}
 		const menu = btnRow.createEl("button", { text: "Back to menu" });
 		menu.onclick = () => {
 			this.sessionScope = null;
@@ -821,6 +843,66 @@ export class SessionView extends ItemView {
 	async startConnectionsSession(files: TFile[] | null = null): Promise<void> {
 		this.sessionScope = files;
 		await this.startSession("connections");
+	}
+
+	/** Redo a saved session's questions verbatim (from a note's grill-redo block): no
+	 * generation, no scheduling writes, graded per the current setting. Practice, not a
+	 * review. */
+	async startReplay(questions: Question[]): Promise<void> {
+		const s = this.plugin.data.settings;
+		const cfg = this.plugin.llmConfig();
+		if (s.gradingMode === "ai" && !cfg) {
+			new Notice('Grill: to redo with AI grading, set an API key, or switch grading to "I mark myself".', 8000);
+			return;
+		}
+		const qs = questions.filter((q) => q && q.question && !q.missingLink);
+		if (!qs.length) {
+			new Notice("Grill: no questions to redo in this session.");
+			return;
+		}
+		this.replayMode = true;
+		this.sessionMode = "standard";
+		this.sessionScope = null;
+		this.sessionStart = new Date();
+		this.questions = qs.map((q) => ({ ...q }));
+		this.targets = [];
+		this.results = [];
+		this.idx = 0;
+		this.pending = null;
+		this.targetCount = this.questions.length;
+		this.planCursor = 0;
+		this.routesUsed = 0;
+		this.routedNotes.clear();
+		this.dirty = false;
+		this.bankDirty = false;
+		this.bridgesDirty = false;
+		this.registry = {};
+		this.concepts = {};
+		this.conceptsByNote = new Map();
+		this.conceptById = new Map();
+		this.contextImages = [];
+		this.noteImages = {};
+		this.pendingConfidence = null;
+		// Grading tone comes from the persona/instructions.
+		const instr = await this.plugin.store.loadInstructions();
+		this.sessionPersona = instr.persona;
+		this.sessionInstructions = instr.preferences;
+		// Current text of each quizzed note, so AI grading still has context.
+		this.noteText = {};
+		this.byName = new Map();
+		for (const n of new Set(this.questions.map((q) => q.node))) {
+			const f = this.app.vault
+				.getMarkdownFiles()
+				.find((file) => file.basename === n && !this.plugin.isExcluded(file.path));
+			if (f) {
+				this.byName.set(n, f);
+				const raw = await this.app.vault.cachedRead(f);
+				this.noteText[n] = raw.length > NOTE_CHAR_CAP ? raw.slice(0, NOTE_CHAR_CAP) + "\n[truncated]" : raw;
+			} else {
+				this.noteText[n] = "";
+			}
+		}
+		this.renderQuestion();
 	}
 
 	/** Generate the next batch of questions and append them. At most one batch
@@ -1027,6 +1109,7 @@ export class SessionView extends ItemView {
 
 	private async startSession(mode: "standard" | "connections" = "standard"): Promise<void> {
 		this.sessionMode = mode;
+		this.replayMode = false;
 		const s = this.plugin.data.settings;
 		const needsKey = s.questionSource === "ai" || s.gradingMode === "ai";
 		const cfg = this.plugin.llmConfig();
@@ -1228,7 +1311,7 @@ export class SessionView extends ItemView {
 			resolveMisconception(this.registry, q.targetsMisconception);
 			this.dirty = true;
 		}
-		if (this.plugin.data.settings.writeStatus) {
+		if (!this.replayMode && this.plugin.data.settings.writeStatus) {
 			const f = this.byName.get(q.node);
 			if (f) await this.plugin.store.writeNoteStatus(f, this.plugin.mastery[q.node]);
 		}
@@ -1322,6 +1405,8 @@ export class SessionView extends ItemView {
 		rating: Rating | null,
 		misconceptionTag: string | undefined,
 	): Promise<void> {
+		// Replay is practice-only: never touch the schedule or stats.
+		if (this.replayMode) return;
 		// A missing-link bridge question is outside FSRS scheduling: it isn't a note
 		// concept, so it must not touch concept or note mastery. Record the pair instead.
 		if (q.missingLink) {
@@ -1406,6 +1491,7 @@ export class SessionView extends ItemView {
 	 * check is on and the user picked a level. Persists immediately so it survives a
 	 * mid-session close. */
 	private captureConfidence(verdict: Verdict): void {
+		if (this.replayMode) return; // practice-only: don't record calibration
 		if (!this.plugin.data.settings.confidenceCheck || this.pendingConfidence === null) return;
 		const ok = verdict === "correct" ? 1 : verdict === "partial" ? 0.5 : 0;
 		pushCalibration(this.plugin.data.calibration, this.pendingConfidence, ok);
@@ -1425,6 +1511,7 @@ export class SessionView extends ItemView {
 	 * MAX_ROUTES per session, never the same prerequisite twice, and only when the
 	 * prerequisite is in this session with a weak, not-already-planned concept. */
 	private maybeRouteToPrerequisite(fromNote: string): void {
+		if (this.replayMode) return; // no generation or plan mutation during a replay
 		if (this.routesUsed >= MAX_ROUTES) return;
 		const file = this.byName.get(fromNote);
 		if (!file) return;
@@ -1486,7 +1573,7 @@ export class SessionView extends ItemView {
 			resolveMisconception(this.registry, q.targetsMisconception);
 			this.dirty = true;
 		}
-		if (this.plugin.data.settings.writeStatus) {
+		if (!this.replayMode && this.plugin.data.settings.writeStatus) {
 			const f = this.byName.get(q.node);
 			if (f) await this.plugin.store.writeNoteStatus(f, this.plugin.mastery[q.node]);
 		}

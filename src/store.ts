@@ -338,6 +338,7 @@ export class GrillStore {
 		meta: SessionMeta,
 		link = true,
 		debrief?: SessionDebrief,
+		redoQuestions: Question[] = [],
 	): Promise<TFile | null> {
 		const dir = normalizePath(`${this.folder()}/Sessions`);
 		await this.ensureFolder(this.folder());
@@ -386,6 +387,27 @@ export class GrillStore {
 			if (e.verdict !== "correct" && e.modelAnswer) {
 				lines.push(`**Expected answer:** ${e.modelAnswer}`, "");
 			}
+		}
+
+		// Embed the asked questions (full grading rubric intact) so "Redo this quiz" can
+		// re-serve them with no model call. Rendered as a button by the grill-redo code
+		// block processor; bridge/missing-link questions are one-offs, so they're excluded.
+		const redo = redoQuestions
+			.filter((q) => !q.missingLink)
+			.map((q) => ({
+				node: q.node,
+				conceptId: q.conceptId,
+				question: q.question,
+				difficulty: q.difficulty,
+				modelAnswer: q.modelAnswer,
+				acceptableAnswers: q.acceptableAnswers,
+				commonErrors: q.commonErrors,
+				hints: q.hints,
+				...(q.authored ? { authored: true, rubric: q.rubric } : {}),
+				...(q.targetsMisconception ? { targetsMisconception: q.targetsMisconception } : {}),
+			}));
+		if (redo.length) {
+			lines.push("## Redo", "", "```grill-redo", JSON.stringify({ v: 1, questions: redo }), "```", "");
 		}
 
 		let path = normalizePath(`${dir}/${stamp}.md`);

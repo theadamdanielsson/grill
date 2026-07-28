@@ -1,7 +1,7 @@
 {
 	"id": "grill",
 	"name": "Grill",
-	"version": "2.1.1",
+	"version": "2.2.0",
 	"minAppVersion": "1.8.0",
 	"description": "An AI study partner for your knowledge graph: it quizzes you on your own notes, tests how your ideas connect, surfaces links you're missing, and grades questions you write yourself. Bring your own key, or run offline with Ollama.",
 	"author": "Adam Danielsson",

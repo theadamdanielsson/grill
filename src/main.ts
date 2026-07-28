@@ -12,7 +12,7 @@ import {
 } from "obsidian";
 import { MasteryMap, statusOf } from "./mastery";
 import { CalPoint, isCalPoint } from "./calibration";
-import { LLMConfig, PROVIDERS, ProviderId, listModels, testModel } from "./llm";
+import { LLMConfig, PROVIDERS, ProviderId, Question, listModels, testModel } from "./llm";
 import { migrateResetScheduling } from "./concepts";
 import { dueFiles } from "./scope";
 import { GrillStore } from "./store";
@@ -223,6 +223,30 @@ export default class GrillPlugin extends Plugin {
 		}
 		this.addSettingTab(new GrillSettingTab(this.app, this));
 
+		// "Redo this quiz" button rendered from the grill-redo block in a session note.
+		this.registerMarkdownCodeBlockProcessor("grill-redo", (source, el) => {
+			let questions: Question[] = [];
+			try {
+				const data = JSON.parse(source) as { questions?: Question[] };
+				if (Array.isArray(data?.questions)) questions = data.questions;
+			} catch {
+				el.createEl("p", { cls: "grill-meta", text: "Grill: couldn't read this redo block." });
+				return;
+			}
+			const n = questions.length;
+			if (!n) return;
+			const box = el.createDiv({ cls: "grill-redo-block" });
+			const btn = box.createEl("button", { text: `Redo this quiz (${n} question${n === 1 ? "" : "s"})`, cls: "mod-cta" });
+			box.createSpan({
+				cls: "grill-meta grill-redo-note",
+				text:
+					this.data.settings.gradingMode === "ai"
+						? "Same questions, no AI to regenerate. AI still grades your answers."
+						: "Same questions, and you grade yourself. No cost.",
+			});
+			btn.onclick = () => void this.startReplay(questions);
+		});
+
 		this.app.workspace.onLayoutReady(() => {
 			void (async () => {
 				this.mastery = await this.store.loadMastery();
@@ -293,6 +317,19 @@ export default class GrillPlugin extends Plugin {
 		const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
 		const view = leaf?.view;
 		if (view instanceof SessionView) await view.startConnectionsSession();
+	}
+
+	/** Redo a saved session's questions (from its grill-redo block): same questions, no
+	 * generation, graded per the current setting, and it doesn't change your schedule. */
+	async startReplay(questions: Question[]): Promise<void> {
+		if (!questions.length) {
+			new Notice("Grill: no questions to redo.");
+			return;
+		}
+		await this.activateView();
+		const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
+		const view = leaf?.view;
+		if (view instanceof SessionView) await view.startReplay(questions);
 	}
 
 	/** Start a session on exactly the notes that are due or struggling. */
@@ -460,6 +497,7 @@ class GrillSettingTab extends PluginSettingTab {
 	display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
+		containerEl.addClass("grill-settings");
 		const s = this.plugin.data.settings;
 		const p = s.provider;
 		const info = PROVIDERS[p];
