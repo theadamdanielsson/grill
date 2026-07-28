@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.1
+
+- Shortened the plugin description to fit Obsidian's 250-character limit so the 2.1.0
+  update reaches the community list. No functional change from 2.1.0.
+
 ## 2.1.0
 
 Grill leans into the thing a flashcard app can't do: it works *inside your knowledge graph*.
