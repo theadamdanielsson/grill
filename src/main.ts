@@ -166,11 +166,6 @@ export default class GrillPlugin extends Plugin {
 			callback: () => void this.startDueSession(),
 		});
 		this.addCommand({
-			id: "connections-review",
-			name: "Connections review (quiz across linked notes)",
-			callback: () => void this.startConnectionsSession(),
-		});
-		this.addCommand({
 			id: "open-dashboard",
 			name: "Open progress dashboard",
 			callback: () => void this.openDashboard(),
@@ -325,14 +320,6 @@ export default class GrillPlugin extends Plugin {
 		const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
 		const view = leaf?.view;
 		if (view instanceof SessionView) await view.startScopedSession(files);
-	}
-
-	/** Start a Connections review: quiz across notes that link to each other. */
-	async startConnectionsSession(): Promise<void> {
-		await this.activateView();
-		const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
-		const view = leaf?.view;
-		if (view instanceof SessionView) await view.startConnectionsSession();
 	}
 
 	/** Redo a saved session's questions (from its grill-redo block): same questions, no

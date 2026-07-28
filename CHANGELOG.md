@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.3.1
+
+- Removed the separate "Connections review" mode (its button and command). Relationship
+  questions are becoming part of normal sessions and the graph, so a dedicated mode was
+  redundant. The missing-link finder ("Links you haven't made yet") is unchanged.
+
 ## 2.3.0
 
 Grill is now built around your **knowledge graph**.

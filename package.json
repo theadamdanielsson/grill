@@ -1,6 +1,6 @@
 {
   "name": "grill",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "description": "Your notes as a living knowledge graph you build by proving you've learned them: Grill quizzes you on your own notes and colours in your map as you go. For Obsidian.",
   "main": "main.js",
   "scripts": {

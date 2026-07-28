@@ -1,7 +1,7 @@
 {
 	"id": "grill",
 	"name": "Grill",
-	"version": "2.3.0",
+	"version": "2.3.1",
 	"minAppVersion": "1.8.0",
 	"description": "Your notes as a living knowledge graph you build by proving you've learned them: Grill quizzes you on your own notes and colours in your map as you go. Bring your own key, or run offline with Ollama.",
 	"author": "Adam Danielsson",

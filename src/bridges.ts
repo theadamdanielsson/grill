@@ -1,6 +1,6 @@
 /** Missing-link finder: "these two notes should be linked, but aren't."
  *
- * Grill already quizzes across the links you HAVE (Connections mode). This finds the
+ * Grill already reads the links you HAVE. This finds the
  * links you're MISSING: pairs of notes that share specific vocabulary yet have no edge
  * between them in the vault graph. Detection is a cheap, offline lexical prefilter that
  * favours recall and is capped; the real precision gate is an LLM adjudicator

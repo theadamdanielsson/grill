@@ -42,11 +42,9 @@ Miss a question and Grill doesn't just mark it wrong and move on. If the note yo
 
 It's also fussy about its own questions. Before one reaches you it's checked for the usual model slop, yes/no questions, hints that give the game away, questions that aren't actually grounded in your note, and quietly dropped if it fails. No extra model call, so it works the same on a local model as on a paid one.
 
-## Connections you haven't made yet
+## Links you haven't made yet
 
-Because your notes live in a graph, Grill can quiz you on the graph itself. A **Connections review** (its own button, or the command) bridges concepts across your `[[links]]`: instead of one note at a time, it asks how two linked notes relate.
-
-It also finds the links you *haven't* made. In an AI session Grill looks for two of your notes that clearly belong together but aren't linked, quizzes you on the connection, and offers a one-tap **Link these notes** button that writes the `[[link]]` into the note for you. Answer it and your graph gets a little denser: the AI working *inside* your graph, not beside it. You can turn it off, or change how many it adds per session, in settings.
+Because your notes live in a graph, Grill can also find the links you *haven't* made. In an AI session it looks for two of your notes that clearly belong together but aren't linked, quizzes you on the connection, and offers a one-tap **Link these notes** button that writes the `[[link]]` into the note for you. Answer it and your graph gets a little denser: the AI working *inside* your graph, not beside it. You can turn it off, or change how many it adds per session, in settings.
 
 ## Writing your own questions
 
