@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.4.1
+
+- Removed the word "Obsidian" from the plugin description (it's redundant inside
+  the plugin directory) — required by Obsidian's automated community plugin
+  review, which failed the 2.4.0 release over it. No functional change from 2.4.0.
+
 ## 2.4.0
 
 - **Study scope is now checkboxes.** Tick any combination of folders, tags, or the
