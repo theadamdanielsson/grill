@@ -455,6 +455,28 @@ class GrillSettingTab extends PluginSettingTab {
 		}
 	}
 
+	/** Reset the behavioural settings to the recommended defaults, keeping the user's
+	 * credentials, provider, and folder choices. */
+	private async restoreDefaults(): Promise<void> {
+		const s = this.plugin.data.settings;
+		this.plugin.data.settings = {
+			...defaultSettings(),
+			provider: s.provider,
+			apiKeys: s.apiKeys,
+			models: s.models,
+			ollamaUrl: s.ollamaUrl,
+			customBaseUrl: s.customBaseUrl,
+			folder: s.folder,
+			includedFolders: s.includedFolders,
+			excludedFolders: s.excludedFolders,
+			onboarded: s.onboarded,
+			conceptsMigrated: s.conceptsMigrated,
+		};
+		await this.plugin.persist();
+		new Notice("Grill: restored the recommended settings.");
+		this.display();
+	}
+
 	display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
@@ -462,6 +484,14 @@ class GrillSettingTab extends PluginSettingTab {
 		const s = this.plugin.data.settings;
 		const p = s.provider;
 		const info = PROVIDERS[p];
+
+		new Setting(containerEl)
+			.setName("Recommended settings")
+			.setDesc(
+				"Reset everything below to the recommended defaults, in case you've changed too much. Your API " +
+					"keys, provider, and folder choices are kept.",
+			)
+			.addButton((b) => b.setButtonText("Restore").onClick(() => void this.restoreDefaults()));
 
 		// ------------------------------------------------------------ AI
 		new Setting(containerEl).setName("AI").setHeading();

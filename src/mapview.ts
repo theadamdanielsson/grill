@@ -1,14 +1,25 @@
-/** Canvas renderer for the learning graph. UI-only: it draws a laid-out `LearningGraph`
- * onto an HTML canvas, handles pan / zoom / hover / click, and can highlight a subset of
- * nodes (the picked scope). Positions come pre-laid-out from `graph.ts`; this maps world
- * coordinates to the screen and draws.
+/** Canvas renderer for the learning graph, powered by d3-force — the same physics engine
+ * Obsidian's own graph view uses. d3-force handles the simulation (many-body repulsion,
+ * link springs, centring, collision) and the drag model; this module owns the canvas layer:
+ * pan / zoom / hover (with neighbour highlight) / click, mastery colours, zoom-adaptive
+ * labels, and the scope-highlight glow.
  *
- * Follows the plugin's existing canvas idiom (see `celebrate()` in sfx.ts): the canvas's own
- * document/window is used so it keeps working in a popped-out pane. Draws are coalesced with
- * requestAnimationFrame; there is no continuous animation loop (kept light).
+ * The plugin's canvas idiom (`celebrate()` in sfx.ts) is followed: the canvas's own window
+ * is used so it keeps working in a popped-out pane.
  */
 
-import type { LearningGraph, GraphNode } from "./graph";
+import {
+	forceSimulation,
+	forceManyBody,
+	forceLink,
+	forceX,
+	forceY,
+	forceCollide,
+	type Simulation,
+	type SimulationNodeDatum,
+	type SimulationLinkDatum,
+} from "d3-force";
+import type { LearningGraph, GraphNode, EdgeTier } from "./graph";
 import { nodeRadius } from "./graph";
 
 export interface MapPalette {
@@ -21,6 +32,21 @@ export interface MapPalette {
 	edgeProven: string;
 	text: string;
 	ring: string;
+}
+
+/** Display settings mirrored from the user's Obsidian graph (graph.json). Force values are
+ * NOT mirrored — d3-force is its own engine and Obsidian's numbers don't translate. */
+export interface GraphAppearance {
+	textFade: number;
+	nodeScale: number;
+	lineScale: number;
+}
+
+const DEFAULT_APPEARANCE: GraphAppearance = { textFade: 0, nodeScale: 1, lineScale: 1 };
+
+type SimNode = GraphNode & SimulationNodeDatum;
+interface SimLink extends SimulationLinkDatum<SimNode> {
+	tier: EdgeTier;
 }
 
 function nodeColour(state: GraphNode["state"], p: MapPalette): string {
@@ -43,24 +69,83 @@ export class LearningMap {
 	private scale = 1;
 	private ox = 0;
 	private oy = 0;
+	private fitScale = 1;
+
+	private nodes: SimNode[];
+	private links: SimLink[];
+	private sim: Simulation<SimNode, SimLink>;
+	private byId = new Map<string, SimNode>();
+	private adj = new Map<string, Set<string>>();
+
 	private highlight: Set<string> | null = null;
-	private hover: GraphNode | null = null;
-	private dragging = false;
+	private hover: SimNode | null = null;
+	/** The node whose neighbourhood is currently drawn-highlighted; kept during fade-out. */
+	private focusNode: SimNode | null = null;
+	private focusSet: Set<string> | null = null;
+	/** Eased hover-highlight intensity 0..1 (animated in/out, like the native graph). */
+	private hoverT = 0;
+	private hoverRaf = 0;
+	private ro: ResizeObserver | null = null;
+	private drawRaf = 0;
+	private disposed = false;
+	private userMoved = false;
+	private ap: GraphAppearance;
+
+	// Interaction.
+	private mode: "none" | "pan" | "drag" = "none";
+	private drag: SimNode | null = null;
 	private moved = false;
 	private lastX = 0;
 	private lastY = 0;
-	private raf = 0;
-	private ro: ResizeObserver | null = null;
-	private disposed = false;
+	// Smooth zoom: ease this.scale toward targetScale around the last cursor focal point.
+	private targetScale = 1;
+	private zx = 0;
+	private zy = 0;
+	private zoomRaf = 0;
 
 	constructor(
 		private canvas: HTMLCanvasElement,
-		private graph: LearningGraph,
+		graph: LearningGraph,
 		private palette: MapPalette,
 		private onOpenNote: (id: string) => void,
+		private onPersist?: (pos: Record<string, { x: number; y: number }>) => void,
+		settled = false,
+		appearance?: Partial<GraphAppearance>,
 	) {
+		this.ap = { ...DEFAULT_APPEARANCE, ...(appearance ?? {}) };
 		this.win = canvas.ownerDocument.defaultView ?? window;
 		this.ctx = canvas.getContext("2d") as CanvasRenderingContext2D;
+
+		this.nodes = graph.nodes as SimNode[];
+		for (const nd of this.nodes) this.byId.set(nd.id, nd);
+		this.links = graph.edges.map((e) => ({ source: e.a, target: e.b, tier: e.tier }));
+		for (const e of graph.edges) {
+			(this.adj.get(e.a) ?? this.adj.set(e.a, new Set()).get(e.a)!).add(e.b);
+			(this.adj.get(e.b) ?? this.adj.set(e.b, new Set()).get(e.b)!).add(e.a);
+		}
+
+		// d3-force: Obsidian-like forces. Link strength defaults to 1/min(degree), which
+		// keeps hub nodes from collapsing; collision gives nodes breathing room.
+		this.sim = forceSimulation<SimNode, SimLink>(this.nodes)
+			.force("charge", forceManyBody<SimNode>().strength(-150).distanceMax(700))
+			.force(
+				"link",
+				forceLink<SimNode, SimLink>(this.links)
+					.id((d) => d.id)
+					.distance(46),
+			)
+			.force("collide", forceCollide<SimNode>().radius((d) => this.radius(d) + 4).strength(0.85))
+			.force("x", forceX<SimNode>(0).strength(0.055))
+			.force("y", forceY<SimNode>(0).strength(0.055))
+			.velocityDecay(0.4)
+			.alpha(settled ? 0.15 : 1)
+			.on("tick", () => this.requestDraw())
+			.on("end", () => {
+				if (!this.userMoved) this.fit();
+				this.requestDraw();
+				this.persist();
+			});
+
 		this.attach();
 		this.resize();
 		this.fit();
@@ -74,8 +159,12 @@ export class LearningMap {
 
 	dispose(): void {
 		this.disposed = true;
-		if (this.raf) this.win.cancelAnimationFrame(this.raf);
+		this.sim.stop();
+		if (this.drawRaf) this.win.cancelAnimationFrame(this.drawRaf);
+		if (this.hoverRaf) this.win.cancelAnimationFrame(this.hoverRaf);
+		if (this.zoomRaf) this.win.cancelAnimationFrame(this.zoomRaf);
 		this.ro?.disconnect();
+		this.persist();
 		this.canvas.onpointerdown = null;
 		this.canvas.onpointermove = null;
 		this.canvas.onpointerup = null;
@@ -98,46 +187,74 @@ export class LearningMap {
 		return { w: this.canvas.width / this.dpr, h: this.canvas.height / this.dpr };
 	}
 
-	/** Fit the whole graph into view with padding. */
 	private fit(): void {
 		const { w, h } = this.cssSize();
-		if (!this.graph.nodes.length) {
+		if (!this.nodes.length) {
 			this.scale = 1;
 			this.ox = w / 2;
 			this.oy = h / 2;
+			this.fitScale = 1;
 			return;
 		}
 		let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-		for (const n of this.graph.nodes) {
-			minX = Math.min(minX, n.x);
-			minY = Math.min(minY, n.y);
-			maxX = Math.max(maxX, n.x);
-			maxY = Math.max(maxY, n.y);
+		for (const nd of this.nodes) {
+			const x = nd.x ?? 0;
+			const y = nd.y ?? 0;
+			minX = Math.min(minX, x);
+			minY = Math.min(minY, y);
+			maxX = Math.max(maxX, x);
+			maxY = Math.max(maxY, y);
 		}
 		const gw = Math.max(1, maxX - minX);
 		const gh = Math.max(1, maxY - minY);
-		const pad = 40;
+		const pad = 48;
 		this.scale = Math.min((w - pad * 2) / gw, (h - pad * 2) / gh, 2.5);
 		if (!Number.isFinite(this.scale) || this.scale <= 0) this.scale = 1;
 		this.ox = w / 2 - ((minX + maxX) / 2) * this.scale;
 		this.oy = h / 2 - ((minY + maxY) / 2) * this.scale;
+		this.fitScale = this.scale;
+		this.targetScale = this.scale;
 	}
 
-	private toScreen(n: { x: number; y: number }): { x: number; y: number } {
-		return { x: n.x * this.scale + this.ox, y: n.y * this.scale + this.oy };
+	private sx(nd: SimNode): number {
+		return (nd.x ?? 0) * this.scale + this.ox;
+	}
+	private sy(nd: SimNode): number {
+		return (nd.y ?? 0) * this.scale + this.oy;
+	}
+	private worldX(px: number): number {
+		return (px - this.ox) / this.scale;
+	}
+	private worldY(py: number): number {
+		return (py - this.oy) / this.scale;
+	}
+	private radius(nd: SimNode): number {
+		// Gentle size range so "covered" notes are only slightly larger, not oversized.
+		return nodeRadius(nd.strength, 4.5, 11) * this.ap.nodeScale;
 	}
 
-	private radiusFor(n: GraphNode): number {
-		return nodeRadius(n.strength);
+	/** Trace a node's shape: a rounded square for practised ("covered") notes — a filled-in
+	 * cell — and a plain dot for notes not yet studied. */
+	private nodePath(x: number, y: number, r: number, square: boolean): void {
+		const ctx = this.ctx;
+		ctx.beginPath();
+		if (square) {
+			const s = r * 1.8;
+			const rad = Math.min(3.5, s * 0.24);
+			if (typeof ctx.roundRect === "function") ctx.roundRect(x - s / 2, y - s / 2, s, s, rad);
+			else ctx.rect(x - s / 2, y - s / 2, s, s);
+		} else {
+			ctx.arc(x, y, r, 0, Math.PI * 2);
+		}
 	}
 
-	private hit(px: number, py: number): GraphNode | null {
-		// Topmost (last drawn) first.
-		for (let i = this.graph.nodes.length - 1; i >= 0; i--) {
-			const n = this.graph.nodes[i];
-			const s = this.toScreen(n);
-			const r = this.radiusFor(n) + 3;
-			if ((px - s.x) ** 2 + (py - s.y) ** 2 <= r * r) return n;
+	private hitNode(px: number, py: number): SimNode | null {
+		for (let i = this.nodes.length - 1; i >= 0; i--) {
+			const nd = this.nodes[i];
+			const r = this.radius(nd) + 3;
+			const dx = px - this.sx(nd);
+			const dy = py - this.sy(nd);
+			if (dx * dx + dy * dy <= r * r) return nd;
 		}
 		return null;
 	}
@@ -146,17 +263,34 @@ export class LearningMap {
 
 	private attach(): void {
 		this.canvas.onpointerdown = (e) => {
-			this.dragging = true;
 			this.moved = false;
 			this.lastX = e.offsetX;
 			this.lastY = e.offsetY;
+			const n = this.hitNode(e.offsetX, e.offsetY);
+			if (n) {
+				this.mode = "drag";
+				this.drag = n;
+				this.userMoved = true;
+				n.fx = this.worldX(e.offsetX);
+				n.fy = this.worldY(e.offsetY);
+				this.sim.alphaTarget(0.3).restart();
+			} else {
+				this.mode = "pan";
+			}
 			this.canvas.setPointerCapture(e.pointerId);
 		};
 		this.canvas.onpointermove = (e) => {
-			if (this.dragging) {
+			if (this.mode === "drag" && this.drag) {
+				this.moved = true;
+				this.drag.fx = this.worldX(e.offsetX);
+				this.drag.fy = this.worldY(e.offsetY);
+				return;
+			}
+			if (this.mode === "pan") {
 				const dx = e.offsetX - this.lastX;
 				const dy = e.offsetY - this.lastY;
 				if (Math.abs(dx) + Math.abs(dy) > 2) this.moved = true;
+				this.userMoved = true;
 				this.ox += dx;
 				this.oy += dy;
 				this.lastX = e.offsetX;
@@ -164,45 +298,41 @@ export class LearningMap {
 				this.requestDraw();
 				return;
 			}
-			const h = this.hit(e.offsetX, e.offsetY);
-			if (h !== this.hover) {
-				this.hover = h;
-				this.canvas.style.cursor = h ? "pointer" : "grab";
-				this.requestDraw();
-			}
+			this.setHover(this.hitNode(e.offsetX, e.offsetY));
 		};
 		this.canvas.onpointerup = (e) => {
-			this.dragging = false;
 			try {
 				this.canvas.releasePointerCapture(e.pointerId);
 			} catch {
 				/* ignore */
 			}
-			if (!this.moved) {
-				const n = this.hit(e.offsetX, e.offsetY);
+			if (this.mode === "drag" && this.drag) {
+				this.drag.fx = null;
+				this.drag.fy = null;
+				this.sim.alphaTarget(0);
+				if (!this.moved) this.onOpenNote(this.drag.id);
+			} else if (this.mode === "pan" && !this.moved) {
+				const n = this.hitNode(e.offsetX, e.offsetY);
 				if (n) this.onOpenNote(n.id);
 			}
+			this.mode = "none";
+			this.drag = null;
 		};
-		this.canvas.onpointerleave = () => {
-			this.hover = null;
-			this.requestDraw();
-		};
+		this.canvas.onpointerleave = () => this.setHover(null);
 		this.canvas.onwheel = (e) => {
 			e.preventDefault();
-			const factor = Math.exp(-e.deltaY * 0.0015);
-			const nx = this.scale * factor;
-			const clamped = Math.min(6, Math.max(0.1, nx));
-			const f = clamped / this.scale;
-			// Zoom around the cursor.
-			this.ox = e.offsetX - (e.offsetX - this.ox) * f;
-			this.oy = e.offsetY - (e.offsetY - this.oy) * f;
-			this.scale = clamped;
-			this.requestDraw();
+			this.userMoved = true;
+			const factor = Math.exp(-e.deltaY * 0.0012);
+			this.targetScale = Math.min(6, Math.max(0.08, this.targetScale * factor));
+			this.zx = e.offsetX;
+			this.zy = e.offsetY;
+			this.animateZoom();
 		};
 		if (typeof ResizeObserver !== "undefined") {
 			const ro = new ResizeObserver(() => {
 				if (this.disposed) return;
 				this.resize();
+				if (!this.userMoved) this.fit();
 				this.requestDraw();
 			});
 			ro.observe(this.canvas);
@@ -213,11 +343,75 @@ export class LearningMap {
 	// ---------------------------------------------------------------- drawing
 
 	private requestDraw(): void {
-		if (this.raf || this.disposed) return;
-		this.raf = this.win.requestAnimationFrame(() => {
-			this.raf = 0;
+		if (this.drawRaf || this.disposed) return;
+		this.drawRaf = this.win.requestAnimationFrame(() => {
+			this.drawRaf = 0;
 			this.draw();
 		});
+	}
+
+	private setHover(n: SimNode | null): void {
+		if (n === this.hover) return;
+		this.hover = n;
+		this.canvas.style.cursor = n ? "pointer" : "grab";
+		if (n) {
+			this.focusNode = n;
+			this.focusSet = new Set<string>([n.id, ...(this.adj.get(n.id) ?? [])]);
+		}
+		this.animateHover();
+	}
+
+	/** Ease the hover-highlight intensity toward its target, redrawing each frame, so the
+	 * neighbourhood fades in and out smoothly instead of snapping. */
+	private animateHover(): void {
+		if (this.hoverRaf || this.disposed) return;
+		const tick = (): void => {
+			this.hoverRaf = 0;
+			const target = this.hover ? 1 : 0;
+			this.hoverT += (target - this.hoverT) * 0.2;
+			if (Math.abs(target - this.hoverT) < 0.012) {
+				this.hoverT = target;
+				if (target === 0) {
+					this.focusNode = null;
+					this.focusSet = null;
+				}
+			}
+			this.draw();
+			if (this.hoverT !== target && !this.disposed) this.hoverRaf = this.win.requestAnimationFrame(tick);
+		};
+		this.hoverRaf = this.win.requestAnimationFrame(tick);
+	}
+
+	/** Ease the zoom toward the target scale around the cursor, so the wheel feels smooth
+	 * instead of jumping a step per notch. */
+	private animateZoom(): void {
+		if (this.zoomRaf || this.disposed) return;
+		const tick = (): void => {
+			this.zoomRaf = 0;
+			const ns = this.scale + (this.targetScale - this.scale) * 0.3;
+			const done = Math.abs(this.targetScale - ns) < 0.0008;
+			const next = done ? this.targetScale : ns;
+			const f = next / this.scale;
+			this.ox = this.zx - (this.zx - this.ox) * f;
+			this.oy = this.zy - (this.zy - this.oy) * f;
+			this.scale = next;
+			this.draw();
+			if (!done && !this.disposed) this.zoomRaf = this.win.requestAnimationFrame(tick);
+		};
+		this.zoomRaf = this.win.requestAnimationFrame(tick);
+	}
+
+	private persist(): void {
+		if (!this.onPersist || !this.nodes.length) return;
+		const pos: Record<string, { x: number; y: number }> = {};
+		for (const nd of this.nodes) pos[nd.id] = { x: Math.round((nd.x ?? 0) * 10) / 10, y: Math.round((nd.y ?? 0) * 10) / 10 };
+		this.onPersist(pos);
+	}
+
+	private endpoint(v: string | number | SimNode): SimNode | undefined {
+		if (typeof v === "object") return v;
+		if (typeof v === "string") return this.byId.get(v);
+		return this.nodes[v];
 	}
 
 	private draw(): void {
@@ -227,77 +421,123 @@ export class LearningMap {
 		ctx.scale(this.dpr, this.dpr);
 		ctx.clearRect(0, 0, w, h);
 
-		const hi = this.highlight;
-		const dim = (id: string): number => (hi && !hi.has(id) ? 0.18 : 1);
+		const hv = this.hoverT; // eased 0..1 hover intensity
+		const fset = this.focusSet;
+		const fid = this.focusNode?.id ?? null;
+		const ls = this.ap.lineScale;
 
-		// Edges first.
-		const byId = new Map(this.graph.nodes.map((n) => [n.id, n]));
-		for (const e of this.graph.edges) {
-			const a = byId.get(e.a);
-			const b = byId.get(e.b);
+		// Dim factors — deliberately gentle (Obsidian fades, it doesn't black out). Hover
+		// fades non-neighbours toward NODE_DIM as hv rises; scope-pick uses a fixed dim.
+		const NODE_DIM = 0.35;
+		const EDGE_DIM = 0.22;
+		const SCOPE_DIM = 0.18;
+		const dimNode = (id: string): number => {
+			if (fset) return fset.has(id) ? 1 : 1 - (1 - NODE_DIM) * hv;
+			if (this.highlight) return this.highlight.has(id) ? 1 : SCOPE_DIM;
+			return 1;
+		};
+		const litScope = (id: string): boolean => !!this.highlight && this.highlight.has(id);
+
+		// Edges, pass 1: the graph in its normal tier colours; non-neighbour edges fade as
+		// you hover a node.
+		for (const e of this.links) {
+			const a = this.endpoint(e.source);
+			const b = this.endpoint(e.target);
 			if (!a || !b) continue;
-			const sa = this.toScreen(a);
-			const sb = this.toScreen(b);
-			const alpha = Math.min(dim(e.a), dim(e.b));
+			let alpha: number;
+			if (fid) {
+				const incident = a.id === fid || b.id === fid;
+				alpha = incident ? 1 : 1 - (1 - EDGE_DIM) * hv;
+			} else {
+				alpha = Math.min(dimNode(a.id), dimNode(b.id));
+			}
 			ctx.globalAlpha = alpha;
 			if (e.tier === "proven") {
 				ctx.strokeStyle = this.palette.edgeProven;
-				ctx.lineWidth = 2.4;
+				ctx.lineWidth = 2.4 * ls;
 				ctx.shadowColor = this.palette.edgeProven;
 				ctx.shadowBlur = 8;
 			} else if (e.tier === "inherited") {
 				ctx.strokeStyle = this.palette.edgeInherited;
-				ctx.lineWidth = 1.4;
+				ctx.lineWidth = 1.4 * ls;
 				ctx.shadowBlur = 0;
 			} else {
 				ctx.strokeStyle = this.palette.edge;
-				ctx.lineWidth = 1;
+				ctx.lineWidth = 1 * ls;
 				ctx.shadowBlur = 0;
 			}
 			ctx.beginPath();
-			ctx.moveTo(sa.x, sa.y);
-			ctx.lineTo(sb.x, sb.y);
+			ctx.moveTo(this.sx(a), this.sy(a));
+			ctx.lineTo(this.sx(b), this.sy(b));
 			ctx.stroke();
 		}
 		ctx.shadowBlur = 0;
 
-		// Nodes.
-		for (const n of this.graph.nodes) {
-			const s = this.toScreen(n);
-			const r = this.radiusFor(n);
-			ctx.globalAlpha = dim(n.id);
-			ctx.fillStyle = nodeColour(n.state, this.palette);
-			ctx.beginPath();
-			ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+		// Edges, pass 2: the hovered node's edges light up in the accent colour, faded in
+		// with the hover intensity so it eases rather than snaps.
+		if (fid && hv > 0.01) {
+			ctx.globalAlpha = hv;
+			ctx.strokeStyle = this.palette.ring;
+			ctx.shadowBlur = 0;
+			ctx.lineWidth = 1.2 * ls;
+			for (const e of this.links) {
+				const a = this.endpoint(e.source);
+				const b = this.endpoint(e.target);
+				if (!a || !b || (a.id !== fid && b.id !== fid)) continue;
+				ctx.beginPath();
+				ctx.moveTo(this.sx(a), this.sy(a));
+				ctx.lineTo(this.sx(b), this.sy(b));
+				ctx.stroke();
+			}
+			ctx.shadowBlur = 0;
+		}
+
+		// Nodes: practised notes are rounded squares (filled-in cells), un-practised ones
+		// plain dots. Scope-highlighted nodes get a glow so it's obvious what a session covers.
+		for (const nd of this.nodes) {
+			const x = this.sx(nd);
+			const y = this.sy(nd);
+			const r = this.radius(nd);
+			const square = nd.state !== "unpracticed";
+			ctx.globalAlpha = dimNode(nd.id);
+			ctx.fillStyle = nodeColour(nd.state, this.palette);
+			if (litScope(nd.id)) {
+				ctx.shadowColor = this.palette.ring;
+				ctx.shadowBlur = 18;
+			}
+			this.nodePath(x, y, r, square);
 			ctx.fill();
-			if (this.hover === n) {
-				ctx.globalAlpha = dim(n.id);
+			ctx.shadowBlur = 0;
+			if (litScope(nd.id)) {
 				ctx.strokeStyle = this.palette.ring;
 				ctx.lineWidth = 2;
-				ctx.beginPath();
-				ctx.arc(s.x, s.y, r + 3, 0, Math.PI * 2);
+				this.nodePath(x, y, r + 3, square);
 				ctx.stroke();
 			}
 		}
-		ctx.globalAlpha = 1;
 
-		// Hover label.
-		if (this.hover) {
-			const s = this.toScreen(this.hover);
-			const r = this.radiusFor(this.hover);
-			ctx.font = "12px var(--font-interface, sans-serif)";
-			const text = this.hover.id;
-			const tw = ctx.measureText(text).width;
-			const lx = s.x - tw / 2;
-			const ly = s.y - r - 8;
-			ctx.globalAlpha = 0.9;
-			ctx.fillStyle = "rgba(0,0,0,0.6)";
-			ctx.fillRect(lx - 4, ly - 12, tw + 8, 16);
+		// Labels — fade in as you zoom past the fit-to-frame zoom. Only the hovered node's
+		// name is forced on (faded in with the hover), like the native graph.
+		const zoom = this.scale / (this.fitScale || 1);
+		const threshold = Math.max(0.9, 1.35 - this.ap.textFade * 0.25);
+		const labelAlpha = Math.max(0, Math.min(1, (zoom - threshold) / 0.5));
+		if (labelAlpha > 0.02 || (fid && hv > 0.02)) {
+			ctx.font = "11px var(--font-interface, sans-serif)";
+			ctx.textAlign = "center";
+			ctx.textBaseline = "top";
 			ctx.fillStyle = this.palette.text;
-			ctx.textBaseline = "middle";
-			ctx.fillText(text, lx, ly - 4);
-			ctx.globalAlpha = 1;
+			for (const nd of this.nodes) {
+				const x = this.sx(nd);
+				if (x < -60 || x > w + 60) continue;
+				const y = this.sy(nd);
+				if (y < -20 || y > h + 20) continue;
+				const la = nd.id === fid ? Math.max(hv, labelAlpha * dimNode(nd.id)) : labelAlpha * dimNode(nd.id);
+				if (la < 0.04) continue;
+				ctx.globalAlpha = la;
+				ctx.fillText(nd.id, x, y + this.radius(nd) + 3);
+			}
 		}
+		ctx.globalAlpha = 1;
 		ctx.restore();
 	}
 }

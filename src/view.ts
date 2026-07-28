@@ -5,8 +5,8 @@ import type GrillPlugin from "./main";
 import { adjudicateBridges, ConceptTarget, debriefSession, generateQuestions, Grade, gradeAnswer, LLMConfig, Question, supportsVision, Verdict } from "./llm";
 import { Concept, extractConcepts, localQuestionForConcept, localQuestions } from "./generate-local";
 import { BridgeMap, detectBridgeCandidates, pairKey } from "./bridges";
-import { buildGraph, runLayout } from "./graph";
-import { LearningMap, MapPalette } from "./mapview";
+import { buildGraph } from "./graph";
+import { GraphAppearance, LearningMap, MapPalette } from "./mapview";
 import type { CachedQuestion, QuestionBank } from "./store";
 import {
 	ConceptMap,
@@ -178,20 +178,35 @@ export class SessionView extends ItemView {
 	private renderOnboarding(): void {
 		const wrap = this.root();
 		wrap.createDiv({ cls: "grill-score", text: "Welcome to Grill" });
+
+		const how = wrap.createEl("ul", { cls: "grill-onboard-how" });
+		const point = (lead: string, rest: string): void => {
+			const li = how.createEl("li");
+			li.createEl("strong", { text: lead });
+			li.appendText(` ${rest}`);
+		};
+		point("Quiz yourself", "on your own notes — Grill writes the questions.");
+		point("Watch your map fill in", "as you prove what you know.");
+		point("Study anything", "— one folder, a tag, or the whole vault.");
+
+		wrap.createDiv({ cls: "grill-section-label", text: "Which folders should Grill study?" });
 		wrap.createEl("p", {
 			cls: "grill-meta",
-			text:
-				"Grill quizzes you on your own notes and builds a living knowledge graph from what you prove " +
-				"you've learned. Which folders should it study and map? Tick some, or leave them all unticked to " +
-				"use your whole vault. You can change this any time in settings.",
+			text: "Tick some, or leave them all unticked to use your whole vault. You can change this any time in settings.",
 		});
+
 		const folderRoot = `${this.plugin.data.settings.folder}/`;
 		const eligible = this.app.vault.getMarkdownFiles().filter((f) => !f.path.startsWith(folderRoot));
 		const folders = listFolders(eligible);
 		const chosen = new Set<string>();
+
 		if (!folders.length) {
 			wrap.createEl("p", { cls: "grill-meta", text: "No folders found — Grill will use your whole vault." });
 		} else {
+			const boxes: HTMLInputElement[] = [];
+			const controls = wrap.createDiv({ cls: "grill-onboard-controls" });
+			const selectAll = controls.createEl("a", { cls: "grill-chip-link", text: "Select all" });
+			const clear = controls.createEl("a", { cls: "grill-chip-link", text: "Clear" });
 			const list = wrap.createDiv({ cls: "grill-onboard-folders" });
 			for (const path of folders) {
 				const row = list.createDiv({ cls: "grill-onboard-row" });
@@ -200,11 +215,21 @@ export class SessionView extends ItemView {
 					if (cb.checked) chosen.add(path);
 					else chosen.delete(path);
 				};
+				boxes.push(cb);
 				const label = row.createEl("label", { text: path });
 				label.onclick = () => cb.click();
 			}
+			selectAll.onclick = () => {
+				for (const p of folders) chosen.add(p);
+				for (const b of boxes) b.checked = true;
+			};
+			clear.onclick = () => {
+				chosen.clear();
+				for (const b of boxes) b.checked = false;
+			};
 		}
-		const btn = wrap.createEl("button", { text: "Start using Grill", cls: "mod-cta grill-start-btn" });
+
+		const btn = wrap.createEl("button", { text: "Get started", cls: "mod-cta grill-start-btn grill-primary-cta" });
 		btn.onclick = async () => {
 			this.plugin.data.settings.includedFolders = [...chosen];
 			this.plugin.data.settings.onboarded = true;
@@ -310,7 +335,7 @@ export class SessionView extends ItemView {
 			}
 		};
 
-		const btn = wrap.createEl("button", { text: "Start session", cls: "mod-cta grill-start-btn" });
+		const btn = wrap.createEl("button", { text: "Get grilled", cls: "mod-cta grill-start-btn grill-primary-cta" });
 		btn.onclick = () => {
 			this.sessionScope = this.pendingScope;
 			void this.startSession();
@@ -353,6 +378,25 @@ export class SessionView extends ItemView {
 			.filter((f) => f.path.startsWith(dir))
 			.sort((a, b) => b.stat.ctime - a.stat.ctime)
 			.slice(0, 5);
+	}
+
+	/** Inherit the user's Obsidian graph settings (graph.json) so the learning graph looks
+	 * like the graph they've already tuned. Missing/invalid → sensible defaults. */
+	private async readGraphAppearance(): Promise<Partial<GraphAppearance>> {
+		try {
+			const path = `${this.app.vault.configDir}/graph.json`;
+			if (!(await this.app.vault.adapter.exists(path))) return {};
+			const g = JSON.parse(await this.app.vault.adapter.read(path)) as Record<string, unknown>;
+			const num = (v: unknown, d: number): number => (typeof v === "number" && Number.isFinite(v) ? v : d);
+			const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
+			return {
+				textFade: clamp(num(g.textFadeMultiplier, 0), -3, 3),
+				nodeScale: clamp(num(g.nodeSizeMultiplier, 1), 0.3, 4),
+				lineScale: clamp(num(g.lineSizeMultiplier, 1), 0.3, 4),
+			};
+		} catch {
+			return {};
+		}
 	}
 
 	/** Node/edge colours resolved from the current theme (canvas can't read CSS vars). */
@@ -423,23 +467,18 @@ export class SessionView extends ItemView {
 
 			const graph = buildGraph(names, links, concepts);
 
-			// Persisted positions keep the map stable; lay out only new nodes.
+			// Restore saved positions (the live sim starts calm when it has them all, or
+			// settles organically when there are new nodes).
 			const saved = await this.plugin.store.loadGraphLayout();
-			let needLayout = false;
+			let settled = graph.nodes.length > 0;
 			for (const n of graph.nodes) {
 				const p = saved[n.id];
 				if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) {
 					n.x = p.x;
 					n.y = p.y;
 				} else {
-					needLayout = true;
+					settled = false;
 				}
-			}
-			if (needLayout) {
-				runLayout(graph, { iterations: graph.nodes.length > 150 ? 220 : 320 });
-				const pos: Record<string, { x: number; y: number }> = {};
-				for (const n of graph.nodes) pos[n.id] = { x: Math.round(n.x * 10) / 10, y: Math.round(n.y * 10) / 10 };
-				await this.plugin.store.saveGraphLayout(pos);
 			}
 
 			status.remove();
@@ -450,8 +489,17 @@ export class SessionView extends ItemView {
 				});
 				return;
 			}
+			const appearance = await this.readGraphAppearance();
 			this.map?.dispose();
-			this.map = new LearningMap(canvas, graph, this.mapPalette(), (id) => this.openNote(id));
+			this.map = new LearningMap(
+				canvas,
+				graph,
+				this.mapPalette(),
+				(id) => this.openNote(id),
+				(pos) => void this.plugin.store.saveGraphLayout(pos),
+				settled,
+				appearance,
+			);
 			if (capped) {
 				host.createDiv({
 					cls: "grill-meta grill-map-status",

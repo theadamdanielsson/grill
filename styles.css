@@ -6,6 +6,39 @@
   margin: 0 auto;
   padding: 0.5em 0.75em 1.5em;
 }
+
+/* Brand: a warm retro accent by default, but fully overridable — set --grill-accent in a
+   theme or CSS snippet to match your own palette. Backgrounds/text still follow the theme. */
+.grill-view {
+  --grill-accent: #e8590c;
+  --grill-accent-contrast: #ffffff;
+}
+/* Full-width, consistent CTAs. */
+.grill-view .grill-start-btn,
+.grill-view .grill-due-cta {
+  width: 100%;
+}
+/* Primary "Get grilled" and the due shortcut wear the brand accent. */
+.grill-view .grill-primary-cta,
+.grill-view .grill-due-cta {
+  background: var(--grill-accent);
+  color: var(--grill-accent-contrast);
+  border: none;
+  font-weight: var(--font-bold, 600);
+}
+.grill-view .grill-primary-cta:hover,
+.grill-view .grill-due-cta:hover {
+  background: var(--grill-accent);
+  filter: brightness(1.08);
+}
+/* Arcade-HUD section labels. */
+.grill-view .grill-section-label {
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  font-size: calc(var(--font-ui-small) * 0.92);
+  color: var(--grill-accent);
+  opacity: 0.85;
+}
 .grill-body {
   margin-top: 0.5em;
 }
@@ -52,12 +85,12 @@
   width: 100%;
   margin-top: 0.5em;
   background: transparent;
-  border: 1px solid var(--interactive-accent);
-  color: var(--interactive-accent);
+  border: 1px solid var(--grill-accent, var(--interactive-accent));
+  color: var(--grill-accent, var(--interactive-accent));
 }
 .grill-connections-btn:hover {
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
+  background: var(--grill-accent, var(--interactive-accent));
+  color: var(--grill-accent-contrast, var(--text-on-accent));
 }
 /* Connections mode: the "A ↔ B" bridge badge on a question. */
 .grill-bridge {
@@ -131,6 +164,20 @@
 }
 
 /* First-run onboarding: choose Grill's folders. */
+.grill-onboard-how {
+  margin: 0.4em 0 0.9em;
+  padding-left: 1.1em;
+  line-height: 1.5;
+}
+.grill-onboard-how li {
+  margin: 0.15em 0;
+}
+.grill-onboard-controls {
+  display: flex;
+  gap: 1em;
+  margin: 0.3em 0;
+  font-size: var(--font-ui-small);
+}
 .grill-onboard-folders {
   display: flex;
   flex-direction: column;
@@ -537,18 +584,28 @@ settings:
   gap: 0.5em;
   margin: 0.75em 0 1em;
 }
+/* Arcade-cabinet scoreboard: monospace accent numbers in faint-bordered tiles. */
 .grill-stat {
   text-align: center;
-  padding: 0.5em 0.25em;
+  padding: 0.55em 0.3em;
   background: var(--background-secondary);
+  border: 1px solid color-mix(in srgb, var(--grill-accent) 28%, transparent);
   border-radius: var(--radius-s, 4px);
 }
 .grill-stat-value {
-  font-size: var(--font-ui-large, 1.2em);
-  font-weight: var(--font-semibold, 600);
+  font-family: var(--font-monospace);
+  font-size: 1.55em;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: 0.02em;
+  color: var(--grill-accent);
 }
 .grill-stat-label {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
   font-size: var(--font-ui-smaller, 0.8em);
+  color: var(--text-muted);
+  margin-top: 0.15em;
 }
 
 /* misconception list */

@@ -34,8 +34,9 @@ debugging.
 - **Keep it local-first.** No accounts, no servers of mine, no telemetry. The only network
   calls Grill makes are to the model provider the user chose, with the user's own key.
   Anything that phones home somewhere else won't get merged.
-- **Don't touch a user's notes unless they asked for it.** Writes to note frontmatter and
-  session files are opt-in and stay that way.
+- **Don't touch a user's notes unless they asked for it.** Writing into a user's own notes
+  (like adding a `[[link]]`) is button-gated; Grill's own state and session files stay in
+  its folder.
 
 ## The rough layout
 
