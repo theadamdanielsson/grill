@@ -12,6 +12,8 @@
 .grill-view {
   --grill-accent: #e8590c;
   --grill-accent-contrast: #ffffff;
+  /* The gold half of the banner's two-tone frame (scoreboard tiles only). */
+  --grill-gold: #ffd166;
 }
 /* Full-width, consistent CTAs. */
 .grill-view .grill-start-btn,
@@ -101,13 +103,12 @@
   margin-bottom: 0.6em;
 }
 .grill-routed {
-  display: flex;
-  align-items: center;
-  gap: 0.4em;
-  flex-wrap: wrap;
   margin-bottom: 0.6em;
   padding-left: 0.6em;
   border-left: 2px solid var(--interactive-accent);
+}
+.grill-routed p {
+  margin: 0;
 }
 .grill-confidence {
   display: flex;
@@ -297,6 +298,31 @@
   resize: vertical;
   margin-bottom: 0.5em;
 }
+.grill-blank-input {
+  font-family: inherit;
+  font-size: inherit;
+  border: none;
+  border-bottom: 2px solid var(--grill-accent, var(--interactive-accent));
+  background: transparent;
+  padding: 0 0.15em;
+  min-width: 6em;
+  width: auto;
+}
+.grill-mc-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4em;
+  margin-bottom: 0.5em;
+}
+.grill-mc-btn {
+  text-align: left;
+  white-space: normal;
+  height: auto;
+  padding: 0.5em 0.75em;
+}
+.grill-mc-btn:disabled {
+  opacity: 0.6;
+}
 .grill-btn-row {
   display: flex;
   gap: 0.5em;
@@ -322,6 +348,18 @@
   color: var(--text-muted);
 }
 .grill-hint p { margin: 0; }
+
+/* Press Start 2P (SIL OFL 1.1, see fonts/PressStart2P-OFL.txt), subset to basic
+ * Latin + digits and embedded inline so the plugin stays a single bundled file.
+ * Grill's own retro arcade identity (see docs/hero.svg) — used for the scoreboard
+ * stat readouts, not general UI text. */
+@font-face {
+  font-family: "Grill Pixel";
+  src: url(data:font/woff2;base64,d09GMgABAAAAAAgcAAwAAAAAHBgAAAfMAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHCoGYACBJhEICqtgn2IBNgIkA4FCC4FCAAQgBYQKByAbfxRRlG7SEVB8fWAb0xrrNyxKkbGZEjRFzm3JIlqrGz09S+87F4UiNIOnb1n71d0zO1fVPbMXMjk4ZMr2UgjC8JBJKIxD8TASoVYhsWvJmF4RZOWnihkGWs/oYeRmD0IQH4SftYPvc++zpUskEolDfoV0MS8ma3KEQTEIC1LQhWkl5l1KltK1u8H/emhudlzCTsj2l28xP/9rrbTTd+yAJaAj4aISoyPs4es/3dfTs7tV20dzwDy3GwDygMITqrBKlEpFyKjYKKWzDJ09jupHszTSyCKyNFI8fw8BlFtUmK/f5mqQbszeDlBgAzTn3x58o0c44L6sFuATeqFMYekPkNHuL3zUq78Sx5/P724AvtFgduD+BbwrWI45oIIOLCSVzdeOOnnwyY+5hXSMfPxm+OQrTDzCusa++rEcmoH/TwJCHXgAPAGeAsJrKXE1HT1pZRUhdVFVCVkRGS0NTUldRWElAzlDeX0FbQykuQqAGQB+w0/If0HtBwAQAQBweASHOO04J3ZBCSWWDD8Z8kGBCJC4WyP98Pi1pDLPKniMjPDjXL2IIVyIRdSeGOOlvKMjBg1lEdryC0Xs6blR7ylDDDEQDnVcvyrQHi21MUwu3RG1XoRiVUdHES9cqOeoMWwa8213uBB8uMjH3I6VuNYQZYoOLh5DXbis76zcPuDgdB0agt8rmYlJwrCgEvFJVBSVWoWhIG/pSQzO8Cnoo/jkcWeY/FCXak4/a27EvIpKrRUpiUgFcZST6qqIMjkqya0zl7zl6pmeZcrq12BErTNSZkHpjMk5DSXWVGxzlOEbk9IxUnP1XaIukIp5LR2ycbJMIN4/97KoAw5GdPh4ricQmc/UGExUbFQM9u7k/D8FYraOBLi4g6ncrmbmNfHEbth3zqd2kJENiHRxZoczDzqCcshDEeGRUqWwQTKb57csSbouEueiKK0I3WSsIxlDkdr6zVOnkIAljieV1zJJ6SqI25NYvhXWVlRUCFJTbbQr5kJihQnKa5JaAhTYOjesLJP+5Awq7aQkihxJH6oCPMtMVolpBYJqji43qYKHXUraI7HKSu25D6wb6jSzRBQRRoiSkSoQJI7qvDbMi8EDDA/jyMJJ9C2L+UKRRUK6WenICed/3yhp6tD4SWfDYllaYXeRg9Sev9AMO0Vs5ZpOCiGJdu/51IiicV2+9IZYLjScTVdETXLmqibkk4vstRPhgNi2/EDERr4t9SyW5FsSdtpCELEEXGyzQbWIck4og3nTYowIs8PjpxjWABlgl1KUEzzI4vq9hsUYNy9ppsB0oYGQRi9IUT73GjBUQZdI61u9R+GPM1wV9Jabm75udmXrPDrRJ7pEH+M6xquKd3RKxkyIj42N6CiAqGCMZdLKC6AT+dAgBvk1OqF8XQP7GzxXVToY4Z2rOLWN2cL1sHlDQHqisYtJxjaiR6UyYAG9xpU+YX5AsQWpklzXKBePM6fH0mdh8whlvmb59BRfXXirouOTTeWeOHbYINqCAMqcp+Peoz1v0sUYChghcpdk85gTfk20Rk9R6Yz5BTs7dQsiVbmJ2A6sqjlJDwtUEizwyoLpGn9A4Nc2RHO2rJocT0dL5XxUdcw0ousuwX4xeU53z4dlr2I/oUutIgTXuFvVOod1PQ6tk7HWOHuVaBY/NaAxl069XPrKQpD2aRXTbfA22xRnRIi2VShuTtDedK7GtHF64KNk49VFO6RrTlZbO9QxjR/CTemaz1msVEx6d6e5uybtmJTTIT+rOIexxqwQwISQEhQFgdXhWjG0dP98pVy6YyOc34nBFXSXRrhXwwXuIFoqtcEpN0vKYRFNIPr6awJy9GxXxlLjIq0FqQUrzT2PatbhzDhmFVe7jJa1BtmDrRjekDvRPU16qX3PZAjt3SE/t/bXltAkkX8Q86j9HjUcZGyPaVi+gf5Ls6c2KjzVW1dW6ko+LSok0UfVaynqNIklD0t0zlR+YsqcoxLlzUPuXnnbIbd6bWjIc+DfH2bKJJBlSrUFIphbKiQwzqR9n9WBuesvdf+NznK+5oZmAD5qQLdeNqyJ+rKC9pFkj6Des2dqj26TvYneHkwSP0XPBBIte8x0Yp7M2BjNwzFWAFPilnHeNXwpWzYj+8dJNHTaFQq+sGZoZM9WH10gU01EPL7A6CKHtp4sNCauGznDkgrvs2VjRGPn9fh9UadxERrSdUx6bKPmJB0ns3idO7gIPvv2kwYJxwaW5LFDjo/z3i2AGDbL6f6f6MzXdC736nbw3puyg46OkcMC3nUZ7mKr9pIRA3vKtDTN764HfMvkkjtW/nuuiK7Js6fG7Qc/Cn/tE5Je3aOfaPZ4+/g3/x+G+NB9SysWJGA9hxPWFb9XVwL7IlPSiRmYTkwM4zgMkfqI3osAsdJQIiSAFJTDn6UrFldMggHMcBFzA0+nJdyUZ49hIaEF+AtRJFzwX+Qo+V/keVooCjzoZVFGX1s/JudOn0UdnbxdrC2t3BALEzMLUqPZ3Cu5IHU9e6TK7Bq78AMljne0afU05IXdkVrt9SXOU5kSc2feQj6u6sGclYvhSTdqOuRpHdtBKgnrgXfx6CdmSKJHgomCsX1mJ68coufwNBNLd7vQhJWB6TzmFdXuVRxLkd0O7nj6NnqD9opQDccueq3qKEp/eFIaFv5gTVgA) format("woff2");
+  font-display: swap;
+  font-weight: normal;
+  font-style: normal;
+}
 
 /* ---------------------------------------------------------------- feedback */
 .grill-verdict {
@@ -351,17 +389,47 @@
   font-size: var(--font-ui-large, 1.2em);
   margin: 0.75em 0 0.5em;
 }
+.grill-divider {
+  border-top: 1px solid var(--background-modifier-border);
+  margin: 1em 0;
+}
 .grill-summary-list {
   display: flex;
   flex-direction: column;
-  gap: 0.3em;
-  margin: 0.5em 0 0.75em;
+  gap: 0.4em;
+  margin: 0.5em 0 1em;
+  padding: 0.7em 0.85em;
+  background: var(--background-secondary);
+  border-radius: var(--radius-s, 4px);
 }
 .grill-summary-row {
   display: flex;
   align-items: center;
   gap: 0.6em;
   font-size: var(--font-ui-small);
+}
+.grill-btn-row-fill button {
+  flex: 1;
+}
+.grill-secondary-btn {
+  background: transparent;
+  border: 1px solid var(--grill-accent, var(--interactive-accent));
+  color: var(--grill-accent, var(--interactive-accent));
+  box-shadow: none;
+}
+.grill-secondary-btn:hover {
+  background: var(--grill-accent, var(--interactive-accent));
+  color: var(--grill-accent-contrast, var(--text-on-accent));
+}
+.grill-route-consent {
+  margin: 0.75em 0 1em;
+  padding: 0.6em 0.85em;
+  border-left: 2px solid var(--interactive-accent);
+  background: var(--background-secondary);
+  border-radius: var(--radius-s, 4px);
+}
+.grill-route-consent p {
+  margin: 0;
 }
 .grill-dot {
   width: 8px;
@@ -387,18 +455,23 @@
 .grill-loading-title {
   font-weight: var(--font-semibold, 600);
   font-size: var(--font-ui-medium);
+  color: var(--grill-accent);
   margin: 0.75em 0 0.1em;
 }
-.grill-spinner {
-  width: 22px;
-  height: 22px;
-  border: 2px solid var(--background-modifier-border);
-  border-top-color: var(--interactive-accent);
-  border-radius: 50%;
-  animation: grill-spin 0.8s linear infinite;
+.grill-flame-spin {
+  display: flex;
+  color: var(--grill-accent);
+  animation: grill-flicker 1.1s ease-in-out infinite;
 }
-@keyframes grill-spin {
-  to { transform: rotate(360deg); }
+.grill-flame-spin svg {
+  width: 28px;
+  height: 28px;
+}
+@keyframes grill-flicker {
+  0%, 100% { transform: scale(1) rotate(-2deg); opacity: 0.85; }
+  25% { transform: scale(1.08) rotate(1deg); opacity: 1; }
+  50% { transform: scale(0.96) rotate(-1deg); opacity: 0.9; }
+  75% { transform: scale(1.05) rotate(2deg); opacity: 1; }
 }
 
 /* ---------------------------------------------------------------- customization
@@ -513,7 +586,7 @@ settings:
 /* ---------------------------------------------------------------- debrief */
 .grill-debrief {
   margin: 0.75em 0 1em;
-  padding: 0.6em 0.85em;
+  padding: 0.9em 1em;
   border-left: 2px solid var(--interactive-accent);
   background: var(--background-secondary);
   border-radius: var(--radius-s, 4px);
@@ -521,14 +594,15 @@ settings:
 .grill-debrief-headline p {
   margin: 0;
   font-weight: var(--font-semibold, 600);
+  font-size: var(--font-ui-medium);
 }
 .grill-debrief-pattern p {
-  margin: 0.4em 0 0;
+  margin: 0.75em 0 0;
   font-size: var(--font-ui-small);
   color: var(--text-muted);
 }
 .grill-debrief-next {
-  margin-top: 0.5em;
+  margin-top: 0.9em;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -536,15 +610,35 @@ settings:
 }
 
 /* ---------------------------------------------------------------- scope picker */
-.grill-scope {
+.grill-scope-header {
   display: flex;
-  align-items: center;
-  gap: 0.5em;
-  margin: 0.6em 0 0.9em;
+  align-items: baseline;
+  gap: 0.4em;
+  margin: 0.5em 0 0.3em;
 }
-.grill-scope-select {
-  flex: 1;
-  min-width: 0;
+.grill-scope-toggle {
+  cursor: pointer;
+}
+.grill-scope-caret {
+  color: var(--text-muted);
+  font-size: 1.1em;
+}
+.grill-scope-summary {
+  margin-left: 0.15em;
+}
+/* Collapsed = a peek (a couple of rows, scroll cut off), not hidden entirely;
+ * expanded lifts the cap so the full checkbox list scrolls as before. */
+.grill-onboard-folders.grill-scope-collapsed {
+  max-height: 5.2em;
+  overflow: hidden;
+}
+.grill-scope-group {
+  font-weight: var(--font-semibold, 600);
+  font-size: var(--font-ui-small);
+  margin: 0.6em 0 0.2em;
+}
+.grill-scope-group:first-child {
+  margin-top: 0;
 }
 
 /* ---------------------------------------------------------------- retention core */
@@ -556,17 +650,20 @@ settings:
   margin-top: 0.75em;
 }
 .grill-debrief-gaps {
-  margin-top: 0.5em;
+  margin-top: 0.9em;
 }
 .grill-debrief-label {
   font-weight: var(--font-semibold, 600);
-  margin-bottom: 0.2em;
+  margin-bottom: 0.45em;
 }
 .grill-debrief-gap {
   display: flex;
   align-items: baseline;
-  gap: 0.4em;
-  margin-bottom: 0.25em;
+  gap: 0.5em;
+  padding: 0.4em 0.55em;
+  margin-bottom: 0.35em;
+  background: var(--background-primary);
+  border-radius: var(--radius-s, 4px);
 }
 .grill-debrief-gap-text {
   flex: 1;
@@ -574,38 +671,46 @@ settings:
 }
 .grill-debrief-gap-text p { margin: 0; font-size: var(--font-ui-small); }
 .grill-debrief-strengths {
-  margin-top: 0.5em;
+  margin-top: 0.9em;
 }
 
-/* dashboard stats */
+/* Arcade scoreboard tiles: the "box within a box" double frame + corner rivets
+ * from Grill's own banner (docs/hero.svg), in the same pixel font as its
+ * "1UP"/"HI-SCORE" HUD text — not a rounded, muted "dashboard card." */
 .grill-stats {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 0.5em;
+  gap: 0.6em;
   margin: 0.75em 0 1em;
 }
-/* Arcade-cabinet scoreboard: monospace accent numbers in faint-bordered tiles. */
 .grill-stat {
   text-align: center;
-  padding: 0.55em 0.3em;
-  background: var(--background-secondary);
-  border: 1px solid color-mix(in srgb, var(--grill-accent) 28%, transparent);
-  border-radius: var(--radius-s, 4px);
+  padding: 0.8em 0.3em 0.6em;
+  background:
+    linear-gradient(var(--grill-gold, #ffd166), var(--grill-gold, #ffd166)) top left / 7px 7px no-repeat,
+    linear-gradient(var(--grill-gold, #ffd166), var(--grill-gold, #ffd166)) top right / 7px 7px no-repeat,
+    linear-gradient(var(--grill-gold, #ffd166), var(--grill-gold, #ffd166)) bottom left / 7px 7px no-repeat,
+    linear-gradient(var(--grill-gold, #ffd166), var(--grill-gold, #ffd166)) bottom right / 7px 7px no-repeat,
+    var(--background-primary);
+  border: 2px solid var(--grill-accent);
+  box-shadow:
+    inset 0 0 0 3px var(--background-primary),
+    inset 0 0 0 5px var(--grill-gold, #ffd166);
 }
 .grill-stat-value {
-  font-family: var(--font-monospace);
-  font-size: 1.55em;
-  font-weight: 700;
-  line-height: 1.1;
-  letter-spacing: 0.02em;
+  font-family: "Grill Pixel", var(--font-monospace);
+  font-size: 1.3em;
+  line-height: 1.4;
   color: var(--grill-accent);
 }
 .grill-stat-label {
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: var(--font-ui-smaller, 0.8em);
-  color: var(--text-muted);
-  margin-top: 0.15em;
+  font-family: "Grill Pixel", var(--font-monospace);
+  font-size: 0.5em;
+  line-height: 1.6;
+  letter-spacing: 0.02em;
+  color: var(--grill-gold, #ffd166);
+  opacity: 0.9;
+  margin-top: 0.5em;
 }
 
 /* misconception list */

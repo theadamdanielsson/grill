@@ -1,6 +1,6 @@
 /** Quiz session side panel. */
 
-import { ItemView, MarkdownRenderer, Notice, TFile, WorkspaceLeaf } from "obsidian";
+import { ItemView, MarkdownRenderer, Notice, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
 import { adjudicateBridges, ConceptTarget, debriefSession, generateQuestions, Grade, gradeAnswer, LLMConfig, Question, supportsVision, Verdict } from "./llm";
 import { Concept, extractConcepts, localQuestionForConcept, localQuestions } from "./generate-local";
@@ -37,7 +37,7 @@ import {
 	SessionDebrief,
 	topMisconceptions,
 } from "./debrief";
-import { decodeScope, dueFiles, encodeScope, filesForScope, listFolders, listTags } from "./scope";
+import { dueFiles, filesForScope, listFolders, listTags, Scope } from "./scope";
 import { CONFIDENCE_LEVELS, calibrationLine, pushCalibration } from "./calibration";
 import { celebrate, playSfx } from "./sfx";
 import { SessionEntry } from "./store";
@@ -66,6 +66,20 @@ interface QuestionResult extends SessionEntry {
 	connectTo?: string;
 }
 
+/** A prerequisite reactive-routing candidate, found but not yet committed — used to
+ * gate the last-question-of-the-session case behind a consent prompt. */
+interface PrereqRoute {
+	concept: Concept;
+	prereqNote: string;
+	local: boolean;
+}
+
+/** A route offered but not yet accepted/declined by the student. */
+interface PendingRoute {
+	route: PrereqRoute;
+	fromNote: string;
+}
+
 /** Most cached question variants kept per concept, to bound questions.json growth. */
 const MAX_VARIANTS = 8;
 /** Cap on learning-graph nodes laid out + drawn, so a huge vault stays responsive. */
@@ -87,7 +101,6 @@ export class SessionView extends ItemView {
 	// Streaming generation state.
 	private questions: Question[] = [];
 	private targetCount = 0;
-	private notesConcat = "";
 	/** Relationships between the session's notes, from their links. */
 	private linksBlock = "";
 	/** Canonical misconception registry, held for the session (re-probe + resolve). */
@@ -121,8 +134,12 @@ export class SessionView extends ItemView {
 	private dirty = false;
 	/** Images per note, resolved once when a vision model is in use. */
 	private noteImages: Record<string, ImageInput[]> = {};
-	/** Flat image list for question generation (all notes in the session). */
-	private contextImages: ImageInput[] = [];
+	/** Whether this session's model can see images at all; per-batch notes text only
+	 * warns about un-sendable embeds for notes actually in that batch. */
+	private sessionVision = false;
+	/** Notes with image embeds that couldn't be sent (no vision support / off), so a
+	 * batch touching one of them can say so instead of silently ignoring the image. */
+	private notesWithUnsentImages = new Set<string>();
 	/** The user's persona override (Grill/Instructions.md), or "" to use the engine default. */
 	private sessionPersona = "";
 	/** The user's question/grading preferences (Grill/Instructions.md), if any. */
@@ -143,6 +160,9 @@ export class SessionView extends ItemView {
 	/** The confidence the user picked for the current question (0..1), or null. Only
 	 * used when the confidence check is on; captured into calibration on grade. */
 	private pendingConfidence: number | null = null;
+	/** The choice clicked on a multiple-choice question, captured for `doAction` to
+	 * read as its "answer" — mc has no textarea to read from. */
+	private mcPicked = "";
 
 	constructor(leaf: WorkspaceLeaf, plugin: GrillPlugin) {
 		super(leaf);
@@ -162,6 +182,17 @@ export class SessionView extends ItemView {
 	async onOpen(): Promise<void> {
 		if (!this.plugin.data.settings.onboarded) this.renderOnboarding();
 		else this.renderStart();
+	}
+
+	/** Called after mastery finishes loading asynchronously post-launch: `this.plugin.mastery`
+	 * starts as an empty placeholder and is only populated once `loadMastery()` resolves, so a
+	 * pane already open at that point (e.g. persisted open across an app reload) can render its
+	 * start screen from the empty placeholder first — showing 0 known/struggling and every note
+	 * untested — with nothing to tell it the real data arrived a moment later. Re-render, but
+	 * only if still idle on the start screen (checked via a DOM marker, not extra state), so this
+	 * never interrupts an active question, loading screen, or summary. */
+	refreshIfOnStartScreen(): void {
+		if (this.contentEl.querySelector(".grill-scope-header")) this.renderStart();
 	}
 
 	/** Public entry so the plugin can force the first-run screen on install. */
@@ -267,13 +298,24 @@ export class SessionView extends ItemView {
 		const eligible = this.allEligible();
 		this.pendingScope = null;
 
-		const countsEl = wrap.createDiv({ cls: "grill-meta" });
+		const statsEl = wrap.createDiv({ cls: "grill-stats grill-start-stats" });
+		const addStat = (label: string): HTMLElement => {
+			const tile = statsEl.createDiv({ cls: "grill-stat" });
+			const value = tile.createDiv({ cls: "grill-stat-value" });
+			tile.createDiv({ cls: "grill-stat-label", text: label });
+			return value;
+		};
+		const notesStat = addStat("Notes");
+		const knownStat = addStat("Known");
+		const strugglingStat = addStat("Struggling");
+		const untestedStat = addStat("Untested");
 		const showCounts = (files: TFile[]): void => {
 			const counts = { untested: 0, struggling: 0, known: 0 };
 			for (const f of files) counts[statusOf(map[f.basename])]++;
-			countsEl.setText(
-				`${files.length} notes: ${counts.known} known, ${counts.struggling} struggling, ${counts.untested} untested`,
-			);
+			notesStat.setText(String(files.length));
+			knownStat.setText(String(counts.known));
+			strugglingStat.setText(String(counts.struggling));
+			untestedStat.setText(String(counts.untested));
 		};
 		showCounts(eligible);
 
@@ -288,47 +330,74 @@ export class SessionView extends ItemView {
 			};
 		}
 
-		// Scope selector: whole vault / current note / a folder / a tag.
-		const scopeRow = wrap.createDiv({ cls: "grill-scope" });
-		scopeRow.createSpan({ cls: "grill-meta", text: "Study" });
-		const sel = scopeRow.createEl("select", { cls: "dropdown grill-scope-select" });
-		sel.createEl("option", { value: "all", text: "Whole vault" });
-
-		if (due.length) {
-			sel.createEl("option", { value: encodeScope({ kind: "due", id: "" }), text: `Due cards only (${due.length})` });
-		}
-
+		// Scope selector: tick any combination of folders, tags, or the current
+		// note; nothing ticked studies the whole vault. Ticked scopes combine by union.
+		// Collapsed by default — the map below is the main focus, not this picker.
 		const active = this.app.workspace.getActiveFile();
-		if (active && active.extension === "md" && !this.plugin.isExcluded(active.path)) {
-			sel.createEl("option", { value: encodeScope({ kind: "note", id: active.path }), text: `Current note: ${active.basename}` });
-		}
-
+		const activeEligible = !!active && active.extension === "md" && !this.plugin.isExcluded(active.path);
 		const folders = listFolders(eligible);
-		if (folders.length) {
-			const g = sel.createEl("optgroup");
-			g.label = "Folders";
-			for (const path of folders) g.createEl("option", { value: encodeScope({ kind: "folder", id: path }), text: path });
-		}
 		const tags = listTags(this.app);
-		if (tags.length) {
-			const g = sel.createEl("optgroup");
-			g.label = "Tags";
-			for (const t of tags) g.createEl("option", { value: encodeScope({ kind: "tag", id: t.tag }), text: `${t.tag} (${t.count})` });
-		}
+		const hasScopeOptions = activeEligible || folders.length > 0 || tags.length > 0;
 
-		sel.onchange = () => {
-			const scope = decodeScope(sel.value);
-			if (scope.kind === "all") {
+		const scopeHeader = wrap.createDiv({ cls: "grill-scope-header" });
+		scopeHeader.createSpan({ cls: "grill-section-label", text: "Scope" });
+		// A dropdown-style caret, not a collapse arrow: signals "this opens a list of
+		// options" the way a native <select> would, right next to the label it opens.
+		scopeHeader.createSpan({ cls: "grill-scope-caret", text: "⌄" });
+		const scopeSummary = scopeHeader.createSpan({ cls: "grill-meta grill-scope-summary", text: "Whole vault" });
+
+		const checked: Scope[] = [];
+		const recompute = (): void => {
+			if (!checked.length) {
 				this.pendingScope = null;
 				showCounts(eligible);
 				this.map?.setHighlight(null);
-			} else {
-				const files = filesForScope(this.app, scope, eligible, map);
-				this.pendingScope = files;
-				showCounts(files);
-				this.map?.setHighlight(new Set(files.map((f) => f.basename)));
+				scopeSummary.setText("Whole vault");
+				return;
 			}
+			const byPath = new Map<string, TFile>();
+			for (const scope of checked) {
+				for (const f of filesForScope(this.app, scope, eligible, map)) byPath.set(f.path, f);
+			}
+			const files = [...byPath.values()];
+			this.pendingScope = files;
+			showCounts(files);
+			this.map?.setHighlight(new Set(files.map((f) => f.basename)));
+			scopeSummary.setText(`${checked.length} selected`);
 		};
+		const addScopeRow = (parent: HTMLElement, label: string, scope: Scope): void => {
+			const row = parent.createDiv({ cls: "grill-onboard-row" });
+			const cb = row.createEl("input", { attr: { type: "checkbox" } });
+			cb.onchange = () => {
+				if (cb.checked) checked.push(scope);
+				else {
+					const i = checked.findIndex((s) => s.kind === scope.kind && s.id === scope.id);
+					if (i >= 0) checked.splice(i, 1);
+				}
+				recompute();
+			};
+			const lbl = row.createEl("label", { text: label });
+			lbl.onclick = () => cb.click();
+		};
+
+		if (hasScopeOptions) {
+			const scopeBox = wrap.createDiv({ cls: "grill-onboard-folders grill-scope-collapsed" });
+			if (activeEligible && active) {
+				addScopeRow(scopeBox, `Current note: ${active.basename}`, { kind: "note", id: active.path });
+			}
+			if (folders.length) {
+				scopeBox.createDiv({ cls: "grill-scope-group", text: "Folders" });
+				for (const path of folders) addScopeRow(scopeBox, path, { kind: "folder", id: path });
+			}
+			if (tags.length) {
+				scopeBox.createDiv({ cls: "grill-scope-group", text: "Tags" });
+				for (const t of tags) addScopeRow(scopeBox, `${t.tag} (${t.count})`, { kind: "tag", id: t.tag });
+			}
+			scopeHeader.addClass("grill-scope-toggle");
+			scopeHeader.onclick = () => {
+				scopeBox.toggleClass("grill-scope-collapsed", !scopeBox.hasClass("grill-scope-collapsed"));
+			};
+		}
 
 		const btn = wrap.createEl("button", { text: "Get grilled", cls: "mod-cta grill-start-btn grill-primary-cta" });
 		btn.onclick = () => {
@@ -539,7 +608,7 @@ export class SessionView extends ItemView {
 		const stat = (label: string, value: string): void => {
 			const s = stats.createDiv({ cls: "grill-stat" });
 			s.createDiv({ cls: "grill-stat-value", text: value });
-			s.createDiv({ cls: "grill-stat-label grill-meta", text: label });
+			s.createDiv({ cls: "grill-stat-label", text: label });
 		};
 		stat("due now", String(dueNow));
 		stat("due this week", String(dueWeek));
@@ -655,7 +724,7 @@ export class SessionView extends ItemView {
 	private renderLoading(title: string, detail: string): void {
 		const wrap = this.root();
 		const box = wrap.createDiv({ cls: "grill-loading" });
-		box.createDiv({ cls: "grill-spinner" });
+		setIcon(box.createDiv({ cls: "grill-flame-spin" }), "flame");
 		box.createEl("p", { text: title, cls: "grill-loading-title" });
 		box.createEl("p", { text: detail, cls: "grill-meta" });
 	}
@@ -713,29 +782,61 @@ export class SessionView extends ItemView {
 			if (this.plugin.data.settings.hideNoteName) {
 				routed.createSpan({ cls: "grill-meta", text: "Shoring up a foundation of the note you just missed" });
 			} else {
-				routed.createSpan({ cls: "grill-meta", text: "You missed" });
-				routed.createSpan({ cls: "grill-chip", text: q.routedFrom });
-				routed.createSpan({ cls: "grill-meta", text: "— checking a foundation it builds on" });
+				this.md(`You missed **${q.routedFrom}** — checking a foundation it builds on`, routed.createDiv({ cls: "grill-meta" }));
 			}
 		}
 
 		const qEl = card.createDiv({ cls: "grill-question" });
-		this.md(q.question, qEl);
+		// Loose match (3+ underscores): the same tolerance questionDefect already
+		// validates against, in case a model writes ___ or _____ instead of ____.
+		const blankMatch = q.type === "blank" ? /_{3,}/.exec(q.question) : null;
+		const isBlank = !!blankMatch;
+		const isMc = q.type === "mc" && !!q.choices && q.choices.length >= 2;
+		let blankInput: HTMLInputElement | null = null;
+		if (isBlank && blankMatch) {
+			// Plain text, not markdown: the blank splits the sentence around a live
+			// input, which markdown rendering can't be interleaved with reliably.
+			const before = q.question.slice(0, blankMatch.index);
+			const after = q.question.slice(blankMatch.index + blankMatch[0].length);
+			qEl.createSpan({ text: before });
+			blankInput = qEl.createEl("input", { cls: "grill-blank-input", attr: { type: "text" } });
+			qEl.createSpan({ text: after });
+		} else {
+			this.md(q.question, qEl);
+		}
 
 		const selfGrade = this.plugin.data.settings.gradingMode === "self";
 		const hintBox = card.createDiv({ cls: "grill-hintbox" });
 		let hintsUsed = 0;
 		const hints = [q.hints.tier1, q.hints.tier2, q.hints.tier3].filter(Boolean);
 
-		const ta = card.createEl("textarea", {
-			cls: "grill-answer",
-			attr: {
-				rows: "5",
-				placeholder: selfGrade
-					? "Answer from memory, or just think it through, then reveal... (Cmd/Ctrl+Enter)"
-					: "Answer from memory... (Cmd/Ctrl+Enter to submit)",
-			},
-		});
+		// Assigned below; declared early so the mc choice buttons (built before the
+		// hint/skip row, and which auto-submit on click) can already call it.
+		let doAction: (giveUp: boolean) => void = () => undefined;
+
+		let ta: HTMLTextAreaElement | null = null;
+		if (isMc) {
+			const mcRow = card.createDiv({ cls: "grill-mc-row" });
+			const shuffled = [...(q.choices as string[])].sort(() => Math.random() - 0.5);
+			for (const choice of shuffled) {
+				const b = mcRow.createEl("button", { text: choice, cls: "grill-mc-btn" });
+				b.onclick = () => {
+					mcRow.querySelectorAll("button").forEach((other) => (other.disabled = true));
+					this.mcPicked = choice;
+					doAction(false);
+				};
+			}
+		} else if (!isBlank) {
+			ta = card.createEl("textarea", {
+				cls: "grill-answer",
+				attr: {
+					rows: "5",
+					placeholder: selfGrade
+						? "Answer from memory, or just think it through, then reveal... (Cmd/Ctrl+Enter)"
+						: "Answer from memory... (Cmd/Ctrl+Enter to submit)",
+				},
+			});
+		}
 		// Confidence check (opt-in, AI grading only): predict how sure you are before
 		// the grade lands, so calibration compares your confidence to an objective mark.
 		if (this.plugin.data.settings.confidenceCheck && !selfGrade) {
@@ -754,7 +855,10 @@ export class SessionView extends ItemView {
 		}
 
 		const row = card.createDiv({ cls: "grill-btn-row" });
-		const submit = row.createEl("button", { text: selfGrade ? "Show answer" : "Submit", cls: "mod-cta" });
+		if (!isMc) {
+			const submit = row.createEl("button", { text: selfGrade ? "Show answer" : "Submit", cls: "mod-cta" });
+			submit.onclick = () => doAction(false);
+		}
 		if (hints.length) {
 			const hintBtn = row.createEl("button", { text: "Hint" });
 			hintBtn.onclick = () => {
@@ -768,17 +872,23 @@ export class SessionView extends ItemView {
 		}
 		const skip = row.createEl("button", { text: "I don't know", cls: "grill-quiet-btn" });
 
-		const doAction = (giveUp: boolean) => {
-			const answer = giveUp ? "" : ta.value.trim();
+		doAction = (giveUp: boolean) => {
+			const answer = giveUp ? "" : isMc ? this.mcPicked : isBlank ? (blankInput?.value.trim() ?? "") : (ta?.value.trim() ?? "");
 			if (selfGrade) this.revealForSelfGrade(answer, giveUp, hintsUsed);
 			else void this.submitAnswer(answer, giveUp, hintsUsed);
 		};
-		submit.onclick = () => doAction(false);
 		skip.onclick = () => doAction(true);
-		ta.addEventListener("keydown", (e) => {
-			if ((e.metaKey || e.ctrlKey) && e.key === "Enter") doAction(false);
-		});
-		ta.focus();
+		if (ta) {
+			ta.addEventListener("keydown", (e) => {
+				if ((e.metaKey || e.ctrlKey) && e.key === "Enter") doAction(false);
+			});
+			ta.focus();
+		} else if (blankInput) {
+			blankInput.addEventListener("keydown", (e) => {
+				if (e.key === "Enter") doAction(false);
+			});
+			blankInput.focus();
+		}
 	}
 
 	private verdictLabel(r: QuestionResult): { text: string; cls: string } {
@@ -788,7 +898,7 @@ export class SessionView extends ItemView {
 		return { text: "Incorrect", cls: "grill-v-incorrect" };
 	}
 
-	private renderFeedback(r: QuestionResult): void {
+	private renderFeedback(r: QuestionResult, pendingRoute: PendingRoute | null = null): void {
 		if (this.plugin.data.settings.sounds) playSfx(r.verdict); // correct / partial / incorrect
 		const wrap = this.root();
 		this.progressBar(wrap);
@@ -819,12 +929,36 @@ export class SessionView extends ItemView {
 
 		if (r.missingLink && r.connectTo) this.offerLink(card, r.node, r.connectTo);
 
+		if (pendingRoute) {
+			this.renderRouteConsentInto(card, pendingRoute);
+			return;
+		}
 		const btn = card.createEl("button", {
 			text: this.idx + 1 < this.targetCount ? "Next question" : "Finish session",
 			cls: "mod-cta",
 		});
 		btn.onclick = () => void this.goToQuestion(this.idx + 1);
 		btn.focus();
+	}
+
+	/** The consent step for extending a session past its agreed length: this was going
+	 * to be the last question, but the missed note builds on a weak prerequisite. Ask
+	 * before inserting it rather than silently growing the session — declining ends the
+	 * session normally, straight into the review/summary screen. */
+	private renderRouteConsentInto(card: HTMLElement, pending: PendingRoute): void {
+		const box = card.createDiv({ cls: "grill-route-consent" });
+		this.md(
+			`That was the last question of this session. It builds on **${pending.route.prereqNote}**, which you're still catching up on — take one more question to shore up that foundation?`,
+			box,
+		);
+		const row = card.createDiv({ cls: "grill-btn-row grill-btn-row-fill" });
+		const yes = row.createEl("button", { text: "Yes, one more", cls: "mod-cta" });
+		yes.onclick = () => {
+			this.commitRoutedTarget(pending.route, pending.fromNote);
+			void this.goToQuestion(this.idx + 1);
+		};
+		const no = row.createEl("button", { text: "No, go to review" });
+		no.onclick = () => void this.finishSession();
 	}
 
 	/** A missing-link question offers to write the `[[link]]` into the graph — the
@@ -931,7 +1065,7 @@ export class SessionView extends ItemView {
 		}
 		if (debrief.gaps.length) {
 			const gaps = box.createDiv({ cls: "grill-debrief-gaps" });
-			gaps.createDiv({ cls: "grill-meta grill-debrief-label", text: "To review" });
+			gaps.createDiv({ cls: "grill-debrief-label", text: "To review" });
 			for (const g of debrief.gaps) {
 				const row = gaps.createDiv({ cls: "grill-debrief-gap" });
 				this.md(`**${g.concept}** — ${g.why}`, row.createDiv({ cls: "grill-debrief-gap-text" }));
@@ -966,8 +1100,13 @@ export class SessionView extends ItemView {
 		const right = this.results.filter((r) => r.verdict === "correct").length;
 		card.createDiv({ cls: "grill-score", text: `${right} of ${this.results.length} correct` });
 
-		if (debrief) this.renderDebrief(card, debrief);
+		if (debrief) {
+			card.createDiv({ cls: "grill-divider" });
+			this.renderDebrief(card, debrief);
+			card.createDiv({ cls: "grill-divider" });
+		}
 
+		card.createDiv({ cls: "grill-section-label", text: "Session results" });
 		const list = card.createDiv({ cls: "grill-summary-list" });
 		for (const r of this.results) {
 			const row = list.createDiv({ cls: "grill-summary-row" });
@@ -982,17 +1121,14 @@ export class SessionView extends ItemView {
 			const a = saved.createSpan({ cls: "grill-chip-link", text: "Open session transcript" });
 			a.onclick = () => void this.app.workspace.getLeaf(false).openFile(note);
 		}
-		card.createEl("p", {
-			cls: "grill-meta",
-			text: "Missed and skipped notes come back next session; correct ones return on expanding intervals.",
-		});
-		const btnRow = card.createDiv({ cls: "grill-btn-row grill-start-btn" });
+		const btnRow = card.createDiv({ cls: "grill-btn-row grill-start-btn grill-btn-row-fill" });
 		const again = btnRow.createEl("button", { text: "Study again", cls: "mod-cta" });
+		again.setAttr("aria-label", "Start a new adaptive session");
 		again.onclick = () => void this.startSession();
 		// Redo the exact same questions with no generation (grading still per the setting).
 		const redoable = this.questions.slice(0, this.results.length).filter((q) => !q.missingLink);
 		if (redoable.length) {
-			const redo = btnRow.createEl("button", { text: "Redo these" });
+			const redo = btnRow.createEl("button", { text: "Redo these", cls: "grill-secondary-btn" });
 			redo.setAttr("aria-label", "Redo the same questions with no AI generation");
 			redo.onclick = () => void this.startReplay(redoable);
 		}
@@ -1050,7 +1186,6 @@ export class SessionView extends ItemView {
 		this.concepts = {};
 		this.conceptsByNote = new Map();
 		this.conceptById = new Map();
-		this.contextImages = [];
 		this.noteImages = {};
 		this.pendingConfidence = null;
 		// Grading tone comes from the persona/instructions.
@@ -1073,6 +1208,30 @@ export class SessionView extends ItemView {
 			}
 		}
 		this.renderQuestion();
+	}
+
+	/** Notes text + images for exactly this batch's targets, not the whole session's
+	 * notes: a batch is 1-2 concepts, almost always from 1-2 notes, so sending every
+	 * other session note's full text and images on every batch call was pure waste
+	 * (and, with no prompt caching in this codebase, paid in full on every call). */
+	private notesForBatch(batch: ConceptTarget[]): { text: string; images: ImageInput[] } {
+		const names = new Set<string>();
+		for (const t of batch) {
+			names.add(t.note);
+			if (t.connectTo) names.add(t.connectTo);
+		}
+		const withImageWarning = [...names].some((n) => this.notesWithUnsentImages.has(n));
+		let text = [...names]
+			.filter((n) => this.noteText[n])
+			.map((n) => `=== NOTE: ${n} ===\n${this.noteText[n].trim()}`)
+			.join("\n\n");
+		if (!this.sessionVision && withImageWarning) {
+			text +=
+				"\n\nNote: some of these notes embed images that cannot be shown to this model. " +
+				"Do not write questions that depend on reading an image; quiz only on the text above.";
+		}
+		const images = [...names].flatMap((n) => this.noteImages[n] ?? []).slice(0, CONTEXT_IMAGE_CAP);
+		return { text, images };
 	}
 
 	/** Generate the next batch of questions and append them. At most one batch
@@ -1107,15 +1266,17 @@ export class SessionView extends ItemView {
 						this.planCursor += 1;
 					}
 					if (!batch.length) continue; // next loop handles the prebuilt target
+					const { text: batchNotesText, images: batchImages } = this.notesForBatch(batch);
 					const qs = await generateQuestions(
 						cfg,
-						this.notesConcat,
+						batchNotesText,
 						batch,
-						this.contextImages,
+						batchImages,
 						this.sessionInstructions,
 						this.linksBlock,
 						"standard",
 						this.sessionPersona,
+						this.plugin.data.settings.questionFormats === "mixed",
 					);
 					if (qs.length) {
 						this.rememberGenerated(qs);
@@ -1311,36 +1472,26 @@ export class SessionView extends ItemView {
 			const seed = pickCandidates([...byName.keys()], this.plugin.mastery, s.maxNotesPerSession);
 			const names = expandSelectionWithLinks(this.app, seed, byName, this.plugin.mastery, s.maxNotesPerSession);
 			const vision = !!cfg && s.questionSource === "ai" && s.sendImages && supportsVision(cfg.provider, cfg.model);
+			this.sessionVision = vision;
 			this.noteText = {};
 			this.noteImages = {};
-			this.contextImages = [];
+			this.notesWithUnsentImages = new Set();
 			this.conceptsByNote = new Map();
-			let notesWithImages = 0;
 			for (const n of names) {
 				const file = byName.get(n);
 				if (!file) continue;
 				const raw = await this.app.vault.cachedRead(file);
 				// Extract concepts from the FULL note; only the prompt context is truncated.
-				this.conceptsByNote.set(n, extractConcepts(n, raw));
+				this.conceptsByNote.set(n, extractConcepts(n, raw, this.plugin.data.settings.questionFormats === "mixed"));
 				this.noteText[n] = raw.length > NOTE_CHAR_CAP ? raw.slice(0, NOTE_CHAR_CAP) + "\n[truncated]" : raw;
 				if (vision) {
 					const imgs = await collectNoteImages(this.app, file, IMAGES_PER_NOTE_CAP);
-					if (imgs.length) {
-						notesWithImages++;
-						this.noteImages[n] = imgs;
-						this.contextImages.push(...imgs.slice(0, Math.max(0, CONTEXT_IMAGE_CAP - this.contextImages.length)));
-					}
+					if (imgs.length) this.noteImages[n] = imgs;
 				} else if (this.app.metadataCache.getFileCache(file)?.embeds?.length) {
-					notesWithImages++;
+					this.notesWithUnsentImages.add(n);
 				}
 			}
 
-			this.notesConcat = names.map((n) => `=== NOTE: ${n} ===\n${this.noteText[n].trim()}`).join("\n\n");
-			if (!vision && notesWithImages > 0 && s.questionSource === "ai") {
-				this.notesConcat +=
-					"\n\nNote: some of these notes embed images that cannot be shown to this model. " +
-					"Do not write questions that depend on reading an image; quiz only on the text above.";
-			}
 			const selectedFiles = names.map((n) => byName.get(n)).filter((f): f is TFile => !!f);
 			const graph = buildSessionGraph(this.app, selectedFiles);
 			this.linksBlock = formatLinksBlock(graph, this.plugin.mastery);
@@ -1427,8 +1578,6 @@ export class SessionView extends ItemView {
 	}
 
 	private async submitAnswer(answer: string, gaveUp: boolean, hintsUsed: number): Promise<void> {
-		const cfg = this.plugin.llmConfig();
-		if (!cfg) return;
 		const q = this.questions[this.idx];
 		let verdict: Verdict;
 		let feedback: string;
@@ -1437,7 +1586,13 @@ export class SessionView extends ItemView {
 			// Zero-cost path: the rubric was generated with the question.
 			verdict = "incorrect";
 			feedback = "No penalty for honesty. Read the expected answer, then the note; this comes back next session.";
+		} else if (q.type === "mc") {
+			// Multiple choice is unambiguous: grade instantly, no LLM round-trip needed.
+			verdict = answer.trim().toLowerCase() === q.modelAnswer.trim().toLowerCase() ? "correct" : "incorrect";
+			feedback = verdict === "correct" ? "Correct." : `Not quite. The answer is "${q.modelAnswer}".`;
 		} else {
+			const cfg = this.plugin.llmConfig();
+			if (!cfg) return;
 			this.renderLoading("Grading your answer", "Checking it against your note and the rubric.");
 			try {
 				const g = await this.gradeMaybeCareful(cfg, q, answer);
@@ -1452,8 +1607,18 @@ export class SessionView extends ItemView {
 		}
 		await this.applyGrade(q, verdict, null, misconceptionTag || undefined);
 		this.captureConfidence(verdict);
-		// Missed it: route to a weak prerequisite next, if this note builds on one.
-		if (verdict === "incorrect") this.maybeRouteToPrerequisite(q.node);
+		// Missed it: route to a weak prerequisite next, if this note builds on one. Mid-
+		// session this happens silently (organic growth); on what would have been the
+		// last question, ask first rather than silently extending past the agreed count.
+		let pendingRoute: PendingRoute | null = null;
+		if (verdict === "incorrect") {
+			if (this.idx + 1 >= this.targetCount) {
+				const route = this.findPrerequisiteRoute(q.node);
+				if (route) pendingRoute = { route, fromNote: q.node };
+			} else {
+				this.maybeRouteToPrerequisite(q.node);
+			}
+		}
 		// Re-probed a known confusion and got it right: mark it resolved.
 		if (q.targetsMisconception && verdict === "correct" && this.registry[q.targetsMisconception]) {
 			resolveMisconception(this.registry, q.targetsMisconception);
@@ -1474,7 +1639,7 @@ export class SessionView extends ItemView {
 			connectTo: q.connectTo,
 		};
 		this.results.push(r);
-		this.renderFeedback(r);
+		this.renderFeedback(r, pendingRoute);
 	}
 
 	/** Grade one answer. With "careful grading" on, run a small consensus and keep the
@@ -1651,16 +1816,28 @@ export class SessionView extends ItemView {
 		return st === "struggling" ? 0 : st === "untested" ? 1 : 2;
 	}
 
-	/** Reactive DOWN-on-failure routing: after a wrong answer, if the missed note
-	 * builds on a prerequisite the student is weak on, insert a question about that
-	 * prerequisite next so they shore up the foundation before moving on. Bounded to
-	 * MAX_ROUTES per session, never the same prerequisite twice, and only when the
-	 * prerequisite is in this session with a weak, not-already-planned concept. */
+	/** Reactive DOWN-on-failure routing: after a wrong answer mid-session, if the missed
+	 * note builds on a prerequisite the student is weak on, insert a question about that
+	 * prerequisite next so they shore up the foundation before moving on — no confirmation,
+	 * since the session hasn't reached its agreed length yet. Bounded to MAX_ROUTES per
+	 * session, never the same prerequisite twice, and only when the prerequisite is in
+	 * this session with a weak, not-already-planned concept. When the wrong answer is on
+	 * what was going to be the LAST question, callers should use `findPrerequisiteRoute` +
+	 * `commitRoutedTarget` instead, so the student can be asked before the session grows
+	 * past what they agreed to. */
 	private maybeRouteToPrerequisite(fromNote: string): void {
-		if (this.replayMode) return; // no generation or plan mutation during a replay
-		if (this.routesUsed >= MAX_ROUTES) return;
+		const route = this.findPrerequisiteRoute(fromNote);
+		if (route) this.commitRoutedTarget(route, fromNote);
+	}
+
+	/** Pure lookup for reactive routing: is there a weak, not-yet-planned,
+	 * not-already-routed prerequisite the missed note builds on? Does not mutate any
+	 * session state, so it's safe to call just to see what WOULD be offered. */
+	private findPrerequisiteRoute(fromNote: string): PrereqRoute | null {
+		if (this.replayMode) return null; // no generation or plan mutation during a replay
+		if (this.routesUsed >= MAX_ROUTES) return null;
 		const file = this.byName.get(fromNote);
-		if (!file) return;
+		if (!file) return null;
 		const local = this.plugin.data.settings.questionSource === "local";
 		const planned = new Set(this.targets.map((t) => t.conceptId));
 		const prereqs = outgoingBasenames(this.app, file)
@@ -1671,14 +1848,20 @@ export class SessionView extends ItemView {
 			const concept = (this.conceptsByNote.get(p) ?? []).find(
 				(c) => !planned.has(c.id) && (!local || c.local) && statusOf(this.concepts[c.id]) !== "known",
 			);
-			if (!concept) continue;
-			if (this.insertRoutedTarget(concept, fromNote, local)) {
-				this.routedNotes.add(p);
-				this.routesUsed += 1;
-				return;
-			}
-			// Couldn't build a question for this prerequisite; try the next one.
+			if (concept) return { concept, prereqNote: p, local };
 		}
+		return null;
+	}
+
+	/** Commit a route found by `findPrerequisiteRoute`: splice it in as the next question
+	 * and account for it (never offer the same prerequisite twice, bound to MAX_ROUTES).
+	 * Returns false if a question couldn't actually be built for it, in which case nothing
+	 * was committed. */
+	private commitRoutedTarget(route: PrereqRoute, fromNote: string): boolean {
+		if (!this.insertRoutedTarget(route.concept, fromNote, route.local)) return false;
+		this.routedNotes.add(route.prereqNote);
+		this.routesUsed += 1;
+		return true;
 	}
 
 	/** Splice a routed prerequisite concept in as the next question, preserving the
@@ -1714,7 +1897,15 @@ export class SessionView extends ItemView {
 		const verdict: Verdict = rating === 1 ? "incorrect" : rating === 2 ? "partial" : "correct";
 		if (this.plugin.data.settings.sounds) playSfx(verdict);
 		await this.applyGrade(q, verdict, rating, undefined);
-		if (verdict === "incorrect") this.maybeRouteToPrerequisite(q.node);
+		let pendingRoute: PendingRoute | null = null;
+		if (verdict === "incorrect") {
+			if (this.idx + 1 >= this.targetCount) {
+				const route = this.findPrerequisiteRoute(q.node);
+				if (route) pendingRoute = { route, fromNote: q.node };
+			} else {
+				this.maybeRouteToPrerequisite(q.node);
+			}
+		}
 		if (q.targetsMisconception && verdict === "correct" && this.registry[q.targetsMisconception]) {
 			resolveMisconception(this.registry, q.targetsMisconception);
 			this.dirty = true;
@@ -1732,6 +1923,17 @@ export class SessionView extends ItemView {
 			missingLink: q.missingLink,
 			connectTo: q.connectTo,
 		});
-		await this.goToQuestion(this.idx + 1);
+		if (pendingRoute) this.renderRouteConsent(pendingRoute);
+		else await this.goToQuestion(this.idx + 1);
+	}
+
+	/** Standalone version of the route-consent step for the self-grade path, which has
+	 * no separate feedback screen to append into (see `renderRouteConsentInto` for the
+	 * AI-graded path's inline version). */
+	private renderRouteConsent(pending: PendingRoute): void {
+		const wrap = this.root();
+		this.progressBar(wrap);
+		const card = wrap.createDiv({ cls: "grill-body" });
+		this.renderRouteConsentInto(card, pending);
 	}
 }

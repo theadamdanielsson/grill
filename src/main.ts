@@ -46,6 +46,10 @@ interface GrillSettings {
 	questionSource: "ai" | "local";
 	/** How answers are graded: an LLM, or the user grades themselves (no key). */
 	gradingMode: "ai" | "self";
+	/** Question formats: plain free-response only, or a mix that also includes
+	 * multiple-choice and fill-in-the-blank. "Mixed" costs a bit more prompt (AI mode)
+	 * per generation call, so it's a real toggle, not baked in unconditionally. */
+	questionFormats: "write" | "mixed";
 	/** End-of-session AI debrief (one extra call per session). Off falls back to
 	 * a deterministic summary. Ignored for no-key sessions (always deterministic). */
 	sessionDebrief: boolean;
@@ -99,6 +103,7 @@ function defaultSettings(): GrillSettings {
 		sendImages: true,
 		questionSource: "ai",
 		gradingMode: "ai",
+		questionFormats: "mixed",
 		sessionDebrief: true,
 		confidenceCheck: false,
 		sounds: true,
@@ -140,6 +145,7 @@ export default class GrillPlugin extends Plugin {
 		if (typeof s.sendImages === "boolean") settings.sendImages = s.sendImages;
 		if (s.questionSource === "ai" || s.questionSource === "local") settings.questionSource = s.questionSource;
 		if (s.gradingMode === "ai" || s.gradingMode === "self") settings.gradingMode = s.gradingMode;
+		if (s.questionFormats === "write" || s.questionFormats === "mixed") settings.questionFormats = s.questionFormats;
 		if (typeof s.sessionDebrief === "boolean") settings.sessionDebrief = s.sessionDebrief;
 		if (typeof s.confidenceCheck === "boolean") settings.confidenceCheck = s.confidenceCheck;
 		if (typeof s.sounds === "boolean") settings.sounds = s.sounds;
@@ -253,6 +259,12 @@ export default class GrillPlugin extends Plugin {
 					await this.persist();
 				}
 				this.refreshStatusBar();
+				// A pane already open at this point rendered its start screen from the
+				// empty mastery placeholder (see refreshIfOnStartScreen) — bring it up to
+				// date now that the real data has loaded.
+				for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
+					if (leaf.view instanceof SessionView) leaf.view.refreshIfOnStartScreen();
+				}
 				// First run: open Grill and ask which folders are its territory.
 				if (!this.data.settings.onboarded) {
 					await this.activateView();
@@ -516,6 +528,24 @@ class GrillSettingTab extends PluginSettingTab {
 						s.gradingMode = v === "self" ? "self" : "ai";
 						await this.plugin.persist();
 						this.display();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Question formats")
+			.setDesc(
+				"Mixed adds multiple-choice and fill-in-the-blank alongside the usual write-in-the-box questions. " +
+					"In AI mode this costs a little extra prompt on every question batch, so it's a real toggle, not " +
+					"just always on.",
+			)
+			.addDropdown((d) =>
+				d
+					.addOption("mixed", "Mixed (write, multiple-choice, fill-in-the-blank)")
+					.addOption("write", "Write only")
+					.setValue(s.questionFormats)
+					.onChange(async (v) => {
+						s.questionFormats = v === "write" ? "write" : "mixed";
+						await this.plugin.persist();
 					}),
 			);
 

@@ -35,7 +35,7 @@ export interface Concept {
 	/** Material the AI needs to write a fresh question about this concept. */
 	context: string;
 	/** The deterministic question for no-key mode. Absent for the note fallback. */
-	local?: { question: string; answer: string; hint?: string };
+	local?: { question: string; answer: string; hint?: string; type?: "write" | "mc" | "blank"; choices?: string[] };
 	/** True for a user-authored `> [!grill]` question: asked verbatim, never rewritten
 	 * by the model, and graded against `rubric`/its answer (or the note) rather than a
 	 * model-written rubric. */
@@ -56,13 +56,25 @@ interface LocalItem {
 	kind: ConceptKind;
 	/** The structural anchor (heading text, term, front...) — the concept label. */
 	label: string;
+	/** Answer format, mirroring Question's — set only when mixed formats are on. */
+	type?: "write" | "mc" | "blank";
+	choices?: string[];
+	/** Colon-form definitions only: the raw definition text with no "**term:**"
+	 * prefix, kept so the mix-formats pass can use it as an MC distractor/choice
+	 * without leaking the term name. Never copied onto the final Question. */
+	defText?: string;
 }
 
 const BLANK = "\\_\\_\\_\\_\\_"; // renders as literal underscores, not emphasis
+/** The interactive blank marker (plain, unescaped) used only when `type: "blank"` —
+ * the session view swaps this for a real inline input, so it must match what the
+ * AI-generated path also emits, not `BLANK` above (which is just markdown display text). */
+const BLANK_MARKER = "____";
 
 const GENERIC_HEADINGS = new Set([
 	"overview", "notes", "summary", "introduction", "intro", "contents",
 	"references", "links", "todo", "index", "misc", "other", "see also",
+	"conclusion", "conclusions", "recap", "key takeaways", "takeaways",
 ]);
 
 const STOPWORDS = new Set([
@@ -72,8 +84,28 @@ const STOPWORDS = new Set([
 ]);
 
 /** Strongly definitional verbs — kept deliberately narrow to avoid turning every
- * "X is high" sentence into a bogus definition. */
-const DEFINITION_VERB = /\s+(?:refers to|means|is defined as|are defined as|denotes|stands for)\s+/i;
+ * "X is high" sentence into a bogus definition. "is/are called|known as" and the
+ * category copula "is a/an" are real notes' most common definitional phrasing
+ * ("Periods of negative growth are called Recessions") and are still guarded by the
+ * same length gate on the definition side, so "X is high" (one content word) still
+ * fails to qualify. */
+const DEFINITION_VERB =
+	/\s+(?:refers to|means|is defined as|are defined as|denotes|stands for|is (?:also )?(?:called|known as)|are (?:also )?(?:called|known as)|is an?)\s+/i;
+
+const WIKILINK_RE = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g;
+
+/** Replace `[[target]]`/`[[target|alias]]` with plain display text, so a detector
+ * that expects prose (a definition's term, a heading label) doesn't choke on — or
+ * capture — raw wikilink syntax. */
+function dewiki(s: string): string {
+	return s.replace(WIKILINK_RE, (_, target: string, alias?: string) => alias ?? target);
+}
+
+/** Clean a label pulled from note structure (a heading, a formula's section) of
+ * wikilink syntax and trailing punctuation, so it reads as plain text in a question. */
+function cleanLabel(s: string): string {
+	return dewiki(s).replace(/[:#*_]+$/, "").trim();
+}
 
 function stripFrontmatter(text: string): string {
 	if (text.startsWith("---\n")) {
@@ -99,7 +131,7 @@ function goodTerm(term: string): boolean {
 
 // --------------------------------------------------------------- inline parsing
 
-type MarkKind = "anki" | "highlight" | "curly" | "bold";
+type MarkKind = "anki" | "highlight" | "curly" | "bold" | "wikilink";
 
 interface Mark {
 	start: number; // position in the display string
@@ -115,7 +147,8 @@ const INLINE_RE = new RegExp(
 	"\\{\\{c(\\d+)::([^}]+?)(?:::([^}]+?))?\\}\\}" + // 1=cN 2=text 3=hint
 		"|==(?:(\\d+);;)?([^=]+?)(?:;;([^=]+?))?==" + // 4=seq 5=text 6=hint
 		"|\\{\\{([^}]+?)\\}\\}" + // 7=text
-		"|\\*\\*([^*]+?)\\*\\*", // 8=text
+		"|\\*\\*([^*]+?)\\*\\*" + // 8=text
+		"|\\[\\[([^\\]|]+)(?:\\|([^\\]]+))?\\]\\]", // 9=target 10=alias
 	"g",
 );
 
@@ -139,8 +172,10 @@ function parseInline(line: string): { display: string; marks: Mark[] } {
 			text = m[5]; hint = m[6]; group = m[4] ? `h${m[4]}` : `u${uid++}`; kind = "highlight";
 		} else if (m[7] !== undefined) {
 			text = m[7]; group = `u${uid++}`; kind = "curly";
-		} else {
+		} else if (m[8] !== undefined) {
 			text = m[8]; group = `u${uid++}`; kind = "bold";
+		} else {
+			text = m[10] !== undefined ? m[10] : m[9]; group = `u${uid++}`; kind = "wikilink";
 		}
 		const start = display.length;
 		display += text;
@@ -150,17 +185,12 @@ function parseInline(line: string): { display: string; marks: Mark[] } {
 	return { display, marks };
 }
 
-/** Cloze cards from one line. Explicit user markers (==, {{ }}) win; otherwise
- * bold is used as an auto signal. One card per group; other marks stay visible. */
-function clozeCards(line: string): LocalItem[] {
-	const { display, marks } = parseInline(line);
-	if (!marks.length) return [];
-	const explicit = marks.filter((k) => k.kind !== "bold");
-	const cloze = explicit.length ? explicit : marks; // bold-only lines use bold
-	const auto = explicit.length === 0; // bold-derived cards get the quality filter
-
+/** Shared blank-building logic for a set of same-line marks: group by `group`
+ * (grouped marks are blanked together on one card), quality-filter auto-detected
+ * groups, then produce one LocalItem per surviving group. */
+function buildClozeCards(display: string, marks: Mark[], auto: boolean, mixFormats: boolean): LocalItem[] {
 	const groups = new Map<string, Mark[]>();
-	for (const mk of cloze) {
+	for (const mk of marks) {
 		const g = groups.get(mk.group);
 		if (g) g.push(mk);
 		else groups.set(mk.group, [mk]);
@@ -172,21 +202,48 @@ function clozeCards(line: string): LocalItem[] {
 		if (auto && !goodTerm(termText)) continue;
 		if (!termText) continue;
 		// Blank this group's spans right-to-left so earlier indices stay valid.
+		const marker = mixFormats ? BLANK_MARKER : BLANK;
 		let q = display;
 		for (const g of [...group].sort((a, b) => b.start - a.start)) {
-			q = q.slice(0, g.start) + BLANK + q.slice(g.end);
+			q = q.slice(0, g.start) + marker + q.slice(g.end);
 		}
 		// Need enough surrounding context for the blank to be answerable.
-		if (wordCount(q.split(BLANK).join(" ")) < 3) continue;
+		if (wordCount(q.split(marker).join(" ")) < 3) continue;
 		out.push({
-			question: `Fill in the blank: ${q.trim()}`,
-			answer: `**${termText}** — ${display.trim()}`,
+			question: mixFormats ? q.trim() : `Fill in the blank: ${q.trim()}`,
+			// Interactive blank: the missing text alone (matches the AI path's modelAnswer
+			// shape). Free-text fallback: the fuller reveal, unchanged from before.
+			answer: mixFormats ? termText : `**${termText}** — ${display.trim()}`,
 			hint: group.find((g) => g.hint)?.hint,
 			kind: auto ? "term" : "card",
 			label: termText,
+			...(mixFormats ? { type: "blank" as const } : {}),
 		});
 	}
 	return out;
+}
+
+/** Cloze cards from EXPLICIT user markup only (Anki cloze, SR highlight) — always
+ * trusted, never quality-filtered, since the user deliberately marked these. */
+function explicitClozeCards(line: string, mixFormats: boolean): LocalItem[] {
+	const { display, marks } = parseInline(line);
+	const explicit = marks.filter((k) => k.kind === "anki" || k.kind === "highlight" || k.kind === "curly");
+	if (!explicit.length) return [];
+	return buildClozeCards(display, explicit, false, mixFormats);
+}
+
+/** Cloze cards auto-detected from bold text or `[[wikilinks]]` — the two signals a
+ * note author gives "this is a term worth knowing" without spelling out a card.
+ * Quality-filtered (`goodTerm`), and only tried when the line has no explicit markup
+ * and no better structural match (a colon/verb definition wins over an auto blank —
+ * see `itemsForNote`), so a well-formed "**Term**: definition" line gets the clean
+ * definitionCard treatment instead of an awkward blank-with-trailing-colon. */
+function autoClozeCards(line: string, mixFormats: boolean): LocalItem[] {
+	const { display, marks } = parseInline(line);
+	if (marks.some((k) => k.kind === "anki" || k.kind === "highlight" || k.kind === "curly")) return []; // explicit wins
+	const auto = marks.filter((k) => k.kind === "bold" || k.kind === "wikilink");
+	if (!auto.length) return [];
+	return buildClozeCards(display, auto, true, mixFormats);
 }
 
 // ------------------------------------------------------------ line heuristics
@@ -205,21 +262,32 @@ function qaCards(line: string): LocalItem[] {
 	return cards;
 }
 
-/** "Term: definition" or "Term refers to definition" → a define-this prompt. */
+/** "Term: definition" or "Term refers to definition" → a define-this prompt. Matches
+ * against a de-wikilinked copy of the line so a term like "[[Recession]]: a period of
+ * ..." (the term itself wikilinked, common in Obsidian notes) still qualifies, and so
+ * neither the label nor the revealed answer carry raw `[[...]]` syntax. */
 function definitionCard(line: string): LocalItem | null {
-	const colon = /^\s*[-*]?\s*([A-Z][^:*\n]{1,50}?)\s*:\s+(.{15,})$/.exec(line);
+	const clean = dewiki(line);
+	const colon = /^\s*[-*]?\s*([A-Z][^:*\n]{1,50}?)\s*:\s+(.{15,})$/.exec(clean);
 	if (colon && !line.includes("http")) {
 		const term = colon[1].trim();
-		if (goodTerm(term) && wordCount(colon[2]) >= 3) {
-			return { question: `Define **${term}**.`, answer: `**${term}:** ${colon[2].trim()}`, kind: "definition", label: term };
+		const def = colon[2].trim();
+		if (goodTerm(term) && wordCount(def) >= 3) {
+			return {
+				question: `Define **${term}**.`,
+				answer: `**${term}:** ${def}`,
+				kind: "definition",
+				label: term,
+				defText: def, // raw, term-free — usable as an MC distractor/choice
+			};
 		}
 	}
-	const verb = DEFINITION_VERB.exec(line);
+	const verb = DEFINITION_VERB.exec(clean);
 	if (verb) {
-		const term = line.slice(0, verb.index).replace(/^(?:the|an?)\s+/i, "").trim();
-		const def = line.slice(verb.index + verb[0].length).trim();
+		const term = clean.slice(0, verb.index).replace(/^(?:the|an?)\s+/i, "").trim();
+		const def = clean.slice(verb.index + verb[0].length).trim();
 		if (goodTerm(term) && wordCount(def) >= 3) {
-			return { question: `Define **${term}**.`, answer: line.trim(), kind: "definition", label: term };
+			return { question: `Define **${term}**.`, answer: clean.trim(), kind: "definition", label: term };
 		}
 	}
 	return null;
@@ -228,24 +296,31 @@ function definitionCard(line: string): LocalItem | null {
 const MATH_RE = /\$\$[^$]+\$\$|\$[^$]+\$/;
 
 /** LaTeX becomes a cloze if the line has prose around it, else a recall prompt. */
-function formulaCard(line: string, context: string): LocalItem | null {
+function formulaCard(line: string, context: string, mixFormats: boolean): LocalItem | null {
 	const mm = MATH_RE.exec(line);
 	if (!mm) return null;
 	const math = mm[0];
 	if (math.replace(/\$/g, "").trim().length < 3) return null;
 	const surrounding = line.replace(MATH_RE, " ").trim();
-	const label = context || "this note";
+	const label = context ? cleanLabel(context) : "this note";
 	if (wordCount(surrounding) >= 3) {
-		const q = line.slice(0, mm.index) + BLANK + line.slice(mm.index + math.length);
-		return { question: `Fill in the blank: ${q.trim()}`, answer: math, kind: "formula", label };
+		const marker = mixFormats ? BLANK_MARKER : BLANK;
+		const q = line.slice(0, mm.index) + marker + line.slice(mm.index + math.length);
+		return {
+			question: mixFormats ? q.trim() : `Fill in the blank: ${q.trim()}`,
+			answer: math,
+			kind: "formula",
+			label,
+			...(mixFormats ? { type: "blank" as const } : {}),
+		};
 	}
 	return { question: `Recall the formula from **${label}**.`, answer: math, kind: "formula", label };
 }
 
 function headingCard(heading: string, body: string): LocalItem | null {
-	const h = heading.trim();
+	const h = cleanLabel(heading);
 	if (!h || GENERIC_HEADINGS.has(h.toLowerCase()) || wordCount(h) > 8) return null;
-	const trimmed = body.trim();
+	const trimmed = dewiki(body).trim();
 	if (trimmed.length < 25) return null;
 	const answer = trimmed.length > 500 ? trimmed.slice(0, 500).trim() + "…" : trimmed;
 	return { question: `Recall what you know about **${h}**.`, answer, kind: "heading", label: h };
@@ -306,7 +381,7 @@ function parseGrillCallout(lines: string[], start: number): { item: LocalItem; n
 
 const ITEM_CAP_PER_NOTE = 12;
 
-function itemsForNote(text: string, cap: number): LocalItem[] {
+function itemsForNote(text: string, cap: number, mixFormats: boolean): LocalItem[] {
 	const body = stripFrontmatter(text).replace(/<!--[\s\S]*?-->/g, "");
 	const lines = body.split("\n");
 	const items: LocalItem[] = [];
@@ -370,9 +445,14 @@ function itemsForNote(text: string, cap: number): LocalItem[] {
 		sectionBody.push(line);
 		block.push(line);
 
-		const cloze = clozeCards(line);
-		if (cloze.length) {
-			for (const c of cloze) push(c);
+		// Priority: explicit user markup, then Q&A separators, then a structural
+		// definition (colon or verb form) — a well-formed "**Term**: definition" line
+		// should read as a clean "Define Term" prompt, not an auto-blank-with-a-
+		// trailing-colon just because the term happened to be bolded too — and only
+		// then the bold/wikilink auto-cloze fallback for lines with no cleaner match.
+		const explicit = explicitClozeCards(line, mixFormats);
+		if (explicit.length) {
+			for (const c of explicit) push(c);
 			continue;
 		}
 		const qa = qaCards(line);
@@ -380,11 +460,51 @@ function itemsForNote(text: string, cap: number): LocalItem[] {
 			for (const c of qa) push(c);
 			continue;
 		}
-		push(definitionCard(line));
-		push(formulaCard(line, heading));
+		const def = definitionCard(line);
+		if (def) {
+			push(def);
+		} else {
+			const auto = autoClozeCards(line, mixFormats);
+			if (auto.length) {
+				for (const c of auto) push(c);
+				continue;
+			}
+		}
+		push(formulaCard(line, heading, mixFormats));
 	}
 	flushHeading();
-	return items.slice(0, cap);
+	return applyMcMix(items.slice(0, cap), mixFormats);
+}
+
+/** Convert some colon-form definitions into multiple-choice: the correct definition
+ * plus 3 distractor definitions sampled from OTHER terms in the same note. Only
+ * definitions carry `defText` (the term-free definition text), so only those are
+ * eligible; needs at least 3 other candidates to build a real choice set. Converts
+ * roughly one in three eligible definitions so free-text variety remains too. */
+function applyMcMix(items: LocalItem[], mixFormats: boolean): LocalItem[] {
+	if (!mixFormats) return items;
+	const pool = items.filter((it) => it.kind === "definition" && it.defText);
+	if (pool.length < 4) return items;
+	let n = 0;
+	return items.map((it) => {
+		if (it.kind !== "definition" || !it.defText) return it;
+		n += 1;
+		if (n % 3 !== 1) return it;
+		const distractors = pool
+			.filter((p) => p !== it)
+			.map((p) => p.defText as string)
+			.sort(() => Math.random() - 0.5)
+			.slice(0, 3);
+		if (distractors.length < 3) return it;
+		const choices = [it.defText, ...distractors].sort(() => Math.random() - 0.5);
+		return {
+			...it,
+			question: `Which of these is the definition of **${it.label}**?`,
+			answer: it.defText,
+			type: "mc" as const,
+			choices,
+		};
+	});
 }
 
 // ------------------------------------------------------------ concept extraction
@@ -405,8 +525,8 @@ const MIN_CONCEPTS_BEFORE_FALLBACK = 2;
 
 /** Deterministically decompose a note into concepts. Same set feeds both the
  * scheduler and either question path, so concept ids never depend on the model. */
-export function extractConcepts(note: string, text: string): Concept[] {
-	const items = itemsForNote(text, ITEM_CAP_PER_NOTE);
+export function extractConcepts(note: string, text: string, mixFormats = false): Concept[] {
+	const items = itemsForNote(text, ITEM_CAP_PER_NOTE, mixFormats);
 	const concepts: Concept[] = [];
 	const usedIds = new Set<string>();
 	for (const it of items) {
@@ -426,7 +546,7 @@ export function extractConcepts(note: string, text: string): Concept[] {
 				it.kind === "authored" ? `${it.question} ${it.answer} ${it.rubric ?? ""}` : it.answer,
 			),
 			context: it.answer,
-			local: { question: it.question, answer: it.answer, hint: it.hint },
+			local: { question: it.question, answer: it.answer, hint: it.hint, type: it.type, choices: it.choices },
 			...(it.kind === "authored" ? { authored: true, rubric: it.rubric } : {}),
 		});
 	}
@@ -465,6 +585,7 @@ export function localQuestionForConcept(c: Concept): Question | null {
 		commonErrors: [],
 		hints: { tier1: c.local.hint ?? "", tier2: "", tier3: "" },
 		...(c.authored ? { authored: true, rubric: c.rubric } : {}),
+		...(c.local.type ? { type: c.local.type, choices: c.local.choices } : {}),
 	};
 }
 

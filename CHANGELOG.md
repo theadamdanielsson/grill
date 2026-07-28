@@ -1,5 +1,42 @@
 # Changelog
 
+## 2.4.0
+
+- **Study scope is now checkboxes.** Tick any combination of folders, tags, or the
+  current note on the start screen instead of picking one from a dropdown; nothing
+  ticked studies the whole vault as before.
+- **Multiple-choice and fill-in-the-blank questions.** Alongside the usual write-in-
+  the-box recall, Grill can now ask real multiple-choice (click an option, graded
+  instantly, no model round-trip) and fill-in-the-blank (an inline input in the
+  sentence) questions, in both AI and no-key modes. New "Question formats" setting
+  (Sessions) to switch back to write-only; AI-mode mixed formats costs a little extra
+  prompt per batch, so it's a real toggle, not silently always on.
+- **A consent step before a session runs long.** Missing the very last question of a
+  session used to silently insert one more (a weak prerequisite check) with no way to
+  say no. Now Grill asks first — "one more" or straight to your review — and leaves
+  mid-session organic growth exactly as it was.
+- **Faster, cheaper AI sessions.** Question generation used to resend every note in
+  the whole session on every 2-question batch; it now sends only the 1-2 notes that
+  batch's concepts actually come from. Anthropic requests also use real prompt
+  caching now (notes/links and the engine rules), so repeat calls in a session cost
+  less and respond faster.
+- **The no-key (deterministic) generator is meaningfully better.** It was missing
+  most of a typical note's testable content — plain sentences with no bold text
+  produced nothing at all. It now also treats `[[wikilinks]]` as fill-in-the-blank
+  candidates (not just bold), recognizes "is/are called" and "is a/an" as definitions
+  alongside the narrower forms it already knew, and no longer lets a bolded term
+  steal a line that would have made a cleaner definition card. Heading- and
+  formula-derived questions also no longer leak raw `[[wikilink]]` syntax into the
+  question text.
+- Loading now shows an animated flame in Grill's orange instead of a generic spinner,
+  everywhere a wait can happen.
+- Cleaned up the end-of-session screen: clearer section spacing and dividers, dropped
+  the "missed/skipped notes come back" footnote, and the bottom buttons ("Study
+  again" / "Redo these" / "Back to menu") now fill the panel width with distinct
+  primary/secondary/tertiary styling instead of three look-alike buttons.
+- Fixed a formatting glitch where the "you missed X, checking a foundation it builds
+  on" prerequisite banner could show a stray double-dash.
+
 ## 2.3.2
 
 - Clearer, more accurate description and README: Grill *colours in* your knowledge graph as
