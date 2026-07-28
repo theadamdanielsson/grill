@@ -5,6 +5,8 @@ import type GrillPlugin from "./main";
 import { adjudicateBridges, ConceptTarget, debriefSession, generateQuestions, Grade, gradeAnswer, LLMConfig, Question, supportsVision, Verdict } from "./llm";
 import { Concept, extractConcepts, localQuestionForConcept, localQuestions } from "./generate-local";
 import { BridgeMap, detectBridgeCandidates, pairKey } from "./bridges";
+import { buildGraph, runLayout } from "./graph";
+import { LearningMap, MapPalette } from "./mapview";
 import type { CachedQuestion, QuestionBank } from "./store";
 import {
 	ConceptMap,
@@ -68,6 +70,8 @@ interface QuestionResult extends SessionEntry {
 
 /** Most cached question variants kept per concept, to bound questions.json growth. */
 const MAX_VARIANTS = 8;
+/** Cap on learning-graph nodes laid out + drawn, so a huge vault stays responsive. */
+const MAP_NODE_CAP = 600;
 
 export class SessionView extends ItemView {
 	plugin: GrillPlugin;
@@ -111,6 +115,8 @@ export class SessionView extends ItemView {
 	 * generation, and practice-only — grading and feedback run, but nothing is written to
 	 * the schedule, stats, or misconception registry. */
 	private replayMode = false;
+	/** The live learning-graph canvas controller on the start screen, if any. */
+	private map: LearningMap | null = null;
 	/** The concepts this session tests, in order. */
 	private sessionConcepts: Concept[] = [];
 	/** Concept targets for the AI generator (one question each, by construction). */
@@ -159,10 +165,59 @@ export class SessionView extends ItemView {
 	}
 
 	async onOpen(): Promise<void> {
-		this.renderStart();
+		if (!this.plugin.data.settings.onboarded) this.renderOnboarding();
+		else this.renderStart();
+	}
+
+	/** Public entry so the plugin can force the first-run screen on install. */
+	showOnboarding(): void {
+		this.renderOnboarding();
+	}
+
+	/** First-run: choose which folders are Grill's study material + graph. */
+	private renderOnboarding(): void {
+		const wrap = this.root();
+		wrap.createDiv({ cls: "grill-score", text: "Welcome to Grill" });
+		wrap.createEl("p", {
+			cls: "grill-meta",
+			text:
+				"Grill quizzes you on your own notes and builds a living knowledge graph from what you prove " +
+				"you've learned. Which folders should it study and map? Tick some, or leave them all unticked to " +
+				"use your whole vault. You can change this any time in settings.",
+		});
+		const folderRoot = `${this.plugin.data.settings.folder}/`;
+		const eligible = this.app.vault.getMarkdownFiles().filter((f) => !f.path.startsWith(folderRoot));
+		const folders = listFolders(eligible);
+		const chosen = new Set<string>();
+		if (!folders.length) {
+			wrap.createEl("p", { cls: "grill-meta", text: "No folders found — Grill will use your whole vault." });
+		} else {
+			const list = wrap.createDiv({ cls: "grill-onboard-folders" });
+			for (const path of folders) {
+				const row = list.createDiv({ cls: "grill-onboard-row" });
+				const cb = row.createEl("input", { attr: { type: "checkbox" } });
+				cb.onchange = () => {
+					if (cb.checked) chosen.add(path);
+					else chosen.delete(path);
+				};
+				const label = row.createEl("label", { text: path });
+				label.onclick = () => cb.click();
+			}
+		}
+		const btn = wrap.createEl("button", { text: "Start using Grill", cls: "mod-cta grill-start-btn" });
+		btn.onclick = async () => {
+			this.plugin.data.settings.includedFolders = [...chosen];
+			this.plugin.data.settings.onboarded = true;
+			await this.plugin.persist();
+			this.plugin.refreshStatusBar();
+			this.renderStart();
+		};
 	}
 
 	private root(): HTMLElement {
+		// Tear down the map's canvas loop / observers whenever a screen re-renders.
+		this.map?.dispose();
+		this.map = null;
 		const el = this.contentEl;
 		el.empty();
 		el.addClass("grill-view");
@@ -246,10 +301,12 @@ export class SessionView extends ItemView {
 			if (scope.kind === "all") {
 				this.pendingScope = null;
 				showCounts(eligible);
+				this.map?.setHighlight(null);
 			} else {
 				const files = filesForScope(this.app, scope, eligible, map);
 				this.pendingScope = files;
 				showCounts(files);
+				this.map?.setHighlight(new Set(files.map((f) => f.basename)));
 			}
 		};
 
@@ -266,6 +323,10 @@ export class SessionView extends ItemView {
 			this.sessionScope = this.pendingScope;
 			void this.startSession("connections");
 		};
+
+		// The learning graph: your notes, coloured in by what you've proven you know.
+		const mapWrap = wrap.createDiv({ cls: "grill-map-wrap" });
+		void this.renderMap(mapWrap);
 
 		const dash = wrap.createDiv({ cls: "grill-meta grill-dash-link" });
 		const dashLink = dash.createSpan({ cls: "grill-chip-link", text: "View your progress" });
@@ -292,6 +353,114 @@ export class SessionView extends ItemView {
 			.filter((f) => f.path.startsWith(dir))
 			.sort((a, b) => b.stat.ctime - a.stat.ctime)
 			.slice(0, 5);
+	}
+
+	/** Node/edge colours resolved from the current theme (canvas can't read CSS vars). */
+	private mapPalette(): MapPalette {
+		const view = this.contentEl.ownerDocument.defaultView ?? window;
+		const cs = view.getComputedStyle(this.contentEl);
+		const v = (name: string, fallback: string): string => cs.getPropertyValue(name).trim() || fallback;
+		return {
+			known: v("--grill-correct", "#3aa675"),
+			struggling: v("--grill-incorrect", "#e5484d"),
+			inProgress: v("--grill-partial", "#e0913a"),
+			unpracticed: v("--text-faint", "#8a8a8a"),
+			edge: v("--background-modifier-border", "#3a3a3a"),
+			edgeInherited: v("--text-muted", "#9a9a9a"),
+			edgeProven: v("--interactive-accent", "#ff7a45"),
+			text: v("--text-normal", "#eaeaea"),
+			ring: v("--interactive-accent", "#ff7a45"),
+		};
+	}
+
+	/** Draw the learning graph over the eligible notes into `host`. Loads concepts + saved
+	 * positions, builds and (re)lays out the graph, persists positions, and mounts the
+	 * canvas controller. Bounded to MAP_NODE_CAP nodes (practised notes + neighbours). */
+	private async renderMap(host: HTMLElement): Promise<void> {
+		const canvas = host.createEl("canvas", { cls: "grill-graph" });
+		const status = host.createDiv({ cls: "grill-meta grill-map-status", text: "Loading your graph…" });
+		try {
+			const eligible = this.allEligible();
+			const nameSet = new Set(eligible.map((f) => f.basename));
+			const concepts = await this.plugin.store.loadConcepts();
+			const practiced = new Set<string>();
+			for (const cm of Object.values(concepts)) {
+				if (nameSet.has(cm.note) && cm.correct + cm.partial + cm.incorrect > 0) practiced.add(cm.note);
+			}
+
+			// Undirected links among eligible notes.
+			const linkSeen = new Set<string>();
+			const allLinks: [string, string][] = [];
+			const neigh = new Map<string, Set<string>>();
+			for (const f of eligible) {
+				const a = f.basename;
+				for (const b of outgoingBasenames(this.app, f)) {
+					if (a === b || !nameSet.has(b)) continue;
+					const key = a < b ? `${a} ${b}` : `${b} ${a}`;
+					if (linkSeen.has(key)) continue;
+					linkSeen.add(key);
+					allLinks.push([a, b]);
+					(neigh.get(a) ?? neigh.set(a, new Set()).get(a)!).add(b);
+					(neigh.get(b) ?? neigh.set(b, new Set()).get(b)!).add(a);
+				}
+			}
+
+			// Node universe, capped: practised notes + their neighbours first, then fill.
+			let names = [...nameSet];
+			let capped = false;
+			if (names.length > MAP_NODE_CAP) {
+				capped = true;
+				const keep = new Set<string>(practiced);
+				for (const p of practiced) for (const n of neigh.get(p) ?? []) keep.add(n);
+				for (const n of names) {
+					if (keep.size >= MAP_NODE_CAP) break;
+					keep.add(n);
+				}
+				names = [...keep].slice(0, MAP_NODE_CAP);
+			}
+			const keepSet = new Set(names);
+			const links = allLinks.filter(([a, b]) => keepSet.has(a) && keepSet.has(b));
+
+			const graph = buildGraph(names, links, concepts);
+
+			// Persisted positions keep the map stable; lay out only new nodes.
+			const saved = await this.plugin.store.loadGraphLayout();
+			let needLayout = false;
+			for (const n of graph.nodes) {
+				const p = saved[n.id];
+				if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) {
+					n.x = p.x;
+					n.y = p.y;
+				} else {
+					needLayout = true;
+				}
+			}
+			if (needLayout) {
+				runLayout(graph, { iterations: graph.nodes.length > 150 ? 220 : 320 });
+				const pos: Record<string, { x: number; y: number }> = {};
+				for (const n of graph.nodes) pos[n.id] = { x: Math.round(n.x * 10) / 10, y: Math.round(n.y * 10) / 10 };
+				await this.plugin.store.saveGraphLayout(pos);
+			}
+
+			status.remove();
+			if (!graph.nodes.length) {
+				host.createDiv({
+					cls: "grill-meta grill-map-status",
+					text: "No notes in Grill's folders yet — add some, or widen Grill's folders in settings.",
+				});
+				return;
+			}
+			this.map?.dispose();
+			this.map = new LearningMap(canvas, graph, this.mapPalette(), (id) => this.openNote(id));
+			if (capped) {
+				host.createDiv({
+					cls: "grill-meta grill-map-status",
+					text: `Showing ${names.length} of ${nameSet.size} notes (the ones you've studied and their neighbours).`,
+				});
+			}
+		} catch (e) {
+			status.setText(`Grill: couldn't draw the graph. ${(e as Error).message}`);
+		}
 	}
 
 	// ------------------------------------------------------------ dashboard
@@ -1311,10 +1480,6 @@ export class SessionView extends ItemView {
 			resolveMisconception(this.registry, q.targetsMisconception);
 			this.dirty = true;
 		}
-		if (!this.replayMode && this.plugin.data.settings.writeStatus) {
-			const f = this.byName.get(q.node);
-			if (f) await this.plugin.store.writeNoteStatus(f, this.plugin.mastery[q.node]);
-		}
 		this.plugin.refreshStatusBar();
 		const r: QuestionResult = {
 			node: q.node,
@@ -1443,6 +1608,8 @@ export class SessionView extends ItemView {
 	}
 
 	async onClose(): Promise<void> {
+		this.map?.dispose();
+		this.map = null;
 		await this.flush();
 	}
 
@@ -1572,10 +1739,6 @@ export class SessionView extends ItemView {
 		if (q.targetsMisconception && verdict === "correct" && this.registry[q.targetsMisconception]) {
 			resolveMisconception(this.registry, q.targetsMisconception);
 			this.dirty = true;
-		}
-		if (!this.replayMode && this.plugin.data.settings.writeStatus) {
-			const f = this.byName.get(q.node);
-			if (f) await this.plugin.store.writeNoteStatus(f, this.plugin.mastery[q.node]);
 		}
 		this.plugin.refreshStatusBar();
 		this.results.push({

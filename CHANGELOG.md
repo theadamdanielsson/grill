@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.3.0
+
+Grill is now built around your **knowledge graph**.
+
+- **Your learning graph.** Opening Grill lands you on a map of your notes, drawn by Grill
+  itself. It starts grey; as you practise, each note colours in by how well you know it
+  (green known, amber shaky) and grows with how durably you know it, and links between notes
+  you've both learned brighten. Pick a folder or tag and that slice lights up so you can see
+  what a session will cover, then watch the map change afterwards. This is a *learning* graph
+  (what you've proven), separate from Obsidian's graph of what you've written.
+- **Grill's folders.** On first run Grill asks which folders are its study material and map
+  (leave blank for the whole vault); change it any time in settings. This also keeps the map
+  fast on big vaults.
+- **Removed:** the old "colour your Obsidian graph" setting and the `grill-status` frontmatter
+  it wrote. The new in-app graph replaces it (and does far more). Any `grill-status`/`grill-due`
+  properties already written to your notes are left as-is; Grill just stops touching them.
+
 ## 2.2.0
 
 - **Redo this quiz.** Every session note now ends with a "Redo this quiz" button. It re-serves

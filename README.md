@@ -2,7 +2,7 @@
 
 # Grill
 
-*Grill turns your notes into an AI-augmented knowledge graph: it quizzes you on what you wrote, tests how your ideas connect, and surfaces the links you're missing.*
+*Grill turns your notes into a living knowledge graph you build by proving you've learned them. It quizzes you on what you wrote, and colours in your map as you go.*
 
 I take a lot of notes and almost never go back to them. Re-reading a note isn't the same as actually remembering it, and I couldn't be bothered to turn everything into flashcards. So Grill quizzes you on the notes you've already got — and, because they live in a graph, on how they fit together.
 
@@ -66,15 +66,11 @@ There's a file at `Grill/Instructions.md` (open it from the settings, or the "Op
 
 Changing the persona only changes Grill's voice. How questions are built and how answers are scored is fixed by the engine, so your grades stay consistent no matter what you write.
 
-## Colouring the graph by what you know
+## Your knowledge graph
 
-Switch on "Colour your graph by what you know" and Grill tags each quizzed note with `grill-status` (known, struggling, or untested) and `grill-due`. Hit "Set up graph colours" and it wires up the three graph groups for you, so the graph lights up by how well you know things:
+Open Grill and you land on your **knowledge graph** — every note Grill studies, drawn as a map. It starts grey. As you practise, each note colours in by how well you know it (green known, amber shaky) and grows with how durably you know it, and the links between notes you've both learned brighten. It's the same idea as a fill-in-the-map game: you're colouring in your own knowledge by proving you've learned it. Pick a folder or tag and that slice lights up so you can see exactly what a session will cover; finish the session and watch the map change.
 
-- `["grill-status":known]` green
-- `["grill-status":struggling]` red
-- `["grill-status":untested]` grey
-
-Dataview and Bases can read the same tags. If you don't want the session notes cluttering your graph, drop `-path:"Grill/"` into the graph filter.
+This is a *learning* graph — what you've proven — which is a different thing from Obsidian's own graph of what you've written. On first run Grill asks which folders are its territory (leave it blank for the whole vault); change it any time under settings.
 
 ## Cost and privacy
 

@@ -102,16 +102,64 @@
   color: var(--interactive-accent);
   font-weight: var(--font-bold, 600);
 }
-/* Brand: an orange rule between each section on Grill's settings page. */
+/* The learning graph on the start screen. */
+.grill-map-wrap {
+  position: relative;
+  height: 52vh;
+  min-height: 220px;
+  margin: 0.7em 0;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m, 8px);
+  overflow: hidden;
+  background: var(--background-secondary);
+}
+.grill-graph {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
+}
+.grill-map-status {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 0.3em 0.6em;
+  background: linear-gradient(transparent, var(--background-secondary) 60%);
+  pointer-events: none;
+}
+
+/* First-run onboarding: choose Grill's folders. */
+.grill-onboard-folders {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+  max-height: 45vh;
+  overflow-y: auto;
+  margin: 0.8em 0 1em;
+  padding: 0.6em 0.7em;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s, 6px);
+}
+.grill-onboard-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+}
+.grill-onboard-row label {
+  cursor: pointer;
+  font-size: var(--font-ui-small);
+}
+
+/* Brand: an orange rule above each section on Grill's settings page, AI included. */
 .grill-settings .setting-item-heading {
   border-top: 2px solid #ff7a45;
   margin-top: 1.4em;
   padding-top: 1.1em;
 }
 .grill-settings .setting-item-heading:first-child {
-  border-top: none;
-  margin-top: 0;
-  padding-top: 0;
+  margin-top: 0.4em;
 }
 
 /* "Redo this quiz" button rendered from a session note's grill-redo code block. */

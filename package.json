@@ -1,7 +1,7 @@
 {
   "name": "grill",
-  "version": "2.2.0",
-  "description": "An AI study partner for your knowledge graph: it quizzes you on your own notes, tests how your ideas connect, surfaces links you're missing, and grades questions you write yourself. For Obsidian.",
+  "version": "2.3.0",
+  "description": "Your notes as a living knowledge graph you build by proving you've learned them: Grill quizzes you on your own notes and colours in your map as you go. For Obsidian.",
   "main": "main.js",
   "scripts": {
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",

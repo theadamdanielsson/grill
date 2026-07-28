@@ -8,7 +8,6 @@ import {
 	TFile,
 	TFolder,
 	WorkspaceLeaf,
-	normalizePath,
 } from "obsidian";
 import { MasteryMap, statusOf } from "./mastery";
 import { CalPoint, isCalPoint } from "./calibration";
@@ -32,12 +31,15 @@ interface GrillSettings {
 	compact: boolean;
 	showProgress: boolean;
 	hideNoteName: boolean;
-	/** Mirror mastery into note frontmatter (grill-status / grill-due). */
-	writeStatus: boolean;
 	/** Wiki-link session transcripts to the quizzed notes. */
 	linkSessions: boolean;
 	/** Vault folders to exclude from sessions (relative paths). */
 	excludedFolders: string[];
+	/** Folders that ARE Grill's study material + graph (relative paths). Empty = the
+	 * whole vault. Chosen on first run; the universe of the learning graph. */
+	includedFolders: string[];
+	/** One-time flag: the first-run "what's Grill's" onboarding has been completed. */
+	onboarded: boolean;
 	/** Send embedded images to the model when it supports vision. */
 	sendImages: boolean;
 	/** Where questions come from: an LLM, or the note's own structure (no key). */
@@ -90,9 +92,10 @@ function defaultSettings(): GrillSettings {
 		compact: false,
 		showProgress: true,
 		hideNoteName: false,
-		writeStatus: false,
 		linkSessions: true,
 		excludedFolders: [],
+		includedFolders: [],
+		onboarded: false,
 		sendImages: true,
 		questionSource: "ai",
 		gradingMode: "ai",
@@ -128,10 +131,12 @@ export default class GrillPlugin extends Plugin {
 		if (typeof s.compact === "boolean") settings.compact = s.compact;
 		if (typeof s.showProgress === "boolean") settings.showProgress = s.showProgress;
 		if (typeof s.hideNoteName === "boolean") settings.hideNoteName = s.hideNoteName;
-		if (typeof s.writeStatus === "boolean") settings.writeStatus = s.writeStatus;
 		if (typeof s.linkSessions === "boolean") settings.linkSessions = s.linkSessions;
 		if (Array.isArray(s.excludedFolders))
 			settings.excludedFolders = s.excludedFolders.filter((v): v is string => typeof v === "string");
+		if (Array.isArray(s.includedFolders))
+			settings.includedFolders = s.includedFolders.filter((v): v is string => typeof v === "string");
+		if (typeof s.onboarded === "boolean") settings.onboarded = s.onboarded;
 		if (typeof s.sendImages === "boolean") settings.sendImages = s.sendImages;
 		if (s.questionSource === "ai" || s.questionSource === "local") settings.questionSource = s.questionSource;
 		if (s.gradingMode === "ai" || s.gradingMode === "self") settings.gradingMode = s.gradingMode;
@@ -179,11 +184,6 @@ export default class GrillPlugin extends Plugin {
 				if (!checking) void this.startScoped([f]);
 				return true;
 			},
-		});
-		this.addCommand({
-			id: "sync-note-properties",
-			name: "Update note properties from mastery",
-			callback: () => void this.backfillStatus(),
 		});
 		this.addCommand({
 			id: "open-instructions",
@@ -258,6 +258,12 @@ export default class GrillPlugin extends Plugin {
 					await this.persist();
 				}
 				this.refreshStatusBar();
+				// First run: open Grill and ask which folders are its territory.
+				if (!this.data.settings.onboarded) {
+					await this.activateView();
+					const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view;
+					if (view instanceof SessionView) view.showOnboarding();
+				}
 			})();
 		});
 	}
@@ -274,9 +280,19 @@ export default class GrillPlugin extends Plugin {
 		await this.app.workspace.getLeaf(true).openFile(file);
 	}
 
-	/** True if a note path is in the Grill folder or a user-excluded folder. */
+	/** True if a note path is outside Grill's territory: in the Grill folder, outside the
+	 * chosen included folders (when any are set), or in a user-excluded folder. Empty
+	 * `includedFolders` means the whole vault is Grill's. */
 	isExcluded(path: string): boolean {
 		if (path.startsWith(`${this.data.settings.folder}/`)) return true;
+		const included = this.data.settings.includedFolders;
+		if (included.length) {
+			const inside = included.some((raw) => {
+				const i = raw.trim();
+				return i && (path === i || path.startsWith(`${i}/`));
+			});
+			if (!inside) return true;
+		}
 		for (const raw of this.data.settings.excludedFolders) {
 			const e = raw.trim();
 			if (e && (path === e || path.startsWith(`${e}/`))) return true;
@@ -352,19 +368,6 @@ export default class GrillPlugin extends Plugin {
 		if (view instanceof SessionView) view.showDashboard();
 	}
 
-	/** One-time backfill: write grill-status/grill-due for every tracked note. */
-	async backfillStatus(): Promise<void> {
-		let n = 0;
-		for (const f of this.app.vault.getMarkdownFiles()) {
-			if (this.isExcluded(f.path)) continue;
-			const m = this.mastery[f.basename];
-			if (!m) continue;
-			await this.store.writeNoteStatus(f, m);
-			n += 1;
-		}
-		new Notice(`Grill: updated properties on ${n} notes.`);
-	}
-
 	/** Active provider config for LLM calls; null if a needed key is missing. */
 	llmConfig(): LLMConfig | null {
 		const s = this.data.settings;
@@ -438,48 +441,6 @@ class GrillSettingTab extends PluginSettingTab {
 					await onChange(v);
 				}),
 		);
-	}
-
-	/** The three Grill graph colour-groups: green known, red struggling, grey untested. */
-	private static readonly GRAPH_GROUPS: { query: string; color: { a: number; rgb: number } }[] = [
-		{ query: '["grill-status":known]', color: { a: 1, rgb: 0x4caf50 } },
-		{ query: '["grill-status":struggling]', color: { a: 1, rgb: 0xe5484d } },
-		{ query: '["grill-status":untested]', color: { a: 1, rgb: 0x9e9e9e } },
-	];
-
-	/** Add Grill's colour-groups to the graph config, without disturbing the user's own
-	 * groups. Shows manual setup instructions if the config can't be edited. */
-	private async setUpGraphColours(): Promise<void> {
-		const path = normalizePath(`${this.app.vault.configDir}/graph.json`);
-		try {
-			let config: { colorGroups?: { query: string; color: { a: number; rgb: number } }[] } = {};
-			if (await this.app.vault.adapter.exists(path)) {
-				config = JSON.parse(await this.app.vault.adapter.read(path)) as typeof config;
-			}
-			const groups = config.colorGroups ?? [];
-			const have = new Set(groups.map((g) => g.query));
-			let added = 0;
-			for (const g of GrillSettingTab.GRAPH_GROUPS) {
-				if (!have.has(g.query)) {
-					groups.push(g);
-					added++;
-				}
-			}
-			config.colorGroups = groups;
-			await this.app.vault.adapter.write(path, JSON.stringify(config, null, 2));
-			new Notice(
-				added
-					? "Grill: graph colours added. Open Graph view to see them."
-					: "Grill: graph colours were already set up.",
-			);
-		} catch {
-			new Notice(
-				"Grill: couldn't set up graph colours automatically. In Graph view settings, add three colour " +
-					"groups with the queries [\"grill-status\":known], [\"grill-status\":struggling] and " +
-					"[\"grill-status\":untested].",
-				10000,
-			);
-		}
 	}
 
 	private async refreshModels(p: ProviderId): Promise<void> {
@@ -901,33 +862,6 @@ class GrillSettingTab extends PluginSettingTab {
 		// ------------------------------------------------------------ Storage
 		new Setting(containerEl).setName("Storage").setHeading();
 
-		const masterySetting = new Setting(containerEl)
-			.setName("Colour your graph by what you know")
-			.setDesc(
-				"Tags each note you've been quizzed on with how solid you are on it, so Obsidian's graph can " +
-					"colour them: green for known, red for shaky, grey for untested. Use the button to set the " +
-					"colours up. Off: your notes are never touched. (Also queryable in Dataview and Bases.)",
-			)
-			.addToggle((t) =>
-				t.setValue(s.writeStatus).onChange(async (v) => {
-					s.writeStatus = v;
-					await this.plugin.persist();
-					if (v)
-						new Notice(
-							"Grill: run 'Update note properties from mastery' to tag notes you've already studied.",
-						);
-					this.display();
-				}),
-			);
-		if (s.writeStatus) {
-			masterySetting.addButton((b) =>
-				b
-					.setButtonText("Set up graph colours")
-					.setTooltip("Add green/red/grey graph groups for Grill mastery")
-					.onClick(() => void this.setUpGraphColours()),
-			);
-		}
-
 		new Setting(containerEl)
 			.setName("Show quiz history in a note's backlinks")
 			.setDesc(
@@ -954,6 +888,25 @@ class GrillSettingTab extends PluginSettingTab {
 					.setValue(s.folder)
 					.onChange(async (v) => {
 						s.folder = v.trim() || "Grill";
+						await this.plugin.persist();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Grill's folders")
+			.setDesc(
+				"Comma-separated folders that ARE Grill's study material and knowledge graph. Relative paths, " +
+					"e.g. Courses, Zettelkasten. Leave blank to use your whole vault.",
+			)
+			.addText((t) =>
+				t
+					.setPlaceholder("Whole vault")
+					.setValue(s.includedFolders.join(", "))
+					.onChange(async (v) => {
+						s.includedFolders = v
+							.split(",")
+							.map((x) => x.trim())
+							.filter(Boolean);
 						await this.plugin.persist();
 					}),
 			);
