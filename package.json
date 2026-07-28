@@ -1,7 +1,7 @@
 {
   "name": "grill",
-  "version": "2.0.4",
-  "description": "Spaced repetition and active recall for your own notes: AI writes flashcard-style questions, grades your answers, and tracks what you keep getting wrong. For Obsidian.",
+  "version": "2.1.0",
+  "description": "An AI study partner for your knowledge graph: it quizzes you on your own notes, tests how your ideas connect, surfaces links you're missing, and grades questions you write yourself. For Obsidian.",
   "main": "main.js",
   "scripts": {
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",

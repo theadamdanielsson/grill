@@ -53,6 +53,18 @@ interface GrillSettings {
 	/** Play short synthesized sound cues on each answer + at session end, with a
 	 * confetti burst on a perfect session. On by default. */
 	sounds: boolean;
+	/** Missing-link finder: surface a "these two notes should be linked" question in
+	 * AI sessions and offer to write the link. On by default. */
+	graphInsights: boolean;
+	/** How many missing-link bridge questions to add per session (0 disables). */
+	bridgesPerSession: number;
+	/** Question cache: reuse a generated question for a due concept. 0 = always reuse
+	 * (only regenerate when the note changes or the bank is empty); N = also write a
+	 * fresh variant after a cached one has been shown N times, for variety. */
+	regenerateEvery: number;
+	/** Careful grading: grade an answer with a small consensus of calls (opt-in,
+	 * higher cost) to reduce leniency error. Off by default. */
+	carefulGrade: boolean;
 	/** One-time flag: the note→concept scheduling reset has run. */
 	conceptsMigrated: boolean;
 }
@@ -87,6 +99,10 @@ function defaultSettings(): GrillSettings {
 		sessionDebrief: true,
 		confidenceCheck: false,
 		sounds: true,
+		graphInsights: true,
+		bridgesPerSession: 1,
+		regenerateEvery: 0,
+		carefulGrade: false,
 		conceptsMigrated: false,
 	};
 }
@@ -122,6 +138,10 @@ export default class GrillPlugin extends Plugin {
 		if (typeof s.sessionDebrief === "boolean") settings.sessionDebrief = s.sessionDebrief;
 		if (typeof s.confidenceCheck === "boolean") settings.confidenceCheck = s.confidenceCheck;
 		if (typeof s.sounds === "boolean") settings.sounds = s.sounds;
+		if (typeof s.graphInsights === "boolean") settings.graphInsights = s.graphInsights;
+		if (typeof s.bridgesPerSession === "number") settings.bridgesPerSession = s.bridgesPerSession;
+		if (typeof s.regenerateEvery === "number") settings.regenerateEvery = s.regenerateEvery;
+		if (typeof s.carefulGrade === "boolean") settings.carefulGrade = s.carefulGrade;
 		if (typeof s.conceptsMigrated === "boolean") settings.conceptsMigrated = s.conceptsMigrated;
 		const calibration = Array.isArray(stored?.calibration) ? stored!.calibration.filter(isCalPoint) : [];
 		this.data = { settings, calibration };
@@ -727,6 +747,66 @@ class GrillSettingTab extends PluginSettingTab {
 			.addToggle((t) =>
 				t.setValue(s.confidenceCheck).onChange(async (v) => {
 					s.confidenceCheck = v;
+					await this.plugin.persist();
+				}),
+			);
+
+		new Setting(containerEl)
+			.setName("Find missing links")
+			.setDesc(
+				"In AI sessions, look for two of your notes that clearly relate but aren't linked, quiz you on the " +
+					"connection, and offer to add the [[link]] for you. Needs a key; off for no-key sessions.",
+			)
+			.addToggle((t) =>
+				t.setValue(s.graphInsights).onChange(async (v) => {
+					s.graphInsights = v;
+					await this.plugin.persist();
+					this.display();
+				}),
+			);
+
+		if (s.graphInsights) {
+			this.sliderSetting(
+				containerEl,
+				"Missing-link questions per session",
+				"How many connection questions to add at most, on top of your normal review.",
+				0,
+				3,
+				Math.min(Math.max(s.bridgesPerSession, 0), 3),
+				(v) => String(v),
+				async (v) => {
+					s.bridgesPerSession = v;
+					await this.plugin.persist();
+				},
+			);
+		}
+
+		this.sliderSetting(
+			containerEl,
+			"Reuse generated questions",
+			"AI questions are cached per concept and reused on review, so a due concept isn't rewritten by a fresh " +
+				"API call every time. 0 reuses the same question until you edit the note; a higher number writes a new " +
+				"variant after a question has been shown that many times, for variety.",
+			0,
+			10,
+			Math.min(Math.max(s.regenerateEvery, 0), 10),
+			(v) => (v === 0 ? "Always reuse" : `Every ${v}`),
+			async (v) => {
+				s.regenerateEvery = v;
+				await this.plugin.persist();
+			},
+		);
+
+		new Setting(containerEl)
+			.setName("Careful grading")
+			.setDesc(
+				"When AI grades your answer, run a small consensus of calls and fall back to the stricter verdict on " +
+					"disagreement. Cuts the chance of being marked correct when you weren't, at a higher per-answer cost. " +
+					"Off by default.",
+			)
+			.addToggle((t) =>
+				t.setValue(s.carefulGrade).onChange(async (v) => {
+					s.carefulGrade = v;
 					await this.plugin.persist();
 				}),
 			);

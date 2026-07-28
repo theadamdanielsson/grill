@@ -20,7 +20,7 @@
 import { Question } from "./llm";
 
 /** The kind of structural element a concept was pulled from. */
-export type ConceptKind = "heading" | "term" | "definition" | "formula" | "card" | "note";
+export type ConceptKind = "heading" | "term" | "definition" | "formula" | "card" | "note" | "authored";
 
 /** A deterministically-identified unit of knowledge within a note. Concept ids
  * are stable across sessions (no model inference), so both the scheduler and
@@ -36,6 +36,12 @@ export interface Concept {
 	context: string;
 	/** The deterministic question for no-key mode. Absent for the note fallback. */
 	local?: { question: string; answer: string; hint?: string };
+	/** True for a user-authored `> [!grill]` question: asked verbatim, never rewritten
+	 * by the model, and graded against `rubric`/its answer (or the note) rather than a
+	 * model-written rubric. */
+	authored?: boolean;
+	/** The grading rubric the user wrote alongside an authored question, if any. */
+	rubric?: string;
 }
 
 interface LocalItem {
@@ -44,6 +50,8 @@ interface LocalItem {
 	answer: string;
 	/** Optional hint carried from an Anki/SR cloze (::hint / ;;hint). */
 	hint?: string;
+	/** Grading rubric the user wrote alongside an authored callout question. */
+	rubric?: string;
 	/** What produced this item, for concept identity. */
 	kind: ConceptKind;
 	/** The structural anchor (heading text, term, front...) — the concept label. */
@@ -243,6 +251,57 @@ function headingCard(heading: string, body: string): LocalItem | null {
 	return { question: `Recall what you know about **${h}**.`, answer, kind: "heading", label: h };
 }
 
+// ------------------------------------------------------ user-authored callout
+
+const CALLOUT_START = /^>\s*\[!grill\][+-]?\s?(.*)$/i;
+
+/** Parse a `> [!grill]` callout the user wrote as their own question. The title (and
+ * any following plain `>` lines before a field) is the question; `> A:`/`> answer:` is
+ * the model answer; `> rubric:` is the grading rubric. Returns the item and the index
+ * of the last consumed line, or null if there's no question text. Example:
+ *
+ *   > [!grill] Why does IFRS 16 move operating leases on-balance-sheet?
+ *   > A: They become a right-of-use asset and a lease liability.
+ *   > rubric: mentions right-of-use asset, lease liability, on-balance-sheet
+ */
+function parseGrillCallout(lines: string[], start: number): { item: LocalItem; next: number } | null {
+	const m = CALLOUT_START.exec(lines[start].trim());
+	if (!m) return null;
+	const qLines: string[] = [];
+	const title = m[1].trim();
+	if (title) qLines.push(title);
+	let answer = "";
+	let rubric = "";
+	let sawField = false;
+	let i = start + 1;
+	for (; i < lines.length; i++) {
+		const t = lines[i].trim();
+		if (!t.startsWith(">")) break;
+		const content = t.replace(/^>\s?/, "").trim();
+		const am = /^(?:a|answer)\s*:\s*(.*)$/i.exec(content);
+		const rm = /^rubric\s*:\s*(.*)$/i.exec(content);
+		if (am) {
+			answer = am[1].trim();
+			sawField = true;
+			continue;
+		}
+		if (rm) {
+			rubric = rm[1].trim();
+			sawField = true;
+			continue;
+		}
+		if (!content) continue;
+		if (!sawField) qLines.push(content);
+		else if (answer) answer = `${answer} ${content}`.trim();
+	}
+	const question = qLines.join(" ").trim();
+	if (!question) return null;
+	return {
+		item: { question, answer, rubric: rubric || undefined, kind: "authored", label: question },
+		next: i - 1,
+	};
+}
+
 // ------------------------------------------------------------ per-note walk
 
 const ITEM_CAP_PER_NOTE = 12;
@@ -273,6 +332,12 @@ function itemsForNote(text: string, cap: number): LocalItem[] {
 
 		if (/^(```|~~~)/.test(line)) { inCode = !inCode; continue; }
 		if (inCode) continue;
+
+		// User-authored question: `> [!grill] ...` callout, possibly multi-line.
+		if (CALLOUT_START.test(line)) {
+			const res = parseGrillCallout(lines, i);
+			if (res) { push(res.item); block = []; i = res.next; continue; }
+		}
 
 		const hm = /^(#{1,6})\s+(.+?)\s*#*$/.exec(line);
 		if (hm) { flushHeading(); heading = hm[2]; sectionBody = []; block = []; continue; }
@@ -356,9 +421,13 @@ export function extractConcepts(note: string, text: string): Concept[] {
 			note,
 			label: it.label,
 			kind: it.kind,
-			sourceHash: hashStr(it.answer),
+			// Authored questions re-open on any edit to the question, answer, or rubric.
+			sourceHash: hashStr(
+				it.kind === "authored" ? `${it.question} ${it.answer} ${it.rubric ?? ""}` : it.answer,
+			),
 			context: it.answer,
 			local: { question: it.question, answer: it.answer, hint: it.hint },
+			...(it.kind === "authored" ? { authored: true, rubric: it.rubric } : {}),
 		});
 	}
 	// A sparse or prose-heavy note still gets one schedulable concept the AI can
@@ -395,6 +464,7 @@ export function localQuestionForConcept(c: Concept): Question | null {
 		acceptableAnswers: [],
 		commonErrors: [],
 		hints: { tier1: c.local.hint ?? "", tier2: "", tier3: "" },
+		...(c.authored ? { authored: true, rubric: c.rubric } : {}),
 	};
 }
 

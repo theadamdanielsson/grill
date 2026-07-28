@@ -1,15 +1,18 @@
 # Grill
 
-*Spaced repetition and active recall on your own notes: AI writes flashcard-style questions, grades your answers, and focuses on what you keep getting wrong.*
+*Grill turns your notes into an AI-augmented knowledge graph: it quizzes you on what you wrote, tests how your ideas connect, and surfaces the links you're missing.*
 
 I take a lot of notes and almost never go back to them. Re-reading a note isn't the same
 as actually remembering it, and I couldn't be bothered to turn everything into flashcards.
-So Grill quizzes you on the notes you've already got.
+So Grill quizzes you on the notes you've already got — and, because they live in a graph, on
+how they fit together.
 
 It reads your vault, gets whichever model you point it at (Claude, GPT, Gemini, DeepSeek,
 Ollama on your own machine, or any OpenAI-compatible endpoint such as OpenRouter, Groq or
-LM Studio) to write questions from your notes, and marks what you type back. It remembers how you did on each note and steers the next session toward the things
-you keep missing.
+LM Studio) to write questions from your notes, and marks what you type back. It turns your
+link graph and your answer history into a real tutor, not just a question generator: it
+remembers how you did on each concept, quizzes you across your `[[links]]`, finds notes you
+should have linked but didn't, and steers each session toward what you keep missing.
 
 ![Grill: open it, start a session, answer, get graded with specific feedback](docs/grill-demo.gif)
 
@@ -88,6 +91,33 @@ It's also fussy about its own questions. Before one reaches you it's checked for
 model slop, yes/no questions, hints that give the game away, questions that aren't actually
 grounded in your note, and quietly dropped if it fails. No extra model call, so it works the
 same on a local model as on a paid one.
+
+## Connections you haven't made yet
+
+Because your notes live in a graph, Grill can quiz you on the graph itself. A **Connections
+review** (its own button, or the command) bridges concepts across your `[[links]]`: instead
+of one note at a time, it asks how two linked notes relate.
+
+It also finds the links you *haven't* made. In an AI session Grill looks for two of your
+notes that clearly belong together but aren't linked, quizzes you on the connection, and
+offers a one-tap **Link these notes** button that writes the `[[link]]` into the note for
+you. Answer it and your graph gets a little denser: the AI working *inside* your graph, not
+beside it. You can turn it off, or change how many it adds per session, in settings.
+
+## Writing your own questions
+
+Sometimes you know exactly what you want to be asked. Drop a callout into any note:
+
+```
+> [!grill] Why does IFRS 16 move operating leases on-balance-sheet?
+> A: They become a right-of-use asset and a lease liability.
+> rubric: mentions right-of-use asset, lease liability, on-balance-sheet
+```
+
+Grill asks it verbatim, schedules it alongside everything else, and marks your typed answer
+against your rubric (or, when you don't write one, against the note). The `A:` and `rubric:`
+lines are both optional. Because it's a callout it folds away and never clutters your prose,
+and if you already keep `Question:: answer` flashcards, those still work as they always did.
 
 ## Telling it how to quiz you
 

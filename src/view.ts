@@ -2,8 +2,10 @@
 
 import { ItemView, MarkdownRenderer, Notice, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
-import { ConceptTarget, debriefSession, generateQuestions, gradeAnswer, Question, supportsVision, Verdict } from "./llm";
-import { Concept, extractConcepts, localQuestions } from "./generate-local";
+import { adjudicateBridges, ConceptTarget, debriefSession, generateQuestions, Grade, gradeAnswer, LLMConfig, Question, supportsVision, Verdict } from "./llm";
+import { Concept, extractConcepts, localQuestionForConcept, localQuestions } from "./generate-local";
+import { BridgeMap, detectBridgeCandidates, pairKey } from "./bridges";
+import type { CachedQuestion, QuestionBank } from "./store";
 import {
 	ConceptMap,
 	ConceptMastery,
@@ -58,7 +60,14 @@ interface QuestionResult extends SessionEntry {
 	hintsUsed: number;
 	/** Raw grader misconception tag, if any; consumed by the end-of-session debrief. */
 	misconceptionTag?: string;
+	/** Set for a missing-link bridge question, with the un-linked partner note, so the
+	 * feedback screen can offer to write the link. */
+	missingLink?: boolean;
+	connectTo?: string;
 }
+
+/** Most cached question variants kept per concept, to bound questions.json growth. */
+const MAX_VARIANTS = 8;
 
 export class SessionView extends ItemView {
 	plugin: GrillPlugin;
@@ -88,6 +97,16 @@ export class SessionView extends ItemView {
 	private concepts: ConceptMap = {};
 	/** Each selected note's current concepts, for recomputing its aggregate. */
 	private conceptsByNote = new Map<string, Concept[]>();
+	/** Concept lookup by id, for prebuilt (authored / cached) questions. */
+	private conceptById = new Map<string, Concept>();
+	/** Missing-link records (which pairs surfaced / were linked), held for the session. */
+	private bridges: BridgeMap = {};
+	/** Per-concept cache of generated questions, reused across reviews. */
+	private questionBank: QuestionBank = {};
+	/** Question bank / bridges changed in memory and need flushing (separate from
+	 * `dirty`, which flushes concepts/mastery/registry). */
+	private bankDirty = false;
+	private bridgesDirty = false;
 	/** The concepts this session tests, in order. */
 	private sessionConcepts: Concept[] = [];
 	/** Concept targets for the AI generator (one question each, by construction). */
@@ -380,6 +399,17 @@ export class SessionView extends ItemView {
 			}
 		}
 
+		// Missing links Grill has helped you connect.
+		const bridges = await this.plugin.store.loadBridges();
+		const linked = Object.values(bridges).filter((b) => b.status === "linked").length;
+		if (linked > 0) {
+			wrap.createDiv({ cls: "grill-section-label", text: "Connections made" });
+			wrap.createDiv({
+				cls: "grill-meta",
+				text: `Grill has helped you link ${linked} pair${linked === 1 ? "" : "s"} of notes you hadn't connected.`,
+			});
+		}
+
 		this.renderHeatmap(wrap);
 	}
 
@@ -452,10 +482,16 @@ export class SessionView extends ItemView {
 		// but honour "hide note name" so we never leak the answer.
 		if (q.connectTo) {
 			const bridge = card.createDiv({ cls: "grill-bridge" });
-			if (this.plugin.data.settings.hideNoteName) {
-				bridge.createSpan({ cls: "grill-meta", text: "Connecting two of your linked notes" });
+			const hidden = this.plugin.data.settings.hideNoteName;
+			if (hidden) {
+				bridge.createSpan({
+					cls: "grill-meta",
+					text: q.missingLink
+						? "Two of your notes that aren't linked yet"
+						: "Connecting two of your linked notes",
+				});
 			} else {
-				bridge.createSpan({ cls: "grill-meta", text: "Bridging" });
+				bridge.createSpan({ cls: "grill-meta", text: q.missingLink ? "A connection you haven't made yet" : "Bridging" });
 				bridge.createSpan({ cls: "grill-chip", text: q.node });
 				bridge.createSpan({ cls: "grill-bridge-arrow", text: "↔" });
 				bridge.createSpan({ cls: "grill-chip", text: q.connectTo });
@@ -573,12 +609,45 @@ export class SessionView extends ItemView {
 			this.md(`**Expected answer:** ${r.modelAnswer}`, ma);
 		}
 
+		if (r.missingLink && r.connectTo) this.offerLink(card, r.node, r.connectTo);
+
 		const btn = card.createEl("button", {
 			text: this.idx + 1 < this.targetCount ? "Next question" : "Finish session",
 			cls: "mod-cta",
 		});
 		btn.onclick = () => void this.goToQuestion(this.idx + 1);
 		btn.focus();
+	}
+
+	/** A missing-link question offers to write the `[[link]]` into the graph — the
+	 * "AI augments your graph" payoff. Button-gated: only an explicit click edits the
+	 * note. Idempotent, and reflects an already-written link. */
+	private offerLink(card: HTMLElement, fromNote: string, toNote: string): void {
+		const box = card.createDiv({ cls: "grill-bridge-link" });
+		if (this.bridges[pairKey(fromNote, toNote)]?.status === "linked") {
+			box.createSpan({ cls: "grill-meta", text: `Linked ${fromNote} and ${toNote}.` });
+			return;
+		}
+		box.createSpan({ cls: "grill-meta", text: "These two notes aren't linked yet." });
+		const btn = box.createEl("button", { text: `Link ${fromNote} ↔ ${toNote}`, cls: "grill-connections-btn" });
+		btn.onclick = async () => {
+			const f = this.byName.get(fromNote);
+			if (!f) {
+				new Notice("Grill: couldn't find the note to link.");
+				return;
+			}
+			btn.disabled = true;
+			const ok = await this.plugin.store.linkNotes(f, toNote);
+			if (ok) {
+				this.recordBridgeResult(fromNote, toNote, "linked");
+				await this.flush();
+				btn.setText(`Linked ${fromNote} ↔ ${toNote}`);
+				new Notice(`Grill: linked ${fromNote} and ${toNote}.`);
+			} else {
+				btn.disabled = false;
+				new Notice("Grill: couldn't write the link.");
+			}
+		};
 	}
 
 	private async finishSession(): Promise<void> {
@@ -763,14 +832,29 @@ export class SessionView extends ItemView {
 		const cfg = this.plugin.llmConfig();
 		if (!cfg) return Promise.resolve();
 		const run = async (): Promise<void> => {
-			try {
-				// Pull plan batches from the cursor until at least one question is
-				// produced (a batch can be fully dropped by the validator) or the plan is
-				// exhausted. Advance the cursor by targets consumed, not questions
-				// produced, so drops never cause a concept to be generated twice.
-				while (this.planCursor < this.targets.length && this.questions.length < this.targetCount) {
-					const batch = this.targets.slice(this.planCursor, this.planCursor + BATCH);
-					this.planCursor += batch.length;
+			// Pull plan targets from the cursor until at least one question is delivered
+			// (a generated batch can be fully dropped by the validator) or the plan is
+			// exhausted. Advance the cursor by targets consumed, not questions produced,
+			// so drops never cause a concept to be generated twice. Prebuilt targets
+			// (user-authored, or a cache hit) cost no model call and yield immediately.
+			while (this.planCursor < this.targets.length && this.questions.length < this.targetCount) {
+					const pre = this.buildPrebuilt(this.targets[this.planCursor]);
+					if (pre) {
+						this.questions.push(pre);
+						this.planCursor += 1;
+						break; // made progress; yield so the UI can render
+					}
+					// Gather a run of consecutive generation-needing targets for one call.
+					const batch: ConceptTarget[] = [];
+					while (
+						this.planCursor < this.targets.length &&
+						batch.length < BATCH &&
+						!this.isPrebuilt(this.targets[this.planCursor])
+					) {
+						batch.push(this.targets[this.planCursor]);
+						this.planCursor += 1;
+					}
+					if (!batch.length) continue; // next loop handles the prebuilt target
 					const qs = await generateQuestions(
 						cfg,
 						this.notesConcat,
@@ -782,16 +866,135 @@ export class SessionView extends ItemView {
 						this.sessionPersona,
 					);
 					if (qs.length) {
+						this.rememberGenerated(qs);
 						for (const q of qs) this.questions.push(q);
 						break;
 					}
 				}
-			} finally {
-				this.pending = null;
+			};
+			// A fully-prebuilt (authored/cached) run resolves synchronously, so clearing
+			// `pending` must happen AFTER this assignment, not inside run() (which would run
+			// before it and leave a stale resolved promise wedged in `pending`, freezing the
+			// queue). Clear it on settle, guarding against a newer in-flight run.
+			const p = run();
+			this.pending = p;
+			void p.catch(() => undefined).finally(() => {
+				if (this.pending === p) this.pending = null;
+			});
+			return p;
+		}
+
+	/** A cached question for this concept that is safe to reuse now, or null. Requires a
+	 * bank entry whose source hash still matches the concept (note unchanged); rotates to
+	 * the least-shown variant. With "reuse generated questions" set above 0, a variant
+	 * that has been shown that many times forces a miss so a fresh variant is written. */
+	private cacheHit(conceptId: string): CachedQuestion | null {
+		const c = this.conceptById.get(conceptId);
+		if (!c || c.authored) return null; // authored questions are verbatim, not banked
+		const bank = this.questionBank[conceptId];
+		if (!bank || !bank.length) return null;
+		const fresh = bank.filter((e) => e.sourceHash === c.sourceHash);
+		if (!fresh.length) return null;
+		fresh.sort(
+			(a, b) => a.timesShown - b.timesShown || (a.lastShownAt ?? "").localeCompare(b.lastShownAt ?? ""),
+		);
+		const pick = fresh[0];
+		const regen = this.plugin.data.settings.regenerateEvery;
+		if (regen > 0 && pick.timesShown >= regen && bank.length < MAX_VARIANTS) return null; // add variety
+		return pick;
+	}
+
+	/** Whether a target needs no model call (user-authored, or a cache hit). Must agree
+	 * with buildPrebuilt: an authored concept counts only if it actually has a question,
+	 * otherwise loadNextBatch could spin on a target it can neither build nor batch. */
+	private isPrebuilt(t: ConceptTarget): boolean {
+		const c = this.conceptById.get(t.conceptId);
+		if (c?.authored) return !!c.local;
+		return this.cacheHit(t.conceptId) !== null;
+	}
+
+	/** Build a target's question without a model call: the verbatim authored question,
+	 * or a rotated cache hit (bumping its use counters). Null when generation is needed. */
+	private buildPrebuilt(t: ConceptTarget): Question | null {
+		const c = this.conceptById.get(t.conceptId);
+		if (c?.authored) {
+			const q = localQuestionForConcept(c);
+			if (q) q.routedFrom = t.routedFrom ?? q.routedFrom;
+			return q;
+		}
+		const hit = this.cacheHit(t.conceptId);
+		if (!hit) return null;
+		hit.timesShown += 1;
+		hit.lastShownAt = new Date().toISOString();
+		this.bankDirty = true;
+		// Strip cache metadata; carry this session's routing label onto the reused question.
+		const { sourceHash: _sh, timesShown: _ts, lastShownAt: _ls, ...q } = hit;
+		return { ...q, routedFrom: t.routedFrom ?? q.routedFrom };
+	}
+
+	/** Cache freshly generated questions per concept for reuse on later reviews. Skips
+	 * authored (verbatim) and bridge (novel, un-scheduled) questions, prunes stale-hash
+	 * variants, and caps the number kept per concept. */
+	private rememberGenerated(qs: Question[]): void {
+		for (const q of qs) {
+			if (!q.conceptId || q.missingLink) continue;
+			const c = this.conceptById.get(q.conceptId);
+			if (!c || c.authored) continue;
+			const kept = (this.questionBank[q.conceptId] ?? []).filter((e) => e.sourceHash === c.sourceHash);
+			kept.push({ ...q, sourceHash: c.sourceHash, timesShown: 1, lastShownAt: new Date().toISOString() });
+			this.questionBank[q.conceptId] = kept.slice(-MAX_VARIANTS);
+			this.bankDirty = true;
+		}
+	}
+
+	/** Missing-link finder: propose un-linked note pairs, confirm the real ones with the
+	 * model, and append up to `max` as bridge questions (a capstone at the session's end).
+	 * A bonus feature: any failure is swallowed so it never breaks a session. */
+	private async appendBridgeTargets(cfg: LLMConfig, names: string[], max: number): Promise<void> {
+		try {
+			const cands = detectBridgeCandidates(this.app, names, this.byName, this.noteText, this.bridges);
+			if (!cands.length) return;
+			const confirmed = await adjudicateBridges(cfg, cands, this.sessionPersona);
+			let added = 0;
+			const now = new Date().toISOString();
+			for (const c of confirmed) {
+				if (added >= max) break;
+				const key = pairKey(c.a, c.b);
+				const prev = this.bridges[key];
+				if (prev && prev.status !== "suggested") continue; // already resolved
+				this.bridges[key] = { a: c.a, b: c.b, bridgeConcept: c.bridgeConcept, status: "suggested", lastSeen: now };
+				this.bridgesDirty = true;
+				this.targets.push({
+					conceptId: `__bridge__:${key}`,
+					note: c.a,
+					label: c.bridgeConcept,
+					context: `${(this.noteText[c.a] ?? "").slice(0, 600)}\n\n${(this.noteText[c.b] ?? "").slice(0, 600)}`,
+					targetDifficulty: "hard",
+					connectTo: c.b,
+					bridge: true,
+					bridgeConcept: c.bridgeConcept,
+				});
+				this.targetCount += 1;
+				added += 1;
 			}
-		};
-		this.pending = run();
-		return this.pending;
+		} catch {
+			// Bridges are a bonus; never fail the session over them.
+		}
+	}
+
+	/** Record that a bridge question was answered (or its link written), keyed by the
+	 * note pair, so the pair isn't re-surfaced and the dashboard can count links made. */
+	private recordBridgeResult(fromNote: string, toNote: string, status: "answered" | "linked"): void {
+		const key = pairKey(fromNote, toNote);
+		const rec = this.bridges[key];
+		const now = new Date().toISOString();
+		if (rec) {
+			if (rec.status !== "linked") rec.status = status; // a written link is terminal
+			rec.lastSeen = now;
+		} else {
+			this.bridges[key] = { a: fromNote, b: toNote, bridgeConcept: "", status, lastSeen: now };
+		}
+		this.bridgesDirty = true;
 	}
 
 	/** Move to question `idx`, generating it (and prefetching the next) as needed. */
@@ -849,6 +1052,10 @@ export class SessionView extends ItemView {
 		try {
 			this.plugin.mastery = await this.plugin.store.loadMastery();
 			this.registry = await this.plugin.store.loadRegistry();
+			this.bridges = await this.plugin.store.loadBridges();
+			this.questionBank = await this.plugin.store.loadQuestionBank();
+			this.bankDirty = false;
+			this.bridgesDirty = false;
 			const instr = await this.plugin.store.loadInstructions();
 			this.sessionPersona = instr.persona;
 			this.sessionInstructions = instr.preferences;
@@ -912,6 +1119,7 @@ export class SessionView extends ItemView {
 			const allConcepts: Concept[] = [];
 			for (const cs of this.conceptsByNote.values()) allConcepts.push(...cs);
 			reconcileConcepts(this.concepts, allConcepts);
+			this.conceptById = new Map(allConcepts.map((c) => [c.id, c]));
 
 			this.questions = [];
 			this.results = [];
@@ -964,6 +1172,11 @@ export class SessionView extends ItemView {
 				return;
 			}
 
+			// Missing-link finder: append up to N bridge questions as a capstone (AI only).
+			if (s.graphInsights && s.bridgesPerSession > 0 && cfg) {
+				await this.appendBridgeTargets(cfg, names, s.bridgesPerSession);
+			}
+
 			this.renderLoading(
 				this.sessionMode === "connections" ? "Writing questions across your links" : "Writing your questions",
 				`${cfg!.model} is reading ${names.length} notes. This usually takes a few seconds.`,
@@ -996,15 +1209,7 @@ export class SessionView extends ItemView {
 		} else {
 			this.renderLoading("Grading your answer", "Checking it against your note and the rubric.");
 			try {
-				const g = await gradeAnswer(
-					cfg,
-					q,
-					this.noteText[q.node] ?? "",
-					answer,
-					this.noteImages[q.node] ?? [],
-					this.sessionInstructions,
-					this.sessionPersona,
-				);
+				const g = await this.gradeMaybeCareful(cfg, q, answer);
 				verdict = g.verdict;
 				feedback = g.feedback;
 				misconceptionTag = g.misconceptionTag;
@@ -1038,9 +1243,32 @@ export class SessionView extends ItemView {
 			modelAnswer: q.modelAnswer,
 			hintsUsed,
 			misconceptionTag: misconceptionTag || undefined,
+			missingLink: q.missingLink,
+			connectTo: q.connectTo,
 		};
 		this.results.push(r);
 		this.renderFeedback(r);
+	}
+
+	/** Grade one answer. With "careful grading" on, run a small consensus and keep the
+	 * strictest verdict, since the measured failure of LLM grading is over-leniency
+	 * (marking a weak answer correct), which would quietly corrupt the FSRS signal. */
+	private async gradeMaybeCareful(cfg: LLMConfig, q: Question, answer: string): Promise<Grade> {
+		const once = (): Promise<Grade> =>
+			gradeAnswer(
+				cfg,
+				q,
+				this.noteText[q.node] ?? "",
+				answer,
+				this.noteImages[q.node] ?? [],
+				this.sessionInstructions,
+				this.sessionPersona,
+			);
+		if (!this.plugin.data.settings.carefulGrade) return once();
+		const grades = await Promise.all([once(), once(), once()]);
+		const rank: Record<Verdict, number> = { incorrect: 0, partial: 1, correct: 2 };
+		grades.sort((a, b) => rank[a.verdict] - rank[b.verdict]);
+		return grades[0]; // strictest verdict (and its feedback) wins
 	}
 
 	/** Self-grade path: reveal the answer, then let the user rate their own recall. */
@@ -1080,6 +1308,8 @@ export class SessionView extends ItemView {
 			if (gaveUp && b.rating === 1) el.addClass("mod-cta");
 			el.onclick = () => void this.recordSelfGrade(b.rating, answer, gaveUp, hintsUsed);
 		}
+
+		if (q.missingLink && q.connectTo) this.offerLink(card, q.node, q.connectTo);
 	}
 
 	/** Record one graded answer: update the concept's schedule, bump the note's
@@ -1092,6 +1322,12 @@ export class SessionView extends ItemView {
 		rating: Rating | null,
 		misconceptionTag: string | undefined,
 	): Promise<void> {
+		// A missing-link bridge question is outside FSRS scheduling: it isn't a note
+		// concept, so it must not touch concept or note mastery. Record the pair instead.
+		if (q.missingLink) {
+			if (q.connectTo) this.recordBridgeResult(q.node, q.connectTo, "answered");
+			return;
+		}
 		const cid = q.conceptId;
 		if (cid && this.concepts[cid]) {
 			if (rating !== null) recordConceptRating(this.concepts, cid, rating);
@@ -1105,11 +1341,20 @@ export class SessionView extends ItemView {
 	/** Persist all session state at once (concepts, mastery, registry). Called at
 	 * session end and on pane close, not per answer, to avoid sync churn. */
 	private async flush(): Promise<void> {
-		if (!this.dirty) return;
-		this.dirty = false;
-		await this.plugin.store.saveConcepts(this.concepts);
-		await this.plugin.store.saveMastery(this.plugin.mastery);
-		await this.plugin.store.saveRegistry(this.registry);
+		if (this.dirty) {
+			this.dirty = false;
+			await this.plugin.store.saveConcepts(this.concepts);
+			await this.plugin.store.saveMastery(this.plugin.mastery);
+			await this.plugin.store.saveRegistry(this.registry);
+		}
+		if (this.bankDirty) {
+			this.bankDirty = false;
+			await this.plugin.store.saveQuestionBank(this.questionBank);
+		}
+		if (this.bridgesDirty) {
+			this.bridgesDirty = false;
+			await this.plugin.store.saveBridges(this.bridges);
+		}
 	}
 
 	async onClose(): Promise<void> {
@@ -1255,6 +1500,8 @@ export class SessionView extends ItemView {
 			feedback: "",
 			modelAnswer: q.modelAnswer,
 			hintsUsed,
+			missingLink: q.missingLink,
+			connectTo: q.connectTo,
 		});
 		await this.goToQuestion(this.idx + 1);
 	}

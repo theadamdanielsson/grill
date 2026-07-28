@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.1.0
+
+Grill leans into the thing a flashcard app can't do: it works *inside your knowledge graph*.
+
+- **Find the links you're missing.** In an AI session Grill now looks for two of your notes
+  that clearly belong together but aren't linked, quizzes you on the connection, and offers a
+  one-tap "Link these notes" button that writes the `[[link]]` into your note for you. The
+  candidate pairs come from a cheap, offline check over your notes' vocabulary; a model call
+  then confirms only the pairs with a real relationship, so it stays precise. It's on by
+  default (AI mode only) and tunable under Sessions, and the dashboard counts the connections
+  you've made.
+- **Write your own questions.** Drop a `> [!grill]` callout into any note with your question,
+  an optional `A:` answer, and an optional `rubric:`, and Grill asks it verbatim, schedules it
+  like everything else, and grades your typed answer against your rubric (or, without one,
+  against the note). It's a callout, so it folds away and never clutters your prose. Your
+  existing `Question:: answer` flashcards still work exactly as before.
+- **Questions are cached now.** A generated question is saved per concept and reused when that
+  concept comes back up for review, instead of a fresh API call (and a fresh question) every
+  single time. It regenerates automatically when you edit the note; set "Reuse generated
+  questions" above zero if you'd rather it write a new variant now and then for variety.
+- **Careful grading (opt-in).** Turn it on and Grill grades an answer with a small consensus
+  of calls and keeps the stricter verdict, cutting the chance of being marked correct when you
+  weren't, at a higher per-answer cost.
+
 ## 2.0.4
 
 - Housekeeping for the plugin safety scorecard: the confetti canvas now uses

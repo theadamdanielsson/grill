@@ -102,6 +102,18 @@
   color: var(--interactive-accent);
   font-weight: var(--font-bold, 600);
 }
+/* Offer to write a missing [[link]] into the note, on a bridge question's feedback. */
+.grill-bridge-link {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5em;
+  margin: 0.8em 0;
+  padding: 0.6em 0.7em;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s, 6px);
+  background: var(--background-secondary);
+}
 /* End-of-session recap of the note-pairs bridged. */
 .grill-conn-list {
   display: flex;
