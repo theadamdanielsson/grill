@@ -1,18 +1,18 @@
-![Grill — your notes, quizzed, inside your knowledge graph](docs/hero.svg)
+![Grill: your notes, quizzed, inside your knowledge graph](docs/hero.svg)
 
 # Grill
 
 *Grill quizzes you on your own Obsidian notes, marks your answers, and colours in a live map of them as you prove what you know.*
 
-I take a lot of notes and almost never go back to them. Re-reading a note isn't the same as remembering it, and I couldn't be bothered to turn everything into flashcards — so Grill quizzes me on the notes I've already got.
+I take a lot of notes and almost never go back to them. Re-reading a note isn't the same as remembering it, and I couldn't be bothered to turn everything into flashcards, so Grill quizzes me on the notes I've already got.
 
 ![Grill: open it, start a session, answer, get graded with specific feedback](docs/grill-demo.gif)
 
 ## How to use it
 
-1. **Pick what Grill studies.** On first run, tick which folders it should cover — or leave them blank for your whole vault.
+1. **Pick what Grill studies.** On first run, tick which folders it should cover, or leave them blank for your whole vault.
 2. **Get grilled.** Hit the flame (or **Get grilled**). Grill writes questions from your notes and marks what you type back, with partial credit and specific feedback.
-3. **Watch your map fill in.** Every note you've learned colours in on the graph — green for solid, amber for shaky — so you can see your knowledge light up.
+3. **Watch your map fill in.** Every note you've learned colours in on the graph (green for solid, amber for shaky) so you can see your knowledge light up.
 
 Focus a session on a folder or tag from the **Study** dropdown; Grill weights it toward what you keep getting wrong and what's due, and a **Review N due** button drops you straight into what's ready.
 
@@ -20,13 +20,13 @@ Focus a session on a folder or tag from the **Study** dropdown; Grill weights it
 
 ## What you get
 
-- **Questions from your own notes** — the AI writes recall questions from what you actually wrote (or, with no key, straight from your notes' structure).
-- **A live map of what you know** — your notes as a graph, coloured and grown by how well you know each. A *learning* graph (what you've proven), distinct from Obsidian's link graph.
-- **Fair grading** — answers are marked against a rubric written with the question: partial credit, three hints, and no confidently-wrong nitpicks.
-- **Finds links you're missing** — spots notes that belong together but aren't linked, and adds the `[[link]]` for you.
-- **Your own questions** — drop a `> [!grill]` callout into any note and Grill asks it verbatim.
-- **Real spaced repetition** — FSRS scheduling per concept resurfaces what's due; edit a note and only the changed parts re-open.
-- **Your key, or fully offline** — Claude, GPT, Gemini, DeepSeek, any OpenAI-compatible endpoint (OpenRouter, Groq, LM Studio), local Ollama, or a no-key deterministic mode.
+- **Questions from your own notes:** the AI writes recall questions from what you actually wrote (or, with no key, straight from your notes' structure).
+- **A live map of what you know:** your notes as a graph, coloured and grown by how well you know each. A *learning* graph (what you've proven), distinct from Obsidian's link graph.
+- **Fair grading:** answers are marked against a rubric written with the question: partial credit, three hints, and no confidently-wrong nitpicks.
+- **Finds links you're missing:** spots notes that belong together but aren't linked, and adds the `[[link]]` for you.
+- **Your own questions:** drop a `> [!grill]` callout into any note and Grill asks it verbatim.
+- **Real spaced repetition:** FSRS scheduling per concept resurfaces what's due; edit a note and only the changed parts re-open.
+- **Your key, or fully offline:** Claude, GPT, Gemini, DeepSeek, any OpenAI-compatible endpoint (OpenRouter, Groq, LM Studio), local Ollama, or a no-key deterministic mode.
 
 ![A partially correct answer, graded with specific feedback and the expected answer](docs/screenshot-feedback.png)
 
@@ -76,9 +76,9 @@ Changing the persona only changes Grill's voice. How questions are built and how
 
 ## Your knowledge graph
 
-Open Grill and you land on your **knowledge graph** — every note Grill studies, drawn as a map. It starts grey. As you practise, each note colours in by how well you know it (green known, amber shaky) and grows with how durably you know it, and the links between notes you've both learned brighten. It's the same idea as a fill-in-the-map game: you're colouring in your own knowledge by proving you've learned it. Pick a folder or tag and that slice lights up so you can see exactly what a session will cover; finish the session and watch the map change.
+Open Grill and you land on your **knowledge graph**: every note Grill studies, drawn as a map. It starts grey. As you practise, each note colours in by how well you know it (green known, amber shaky) and grows with how durably you know it, and the links between notes you've both learned brighten. It's the same idea as a fill-in-the-map game: you're colouring in your own knowledge by proving you've learned it. Pick a folder or tag and that slice lights up so you can see exactly what a session will cover; finish the session and watch the map change.
 
-This is a *learning* graph — what you've proven — which is a different thing from Obsidian's own graph of what you've written. On first run Grill asks which folders are its territory (leave it blank for the whole vault); change it any time under settings.
+This is a *learning* graph (what you've proven), which is a different thing from Obsidian's own graph of what you've written. On first run Grill asks which folders are its territory (leave it blank for the whole vault); change it any time under settings.
 
 ## Cost and privacy
 

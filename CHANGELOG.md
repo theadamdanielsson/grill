@@ -5,12 +5,12 @@
 - **Reactive routing now prefers your most-connected weak note.** When you miss a
   question and Grill routes you to a shaky prerequisite, it used to just grab the
   first one it found. Now, among equally-weak candidates, it prefers the one your
-  other notes most depend on — shoring it up pays off across the whole session,
+  other notes most depend on, shoring it up pays off across the whole session,
   not just the one note you missed. In a sparsely-linked vault this changes
   nothing; the effect only shows up once there's real structure to prefer.
 - **Misconception contagion.** When you show a specific confusion on one note
   (AI grading only), Grill now checks whether that same mistake might apply to a
-  linked, not-yet-known neighbor — and tests it there before you naturally hit it
+  linked, not-yet-known neighbor, and tests it there before you naturally hit it
   yourself. Bounded to 2 probes per session, and it's honest about not having a
   no-key-mode equivalent yet (no model in the loop to judge whether a raw tag
   actually transfers). Same consent rule as reactive routing: silent mid-session,
@@ -31,7 +31,7 @@
 ## 2.4.1
 
 - Removed the word "Obsidian" from the plugin description (it's redundant inside
-  the plugin directory) — required by Obsidian's automated community plugin
+  the plugin directory), required by Obsidian's automated community plugin
   review, which failed the 2.4.0 release over it. No functional change from 2.4.0.
 
 ## 2.4.0
@@ -47,7 +47,7 @@
   prompt per batch, so it's a real toggle, not silently always on.
 - **A consent step before a session runs long.** Missing the very last question of a
   session used to silently insert one more (a weak prerequisite check) with no way to
-  say no. Now Grill asks first — "one more" or straight to your review — and leaves
+  say no. Now Grill asks first ("one more" or straight to your review) and leaves
   mid-session organic growth exactly as it was.
 - **Faster, cheaper AI sessions.** Question generation used to resend every note in
   the whole session on every 2-question batch; it now sends only the 1-2 notes that
@@ -55,7 +55,7 @@
   caching now (notes/links and the engine rules), so repeat calls in a session cost
   less and respond faster.
 - **The no-key (deterministic) generator is meaningfully better.** It was missing
-  most of a typical note's testable content — plain sentences with no bold text
+  most of a typical note's testable content: plain sentences with no bold text
   produced nothing at all. It now also treats `[[wikilinks]]` as fill-in-the-blank
   candidates (not just bold), recognizes "is/are called" and "is a/an" as definitions
   alongside the narrower forms it already knew, and no longer lets a bolded term

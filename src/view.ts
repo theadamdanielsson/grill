@@ -239,9 +239,9 @@ export class SessionView extends ItemView {
 			li.createEl("strong", { text: lead });
 			li.appendText(` ${rest}`);
 		};
-		point("Quiz yourself", "on your own notes — Grill writes the questions.");
+		point("Quiz yourself", "on your own notes. Grill writes the questions.");
 		point("Watch your map fill in", "as you prove what you know.");
-		point("Study anything", "— one folder, a tag, or the whole vault.");
+		point("Study anything", "in one folder, a tag, or the whole vault.");
 
 		wrap.createDiv({ cls: "grill-section-label", text: "Which folders should Grill study?" });
 		wrap.createEl("p", {

@@ -40,12 +40,12 @@ debugging.
 
 ## The rough layout
 
-- `src/main.ts` — plugin entry, commands, settings tab.
-- `src/view.ts` — the session panel: asking, answering, grading, the flow between them.
-- `src/llm.ts` — the multi-provider model layer and the question/grading prompts.
-- `src/mastery.ts` — FSRS scheduling and which notes to pick next.
-- `src/store.ts` — reading and writing the Grill folder (mastery, sessions, instructions).
-- `src/images.ts` — pulling embedded images out of notes for vision models.
+- `src/main.ts`: plugin entry, commands, settings tab.
+- `src/view.ts`: the session panel: asking, answering, grading, the flow between them.
+- `src/llm.ts`: the multi-provider model layer and the question/grading prompts.
+- `src/mastery.ts`: FSRS scheduling and which notes to pick next.
+- `src/store.ts`: reading and writing the Grill folder (mastery, sessions, instructions).
+- `src/images.ts`: pulling embedded images out of notes for vision models.
 
 ## Reporting bugs
 
