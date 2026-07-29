@@ -55,6 +55,10 @@ const CONTEXT_IMAGE_CAP = 12;
 /** Reactive prerequisite routing: most detours inserted per session, so a run of
  * wrong answers can't balloon the session or chain endlessly down the link graph. */
 const MAX_ROUTES = 3;
+/** Most misconception-contagion probes inserted per session — deliberately smaller
+ * than MAX_ROUTES since this is a more speculative mechanic (re-probing a raw,
+ * not-yet-canonicalized tag on a note it may or may not actually apply to). */
+const MAX_CONTAGION = 2;
 
 interface QuestionResult extends SessionEntry {
 	hintsUsed: number;
@@ -74,11 +78,23 @@ interface PrereqRoute {
 	local: boolean;
 }
 
-/** A route offered but not yet accepted/declined by the student. */
-interface PendingRoute {
-	route: PrereqRoute;
-	fromNote: string;
+/** A misconception-contagion candidate: the same confusion the student just showed on
+ * `fromNote`, tested on a linked, not-yet-known neighbor before they naturally hit it
+ * there. Found but not yet committed. AI mode only — there's no deterministic way to
+ * judge whether a raw grader tag plausibly applies elsewhere without a model in the
+ * loop, so this never fires in no-key mode. */
+interface ContagionRoute {
+	concept: Concept;
+	neighborNote: string;
+	tag: string;
 }
+
+/** A reactive session extension offered but not yet accepted/declined by the student:
+ * either a prerequisite route or a misconception-contagion probe. Only one kind can be
+ * pending at a time (see submitAnswer/recordSelfGrade — prerequisite takes priority). */
+type PendingExtension =
+	| { kind: "prerequisite"; route: PrereqRoute; fromNote: string }
+	| { kind: "contagion"; route: ContagionRoute; fromNote: string };
 
 /** Most cached question variants kept per concept, to bound questions.json growth. */
 const MAX_VARIANTS = 8;
@@ -150,6 +166,18 @@ export class SessionView extends ItemView {
 	 * (so the same foundation isn't inserted twice in one session). */
 	private routesUsed = 0;
 	private routedNotes = new Set<string>();
+	/** Each session note's rank in the session graph's foundationalOrder (lower = more
+	 * heavily depended-upon by other session notes), captured once at session setup so
+	 * reactive routing — which runs later, per answer — can prefer shoring up the most
+	 * globally-connected weak prerequisite over just the first one found. */
+	private noteFoundationalRank = new Map<string, number>();
+	/** Each session note's undirected neighbors (outgoing + incoming links, deduped),
+	 * captured once at session setup for misconception contagion to walk later. */
+	private sessionNeighbors = new Map<string, string[]>();
+	/** Misconception-contagion budget: probes spent, and neighbors already probed (so
+	 * the same neighbor isn't targeted twice in one session). */
+	private contagionUsed = 0;
+	private contagionNotes = new Set<string>();
 	/** How many of `targets` have been handed to generation so far. Tracked separately
 	 * from `questions.length` because the quality validator can drop a generated
 	 * question, so one target need not yield exactly one question — keying the next
@@ -786,6 +814,20 @@ export class SessionView extends ItemView {
 			}
 		}
 
+		// Misconception contagion: make the probe legible ("you showed the same mistake
+		// on X, checking if it applies here too"). Honour "hide note name" as above.
+		if (q.contagionFrom) {
+			const contagion = card.createDiv({ cls: "grill-routed" });
+			if (this.plugin.data.settings.hideNoteName) {
+				contagion.createSpan({ cls: "grill-meta", text: "Checking whether a mistake from another note shows up here too" });
+			} else {
+				this.md(
+					`You showed the same kind of mistake on **${q.contagionFrom}** — checking if it applies here too`,
+					contagion.createDiv({ cls: "grill-meta" }),
+				);
+			}
+		}
+
 		const qEl = card.createDiv({ cls: "grill-question" });
 		// Loose match (3+ underscores): the same tolerance questionDefect already
 		// validates against, in case a model writes ___ or _____ instead of ____.
@@ -898,7 +940,7 @@ export class SessionView extends ItemView {
 		return { text: "Incorrect", cls: "grill-v-incorrect" };
 	}
 
-	private renderFeedback(r: QuestionResult, pendingRoute: PendingRoute | null = null): void {
+	private renderFeedback(r: QuestionResult, pendingExtension: PendingExtension | null = null): void {
 		if (this.plugin.data.settings.sounds) playSfx(r.verdict); // correct / partial / incorrect
 		const wrap = this.root();
 		this.progressBar(wrap);
@@ -929,8 +971,8 @@ export class SessionView extends ItemView {
 
 		if (r.missingLink && r.connectTo) this.offerLink(card, r.node, r.connectTo);
 
-		if (pendingRoute) {
-			this.renderRouteConsentInto(card, pendingRoute);
+		if (pendingExtension) {
+			this.renderRouteConsentInto(card, pendingExtension);
 			return;
 		}
 		const btn = card.createEl("button", {
@@ -942,19 +984,22 @@ export class SessionView extends ItemView {
 	}
 
 	/** The consent step for extending a session past its agreed length: this was going
-	 * to be the last question, but the missed note builds on a weak prerequisite. Ask
-	 * before inserting it rather than silently growing the session — declining ends the
-	 * session normally, straight into the review/summary screen. */
-	private renderRouteConsentInto(card: HTMLElement, pending: PendingRoute): void {
+	 * to be the last question, but either the missed note builds on a weak prerequisite,
+	 * or the same confusion might apply to a linked neighbor. Ask before inserting it
+	 * rather than silently growing the session — declining ends the session normally,
+	 * straight into the review/summary screen. */
+	private renderRouteConsentInto(card: HTMLElement, pending: PendingExtension): void {
 		const box = card.createDiv({ cls: "grill-route-consent" });
-		this.md(
-			`That was the last question of this session. It builds on **${pending.route.prereqNote}**, which you're still catching up on — take one more question to shore up that foundation?`,
-			box,
-		);
+		const message =
+			pending.kind === "prerequisite"
+				? `That was the last question of this session. It builds on **${pending.route.prereqNote}**, which you're still catching up on — take one more question to shore up that foundation?`
+				: `That was the last question of this session. The same mistake might also apply to **${pending.route.neighborNote}**, a linked note — take one more question to check?`;
+		this.md(message, box);
 		const row = card.createDiv({ cls: "grill-btn-row grill-btn-row-fill" });
 		const yes = row.createEl("button", { text: "Yes, one more", cls: "mod-cta" });
 		yes.onclick = () => {
-			this.commitRoutedTarget(pending.route, pending.fromNote);
+			if (pending.kind === "prerequisite") this.commitRoutedTarget(pending.route, pending.fromNote);
+			else this.commitContagionTarget(pending.route, pending.fromNote);
 			void this.goToQuestion(this.idx + 1);
 		};
 		const no = row.createEl("button", { text: "No, go to review" });
@@ -1179,6 +1224,10 @@ export class SessionView extends ItemView {
 		this.planCursor = 0;
 		this.routesUsed = 0;
 		this.routedNotes.clear();
+		this.noteFoundationalRank = new Map();
+		this.sessionNeighbors = new Map();
+		this.contagionUsed = 0;
+		this.contagionNotes.clear();
 		this.dirty = false;
 		this.bankDirty = false;
 		this.bridgesDirty = false;
@@ -1319,10 +1368,14 @@ export class SessionView extends ItemView {
 
 	/** Whether a target needs no model call (user-authored, or a cache hit). Must agree
 	 * with buildPrebuilt: an authored concept counts only if it actually has a question,
-	 * otherwise loadNextBatch could spin on a target it can neither build nor batch. */
+	 * otherwise loadNextBatch could spin on a target it can neither build nor batch. A
+	 * contagion target never counts a cache hit as prebuilt: a stale cached question
+	 * predates the misconception tag it's meant to re-probe and likely doesn't test it
+	 * at all, so contagion always forces a fresh, tag-aware generation call. */
 	private isPrebuilt(t: ConceptTarget): boolean {
 		const c = this.conceptById.get(t.conceptId);
 		if (c?.authored) return !!c.local;
+		if (t.contagionFrom) return false;
 		return this.cacheHit(t.conceptId) !== null;
 	}
 
@@ -1332,17 +1385,25 @@ export class SessionView extends ItemView {
 		const c = this.conceptById.get(t.conceptId);
 		if (c?.authored) {
 			const q = localQuestionForConcept(c);
-			if (q) q.routedFrom = t.routedFrom ?? q.routedFrom;
+			if (q) {
+				q.routedFrom = t.routedFrom ?? q.routedFrom;
+				q.contagionFrom = t.contagionFrom ?? q.contagionFrom;
+			}
 			return q;
 		}
+		if (t.contagionFrom) return null; // see isPrebuilt: never serve a stale cache hit here
 		const hit = this.cacheHit(t.conceptId);
 		if (!hit) return null;
 		hit.timesShown += 1;
 		hit.lastShownAt = new Date().toISOString();
 		this.bankDirty = true;
-		// Strip cache metadata; carry this session's routing label onto the reused question.
+		// Strip cache metadata, and set (never fall back to) this serve's own routing
+		// label: a cache hit's stored routedFrom/contagionFrom describes why IT was
+		// inserted whenever it was first generated, not why this target is being served
+		// now — falling back to the cached value would leak a stale "you missed X" or
+		// "same mistake as X" banner into a later, unrelated normal-scheduling serve.
 		const { sourceHash: _sh, timesShown: _ts, lastShownAt: _ls, ...q } = hit;
-		return { ...q, routedFrom: t.routedFrom ?? q.routedFrom };
+		return { ...q, routedFrom: t.routedFrom, contagionFrom: t.contagionFrom };
 	}
 
 	/** Cache freshly generated questions per concept for reuse on later reviews. Skips
@@ -1495,6 +1556,10 @@ export class SessionView extends ItemView {
 			const selectedFiles = names.map((n) => byName.get(n)).filter((f): f is TFile => !!f);
 			const graph = buildSessionGraph(this.app, selectedFiles);
 			this.linksBlock = formatLinksBlock(graph, this.plugin.mastery);
+			this.noteFoundationalRank = new Map(graph.foundationalOrder.map((n, i) => [n, i]));
+			this.sessionNeighbors = new Map(
+				Object.entries(graph.adjacency).map(([n, adj]) => [n, [...new Set([...adj.linksTo, ...adj.linkedFrom])]]),
+			);
 
 			// Concept layer: reconcile the extracted concepts (create new ones,
 			// re-open any whose source text changed), then pick which to test.
@@ -1510,6 +1575,8 @@ export class SessionView extends ItemView {
 			this.pending = null;
 			this.routesUsed = 0;
 			this.routedNotes.clear();
+			this.contagionUsed = 0;
+			this.contagionNotes.clear();
 			this.planCursor = 0;
 			const want = Math.max(1, s.questionsPerSession);
 
@@ -1607,16 +1674,24 @@ export class SessionView extends ItemView {
 		}
 		await this.applyGrade(q, verdict, null, misconceptionTag || undefined);
 		this.captureConfidence(verdict);
-		// Missed it: route to a weak prerequisite next, if this note builds on one. Mid-
-		// session this happens silently (organic growth); on what would have been the
-		// last question, ask first rather than silently extending past the agreed count.
-		let pendingRoute: PendingRoute | null = null;
+		// Missed it: route to a weak prerequisite next, if this note builds on one, or
+		// check whether the same confusion applies to a linked neighbor. Mid-session this
+		// happens silently (organic growth); on what would have been the last question,
+		// ask first rather than silently extending past the agreed count. Prerequisite
+		// routing takes priority — only offer contagion when there's no prerequisite to
+		// offer, so the student is never asked twice in the same turn.
+		let pendingExtension: PendingExtension | null = null;
 		if (verdict === "incorrect") {
 			if (this.idx + 1 >= this.targetCount) {
 				const route = this.findPrerequisiteRoute(q.node);
-				if (route) pendingRoute = { route, fromNote: q.node };
+				if (route) pendingExtension = { kind: "prerequisite", route, fromNote: q.node };
+				else if (misconceptionTag) {
+					const contagion = this.findContagionRoute(q.node, misconceptionTag);
+					if (contagion) pendingExtension = { kind: "contagion", route: contagion, fromNote: q.node };
+				}
 			} else {
 				this.maybeRouteToPrerequisite(q.node);
+				if (misconceptionTag) this.maybeSpreadMisconception(q.node, misconceptionTag);
 			}
 		}
 		// Re-probed a known confusion and got it right: mark it resolved.
@@ -1639,7 +1714,7 @@ export class SessionView extends ItemView {
 			connectTo: q.connectTo,
 		};
 		this.results.push(r);
-		this.renderFeedback(r, pendingRoute);
+		this.renderFeedback(r, pendingExtension);
 	}
 
 	/** Grade one answer. With "careful grading" on, run a small consensus and keep the
@@ -1816,6 +1891,14 @@ export class SessionView extends ItemView {
 		return st === "struggling" ? 0 : st === "untested" ? 1 : 2;
 	}
 
+	/** A note's position in the session graph's foundationalOrder — lower is more
+	 * heavily depended-upon by other session notes. Notes outside the session graph
+	 * (shouldn't normally happen for a routing candidate, but not guaranteed) sort last,
+	 * so the tie-break only ever activates between two notes it actually has data for. */
+	private foundationalRank(note: string): number {
+		return this.noteFoundationalRank.get(note) ?? Number.MAX_SAFE_INTEGER;
+	}
+
 	/** Reactive DOWN-on-failure routing: after a wrong answer mid-session, if the missed
 	 * note builds on a prerequisite the student is weak on, insert a question about that
 	 * prerequisite next so they shore up the foundation before moving on — no confirmation,
@@ -1840,9 +1923,14 @@ export class SessionView extends ItemView {
 		if (!file) return null;
 		const local = this.plugin.data.settings.questionSource === "local";
 		const planned = new Set(this.targets.map((t) => t.conceptId));
+		// Weakest-first, same as before; among equally-weak candidates, prefer the one
+		// more heavily depended-upon by other session notes (shoring it up pays off
+		// across the whole session, not just this one edge). In a sparse vault every
+		// candidate ranks equally (or is unranked), so this tie-break is a no-op and
+		// behavior is identical to before.
 		const prereqs = outgoingBasenames(this.app, file)
 			.filter((p) => p !== fromNote && this.byName.has(p) && !this.routedNotes.has(p))
-			.sort((a, b) => this.noteWeakness(a) - this.noteWeakness(b));
+			.sort((a, b) => this.noteWeakness(a) - this.noteWeakness(b) || this.foundationalRank(a) - this.foundationalRank(b));
 		for (const p of prereqs) {
 			if (this.noteWeakness(p) === 2) break; // sorted weakest-first: the rest are known
 			const concept = (this.conceptsByNote.get(p) ?? []).find(
@@ -1892,16 +1980,67 @@ export class SessionView extends ItemView {
 		return true;
 	}
 
+	/** Reactive misconception contagion: after a wrong answer mid-session, if the missed
+	 * note's confusion might apply to a linked neighbor, insert a question testing that
+	 * neighbor for the same tag next — no confirmation needed mid-session, same as
+	 * prerequisite routing. AI mode only. */
+	private maybeSpreadMisconception(fromNote: string, tag: string): void {
+		const route = this.findContagionRoute(fromNote, tag);
+		if (route) this.commitContagionTarget(route, fromNote);
+	}
+
+	/** Pure lookup for misconception contagion: is there an untested/struggling,
+	 * in-session, not-yet-planned, not-yet-probed neighbor of `fromNote` worth checking
+	 * for the same confusion? AI mode only — no deterministic way to judge relevance
+	 * without a model in the loop. Does not mutate any session state. */
+	private findContagionRoute(fromNote: string, tag: string): ContagionRoute | null {
+		if (this.replayMode) return null;
+		if (this.plugin.data.settings.questionSource === "local") return null;
+		if (this.contagionUsed >= MAX_CONTAGION) return null;
+		const planned = new Set(this.targets.map((t) => t.conceptId));
+		const neighbors = (this.sessionNeighbors.get(fromNote) ?? [])
+			.filter((n) => n !== fromNote && this.byName.has(n) && !this.contagionNotes.has(n))
+			.sort((a, b) => this.noteWeakness(a) - this.noteWeakness(b) || this.foundationalRank(a) - this.foundationalRank(b));
+		for (const n of neighbors) {
+			if (this.noteWeakness(n) === 2) break; // known: no point re-probing there
+			const concept = (this.conceptsByNote.get(n) ?? []).find(
+				(c) => !planned.has(c.id) && statusOf(this.concepts[c.id]) !== "known",
+			);
+			if (concept) return { concept, neighborNote: n, tag };
+		}
+		return null;
+	}
+
+	/** Commit a contagion candidate found by `findContagionRoute`: splice it into the
+	 * not-yet-generated plan (AI mode only, so always via `targets`) and account for it
+	 * (never probe the same neighbor twice, bounded to MAX_CONTAGION). */
+	private commitContagionTarget(route: ContagionRoute, fromNote: string): void {
+		this.targets.splice(this.planCursor, 0, {
+			conceptId: route.concept.id,
+			note: route.concept.note,
+			label: route.concept.label,
+			context: route.concept.context,
+			targetDifficulty: "easy",
+			activeMisconception: route.tag,
+			contagionFrom: fromNote,
+		});
+		this.targetCount += 1;
+		this.contagionNotes.add(route.neighborNote);
+		this.contagionUsed += 1;
+	}
+
 	private async recordSelfGrade(rating: Rating, answer: string, gaveUp: boolean, hintsUsed: number): Promise<void> {
 		const q = this.questions[this.idx];
 		const verdict: Verdict = rating === 1 ? "incorrect" : rating === 2 ? "partial" : "correct";
 		if (this.plugin.data.settings.sounds) playSfx(verdict);
 		await this.applyGrade(q, verdict, rating, undefined);
-		let pendingRoute: PendingRoute | null = null;
+		// Self-grade never produces a misconceptionTag (no AI grader call), so contagion
+		// can't trigger here — only prerequisite routing applies to this path.
+		let pendingRoute: PendingExtension | null = null;
 		if (verdict === "incorrect") {
 			if (this.idx + 1 >= this.targetCount) {
 				const route = this.findPrerequisiteRoute(q.node);
-				if (route) pendingRoute = { route, fromNote: q.node };
+				if (route) pendingRoute = { kind: "prerequisite", route, fromNote: q.node };
 			} else {
 				this.maybeRouteToPrerequisite(q.node);
 			}
@@ -1930,7 +2069,7 @@ export class SessionView extends ItemView {
 	/** Standalone version of the route-consent step for the self-grade path, which has
 	 * no separate feedback screen to append into (see `renderRouteConsentInto` for the
 	 * AI-graded path's inline version). */
-	private renderRouteConsent(pending: PendingRoute): void {
+	private renderRouteConsent(pending: PendingExtension): void {
 		const wrap = this.root();
 		this.progressBar(wrap);
 		const card = wrap.createDiv({ cls: "grill-body" });

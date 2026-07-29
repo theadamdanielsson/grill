@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.5.0
+
+- **Reactive routing now prefers your most-connected weak note.** When you miss a
+  question and Grill routes you to a shaky prerequisite, it used to just grab the
+  first one it found. Now, among equally-weak candidates, it prefers the one your
+  other notes most depend on — shoring it up pays off across the whole session,
+  not just the one note you missed. In a sparsely-linked vault this changes
+  nothing; the effect only shows up once there's real structure to prefer.
+- **Misconception contagion.** When you show a specific confusion on one note
+  (AI grading only), Grill now checks whether that same mistake might apply to a
+  linked, not-yet-known neighbor — and tests it there before you naturally hit it
+  yourself. Bounded to 2 probes per session, and it's honest about not having a
+  no-key-mode equivalent yet (no model in the loop to judge whether a raw tag
+  actually transfers). Same consent rule as reactive routing: silent mid-session,
+  asked first if it would extend a session past its agreed length.
+- Fixed a bug found while building the above: a cached question could leak its
+  original "you missed X" routing banner into a completely unrelated later
+  session if reused through the normal question cache. Cache reuse now always
+  reflects why *this* serving was inserted, never a stale one from whenever the
+  question was first generated.
+
 ## 2.4.2
 
 - Dropped "tutor" from how Grill describes itself: the README tagline and the

@@ -104,6 +104,11 @@ export interface Question {
 	 * note the student just missed, whose foundation this question shores up. Shown
 	 * so the detour is legible ("you missed X, so let's check Y it builds on"). */
 	routedFrom?: string;
+	/** Set when this question was inserted by misconception contagion: the note the
+	 * student just showed a specific confusion on, whose linked neighbor this question
+	 * re-probes for the same confusion. Shown so the detour is legible ("you showed
+	 * the same mistake on X, checking if it applies here too"). AI mode only. */
+	contagionFrom?: string;
 	/** A missing-link bridge question: `connectTo` names a note NOT yet linked to
 	 * `node`, and answering tests the latent relationship. Drives the "Link these
 	 * notes" affordance and keeps the question out of concept/FSRS scheduling. */
@@ -628,6 +633,9 @@ export interface ConceptTarget {
 	/** Set when this target was inserted by reactive prerequisite routing: the note
 	 * the student just missed, whose foundation this concept shores up. */
 	routedFrom?: string;
+	/** Set when this target was inserted by misconception contagion: the note the
+	 * student just showed `activeMisconception` on. AI mode only. */
+	contagionFrom?: string;
 	/** A missing-link bridge target: `connectTo` is a note NOT yet linked to `note`.
 	 * The question must test the latent relationship named by `bridgeConcept`. */
 	bridge?: boolean;
@@ -875,6 +883,7 @@ export async function generateQuestions(
 			targetsMisconception: (q.targetsMisconception ?? "").trim() || (t.activeMisconception ?? ""),
 			connectTo: t.connectTo,
 			routedFrom: t.routedFrom,
+			contagionFrom: t.contagionFrom,
 			missingLink: t.bridge,
 			// Only trust the model's type/choices when the schema actually offered them;
 			// otherwise force "write" regardless of what a model might volunteer.
