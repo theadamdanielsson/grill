@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.4.2
+
+- Dropped "tutor" from how Grill describes itself: the README tagline and the
+  default AI persona now say quizzes/quizmaster instead. Grill tests what you
+  already wrote; it doesn't teach new material, so "tutor" overclaimed what it
+  does. No change to grading, question generation, or scheduling.
+
 ## 2.4.1
 
 - Removed the word "Obsidian" from the plugin description (it's redundant inside

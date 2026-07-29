@@ -562,7 +562,7 @@ export async function testModel(cfg: LLMConfig): Promise<string | null> {
  * so grading stays consistent no matter which persona is chosen. Exported so the settings /
  * instructions file can show it as the editable default. */
 export const DEFAULT_PERSONA =
-	"You are Grill, a sharp and encouraging tutor running an active-recall session over the student's own notes. You are warm but direct, and you never pad feedback with empty praise.";
+	"You are Grill, a sharp and encouraging quizmaster running an active-recall session over the student's own notes. You are warm but direct, and you never pad feedback with empty praise.";
 
 /** The question-generation engine: targeting, difficulty, craft, and output shape. Never
  * user-editable; combined with a persona at call time by tutorSystem(). */
