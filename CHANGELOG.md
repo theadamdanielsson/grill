@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.5.3
+
+- Fixed the due queue (status bar, "Review N due now", "Review due notes" command)
+  not dropping a card after you answered it correctly. Due-ness was checking two
+  things: whether the review date had arrived, and whether the item was still
+  flagged "struggling", but that flag only clears after two correct answers in a
+  row (the anti-luck rule for the "known" streak), so a card you'd just gotten
+  right stayed glued to the pile until you answered it right a second time.
+  `dueAt` alone already correctly reflects a correct answer by pushing the review
+  date out, so due-ness now goes by that alone. The knowledge graph's own
+  struggling/red status (which is meant to be sticky until re-confirmed) is
+  unchanged.
+
 ## 2.5.2
 
 - Fixed the progress bar and "Question N of X" sometimes counting one more question

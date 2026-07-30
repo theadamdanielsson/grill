@@ -4,7 +4,7 @@
  */
 
 import { App, TFile, getAllTags } from "obsidian";
-import { MasteryMap, statusOf } from "./mastery";
+import { MasteryMap } from "./mastery";
 
 export type ScopeKind = "all" | "due" | "folder" | "tag" | "note";
 
@@ -60,12 +60,15 @@ export function listTags(app: App, limit = 40): { tag: string; count: number }[]
 		.slice(0, limit);
 }
 
-/** Notes that are struggling or past their review date. */
+/** Notes past their scheduled review date. `dueAt` alone is authoritative (see
+ * `GrillPlugin.dueCount`): a separate "struggling" check would keep a
+ * just-answered-correctly note in the due pile until its second consecutive
+ * correct answer, which reads as a correct answer being ignored. */
 export function dueFiles(eligible: TFile[], mastery: MasteryMap, now = new Date()): TFile[] {
 	return eligible.filter((f) => {
 		const m = mastery[f.basename];
 		if (!m) return false;
-		return statusOf(m) === "struggling" || (!!m.dueAt && new Date(m.dueAt) <= now);
+		return !!m.dueAt && new Date(m.dueAt) <= now;
 	});
 }
 

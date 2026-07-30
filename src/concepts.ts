@@ -135,10 +135,15 @@ function interleaveByNote(concepts: Concept[]): Concept[] {
  * coverage), then least-recently-seen known. Each bucket is interleaved across
  * notes so the session mixes topics rather than blocking on one note.
  *
- * `dueOnly` is for the due-queue entry points (status bar, "Review N due"):
- * it must return ONLY due/struggling concepts, never padded with untested or
- * known ones to reach `cap` — otherwise clicking "N due" silently balloons
- * into a full questionsPerSession-length session. */
+ * `dueOnly` is for the due-queue entry points (status bar, "Review N due"): it
+ * must return ONLY concepts whose `dueAt` has actually arrived, never padded
+ * with untested or known ones to reach `cap` (otherwise clicking "N due"
+ * silently balloons into a full questionsPerSession-length session). It also
+ * must NOT fall back to `statusOf(cm) === "struggling"`, unlike the general
+ * (non-dueOnly) ordering below: applyRating already keeps `dueAt` in sync (now
+ * on a miss, pushed out on a hit), so a concept just answered correctly once
+ * would otherwise stay glued to the due queue until its SECOND consecutive
+ * correct answer (the "known" streak): a correct answer that looks ignored. */
 export function pickConcepts(
 	concepts: Concept[],
 	map: ConceptMap,
@@ -146,6 +151,14 @@ export function pickConcepts(
 	dueOnly = false,
 	now = new Date(),
 ): Concept[] {
+	if (dueOnly) {
+		const due = concepts.filter((c) => {
+			const cm = map[c.id];
+			return !!cm && conceptTested(cm) && !!cm.dueAt && new Date(cm.dueAt) <= now;
+		});
+		due.sort((a, b) => (map[a.id]?.dueAt ?? "").localeCompare(map[b.id]?.dueAt ?? ""));
+		return interleaveByNote(due).slice(0, cap);
+	}
 	const due: Concept[] = [];
 	const untested: Concept[] = [];
 	const rest: Concept[] = [];
@@ -160,7 +173,6 @@ export function pickConcepts(
 		else rest.push(c);
 	}
 	due.sort((a, b) => (map[a.id]?.dueAt ?? "").localeCompare(map[b.id]?.dueAt ?? ""));
-	if (dueOnly) return interleaveByNote(due).slice(0, cap);
 	rest.sort((a, b) => (map[a.id]?.lastSeen ?? "").localeCompare(map[b.id]?.lastSeen ?? ""));
 	return [...interleaveByNote(due), ...interleaveByNote(untested), ...interleaveByNote(rest)].slice(0, cap);
 }

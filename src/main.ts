@@ -9,7 +9,7 @@ import {
 	TFolder,
 	WorkspaceLeaf,
 } from "obsidian";
-import { MasteryMap, statusOf } from "./mastery";
+import { MasteryMap } from "./mastery";
 import { CalPoint, isCalPoint } from "./calibration";
 import { LLMConfig, PROVIDERS, ProviderId, Question, listModels, testModel } from "./llm";
 import { migrateResetScheduling } from "./concepts";
@@ -307,7 +307,12 @@ export default class GrillPlugin extends Plugin {
 		return false;
 	}
 
-	/** Count of notes currently worth reviewing (struggling or due). */
+	/** Count of notes currently worth reviewing (past their scheduled review date).
+	 * `dueAt` alone is authoritative: applyRating already keeps it in sync (now on
+	 * a miss, pushed out on a hit), so a separate "struggling" check would keep a
+	 * just-answered-correctly item glued to the due count until its SECOND
+	 * consecutive correct answer (the "known" streak), which reads as the due
+	 * pile ignoring a correct answer. */
 	dueCount(): number {
 		const now = new Date();
 		let n = 0;
@@ -315,8 +320,7 @@ export default class GrillPlugin extends Plugin {
 			if (this.isExcluded(f.path)) continue;
 			const m = this.mastery[f.basename];
 			if (!m) continue;
-			const s = statusOf(m);
-			if (s === "struggling" || (m.dueAt && new Date(m.dueAt) <= now)) n += 1;
+			if (m.dueAt && new Date(m.dueAt) <= now) n += 1;
 		}
 		return n;
 	}
