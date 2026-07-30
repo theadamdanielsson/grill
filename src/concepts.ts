@@ -133,8 +133,19 @@ function interleaveByNote(concepts: Concept[]): Concept[] {
 
 /** Concept-level candidate selection: due/struggling first, then untested (for
  * coverage), then least-recently-seen known. Each bucket is interleaved across
- * notes so the session mixes topics rather than blocking on one note. */
-export function pickConcepts(concepts: Concept[], map: ConceptMap, cap: number, now = new Date()): Concept[] {
+ * notes so the session mixes topics rather than blocking on one note.
+ *
+ * `dueOnly` is for the due-queue entry points (status bar, "Review N due"):
+ * it must return ONLY due/struggling concepts, never padded with untested or
+ * known ones to reach `cap` — otherwise clicking "N due" silently balloons
+ * into a full questionsPerSession-length session. */
+export function pickConcepts(
+	concepts: Concept[],
+	map: ConceptMap,
+	cap: number,
+	dueOnly = false,
+	now = new Date(),
+): Concept[] {
 	const due: Concept[] = [];
 	const untested: Concept[] = [];
 	const rest: Concept[] = [];
@@ -149,6 +160,7 @@ export function pickConcepts(concepts: Concept[], map: ConceptMap, cap: number, 
 		else rest.push(c);
 	}
 	due.sort((a, b) => (map[a.id]?.dueAt ?? "").localeCompare(map[b.id]?.dueAt ?? ""));
+	if (dueOnly) return interleaveByNote(due).slice(0, cap);
 	rest.sort((a, b) => (map[a.id]?.lastSeen ?? "").localeCompare(map[b.id]?.lastSeen ?? ""));
 	return [...interleaveByNote(due), ...interleaveByNote(untested), ...interleaveByNote(rest)].slice(0, cap);
 }

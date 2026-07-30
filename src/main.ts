@@ -327,11 +327,11 @@ export default class GrillPlugin extends Plugin {
 		this.statusBar.setText(n > 0 ? `Grill: ${n} due` : "Grill");
 	}
 
-	async startScoped(files: TFile[]): Promise<void> {
+	async startScoped(files: TFile[], dueOnly = false): Promise<void> {
 		await this.activateView();
 		const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
 		const view = leaf?.view;
-		if (view instanceof SessionView) await view.startScopedSession(files);
+		if (view instanceof SessionView) await view.startScopedSession(files, dueOnly);
 	}
 
 	/** Redo a saved session's questions (from its grill-redo block): same questions, no
@@ -356,7 +356,7 @@ export default class GrillPlugin extends Plugin {
 			await this.activateView();
 			return;
 		}
-		await this.startScoped(due);
+		await this.startScoped(due, true);
 	}
 
 	/** Open the progress dashboard in the Grill panel. */

@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.5.1
+
+- Fixed "Review N due now" (the status bar click, the panel button, and the "Review
+  due notes" command) starting a full questionsPerSession-length session instead of
+  covering only the actually-due/struggling items. The due queue was scoping notes
+  correctly but the concept picker underneath still padded the session with
+  untested and already-known concepts from those same notes to hit the usual
+  session length. "Grill this note/folder" is unaffected: that's meant to be a full
+  session and still is.
+
 ## 2.5.0
 
 - **Reactive routing now prefers your most-connected weak note.** When you miss a

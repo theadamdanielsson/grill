@@ -109,6 +109,9 @@ export class SessionView extends ItemView {
 	sessionScope: TFile[] | null = null;
 	/** Scope chosen on the start screen; null means the whole vault. */
 	private pendingScope: TFile[] | null = null;
+	/** Due-queue sessions (status bar, "Review N due"): only due/struggling
+	 * concepts, never padded with untested/known ones to fill a full session. */
+	private dueOnly = false;
 
 	private results: QuestionResult[] = [];
 	private idx = 0;
@@ -354,6 +357,7 @@ export class SessionView extends ItemView {
 			const cta = wrap.createEl("button", { text: `Review ${due.length} due now`, cls: "mod-cta grill-due-cta" });
 			cta.onclick = () => {
 				this.sessionScope = due;
+				this.dueOnly = true;
 				void this.startSession();
 			};
 		}
@@ -430,6 +434,7 @@ export class SessionView extends ItemView {
 		const btn = wrap.createEl("button", { text: "Get grilled", cls: "mod-cta grill-start-btn grill-primary-cta" });
 		btn.onclick = () => {
 			this.sessionScope = this.pendingScope;
+			this.dueOnly = false;
 			void this.startSession();
 		};
 
@@ -1180,6 +1185,7 @@ export class SessionView extends ItemView {
 		const menu = btnRow.createEl("button", { text: "Back to menu" });
 		menu.onclick = () => {
 			this.sessionScope = null;
+			this.dueOnly = false;
 			this.renderStart();
 		};
 	}
@@ -1191,9 +1197,13 @@ export class SessionView extends ItemView {
 		return all.filter((f) => !this.plugin.isExcluded(f.path));
 	}
 
-	/** Entry point for "Grill this note/folder": scope the session and start. */
-	async startScopedSession(files: TFile[]): Promise<void> {
+	/** Entry point for "Grill this note/folder" and the due queue: scope the
+	 * session and start. `dueOnly` is true only for the due-queue callers
+	 * (status bar, "Review due notes" command); "Grill this note/folder" is a
+	 * full scoped session, never due-only. */
+	async startScopedSession(files: TFile[], dueOnly = false): Promise<void> {
 		this.sessionScope = files;
+		this.dueOnly = dueOnly;
 		await this.startSession();
 	}
 
@@ -1214,6 +1224,7 @@ export class SessionView extends ItemView {
 		}
 		this.replayMode = true;
 		this.sessionScope = null;
+		this.dueOnly = false;
 		this.sessionStart = new Date();
 		this.questions = qs.map((q) => ({ ...q }));
 		this.targets = [];
@@ -1582,7 +1593,7 @@ export class SessionView extends ItemView {
 
 			// No-key mode can only use concepts that carry a deterministic question.
 			const pickable = s.questionSource === "local" ? allConcepts.filter((c) => c.local) : allConcepts;
-			this.sessionConcepts = pickConcepts(pickable, this.concepts, want);
+			this.sessionConcepts = pickConcepts(pickable, this.concepts, want, this.dueOnly);
 			if (this.sessionConcepts.length === 0) {
 				new Notice(
 					s.questionSource === "local"
