@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.5.4
+
+- Fixed the knowledge graph getting stuck red instead of progressing red/grey to
+  amber to green. The graph's colour logic claimed to mirror the dashboard's
+  "struggling" definition (missed at least once, not yet re-confirmed) but
+  actually used a looser one: any concept not yet confirmed twice in a row,
+  including one that's never been wrong, just answered correctly for the first
+  time. So the first correct answer on any fresh concept in a note could paint
+  the whole note red, and a multi-concept note could stay red indefinitely as
+  each new concept got its first (correct) exposure. Graph colour now uses the
+  same "actually missed" definition as the dashboard and due queue.
+
 ## 2.5.3
 
 - Fixed the due queue (status bar, "Review N due now", "Review due notes" command)
