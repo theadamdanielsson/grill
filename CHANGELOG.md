@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.5.2
+
+- Fixed the progress bar and "Question N of X" sometimes counting one more question
+  than the session could actually deliver, so it looked stuck one short at the end.
+  When the AI generator dropped a question during quality filtering (it already does
+  this deliberately for slop/yes-no/ungrounded questions), the promised total never
+  shrank to match, so the last slot was never filled. The total now adjusts down
+  whenever that happens, instead of leaving a phantom question in the count.
+
 ## 2.5.1
 
 - Fixed "Review N due now" (the status bar click, the panel button, and the "Review

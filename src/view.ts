@@ -1338,6 +1338,13 @@ export class SessionView extends ItemView {
 						this.sessionPersona,
 						this.plugin.data.settings.questionFormats === "mixed",
 					);
+					// The cursor already advanced past this whole batch (targets consumed,
+					// not questions produced — see above), so any target the validator
+					// dropped, partially or entirely, is never coming back. Shrink the
+					// promised total to match, or "Question N of targetCount" and the
+					// progress bar keep counting a slot that will never be shown.
+					const shortfall = batch.length - qs.length;
+					if (shortfall > 0) this.targetCount = Math.max(this.questions.length, this.targetCount - shortfall);
 					if (qs.length) {
 						this.rememberGenerated(qs);
 						for (const q of qs) this.questions.push(q);
