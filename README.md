@@ -1,7 +1,5 @@
 ![Grill: your notes, quizzed, inside your knowledge graph](docs/hero.svg)
 
-# Grill
-
 *Grill quizzes you on your own Obsidian notes, marks your answers, and colours in a live map of them as you prove what you know.*
 
 I take a lot of notes and almost never go back to them. Re-reading a note isn't the same as remembering it, and I couldn't be bothered to turn everything into flashcards, so Grill quizzes me on the notes I've already got.
