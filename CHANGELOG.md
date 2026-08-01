@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.5.6
+## 3.0.0
 
 - **The full arcade redesign.** Grill's look used to stop at the banner: the rest of the
   plugin fell back to generic Obsidian styling with an orange accent layered on top. Every
