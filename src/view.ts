@@ -679,6 +679,7 @@ export class SessionView extends ItemView {
 						(nowMs - new Date(n.lastSeen).getTime()) / 86_400_000 >= STALE_DAYS,
 				},
 				{ kind: "misconceptions", label: "Misconceptions", match: (n) => n.misconceptions > 0 },
+				{ kind: "leeches", label: "Stuck", match: (n) => n.leeches > 0 },
 				{ kind: "orphan", label: "Unlinked", match: (n) => (degree.get(n.id) ?? 0) === 0 },
 			];
 			const activeFilters = new Set<string>();
@@ -1898,7 +1899,7 @@ export class SessionView extends ItemView {
 
 			// No-key mode can only use concepts that carry a deterministic question.
 			const pickable = s.questionSource === "local" ? allConcepts.filter((c) => c.local) : allConcepts;
-			this.sessionConcepts = pickConcepts(pickable, this.concepts, want, this.dueOnly);
+			this.sessionConcepts = pickConcepts(pickable, this.concepts, want, this.dueOnly, new Date(), s.newConceptsPerDay);
 			if (this.sessionConcepts.length === 0) {
 				new Notice(
 					s.questionSource === "local"
@@ -2142,8 +2143,9 @@ export class SessionView extends ItemView {
 		}
 		const cid = q.conceptId;
 		if (cid && this.concepts[cid]) {
-			if (rating !== null) recordConceptRating(this.concepts, cid, rating);
-			else recordConceptAnswer(this.concepts, cid, verdict, q.difficulty ?? "medium");
+			const retention = this.plugin.data.settings.desiredRetention / 100;
+			if (rating !== null) recordConceptRating(this.concepts, cid, rating, new Date(), retention);
+			else recordConceptAnswer(this.concepts, cid, verdict, q.difficulty ?? "medium", new Date(), retention);
 		}
 		recordNoteStats(this.plugin.mastery, q.node, verdict, misconceptionTag);
 		this.recomputeAggregate(q.node);

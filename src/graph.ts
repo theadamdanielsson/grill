@@ -14,7 +14,7 @@
  */
 
 import type { ConceptMap, ConceptMastery } from "./concepts";
-import { conceptMasteryScore, statusOf } from "./mastery";
+import { conceptMasteryScore, isLeech, statusOf } from "./mastery";
 
 export type NodeState = "unpracticed" | "in-progress" | "struggling" | "known";
 export type EdgeTier = "structural" | "inherited" | "proven";
@@ -42,6 +42,9 @@ export interface GraphNode {
 	dueAt: string | null;
 	/** Active (unresolved) canonical misconceptions observed on this note. */
 	misconceptions: number;
+	/** Concepts that keep failing no matter how much they've been reviewed (see
+	 * isLeech), distinct from ordinary struggling. */
+	leeches: number;
 	x: number;
 	y: number;
 }
@@ -83,10 +86,20 @@ export function noteState(
 	mastery: number | null;
 	lastSeen: string | null;
 	dueAt: string | null;
+	leeches: number;
 } {
 	const tested = records.filter(conceptTested);
 	if (!tested.length) {
-		return { practiced: false, state: "unpracticed", strength: 0, coverage: 0, mastery: null, lastSeen: null, dueAt: null };
+		return {
+			practiced: false,
+			state: "unpracticed",
+			strength: 0,
+			coverage: 0,
+			mastery: null,
+			lastSeen: null,
+			dueAt: null,
+			leeches: 0,
+		};
 	}
 	// Coverage denominator caps at COVERAGE_TARGET rather than the note's full concept
 	// count, so a note only reads "known" once a REPRESENTATIVE sample is confirmed —
@@ -124,7 +137,8 @@ export function noteState(
 	const coverage = known / Math.max(1, Math.min(records.length, COVERAGE_TARGET));
 	const mastery = masteryCount > 0 ? masterySum / masteryCount : null;
 	const state: NodeState = anyStruggling ? "struggling" : coverage >= COVERAGE_KNOWN ? "known" : "in-progress";
-	return { practiced: true, state, strength: stabSum / tested.length, coverage, mastery, lastSeen, dueAt };
+	const leeches = records.filter(isLeech).length;
+	return { practiced: true, state, strength: stabSum / tested.length, coverage, mastery, lastSeen, dueAt, leeches };
 }
 
 /** Group the concept map by note basename. */
@@ -212,6 +226,7 @@ export function buildGraph(
 			lastSeen: info.lastSeen,
 			dueAt: info.dueAt,
 			misconceptions: misconceptions[id] ?? 0,
+			leeches: info.leeches,
 			x: 0,
 			y: 0,
 		};

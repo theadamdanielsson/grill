@@ -98,15 +98,22 @@ export function recordConceptAnswer(
 	verdict: Verdict,
 	difficulty: QDifficulty,
 	now = new Date(),
+	desiredRetention?: number,
 ): void {
 	const cm = map[conceptId];
-	if (cm) applyRating(cm, toRating(verdict, difficulty), now);
+	if (cm) applyRating(cm, toRating(verdict, difficulty), now, desiredRetention);
 }
 
 /** Self-grade path: the user's own Again/Hard/Good/Easy rating is the signal. */
-export function recordConceptRating(map: ConceptMap, conceptId: string, rating: Rating, now = new Date()): void {
+export function recordConceptRating(
+	map: ConceptMap,
+	conceptId: string,
+	rating: Rating,
+	now = new Date(),
+	desiredRetention?: number,
+): void {
 	const cm = map[conceptId];
-	if (cm) applyRating(cm, rating, now);
+	if (cm) applyRating(cm, rating, now, desiredRetention);
 }
 
 /** Round-robin concepts across their notes (preserving each note's given order),
@@ -151,12 +158,25 @@ function interleaveByNote(concepts: Concept[]): Concept[] {
  * on a miss, pushed out on a hit), so a concept just answered correctly once
  * would otherwise stay glued to the due queue until its SECOND consecutive
  * correct answer (the "known" streak): a correct answer that looks ignored. */
+/** How many concepts in `map` had their first-ever exposure since `todayStart`: total
+ * interactions === 1 (this was their only, and therefore first, answer) and that
+ * answer was today. Used to cap new-concept introduction per day — see `pickConcepts`. */
+function newConceptsIntroducedSince(map: ConceptMap, todayStart: Date): number {
+	let n = 0;
+	for (const cm of Object.values(map)) {
+		if (cm.correct + cm.partial + cm.incorrect !== 1) continue;
+		if (cm.lastSeen && new Date(cm.lastSeen) >= todayStart) n++;
+	}
+	return n;
+}
+
 export function pickConcepts(
 	concepts: Concept[],
 	map: ConceptMap,
 	cap: number,
 	dueOnly = false,
 	now = new Date(),
+	newConceptsPerDay = 0,
 ): Concept[] {
 	if (dueOnly) {
 		const due = concepts.filter((c) => {
@@ -181,7 +201,19 @@ export function pickConcepts(
 	}
 	due.sort((a, b) => (map[a.id]?.dueAt ?? "").localeCompare(map[b.id]?.dueAt ?? ""));
 	rest.sort((a, b) => (map[a.id]?.lastSeen ?? "").localeCompare(map[b.id]?.lastSeen ?? ""));
-	return [...interleaveByNote(due), ...interleaveByNote(untested), ...interleaveByNote(rest)].slice(0, cap);
+	// Daily new-concept cap: independent of the per-session cap above, this limits how
+	// much brand-new material can enter the schedule in one calendar day, so a few
+	// missed days can't leave the due queue permanently outrunning what's reviewable.
+	// Untested concepts beyond today's remaining quota simply don't enter this
+	// session's pool; due/rest (review of concepts already in the schedule) are
+	// unaffected, so a session still fills normally from what's actually due.
+	let untestedPool = untested;
+	if (newConceptsPerDay > 0) {
+		const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+		const remaining = Math.max(0, newConceptsPerDay - newConceptsIntroducedSince(map, todayStart));
+		untestedPool = untested.slice(0, remaining);
+	}
+	return [...interleaveByNote(due), ...interleaveByNote(untestedPool), ...interleaveByNote(rest)].slice(0, cap);
 }
 
 /** Concept-derived note status + soonest due date, over the note's CURRENT

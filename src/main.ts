@@ -83,6 +83,17 @@ interface GrillSettings {
 	 * confirmed) vs mastery (how well you'd currently recall the parts you've
 	 * studied), 0-100. */
 	graphCoverageWeight: number;
+	/** FSRS "desired retention", as a percent (70-97): the recall probability the
+	 * scheduler aims for at each concept's due date. Lower = shorter intervals =
+	 * things come due more often = progress feels faster, at the cost of more
+	 * reviews. Higher = longer intervals, fewer but higher-stakes reviews. */
+	desiredRetention: number;
+	/** Cap on how many never-before-tested concepts a session will introduce per
+	 * calendar day, independent of questionsPerSession/maxNotesPerSession (which
+	 * govern one sitting, not the day). Once hit, sessions fill remaining slots from
+	 * due/review material instead, so the due backlog can't balloon from unlimited
+	 * new material outrunning how fast it can actually be reviewed. 0 = no cap. */
+	newConceptsPerDay: number;
 }
 
 interface PluginData {
@@ -125,6 +136,8 @@ function defaultSettings(): GrillSettings {
 		graphColorMode: "mastery",
 		graphNumberMode: "off",
 		graphCoverageWeight: 15,
+		desiredRetention: 90,
+		newConceptsPerDay: 0,
 	};
 }
 
@@ -181,6 +194,8 @@ export default class GrillPlugin extends Plugin {
 		// slider; carry untouched installs to the new default instead of leaving them
 		// stuck weighting coverage 4x heavier than intended against the new score.
 		if (s.graphCoverageWeight === 60) settings.graphCoverageWeight = 15;
+		if (typeof s.desiredRetention === "number") settings.desiredRetention = s.desiredRetention;
+		if (typeof s.newConceptsPerDay === "number") settings.newConceptsPerDay = s.newConceptsPerDay;
 		const calibration = Array.isArray(stored?.calibration) ? stored!.calibration.filter(isCalPoint) : [];
 		this.data = { settings, calibration };
 
@@ -838,6 +853,39 @@ class GrillSettingTab extends PluginSettingTab {
 			async (v) => {
 				// Store a large sentinel for "All" so it stays All as the vault grows.
 				s.maxNotesPerSession = v >= totalNotes ? ALL_NOTES : v;
+				await this.plugin.persist();
+			},
+		);
+
+		this.sliderSetting(
+			containerEl,
+			"Review frequency",
+			"How hard the schedule works to keep things fresh. Lower brings concepts back sooner (more " +
+				"reviews, progress feels faster); higher spaces them further apart (fewer reviews, longer " +
+				"before something you know comes back around).",
+			70,
+			97,
+			Math.min(Math.max(s.desiredRetention, 70), 97),
+			(v) => `${v}%`,
+			async (v) => {
+				s.desiredRetention = v;
+				await this.plugin.persist();
+			},
+		);
+
+		this.sliderSetting(
+			containerEl,
+			"New concepts per day",
+			"Caps how many never-before-tested concepts a session will introduce per calendar day, on top " +
+				"of the per-session limits above. Once hit, sessions fill remaining slots by reviewing what's " +
+				"already due instead — so a few missed days can't leave the due queue permanently outrunning " +
+				"what you can actually review. 0 = no daily cap.",
+			0,
+			100,
+			Math.min(Math.max(s.newConceptsPerDay, 0), 100),
+			(v) => (v === 0 ? "No cap" : `${v}/day`),
+			async (v) => {
+				s.newConceptsPerDay = v;
 				await this.plugin.persist();
 			},
 		);

@@ -102,6 +102,9 @@ export function statusOf(m: (Schedulable & { aggStatus?: NoteStatus }) | undefin
 // ---------------------------------------------------------------- FSRS-4.5
 
 const W = [0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34, 1.26, 0.29, 2.61];
+/** Default when the user hasn't set "Review frequency" in settings. Lower = shorter
+ * intervals = things come due more often = progress feels faster, at the cost of more
+ * reviews; higher = longer intervals, fewer but higher-stakes reviews. */
 const DESIRED_RETENTION = 0.9;
 const MIN_STABILITY = 0.1;
 const MAX_INTERVAL_DAYS = 365;
@@ -132,6 +135,18 @@ export function conceptMasteryScore(m: Schedulable, now = new Date()): number | 
 	const elapsedDays = m.lastSeen ? (now.getTime() - new Date(m.lastSeen).getTime()) / 86400_000 : 0;
 	const confidence = Math.min(1, m.stability / S_SOLID);
 	return retrievability(m.stability, elapsedDays) * confidence;
+}
+
+/** A concept that keeps failing no matter how much it's reviewed, distinct from
+ * ordinary "struggling" (which just means not yet durable). Anki's leech mechanic,
+ * scaled down: Anki's default threshold is 8 lapses, but that assumes a fixed card
+ * reviewed far more densely than Grill's AI-generated, spaced-out concepts, so 4 is
+ * the practical equivalent here. Requires BOTH real failure volume and a lack of
+ * progress (stability still short of S_SOLID) — a concept that failed early but has
+ * since climbed past that isn't a leech, it's just a normal recovered lapse. */
+export const LEECH_MIN_INCORRECT = 4;
+export function isLeech(m: Schedulable): boolean {
+	return m.incorrect >= LEECH_MIN_INCORRECT && (m.stability === null || m.stability < S_SOLID);
 }
 
 /** Verdict → FSRS rating (1=again, 2=hard, 3=good, 4=easy), difficulty-aware on
@@ -188,8 +203,11 @@ export function fuzzInterval(days: number): number {
 // ---------------------------------------------------------------- updates
 
 /** Apply one FSRS rating (1-4) to any schedulable record, updating stability,
- * difficulty, counters, streak and due date. Runs at note or concept level. */
-export function applyRating(m: Schedulable, rating: number, now: Date): void {
+ * difficulty, counters, streak and due date. Runs at note or concept level.
+ * `desiredRetention` is the user's "Review frequency" setting (falls back to the
+ * FSRS-standard 0.9 default when omitted, e.g. for callers that don't thread settings
+ * through). */
+export function applyRating(m: Schedulable, rating: number, now: Date, desiredRetention = DESIRED_RETENTION): void {
 	const elapsedDays = m.lastSeen ? (now.getTime() - new Date(m.lastSeen).getTime()) / 86400_000 : 0;
 	if (m.stability === null || m.difficulty === null) {
 		m.stability = initialStability(rating);
@@ -218,7 +236,7 @@ export function applyRating(m: Schedulable, rating: number, now: Date): void {
 	if (rating === 1) {
 		m.dueAt = now.toISOString(); // immediately due again
 	} else {
-		const days = fuzzInterval(optimalInterval(m.stability));
+		const days = fuzzInterval(optimalInterval(m.stability, desiredRetention));
 		m.dueAt = new Date(now.getTime() + days * 86400_000).toISOString();
 	}
 

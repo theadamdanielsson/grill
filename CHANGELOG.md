@@ -1,5 +1,20 @@
 # Changelog
 
+## 3.2.0
+
+- **"Review frequency" setting**: controls how aggressively the schedule keeps things
+  fresh (FSRS's "desired retention," 70-97%). Lower brings concepts back sooner for
+  faster-feeling progress at the cost of more reviews; higher spaces them further apart.
+  Previously fixed at 90% with no way to adjust it.
+- **"New concepts per day" setting**: caps how many never-before-tested concepts a
+  session will introduce per calendar day, independent of the per-session limits. Once
+  hit, sessions fill remaining slots by reviewing what's already due instead, so a few
+  missed days can't leave the due queue permanently outrunning what's reviewable. Off
+  (no cap) by default.
+- **A new "Stuck" filter on the graph**: flags concepts that keep failing no matter how
+  much they've been reviewed, distinct from ordinary "Learning" (not yet durable) —
+  Anki's leech concept, scaled to Grill's spaced, AI-generated concepts.
+
 ## 3.1.0
 
 - **Three new question formats**: true/false, select-all-that-apply, and matching, joining
