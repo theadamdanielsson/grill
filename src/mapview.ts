@@ -278,7 +278,7 @@ export class LearningMap {
 		this.requestDraw();
 	}
 
-	/** Switch the numeric overlay (off, or a grade format) and/or the coverage/accuracy
+	/** Switch the numeric overlay (off, or a grade format) and/or the coverage/mastery
 	 * weighting it's computed with. Either argument may be omitted to leave it unchanged. */
 	setNumberDisplay(mode?: NumberMode, coverageWeight?: number): void {
 		if (mode !== undefined) this.numberMode = mode;

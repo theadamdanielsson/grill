@@ -39,6 +39,13 @@ export type ConceptMap = Record<string, ConceptMastery>;
 /** A note counts as "known" only once this share of its concepts is tested-known,
  * so a note can't look mastered while most of it was never asked about. */
 const COVERAGE_KNOWN = 0.8;
+/** Coverage's denominator caps at this many concepts, not the note's raw extracted
+ * count — otherwise a content-dense note (a long vocab list, a big glossary) needs
+ * proportionally more known concepts just to read "covered" than a short one, purely
+ * as an artifact of how many candidate concepts extractConcepts happened to find, not
+ * anything about how well the note is actually known. ~8 known concepts reads as a
+ * representative sample of any note, dense or sparse. */
+const COVERAGE_TARGET = 8;
 
 function emptyConcept(c: Concept): ConceptMastery {
 	return {
@@ -192,10 +199,12 @@ export function noteAggregate(concepts: Concept[], map: ConceptMap): { aggStatus
 		// known. A clean provisional (one correct, never missed) stays grey, not red.
 		return !!cm && cm.incorrect + cm.partial > 0 && statusOf(cm) !== "known";
 	});
-	// Coverage counts CONFIRMED-known concepts (streak >= KNOWN_MIN_STREAK), not merely
-	// answered ones, so a note can't read "known" off one lucky answer per concept.
+	// Coverage counts CONFIRMED-known concepts (stability >= S_SOLID, see statusOf),
+	// not merely answered ones, so a note can't read "known" off one lucky answer per
+	// concept. The denominator caps at COVERAGE_TARGET (see its doc comment) rather
+	// than the note's raw concept count.
 	const known = concepts.filter((c) => statusOf(map[c.id]) === "known").length;
-	const coverage = known / Math.max(1, concepts.length);
+	const coverage = known / Math.max(1, Math.min(concepts.length, COVERAGE_TARGET));
 	// "known" only at high confirmed coverage; otherwise the tested parts are solid
 	// but the note is incomplete, so it reads "untested" (grey, not red) — its
 	// unconfirmed concepts still surface through selection. This avoids painting

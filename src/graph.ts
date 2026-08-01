@@ -14,7 +14,7 @@
  */
 
 import type { ConceptMap, ConceptMastery } from "./concepts";
-import { statusOf } from "./mastery";
+import { conceptMasteryScore, statusOf } from "./mastery";
 
 export type NodeState = "unpracticed" | "in-progress" | "struggling" | "known";
 export type EdgeTier = "structural" | "inherited" | "proven";
@@ -24,12 +24,18 @@ export interface GraphNode {
 	state: NodeState;
 	/** Mean FSRS stability of the note's tested concepts (0 when unpractised). */
 	strength: number;
-	/** Confirmed-known concepts / total concepts, 0-1. The same figure noteAggregate uses
-	 * to gate "known" — exposed directly so a numeric overlay can show it without re-deriving. */
+	/** Confirmed-known concepts / min(total concepts, COVERAGE_TARGET), 0-1. The same
+	 * figure noteAggregate uses to gate "known" — exposed directly so a numeric overlay
+	 * can show it without re-deriving. Capped so a content-dense note doesn't need
+	 * proportionally more known concepts just to read "covered" than a short one. */
 	coverage: number;
-	/** Correct-weighted accuracy across tested concepts, 0-1 (partial counts half); null
-	 * when nothing's been tested yet, so a display layer can show "--" instead of 0%. */
-	accuracy: number | null;
+	/** Mean per-concept FSRS mastery (retrievability x confidence, see
+	 * conceptMasteryScore) across TESTED concepts only — how well you'd recall what
+	 * you've actually studied right now, not diluted by concepts you haven't reached
+	 * yet and not haunted by an old mistake once it's been solidly re-demonstrated
+	 * since. Null when nothing's been tested yet, so a display layer can show "--"
+	 * instead of 0%. */
+	mastery: number | null;
 	/** Most recent lastSeen among the note's tested concepts, or null if untested. */
 	lastSeen: string | null;
 	/** Soonest dueAt among the note's tested concepts, or null if untested. */
@@ -53,6 +59,8 @@ export interface LearningGraph {
 
 /** Coverage of confirmed-known concepts for a note to read "known" (matches concepts.ts). */
 const COVERAGE_KNOWN = 0.8;
+/** Coverage's denominator caps at this many concepts (matches concepts.ts COVERAGE_TARGET). */
+const COVERAGE_TARGET = 8;
 /** FSRS stability floor (matches mastery.ts MIN_STABILITY). */
 const MIN_STABILITY = 0.1;
 
@@ -61,56 +69,62 @@ function conceptTested(cm: ConceptMastery): boolean {
 }
 
 /** A note's full derived state from its concept mastery records: colour state, proven
- * strength, coverage, accuracy, and recency/due timestamps. Mirrors `noteAggregate`: any
+ * strength, coverage, mastery, and recency/due timestamps. Mirrors `noteAggregate`: any
  * struggling tested concept → struggling; else high confirmed-known coverage → known; else
- * in-progress. Strength = mean stability of tested concepts. */
-export function noteState(records: ConceptMastery[]): {
+ * in-progress. Strength = mean stability of tested concepts (drives node size). */
+export function noteState(
+	records: ConceptMastery[],
+	now = new Date(),
+): {
 	practiced: boolean;
 	state: NodeState;
 	strength: number;
 	coverage: number;
-	accuracy: number | null;
+	mastery: number | null;
 	lastSeen: string | null;
 	dueAt: string | null;
 } {
 	const tested = records.filter(conceptTested);
 	if (!tested.length) {
-		return { practiced: false, state: "unpracticed", strength: 0, coverage: 0, accuracy: null, lastSeen: null, dueAt: null };
+		return { practiced: false, state: "unpracticed", strength: 0, coverage: 0, mastery: null, lastSeen: null, dueAt: null };
 	}
-	// Coverage denominator is ALL the note's concepts (tested + not-yet-tested), so a note
-	// only reads "known" once most of it is confirmed — not off a couple of lucky answers.
-	// A note reads "in-progress" while its tested parts are solid but coverage is still low.
+	// Coverage denominator caps at COVERAGE_TARGET rather than the note's full concept
+	// count, so a note only reads "known" once a REPRESENTATIVE sample is confirmed —
+	// not off a couple of lucky answers, but also not scaled by how many candidate
+	// concepts happened to get extracted from a dense note. A note reads "in-progress"
+	// while its tested parts are solid but coverage is still low.
 	let known = 0;
 	let anyStruggling = false;
 	for (const c of records) {
 		const s = statusOf(c);
 		if (s === "known") known++;
 		// Genuinely shaky, matching noteAggregate: actually missed at least once and not
-		// yet re-confirmed. A concept that's only ever been answered correctly is
-		// provisional (streak < KNOWN_MIN_STREAK reads "struggling" from statusOf alone),
-		// not struggling — otherwise every note's first-ever correct answer on a fresh
-		// concept paints it red, and it can never progress past red as long as untested
-		// concepts keep getting their first (correct) exposure.
+		// yet re-confirmed (stability still below S_SOLID). A concept that's only ever
+		// been answered correctly is provisional, not struggling — otherwise every
+		// note's first-ever correct answer on a fresh concept paints it red, and it can
+		// never progress past red as long as untested concepts keep getting their first
+		// (correct) exposure.
 		else if (conceptTested(c) && c.incorrect + c.partial > 0) anyStruggling = true;
 	}
 	let stabSum = 0;
-	let correctSum = 0;
-	let answerSum = 0;
+	let masterySum = 0;
+	let masteryCount = 0;
 	let lastSeen: string | null = null;
 	let dueAt: string | null = null;
 	for (const c of tested) {
 		stabSum += c.stability ?? MIN_STABILITY;
-		// Partial credit counts as half a correct answer, matching how the grading bands
-		// treat it everywhere else in the app (never a full miss, never a full hit).
-		correctSum += c.correct + c.partial * 0.5;
-		answerSum += c.correct + c.partial + c.incorrect;
+		const m = conceptMasteryScore(c, now);
+		if (m !== null) {
+			masterySum += m;
+			masteryCount += 1;
+		}
 		if (c.lastSeen && (!lastSeen || c.lastSeen > lastSeen)) lastSeen = c.lastSeen;
 		if (c.dueAt && (!dueAt || c.dueAt < dueAt)) dueAt = c.dueAt;
 	}
-	const coverage = known / records.length;
-	const accuracy = answerSum > 0 ? correctSum / answerSum : null;
+	const coverage = known / Math.max(1, Math.min(records.length, COVERAGE_TARGET));
+	const mastery = masteryCount > 0 ? masterySum / masteryCount : null;
 	const state: NodeState = anyStruggling ? "struggling" : coverage >= COVERAGE_KNOWN ? "known" : "in-progress";
-	return { practiced: true, state, strength: stabSum / tested.length, coverage, accuracy, lastSeen, dueAt };
+	return { practiced: true, state, strength: stabSum / tested.length, coverage, mastery, lastSeen, dueAt };
 }
 
 /** Group the concept map by note basename. */
@@ -130,14 +144,17 @@ export function nodeRadius(strength: number, minR = 5, maxR = 20, refStability =
 	return minR + (maxR - minR) * t;
 }
 
-/** A note's coverage and accuracy folded into one 0-1 "how would I do on this right now"
+/** A note's coverage and mastery folded into one 0-1 "how would I do on this right now"
  * score, weighted by `coverageWeight` (0-1: how much finishing the note matters relative
- * to how well you've done on the parts you've actually been tested on). Null when nothing's
- * been tested yet, so a display layer can show a placeholder instead of a misleading 0. */
-export function gradeScore(node: Pick<GraphNode, "coverage" | "accuracy">, coverageWeight: number): number | null {
-	if (node.accuracy === null) return null;
+ * to how well you'd currently recall the parts you've actually studied). Null when
+ * nothing's been tested yet, so a display layer can show a placeholder instead of a
+ * misleading 0. Defaults to mostly `mastery`: coverage is capped (see COVERAGE_TARGET)
+ * but still scales with how much of the note is left untouched, which isn't what "how
+ * well do I know this" should mean by default. */
+export function gradeScore(node: Pick<GraphNode, "coverage" | "mastery">, coverageWeight: number): number | null {
+	if (node.mastery === null) return null;
 	const w = Math.min(1, Math.max(0, coverageWeight));
-	return node.coverage * w + node.accuracy * (1 - w);
+	return node.coverage * w + node.mastery * (1 - w);
 }
 
 export type GradeFormat = "percent" | "letter";
@@ -178,19 +195,20 @@ export function buildGraph(
 	concepts: ConceptMap,
 	isProven: (a: string, b: string) => boolean = () => false,
 	misconceptions: Record<string, number> = {},
+	now = new Date(),
 ): LearningGraph {
 	const byNote = conceptsByNote(concepts);
 	const inUniverse = new Set(notes);
 	const practiced = new Set<string>();
 	const nodes: GraphNode[] = notes.map((id) => {
-		const info = noteState(byNote.get(id) ?? []);
+		const info = noteState(byNote.get(id) ?? [], now);
 		if (info.practiced) practiced.add(id);
 		return {
 			id,
 			state: info.state,
 			strength: info.strength,
 			coverage: info.coverage,
-			accuracy: info.accuracy,
+			mastery: info.mastery,
 			lastSeen: info.lastSeen,
 			dueAt: info.dueAt,
 			misconceptions: misconceptions[id] ?? 0,

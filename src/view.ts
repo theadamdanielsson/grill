@@ -3,7 +3,7 @@
 import { ItemView, MarkdownRenderer, Notice, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
 import { adjudicateBridges, ConceptTarget, debriefSession, generateQuestions, Grade, gradeAnswer, LLMConfig, Question, supportsVision, Verdict } from "./llm";
-import { Concept, extractConcepts, localQuestionForConcept, localQuestions } from "./generate-local";
+import { Concept, ConceptKind, extractConcepts, localQuestionForConcept, localQuestions } from "./generate-local";
 import { BridgeMap, detectBridgeCandidates, pairKey } from "./bridges";
 import { buildGraph, formatGrade, gradeScore, type GraphNode } from "./graph";
 import { GraphAppearance, LearningMap, MapPalette } from "./mapview";
@@ -55,6 +55,28 @@ const DUE_SESSION_CAP = 200;
 /** Questions generated per model call. Small batches cut the wait before the
  * first question and let the next batch prefetch while the user answers. */
 const BATCH = 2;
+/** Deterministic per-session rotation for seedType(): mirrors how targetDifficulty is
+ * already assigned server-side rather than left to the model. Left to its own
+ * discretion, a model reliably regresses to only 'mc'/'blank'/'write' in practice — a
+ * real 15-question session produced zero 'tf'/'multi'/'match' despite explicit
+ * instructions offering them (see FORMAT_MIX_INSTRUCTIONS). 5 of 10 slots are 'write',
+ * matching the earlier "roughly half write" intent, now enforced by construction
+ * instead of hoped for. */
+const FORMAT_ROTATION: NonNullable<Question["type"]>[] = [
+	"write",
+	"mc",
+	"write",
+	"blank",
+	"write",
+	"tf",
+	"write",
+	"multi",
+	"write",
+	"match",
+];
+/** Concept kinds broad enough to genuinely support 'multi'/'match' (several related
+ * items) — see seedType. */
+const BROAD_CONCEPT_KINDS = new Set<ConceptKind>(["heading", "note"]);
 /** Most images to pull from a single note, and across a whole session's context,
  * so a screenshot-heavy vault doesn't run up a huge image-token bill. */
 const IMAGES_PER_NOTE_CAP = 4;
@@ -365,7 +387,7 @@ export class SessionView extends ItemView {
 		};
 		const notesStat = addStat("Notes");
 		const knownStat = addStat("Known", "correct");
-		const strugglingStat = addStat("Struggling", "incorrect");
+		const strugglingStat = addStat("Learning", "incorrect");
 		const untestedStat = addStat("Untested");
 		const showCounts = (files: TFile[]): void => {
 			const counts = { untested: 0, struggling: 0, known: 0 };
@@ -647,7 +669,7 @@ export class SessionView extends ItemView {
 			const STALE_DAYS = 14;
 			const filterDefs: { kind: string; label: string; match: (n: GraphNode) => boolean }[] = [
 				{ kind: "due", label: "Due", match: (n) => !!n.dueAt && new Date(n.dueAt).getTime() <= nowMs },
-				{ kind: "struggling", label: "Struggling", match: (n) => n.state === "struggling" },
+				{ kind: "struggling", label: "Learning", match: (n) => n.state === "struggling" },
 				{
 					kind: "stale",
 					label: `Stale (${STALE_DAYS}d+)`,
@@ -988,18 +1010,24 @@ export class SessionView extends ItemView {
 		const qEl = card.createDiv({ cls: "grill-question" });
 		// Loose match (3+ underscores): the same tolerance questionDefect already
 		// validates against, in case a model writes ___ or _____ instead of ____.
-		const blankMatch = q.type === "blank" ? /_{3,}/.exec(q.question) : null;
-		const isBlank = !!blankMatch;
+		// Up to three per question (questionDefect caps it); each gets its own input.
+		const blankMatches = q.type === "blank" ? [...q.question.matchAll(/_{3,}/g)] : [];
+		const isBlank = blankMatches.length > 0;
 		const isMc = q.type === "mc" && !!q.choices && q.choices.length >= 2;
-		let blankInput: HTMLInputElement | null = null;
-		if (isBlank && blankMatch) {
-			// Plain text, not markdown: the blank splits the sentence around a live
-			// input, which markdown rendering can't be interleaved with reliably.
-			const before = q.question.slice(0, blankMatch.index);
-			const after = q.question.slice(blankMatch.index + blankMatch[0].length);
-			qEl.createSpan({ text: before });
-			blankInput = qEl.createEl("input", { cls: "grill-blank-input", attr: { type: "text" } });
-			qEl.createSpan({ text: after });
+		const isTf = q.type === "tf";
+		const isMulti = q.type === "multi" && !!q.choices && q.choices.length >= 2 && !!q.correctChoices?.length;
+		const isMatch = q.type === "match" && !!q.pairs && q.pairs.length >= 2;
+		const blankInputs: HTMLInputElement[] = [];
+		if (isBlank) {
+			// Plain text, not markdown: each blank splits the surrounding text around a
+			// live input, which markdown rendering can't be interleaved with reliably.
+			let cursor = 0;
+			for (const m of blankMatches) {
+				qEl.createSpan({ text: q.question.slice(cursor, m.index) });
+				blankInputs.push(qEl.createEl("input", { cls: "grill-blank-input", attr: { type: "text" } }));
+				cursor = (m.index ?? 0) + m[0].length;
+			}
+			qEl.createSpan({ text: q.question.slice(cursor) });
 		} else {
 			this.md(q.question, qEl);
 		}
@@ -1009,21 +1037,80 @@ export class SessionView extends ItemView {
 		let hintsUsed = 0;
 		const hints = [q.hints.tier1, q.hints.tier2, q.hints.tier3].filter(Boolean);
 
-		// Assigned below; declared early so the mc choice buttons (built before the
+		// Assigned below; declared early so the mc/tf choice buttons (built before the
 		// hint/skip row, and which auto-submit on click) can already call it.
 		let doAction: (giveUp: boolean) => void = () => undefined;
 
 		let ta: HTMLTextAreaElement | null = null;
-		if (isMc) {
+		const multiSelected = new Set<string>();
+		const matchPicks: Record<string, string> = {};
+		if (isMc || isTf) {
 			const mcRow = card.createDiv({ cls: "grill-mc-row" });
-			const shuffled = [...(q.choices as string[])].sort(() => Math.random() - 0.5);
-			for (const choice of shuffled) {
-				const b = mcRow.createEl("button", { text: choice, cls: "grill-mc-btn" });
+			const options = isTf ? ["True", "False"] : [...(q.choices as string[])].sort(() => Math.random() - 0.5);
+			for (const choice of options) {
+				const b = mcRow.createEl("button", { text: choice, cls: isTf ? "grill-mc-btn grill-tf-btn" : "grill-mc-btn" });
 				b.onclick = () => {
 					mcRow.querySelectorAll("button").forEach((other) => (other.disabled = true));
 					this.mcPicked = choice;
 					doAction(false);
 				};
+			}
+		} else if (isMulti) {
+			// Select all that apply: togglable options, an explicit Submit gathers them
+			// (unlike mc/tf, a single click can't be "the answer" here).
+			const multiRow = card.createDiv({ cls: "grill-multi-row" });
+			const options = [...(q.choices as string[])].sort(() => Math.random() - 0.5);
+			for (const choice of options) {
+				const b = multiRow.createEl("button", { text: choice, cls: "grill-multi-btn" });
+				b.onclick = () => {
+					if (multiSelected.has(choice)) {
+						multiSelected.delete(choice);
+						b.removeClass("is-selected");
+					} else {
+						multiSelected.add(choice);
+						b.addClass("is-selected");
+					}
+				};
+			}
+		} else if (isMatch) {
+			// Matching: fixed-order left column of prompts, shuffled right-column pool.
+			// Tap a left row to arm it, then tap a right option to assign the pair;
+			// tapping an already-assigned left row lets you reassign it before Submit.
+			const pairs = q.pairs as { left: string; right: string }[];
+			const matchWrap = card.createDiv({ cls: "grill-match-wrap" });
+			const leftCol = matchWrap.createDiv({ cls: "grill-match-col" });
+			const rightCol = matchWrap.createDiv({ cls: "grill-match-col grill-match-pool" });
+			const slots = new Map<string, HTMLElement>();
+			const leftRows = new Map<string, HTMLElement>();
+			const rightBtns = new Map<string, HTMLButtonElement>();
+			let armed: string | null = null;
+			const setArmed = (left: string | null) => {
+				armed = left;
+				for (const [l, lrow] of leftRows) lrow.toggleClass("is-armed", l === left);
+			};
+			for (const p of pairs) {
+				const lrow = leftCol.createDiv({ cls: "grill-match-row" });
+				lrow.createSpan({ cls: "grill-match-label", text: p.left });
+				slots.set(p.left, lrow.createDiv({ cls: "grill-match-slot", text: "Tap a match →" }));
+				leftRows.set(p.left, lrow);
+				lrow.onclick = () => setArmed(armed === p.left ? null : p.left);
+			}
+			const assignTo = (leftKey: string, right: string, btn: HTMLButtonElement) => {
+				const prev = matchPicks[leftKey];
+				if (prev) rightBtns.get(prev)?.removeClass("is-used");
+				matchPicks[leftKey] = right;
+				btn.addClass("is-used");
+				slots.get(leftKey)!.setText(right);
+				setArmed(null);
+			};
+			const shuffledRight = [...pairs.map((p) => p.right)].sort(() => Math.random() - 0.5);
+			for (const right of shuffledRight) {
+				const b = rightCol.createEl("button", { text: right, cls: "grill-match-btn" });
+				b.onclick = () => {
+					if (b.hasClass("is-used") || !armed) return;
+					assignTo(armed, right, b);
+				};
+				rightBtns.set(right, b);
 			}
 		} else if (!isBlank) {
 			ta = card.createEl("textarea", {
@@ -1054,7 +1141,7 @@ export class SessionView extends ItemView {
 		}
 
 		const row = card.createDiv({ cls: "grill-btn-row" });
-		if (!isMc) {
+		if (!isMc && !isTf) {
 			const submit = row.createEl("button", { text: selfGrade ? "Show answer" : "Submit", cls: "mod-cta grill-submit-btn" });
 			submit.onclick = () => doAction(false);
 		}
@@ -1072,9 +1159,24 @@ export class SessionView extends ItemView {
 		const skip = row.createEl("button", { text: "I don't know", cls: "grill-quiet-btn" });
 
 		doAction = (giveUp: boolean) => {
-			const answer = giveUp ? "" : isMc ? this.mcPicked : isBlank ? (blankInput?.value.trim() ?? "") : (ta?.value.trim() ?? "");
+			let answer = "";
+			if (!giveUp) {
+				if (isMc || isTf) answer = this.mcPicked;
+				else if (isMulti) answer = [...multiSelected].join(", ");
+				else if (isMatch)
+					answer = (q.pairs ?? []).map((p) => `${p.left} → ${matchPicks[p.left] ?? "(unmatched)"}`).join("; ");
+				else if (isBlank) answer = blankInputs.map((el) => el.value.trim()).join(" / ");
+				else answer = ta?.value.trim() ?? "";
+			}
 			if (selfGrade) this.revealForSelfGrade(answer, giveUp, hintsUsed);
-			else void this.submitAnswer(answer, giveUp, hintsUsed);
+			else
+				void this.submitAnswer(
+					answer,
+					giveUp,
+					hintsUsed,
+					isMulti ? [...multiSelected] : undefined,
+					isMatch ? matchPicks : undefined,
+				);
 		};
 		skip.onclick = () => doAction(true);
 		if (ta) {
@@ -1082,11 +1184,15 @@ export class SessionView extends ItemView {
 				if ((e.metaKey || e.ctrlKey) && e.key === "Enter") doAction(false);
 			});
 			ta.focus();
-		} else if (blankInput) {
-			blankInput.addEventListener("keydown", (e) => {
-				if (e.key === "Enter") doAction(false);
+		} else if (blankInputs.length) {
+			blankInputs.forEach((el, i) => {
+				el.addEventListener("keydown", (e) => {
+					if (e.key !== "Enter") return;
+					if (i < blankInputs.length - 1) blankInputs[i + 1].focus();
+					else doAction(false);
+				});
 			});
-			blankInput.focus();
+			blankInputs[0].focus();
 		}
 	}
 
@@ -1485,6 +1591,14 @@ export class SessionView extends ItemView {
 					}
 					if (!batch.length) continue; // next loop handles the prebuilt target
 					const { text: batchNotesText, images: batchImages } = this.notesForBatch(batch);
+					// Tally formats already generated this session (not just this batch), so a
+					// batch several calls in can be steered toward whichever types haven't
+					// shown up yet instead of the model defaulting to mc/blank every time.
+					const formatCounts: Partial<Record<string, number>> = {};
+					for (const q of this.questions) {
+						const t = q.type ?? "write";
+						formatCounts[t] = (formatCounts[t] ?? 0) + 1;
+					}
 					const qs = await generateQuestions(
 						cfg,
 						batchNotesText,
@@ -1495,6 +1609,7 @@ export class SessionView extends ItemView {
 						"standard",
 						this.sessionPersona,
 						this.plugin.data.settings.questionFormats === "mixed",
+						formatCounts,
 					);
 					// The cursor already advanced past this whole batch (targets consumed,
 					// not questions produced — see above), so any target the validator
@@ -1525,7 +1640,13 @@ export class SessionView extends ItemView {
 	/** A cached question for this concept that is safe to reuse now, or null. Requires a
 	 * bank entry whose source hash still matches the concept (note unchanged); rotates to
 	 * the least-shown variant. With "reuse generated questions" set above 0, a variant
-	 * that has been shown that many times forces a miss so a fresh variant is written. */
+	 * that has been shown that many times forces a miss so a fresh variant is written —
+	 * unconditionally, even once the bank already holds MAX_VARIANTS: rememberGenerated
+	 * evicts the oldest to keep storage bounded, so this never grows unboundedly. Forcing
+	 * a miss only below the storage cap (the previous behaviour) meant a concept that had
+	 * ever accumulated a full bank would rotate the same fixed set of variants forever,
+	 * with no way to pick up a later generator improvement (a new question type, a
+	 * prompt fix) short of the note's content changing. */
 	private cacheHit(conceptId: string): CachedQuestion | null {
 		const c = this.conceptById.get(conceptId);
 		if (!c || c.authored) return null; // authored questions are verbatim, not banked
@@ -1538,7 +1659,7 @@ export class SessionView extends ItemView {
 		);
 		const pick = fresh[0];
 		const regen = this.plugin.data.settings.regenerateEvery;
-		if (regen > 0 && pick.timesShown >= regen && bank.length < MAX_VARIANTS) return null; // add variety
+		if (regen > 0 && pick.timesShown >= regen) return null; // add variety
 		return pick;
 	}
 
@@ -1794,7 +1915,8 @@ export class SessionView extends ItemView {
 			// misconception on at most ONE concept per note, so it isn't over-asked.
 			const activeByNote = activeMisconceptionsByNote(this.registry, names);
 			const misconceptionUsed = new Set<string>();
-			this.targets = this.sessionConcepts.slice(0, this.targetCount).map((c) => {
+			const mixFormats = s.questionFormats === "mixed";
+			this.targets = this.sessionConcepts.slice(0, this.targetCount).map((c, i) => {
 				let activeMisconception: string | undefined;
 				if (!misconceptionUsed.has(c.note)) {
 					activeMisconception = activeByNote[c.note]?.[0]?.tag;
@@ -1806,6 +1928,7 @@ export class SessionView extends ItemView {
 					label: c.label,
 					context: c.context,
 					targetDifficulty: this.seedDifficulty(this.concepts[c.id], c.note, graph),
+					targetType: mixFormats ? this.seedType(c.kind, i) : undefined,
 					activeMisconception,
 				};
 			});
@@ -1839,7 +1962,13 @@ export class SessionView extends ItemView {
 		}
 	}
 
-	private async submitAnswer(answer: string, gaveUp: boolean, hintsUsed: number): Promise<void> {
+	private async submitAnswer(
+		answer: string,
+		gaveUp: boolean,
+		hintsUsed: number,
+		multiPicks?: string[],
+		matchPicks?: Record<string, string>,
+	): Promise<void> {
 		const q = this.questions[this.idx];
 		let verdict: Verdict;
 		let feedback: string;
@@ -1848,10 +1977,29 @@ export class SessionView extends ItemView {
 			// Zero-cost path: the rubric was generated with the question.
 			verdict = "incorrect";
 			feedback = "No penalty for honesty. Read the expected answer, then the note; this comes back next session.";
-		} else if (q.type === "mc") {
-			// Multiple choice is unambiguous: grade instantly, no LLM round-trip needed.
+		} else if (q.type === "mc" || q.type === "tf") {
+			// Unambiguous, structured formats: grade instantly, no LLM round-trip needed.
 			verdict = answer.trim().toLowerCase() === q.modelAnswer.trim().toLowerCase() ? "correct" : "incorrect";
 			feedback = verdict === "correct" ? "Correct." : `Not quite. The answer is "${q.modelAnswer}".`;
+		} else if (q.type === "multi") {
+			const correct = new Set((q.correctChoices ?? []).map((c) => c.trim().toLowerCase()));
+			const chosen = new Set((multiPicks ?? []).map((c) => c.trim().toLowerCase()));
+			let hits = 0;
+			for (const c of correct) if (chosen.has(c)) hits++;
+			const misses = correct.size - hits;
+			const extras = [...chosen].filter((c) => !correct.has(c)).length;
+			const wrong = misses + extras;
+			if (wrong === 0) verdict = "correct";
+			else if (hits > 0 && wrong <= Math.max(1, Math.ceil(correct.size / 2))) verdict = "partial";
+			else verdict = "incorrect";
+			feedback = verdict === "correct" ? "Correct — every one." : `Correct answer: ${q.modelAnswer}.`;
+		} else if (q.type === "match") {
+			const pairs = q.pairs ?? [];
+			const hits = pairs.filter(
+				(p) => (matchPicks?.[p.left] ?? "").trim().toLowerCase() === p.right.trim().toLowerCase(),
+			).length;
+			verdict = hits === pairs.length ? "correct" : hits > 0 ? "partial" : "incorrect";
+			feedback = verdict === "correct" ? "Every pair correct." : `Correct pairing: ${q.modelAnswer}.`;
 		} else {
 			const cfg = this.plugin.llmConfig();
 			if (!cfg) return;
@@ -2058,6 +2206,17 @@ export class SessionView extends ItemView {
 	 * already confirmed. No point lobbing the easiest possible question at an advanced
 	 * note whose prerequisites are solid. Seeds DIFFICULTY only, never mastery, so it
 	 * can't create a coverage illusion; any shaky prerequisite keeps it easy. */
+	private seedType(kind: ConceptKind, index: number): Question["type"] {
+		const t = FORMAT_ROTATION[index % FORMAT_ROTATION.length];
+		// 'multi'/'match' need several distinct related items, which only a broader
+		// concept has (a whole heading/section, or the whole-note fallback) — an atomic
+		// single-fact concept (a vocab card, a definition, a formula, a bare term) can't
+		// genuinely support them, so substitute the nearest structured alternative
+		// rather than silently skipping that slot in the rotation.
+		if ((t === "multi" || t === "match") && !BROAD_CONCEPT_KINDS.has(kind)) return t === "multi" ? "mc" : "blank";
+		return t;
+	}
+
 	private seedDifficulty(cm: ConceptMastery | undefined, note: string, graph: SessionGraph): QDifficulty {
 		const base = conceptTargetDifficulty(cm);
 		if (base !== "easy" || conceptTested(cm)) return base; // only seed the first exposure

@@ -121,12 +121,25 @@ export interface Question {
 	rubric?: string;
 	/** Answer format. "write" (the default, free-response) is assumed when unset.
 	 * "mc" renders `choices` as clickable options and grades instantly by exact match
-	 * against `modelAnswer`. "blank" renders `question`'s blank marker (`____`) as an
-	 * inline input, graded like "write" against `modelAnswer`/`acceptableAnswers`. */
-	type?: "write" | "mc" | "blank";
+	 * against `modelAnswer`. "blank" renders `question`'s blank marker(s) (`____`, one
+	 * to three per question) as inline input(s), graded like "write" against
+	 * `modelAnswer`/`acceptableAnswers`. "tf" renders a fixed True/False pair and grades
+	 * instantly against `modelAnswer` ("True"/"False"). "multi" renders `choices` as
+	 * togglable options where 2+ are correct (`correctChoices`), graded instantly by set
+	 * comparison. "match" renders `pairs` as two columns to connect, graded instantly by
+	 * per-pair comparison. */
+	type?: "write" | "mc" | "blank" | "tf" | "multi" | "match";
 	/** For `type: "mc"`: the options shown, one of which must equal `modelAnswer`
-	 * exactly (case-insensitive compare at grade time). */
+	 * exactly (case-insensitive compare at grade time). Unused for "tf" (always
+	 * rendered as a fixed True/False pair) and for "multi" (see `choices` below). */
 	choices?: string[];
+	/** For `type: "multi"`: the full option set is `choices`; this is the subset (2 or
+	 * more) whose exact text marks them correct. Everything else in `choices` is a
+	 * distractor. */
+	correctChoices?: string[];
+	/** For `type: "match"`: the correct left/right pairs. Rendered as a fixed-order left
+	 * column and a shuffled right-column pool the student connects them to. */
+	pairs?: { left: string; right: string }[];
 }
 
 export type Verdict = "correct" | "partial" | "incorrect";
@@ -406,13 +419,13 @@ function buildCall(
 	}
 }
 
-async function callJSON(
+async function callJSONOnce(
 	cfg: LLMConfig,
 	system: string,
 	user: string | SplitUser,
 	schema: Record<string, unknown>,
 	maxTokens: number,
-	images: ImageInput[] = [],
+	images: ImageInput[],
 ): Promise<unknown> {
 	const call = buildCall(cfg, system, user, schema, maxTokens, images);
 	const resp = await requestUrl({
@@ -438,6 +451,29 @@ async function callJSON(
 		const m = text.match(/\{[\s\S]*\}/);
 		if (m) return JSON.parse(m[0]) as unknown;
 		throw new Error("Model returned unparseable output");
+	}
+}
+
+/** A model occasionally returns no content at all, or garbles the JSON, on an otherwise
+ * healthy request — known transient flakiness with reasoning models, not something a
+ * second identical request usually repeats. Retry once before surfacing it to the
+ * student as a failed batch/grade. A real API error (bad key, rate limit, quota) throws
+ * from callJSONOnce before reaching this catch, so it's never retried into a second
+ * billed call for a failure that won't fix itself. */
+async function callJSON(
+	cfg: LLMConfig,
+	system: string,
+	user: string | SplitUser,
+	schema: Record<string, unknown>,
+	maxTokens: number,
+	images: ImageInput[] = [],
+): Promise<unknown> {
+	try {
+		return await callJSONOnce(cfg, system, user, schema, maxTokens, images);
+	} catch (e) {
+		const msg = (e as Error).message;
+		if (msg !== "Empty model response" && msg !== "Model returned unparseable output") throw e;
+		return await callJSONOnce(cfg, system, user, schema, maxTokens, images);
 	}
 }
 
@@ -602,21 +638,59 @@ Return exactly one question per concept, in the same order as the concept list. 
  * student has opted into mixed question formats (default: on, but a real toggle —
  * see `questionFormats` setting) — this instruction is pure prompt overhead paid on
  * every single generation call with no caching in this codebase, so users who don't
- * want mc/blank shouldn't pay for it. */
+ * want the structured formats shouldn't pay for it. */
 const FORMAT_MIX_INSTRUCTIONS =
-	"\n\nAnswer format ('type'): vary the format across the batch so it isn't all one kind. Roughly one in " +
-	"three questions should be 'mc' or 'blank'; the rest 'write'.\n" +
-	"- 'write' (free response, the default): question is an open prompt; leave 'choices' as an empty array.\n" +
+	"\n\nAnswer format ('type'): a concept tagged '[format: X]' below has already been assigned that format — set " +
+	"'type' to X and write it in that shape. Use 'write' instead ONLY if X is a genuinely bad fit for that " +
+	"concept's actual content (e.g. 'match'/'multi' need several distinct related items, not one fact) — don't " +
+	"explain the substitution, just make it. A concept with no '[format: X]' tag is your own judgement call: " +
+	"default to 'write' unless it obviously suits a structured format better. Leave 'choices', 'correctChoices', " +
+	"and 'pairs' as empty arrays except where a type below says to fill them.\n" +
+	"- 'write' (free response, the default): question is an open prompt.\n" +
 	"- 'mc' (multiple choice): question is a normal question (not \"which of the following...\"); 'choices' has " +
 	"3-4 plausible options in random order, and 'modelAnswer' must equal one of them EXACTLY, character for " +
 	"character. Only use 'mc' when the concept genuinely has a small set of discrete correct answers (a term, a " +
 	"value, a category) — never for open-ended \"explain\" or \"derive\" concepts. Distractors must be plausible.\n" +
-	"- 'blank' (fill in the blank): question is a single sentence from the concept with exactly one blank written " +
-	"as '____' in place of the key term/value; 'modelAnswer' is the missing text; leave 'choices' as an empty array.";
+	"- 'blank' (fill in the blank): question is one or two sentences from the concept with 1-3 blanks written as " +
+	"'____' in place of key terms/values. 'modelAnswer' lists each blank's missing text in left-to-right order, " +
+	"separated by ' / ' (e.g. \"mitochondria / cytoplasm\"). Prefer a single blank; use more than one only when " +
+	"the concept genuinely has multiple co-located facts worth testing together in one sentence.\n" +
+	"- 'tf' (true/false): 'question' is a single factual STATEMENT to judge, not phrased as a question, and not " +
+	"hedgy or a matter of opinion. 'modelAnswer' is exactly 'True' or 'False'. Roughly half your 'tf' statements " +
+	"across the batch should be false (a plausible but wrong claim), not all true.\n" +
+	"- 'multi' (select all that apply): question asks for every option that fits; 'choices' has 4-6 options in " +
+	"random order, 'correctChoices' lists the exact text of every correct one (2 or more, and strictly fewer " +
+	"than the full option count — there must be at least one wrong option). Only use 'multi' when the concept " +
+	"has a genuine set of several correct items among plausible distractors, not a single right answer.\n" +
+	"- 'match' (matching): question asks the student to match related pairs; 'pairs' has 3-5 {left, right} " +
+	"entries (e.g. term→definition, cause→effect, step→outcome), each left and each right unique within the " +
+	"list. Only use 'match' when the concept is genuinely a set of parallel relationships, not one fact.";
 
 /** Build the question-generation system prompt: the chosen persona (or the default) on top
  * of the fixed engine rules. An empty/whitespace persona falls back to the default. */
 const tutorSystem = (persona: string): string => `${persona.trim() || DEFAULT_PERSONA}\n\n${TUTOR_RULES}`;
+
+/** A dynamic steering line appended after FORMAT_MIX_INSTRUCTIONS: without it, a model
+ * given full discretion over 'type' reliably gravitates to 'mc'/'blank' and rarely
+ * reaches for 'tf'/'multi'/'match' even on content that would suit them (observed live:
+ * a real 15-question vocabulary session generated 7 mc, 5 blank, 3 write, and not a
+ * single tf/multi/match). Naming exactly what's been used so far this session and which
+ * types are still unused turns "your discretion" into a concrete ask, without forcing a
+ * bad fit — still "if it plausibly fits," never "must use." Silent for a batch with no
+ * prior history (nothing to steer from yet) or once every type has appeared at least once. */
+function formatNudge(counts: Partial<Record<string, number>>): string {
+	const kinds = ["mc", "blank", "tf", "multi", "match"] as const;
+	const total = kinds.reduce((n, k) => n + (counts[k] ?? 0), 0);
+	if (total === 0) return "";
+	const unused = kinds.filter((k) => !(counts[k] ?? 0));
+	if (!unused.length) return "";
+	const summary = kinds.map((k) => `${k}:${counts[k] ?? 0}`).join(", ");
+	return (
+		`\n\nSo far this session the formats used are ${summary}. ${unused.join(", ")} ${unused.length === 1 ? "hasn't" : "haven't"} ` +
+		"appeared yet. If any concept below plausibly fits one of the unused ones, use it instead of reaching for " +
+		"'mc' or 'blank' again by default."
+	);
+}
 
 /** One concept the scheduler picked for this session; the LLM writes a question
  * for it. The concept id is assigned by construction, never inferred. */
@@ -626,6 +700,11 @@ export interface ConceptTarget {
 	label: string;
 	context: string;
 	targetDifficulty: "easy" | "medium" | "hard";
+	/** Assigned deterministically before the call (see seedType in view.ts), the same
+	 * way targetDifficulty is — never left to the model's own discretion. Undefined for
+	 * targets built outside the main scheduling path (bridge/routed/contagion), which
+	 * still get the model's free choice among formats. */
+	targetType?: Question["type"];
 	/** Canonical misconception tag to deliberately re-probe, if any. */
 	activeMisconception?: string;
 	/** In a connections session, the linked note to bridge this concept to. */
@@ -689,9 +768,19 @@ function questionsSchema(mixFormats: boolean): Record<string, unknown> {
 		"targetsMisconception",
 	];
 	if (mixFormats) {
-		properties.type = { type: "string", enum: ["write", "mc", "blank"] };
+		properties.type = { type: "string", enum: ["write", "mc", "blank", "tf", "multi", "match"] };
 		properties.choices = { type: "array", items: { type: "string" } };
-		required.push("type", "choices");
+		properties.correctChoices = { type: "array", items: { type: "string" } };
+		properties.pairs = {
+			type: "array",
+			items: {
+				type: "object",
+				properties: { left: { type: "string" }, right: { type: "string" } },
+				required: ["left", "right"],
+				additionalProperties: false,
+			},
+		};
+		required.push("type", "choices", "correctChoices", "pairs");
 	}
 	return {
 		type: "object",
@@ -763,15 +852,40 @@ export function questionDefect(q: Question, source: string): string | null {
 	const text = q.question.trim();
 	if (text.length < 10 || text.length > 1000) return "length";
 	if (!q.modelAnswer.trim()) return "empty model answer";
-	if (q.type === "mc") {
-		if (!q.choices || q.choices.length < 2) return "mc with too few choices";
-		if (!q.choices.includes(q.modelAnswer)) return "mc answer not among choices";
-	} else if (q.type === "blank") {
-		if (!/_{3,}/.test(text)) return "blank question missing a blank marker";
-	} else {
-		// Grill is free-response by default: an MC-style stem gives the student no
-		// options to pick, unless this question is actually typed 'mc' above.
-		if (MC_STEM.test(text)) return "multiple-choice stem";
+	switch (q.type) {
+		case "mc":
+			if (!q.choices || q.choices.length < 2) return "mc with too few choices";
+			if (!q.choices.includes(q.modelAnswer)) return "mc answer not among choices";
+			break;
+		case "blank": {
+			const blanks = text.match(/_{3,}/g) ?? [];
+			if (blanks.length === 0) return "blank question missing a blank marker";
+			if (blanks.length > 3) return "blank question has too many blanks";
+			break;
+		}
+		case "tf":
+			// Rendered as a fixed True/False pair regardless of what the model put in
+			// `choices` (normalized post-generation, below), so only the answer matters here.
+			if (!/^(true|false)$/i.test(q.modelAnswer.trim())) return "tf answer isn't true/false";
+			break;
+		case "multi": {
+			if (!q.choices || q.choices.length < 3) return "multi with too few choices";
+			if (!q.correctChoices || q.correctChoices.length < 2) return "multi needs 2+ correct choices";
+			if (!q.correctChoices.every((c) => q.choices!.includes(c))) return "multi correctChoices not among choices";
+			if (q.correctChoices.length >= q.choices.length) return "multi with no wrong option";
+			break;
+		}
+		case "match": {
+			if (!q.pairs || q.pairs.length < 3) return "match with too few pairs";
+			const lefts = new Set(q.pairs.map((p) => p.left.trim().toLowerCase()));
+			const rights = new Set(q.pairs.map((p) => p.right.trim().toLowerCase()));
+			if (lefts.size !== q.pairs.length || rights.size !== q.pairs.length) return "match pairs not unique";
+			break;
+		}
+		default:
+			// Grill is free-response by default: an MC-style stem gives the student no
+			// options to pick, unless this question is actually typed 'mc' above.
+			if (MC_STEM.test(text)) return "multiple-choice stem";
 	}
 	if (/what does (the|your) notes?\b/i.test(text)) return "asks what the note says";
 	if (YESNO_OPENER.test(text) && !OPEN_CUE.test(text) && text.length < 90) return "yes/no question";
@@ -805,6 +919,7 @@ export async function generateQuestions(
 	mode: "standard" | "connections" = "standard",
 	persona: string = DEFAULT_PERSONA,
 	mixFormats = false,
+	formatCounts: Partial<Record<string, number>> = {},
 ): Promise<Question[]> {
 	const hasBridge = targets.some((t) => t.bridge);
 	const conceptList = targets
@@ -815,7 +930,8 @@ export async function generateQuestions(
 				: t.connectTo
 					? ` [connect to note "${t.connectTo}"]`
 					: "";
-			return `${i + 1}. [note "${t.note}"] concept: "${t.label}" (aim: ${t.targetDifficulty})${reprobe}${connect}\n   source: ${t.context.slice(0, 500)}`;
+			const format = mixFormats && t.targetType ? ` [format: ${t.targetType}]` : "";
+			return `${i + 1}. [note "${t.note}"] concept: "${t.label}" (aim: ${t.targetDifficulty})${format}${reprobe}${connect}\n   source: ${t.context.slice(0, 500)}`;
 		})
 		.join("\n");
 	// Split so the notes+links (often identical across several batch calls in a
@@ -852,7 +968,7 @@ export async function generateQuestions(
 				"conflict with the rules above.\n" +
 				`<preferences>\n${instructions}\n</preferences>`
 			: "") +
-		(mixFormats ? FORMAT_MIX_INSTRUCTIONS : "");
+		(mixFormats ? FORMAT_MIX_INSTRUCTIONS + formatNudge(formatCounts) : "");
 	type RawQ = Omit<Question, "node" | "conceptId"> & { n?: number };
 	const data = (await callJSON(cfg, tutorSystem(persona), { cacheable, rest }, questionsSchema(mixFormats), 8000, images)) as {
 		questions: RawQ[];
@@ -894,6 +1010,10 @@ export async function generateQuestions(
 			// otherwise force "write" regardless of what a model might volunteer.
 			type: mixFormats ? (q.type ?? "write") : "write",
 			choices: mixFormats ? (q.choices ?? []).map(cleanText) : [],
+			correctChoices: mixFormats ? (q.correctChoices ?? []).map(cleanText) : [],
+			pairs: mixFormats
+				? (q.pairs ?? []).map((p) => ({ left: cleanText(p.left ?? ""), right: cleanText(p.right ?? "") }))
+				: [],
 		};
 		// Self-heal an mc answer that doesn't exactly match one of its own choices: try
 		// a normalized match and snap modelAnswer to that choice's exact text, rather
@@ -902,6 +1022,28 @@ export async function generateQuestions(
 			const want = normalizeForMatch(candidate.modelAnswer);
 			const hit = candidate.choices.find((c) => normalizeForMatch(c) === want);
 			if (hit) candidate.modelAnswer = hit;
+		}
+		// Same self-heal for 'multi': snap each correctChoices entry back to its exact
+		// choice text by normalized match, dropping any that don't resolve to a real
+		// option at all (rather than grading against a phantom "correct" choice later).
+		if (candidate.type === "multi" && candidate.choices?.length && candidate.correctChoices?.length) {
+			candidate.correctChoices = candidate.correctChoices
+				.map((c) => candidate.choices!.find((o) => normalizeForMatch(o) === normalizeForMatch(c)) ?? null)
+				.filter((c): c is string => c !== null);
+			candidate.modelAnswer = candidate.correctChoices.join(", ");
+		}
+		// 'tf' is always rendered as a fixed True/False pair (never the model's own
+		// 'choices' text) — normalize casing here so a well-formed but oddly-cased
+		// answer ("TRUE", "false") isn't dropped by the defect check below.
+		if (candidate.type === "tf") {
+			const norm = candidate.modelAnswer.trim().toLowerCase();
+			if (norm === "true" || norm === "false") candidate.modelAnswer = norm === "true" ? "True" : "False";
+			candidate.choices = ["True", "False"];
+		}
+		// 'match': build a reliable human-readable modelAnswer from the pairs themselves
+		// for the feedback screen, rather than trusting the model's own prose there.
+		if (candidate.type === "match" && candidate.pairs?.length) {
+			candidate.modelAnswer = candidate.pairs.map((p) => `${p.left} → ${p.right}`).join("; ");
 		}
 		// Deterministic quality gate (drop-and-continue): skip slop rather than quiz
 		// it. A dropped concept just goes unasked this batch; we only fail if nothing

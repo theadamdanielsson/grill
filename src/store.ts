@@ -423,7 +423,9 @@ export class GrillStore {
 				hints: q.hints,
 				...(q.authored ? { authored: true, rubric: q.rubric } : {}),
 				...(q.targetsMisconception ? { targetsMisconception: q.targetsMisconception } : {}),
-				...(q.type && q.type !== "write" ? { type: q.type, choices: q.choices } : {}),
+				...(q.type && q.type !== "write"
+					? { type: q.type, choices: q.choices, correctChoices: q.correctChoices, pairs: q.pairs }
+					: {}),
 			}));
 		if (redo.length) {
 			lines.push("## Redo", "", "```grill-redo", JSON.stringify({ v: 1, questions: redo }), "```", "");

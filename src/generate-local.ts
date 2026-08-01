@@ -379,7 +379,16 @@ function parseGrillCallout(lines: string[], start: number): { item: LocalItem; n
 
 // ------------------------------------------------------------ per-note walk
 
-const ITEM_CAP_PER_NOTE = 12;
+// This is the ceiling on how many concepts a note can EVER have, in either local or AI
+// mode (extractConcepts feeds both) — not a per-session pacing limit, which is handled
+// separately by questionsPerSession/maxNotesPerSession/due rotation. Content past this
+// cap is permanently invisible to the scheduler, no matter how many sessions run, since
+// the walk below stops scanning once it's collected this many items (first N in
+// document order). Was 12, which silently truncated any content-dense note (a
+// vocabulary list, a long glossary) to only ever quiz its first ~12 terms forever;
+// raised well past realistic note sizes so pacing, not this cap, is what limits a
+// session.
+const ITEM_CAP_PER_NOTE = 80;
 
 function itemsForNote(text: string, cap: number, mixFormats: boolean): LocalItem[] {
 	const body = stripFrontmatter(text).replace(/<!--[\s\S]*?-->/g, "");

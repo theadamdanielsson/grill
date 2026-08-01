@@ -1,5 +1,38 @@
 # Changelog
 
+## 3.1.0
+
+- **Three new question formats**: true/false, select-all-that-apply, and matching, joining
+  the existing write/multiple-choice/fill-in-the-blank. All three grade instantly, no AI
+  round-trip needed. Format is now assigned deterministically per concept rather than left
+  to the model's own judgment — left to itself, a model reliably regresses to only
+  multiple-choice and fill-in-the-blank even when explicitly offered the rest; forcing an
+  assignment (the same way question difficulty is already forced, not suggested) fixed it in
+  live testing. Fill-in-the-blank can now also carry up to three blanks in one sentence
+  instead of exactly one.
+- **The mastery/graph score is rebuilt on the FSRS memory strength Grill already computes**,
+  instead of a raw answer streak (wiped to zero by a single miss) and lifetime-cumulative
+  accuracy (an old mistake could drag a note's score down forever, even long after you'd
+  since re-learned it properly). A lapse now degrades a concept's score rather than erasing
+  it, and coverage no longer scales with however many concepts a dense note happens to
+  contain — a long vocabulary list doesn't need proportionally more before it reads
+  "covered" than a short one. The "Grade weighting" setting's default shifts from
+  coverage-heavy to mastery-first accordingly (existing vaults migrate automatically).
+- Fixed a real cap that silently limited every note to its first 12 extractable concepts,
+  in document order, forever — content past that point in a long or dense note was never
+  reachable by any session, no matter how many you ran. Raised well past realistic note
+  sizes.
+- Fixed the "reuse generated questions" cache: once a concept had accumulated its maximum
+  stored variants, it would keep rotating the same ones indefinitely and never generate a
+  fresh question again, regardless of the reuse setting — meaning a generator improvement
+  (a new format, a prompt fix) could never reach an already-mature concept. Added a
+  "Clear cached questions" button (Settings) as an immediate escape hatch.
+- Question generation now retries once automatically on an empty or garbled model response
+  before surfacing it as a failure — a known occasional flakiness with reasoning models that
+  a second identical request usually doesn't repeat.
+- Multi-selecting several notes (or folders) in the file explorer and right-clicking now
+  offers "Grill these N notes," alongside the existing single-note/single-folder options.
+
 ## 3.0.0
 
 - **The full arcade redesign.** Grill's look used to stop at the banner: the rest of the

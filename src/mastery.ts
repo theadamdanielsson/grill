@@ -30,11 +30,24 @@ export type MasteryMap = Record<string, NoteMastery>;
 
 export type NoteStatus = "untested" | "struggling" | "known";
 
-/** Anti-luck: a concept is only "known" once it has been recalled correctly this
- * many times in a row. One lucky answer on a stochastically-generated question is
- * not mastery, so a single correct leaves the concept provisional (still in
- * rotation) until a second recall corroborates it. */
+/** Anti-luck, kept for `conceptTargetDifficulty`'s difficulty ramp; no longer what
+ * gates "known" (see `S_SOLID` below) — a raw consecutive-correct streak resets to
+ * zero on any single miss, discarding real prior strength, so status now reads off
+ * FSRS stability instead, which degrades on a lapse rather than erasing. */
 export const KNOWN_MIN_STREAK = 2;
+/** FSRS stability (days) a concept must reach to read "known". Calibrated against
+ * real data, not just the FSRS formula in the abstract: stability at streak>=2 (the
+ * old "known" bar) varies hugely in practice — observed 0.48 to 10+ days across one
+ * real vault, median ~5.8 — because it depends on how much time actually elapsed
+ * between reviews, not just the count. A higher value (e.g. 9, matching a literal
+ * "~2 spaced recalls" back-of-envelope) reads as STRICTER than the old streak gate
+ * for a large share of real concepts, which is the wrong direction: the point of
+ * this switch was to stop a single lapse from wiping out real prior strength, not to
+ * raise the bar. 5 sits at the empirical median, so roughly as many concepts clear
+ * it as would have hit streak>=2 before, while first-answer confidence (stability
+ * ~1.6-2.2 off one correct) still stays comfortably low (~32-44%) — still
+ * provisional, not instant mastery. */
+export const S_SOLID = 5;
 
 export function emptyMastery(): NoteMastery {
 	return {
@@ -80,8 +93,10 @@ export function statusOf(m: (Schedulable & { aggStatus?: NoteStatus }) | undefin
 	if (!m) return "untested";
 	if (m.aggStatus) return m.aggStatus;
 	if (m.correct === 0 && m.incorrect === 0 && m.partial === 0) return "untested";
-	// Corroboration required: one correct answer is provisional, not mastery.
-	return m.streak >= KNOWN_MIN_STREAK ? "known" : "struggling";
+	// Durable-memory gate, not a streak: a lapse degrades stability (see
+	// nextStabilityAfterFailure) rather than zeroing it, so a concept that's been
+	// solidly re-demonstrated since an old miss correctly reads "known" again.
+	return m.stability !== null && m.stability >= S_SOLID ? "known" : "struggling";
 }
 
 // ---------------------------------------------------------------- FSRS-4.5
@@ -98,6 +113,25 @@ function clamp(v: number, min: number, max: number): number {
 export function retrievability(stability: number, elapsedDays: number): number {
 	if (stability <= 0 || elapsedDays <= 0) return 1;
 	return Math.pow(1 + elapsedDays / (9 * stability), -1);
+}
+
+/** A concept's current mastery, 0-1: "how likely you'd recall this right now,
+ * discounted for how provisional that recall still is." `null` until first tested.
+ *
+ * retrievability(stability, elapsed) is FSRS's own recency-weighted recall estimate
+ * — it decays as time passes since `lastSeen` and jumps back up on review, so it
+ * never reads as a frozen lifetime average the way raw correct/incorrect counters
+ * do. `confidence` (stability/S_SOLID, capped at 1) is the anti-luck term that
+ * replaces the old streak-of-2 gate: a single fresh correct has low stability, so
+ * it reads as provisional (~0.18) rather than instant mastery, but stability
+ * compounds fast on spaced success and saturates by roughly the second spaced
+ * recall — the same "prove it twice" intuition, just continuous and driven by
+ * actual memory strength instead of a counter a single lapse wipes to zero. */
+export function conceptMasteryScore(m: Schedulable, now = new Date()): number | null {
+	if (m.stability === null) return null;
+	const elapsedDays = m.lastSeen ? (now.getTime() - new Date(m.lastSeen).getTime()) / 86400_000 : 0;
+	const confidence = Math.min(1, m.stability / S_SOLID);
+	return retrievability(m.stability, elapsedDays) * confidence;
 }
 
 /** Verdict → FSRS rating (1=again, 2=hard, 3=good, 4=easy), difficulty-aware on

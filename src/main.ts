@@ -79,8 +79,9 @@ interface GrillSettings {
 	graphColorMode: ColorMode;
 	/** Numeric grade overlay on graph nodes: off, or a display scale. */
 	graphNumberMode: NumberMode;
-	/** How much a note's grade score weighs coverage (finishing the note) vs accuracy
-	 * (how well you've done on the parts you've been tested on), 0-100. */
+	/** How much a note's grade score weighs coverage (how much of the note is
+	 * confirmed) vs mastery (how well you'd currently recall the parts you've
+	 * studied), 0-100. */
 	graphCoverageWeight: number;
 }
 
@@ -123,7 +124,7 @@ function defaultSettings(): GrillSettings {
 		conceptsMigrated: false,
 		graphColorMode: "mastery",
 		graphNumberMode: "off",
-		graphCoverageWeight: 60,
+		graphCoverageWeight: 15,
 	};
 }
 
@@ -173,6 +174,13 @@ export default class GrillPlugin extends Plugin {
 			settings.graphNumberMode = s.graphNumberMode as NumberMode;
 		}
 		if (typeof s.graphCoverageWeight === "number") settings.graphCoverageWeight = s.graphCoverageWeight;
+		// One-time migration: 60 was the only default this setting ever shipped with,
+		// before the mastery model rewrite (graph.ts) dropped the shipped default to 15
+		// — the old figure was tuned around a lifetime-accuracy score that doesn't exist
+		// anymore. A stored 60 is essentially never a deliberate choice on a 0-100
+		// slider; carry untouched installs to the new default instead of leaving them
+		// stuck weighting coverage 4x heavier than intended against the new score.
+		if (s.graphCoverageWeight === 60) settings.graphCoverageWeight = 15;
 		const calibration = Array.isArray(stored?.calibration) ? stored!.calibration.filter(isCalPoint) : [];
 		this.data = { settings, calibration };
 
@@ -233,6 +241,28 @@ export default class GrillPlugin extends Plugin {
 							}),
 					);
 				}
+			}),
+		);
+		// Multi-selection in the file explorer (shift/cmd-click several notes and/or
+		// folders, then right-click) gets its own event, separate from single-file-menu.
+		this.registerEvent(
+			this.app.workspace.on("files-menu", (menu, files) => {
+				const notes = new Map<string, TFile>();
+				for (const f of files) {
+					if (f instanceof TFile && f.extension === "md") notes.set(f.path, f);
+					else if (f instanceof TFolder) {
+						for (const md of this.app.vault.getMarkdownFiles()) {
+							if (md.path.startsWith(f.path + "/")) notes.set(md.path, md);
+						}
+					}
+				}
+				if (!notes.size) return;
+				menu.addItem((i) =>
+					i
+						.setTitle(`Grill these ${notes.size} note${notes.size === 1 ? "" : "s"}`)
+						.setIcon("flame")
+						.onClick(() => void this.startScoped([...notes.values()])),
+				);
 			}),
 		);
 		if (!Platform.isMobile) {
@@ -576,13 +606,14 @@ class GrillSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Question formats")
 			.setDesc(
-				"Mixed adds multiple-choice and fill-in-the-blank alongside the usual write-in-the-box questions. " +
+				"Mixed adds multiple-choice, fill-in-the-blank, true/false, select-all-that-apply, and matching " +
+					"alongside the usual write-in-the-box questions, picked per concept based on what actually fits it. " +
 					"In AI mode this costs a little extra prompt on every question batch, so it's a real toggle, not " +
 					"just always on.",
 			)
 			.addDropdown((d) =>
 				d
-					.addOption("mixed", "Mixed (write, multiple-choice, fill-in-the-blank)")
+					.addOption("mixed", "Mixed (write, multiple-choice, fill-in-the-blank, true/false, and more)")
 					.addOption("write", "Write only")
 					.setValue(s.questionFormats)
 					.onChange(async (v) => {
@@ -886,6 +917,21 @@ class GrillSettingTab extends PluginSettingTab {
 		);
 
 		new Setting(containerEl)
+			.setName("Clear cached questions")
+			.setDesc(
+				"Forces every concept to write a fresh question next time it's due, instead of waiting to " +
+					"naturally cycle through 'Reuse generated questions' above. Useful right after a Grill update " +
+					"changes how questions are written (a new format, a prompt fix) so it reaches concepts you've " +
+					"already studied a lot, not just new ones. Doesn't affect a session already open.",
+			)
+			.addButton((b) =>
+				b.setButtonText("Clear").onClick(async () => {
+					await this.plugin.store.saveQuestionBank({});
+					new Notice("Grill: cleared cached questions.");
+				}),
+			);
+
+		new Setting(containerEl)
 			.setName("Careful grading")
 			.setDesc(
 				"When AI grades your answer, run a small consensus of calls and fall back to the stricter verdict on " +
@@ -957,7 +1003,7 @@ class GrillSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Colour by")
 			.setDesc(
-				"Mastery is the default: grey untested, red struggling, amber in-progress, green known. The " +
+				"Mastery is the default: grey untested, red learning, amber in-progress, green known. The " +
 					"others colour every practised note on a green-to-red scale by a different signal, so you can " +
 					"spot what needs attention at a glance instead of reading it note by note.",
 			)
@@ -978,7 +1024,7 @@ class GrillSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Grade numbers on the graph")
 			.setDesc(
-				"Show a number on every practised node: your current coverage and accuracy on that note folded " +
+				"Show a number on every practised node: your current coverage and mastery on that note folded " +
 					"into one score, so you can read \"what would I score on this right now\" at a glance instead of " +
 					"just a colour. Untested notes show nothing.",
 			)
@@ -1000,9 +1046,11 @@ class GrillSettingTab extends PluginSettingTab {
 			this.sliderSetting(
 				containerEl,
 				"Grade weighting",
-				"How much the score weighs coverage (finishing the note) against accuracy (how well you've done " +
-					"on what's actually been tested). Left: pure accuracy, so one right answer can already read " +
-					"100%. Right: pure coverage, so the score stays low until most of the note is confirmed.",
+				"How much the score weighs coverage (how much of the note you've confirmed, capped so a long " +
+					"note isn't penalised for its length) against mastery (how well you'd recall what you've " +
+					"actually studied right now, from spaced review, not a single lucky answer). Left: pure " +
+					"mastery. Right: pure coverage, so the score stays low until a representative slice of the " +
+					"note is confirmed.",
 				0,
 				100,
 				s.graphCoverageWeight,

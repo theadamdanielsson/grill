@@ -712,6 +712,98 @@
 }
 .grill-hint p { margin: 0; }
 
+/* True/false: the same mc row/button, just forced into a side-by-side pair instead of
+   a stacked column, with a fixed (not answer-dependent) left-border tint on each side
+   so it doesn't leak which one is correct. */
+.grill-mc-row:has(.grill-tf-btn) {
+  flex-direction: row;
+}
+.grill-tf-btn {
+  flex: 1;
+  text-align: center;
+  border-left: 3px solid transparent;
+}
+.grill-tf-btn:nth-of-type(1) {
+  border-left-color: color-mix(in srgb, var(--grill-accent, var(--interactive-accent)) 55%, transparent);
+}
+.grill-tf-btn:nth-of-type(2) {
+  border-left-color: color-mix(in srgb, var(--grill-flame-hot, #ff5a1f) 55%, transparent);
+}
+
+/* Select all that apply: same footprint as mc's options, but selection persists (no
+   disable-on-click) until Submit, so a chosen option needs its own "on" state. */
+.grill-multi-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4em;
+  margin-bottom: 0.5em;
+}
+.grill-multi-btn {
+  width: 100%;
+  text-align: left;
+  white-space: normal;
+  height: auto;
+  padding: 0.5em 0.75em;
+}
+.grill-multi-btn.is-selected {
+  background: var(--grill-accent, var(--interactive-accent));
+  color: var(--grill-accent-contrast, var(--text-on-accent));
+}
+
+/* Matching: fixed-order left column of prompts, shuffled right-column pool. Tap a left
+   row to arm it (gets the accent outline), then tap a right option to assign it. */
+.grill-match-wrap {
+  display: flex;
+  gap: 1em;
+  margin-bottom: 0.5em;
+}
+.grill-match-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4em;
+}
+.grill-match-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5em;
+  padding: 0.5em 0.75em;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s, 4px);
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    transform 0.15s ease;
+}
+.grill-match-row.is-armed {
+  border-color: var(--grill-accent, var(--interactive-accent));
+  background: color-mix(in srgb, var(--grill-accent, var(--interactive-accent)) 10%, transparent);
+}
+.grill-match-label {
+  overflow-wrap: anywhere;
+}
+.grill-match-slot {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 45%;
+}
+.grill-match-btn {
+  width: 100%;
+  text-align: left;
+  white-space: normal;
+  height: auto;
+  padding: 0.5em 0.75em;
+}
+.grill-match-btn.is-used {
+  opacity: 0.4;
+  pointer-events: none;
+}
 /* Press Start 2P (SIL OFL 1.1, see fonts/PressStart2P-OFL.txt), subset to basic
  * Latin + digits and embedded inline so the plugin stays a single bundled file.
  * Grill's own retro arcade identity (see docs/hero.svg) — used with intent for HUD
