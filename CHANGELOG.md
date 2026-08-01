@@ -1,5 +1,42 @@
 # Changelog
 
+## 2.5.6
+
+- **The full arcade redesign.** Grill's look used to stop at the banner: the rest of the
+  plugin fell back to generic Obsidian styling with an orange accent layered on top. Every
+  screen now wears the same identity pulled directly from `docs/hero.svg`'s actual palette:
+  the gold/ember double frame with square corner rivets, the dot-grid CRT ground, scanlines,
+  and a slow flame glow rising from the base. The start screen, progress dashboard,
+  first-run onboarding, and the session summary ("high score" screen) all get the full
+  cabinet treatment. The question/answer flow and post-answer feedback screen get a lighter
+  touch on purpose: they stay on your own Obsidian theme and just pick up Grill's accent
+  color on the progress bar and the Submit/Hint buttons, since legibility while actually
+  studying matters more than brand consistency there.
+- The learning graph now uses the same fixed arcade palette as everything else instead of
+  theme-derived colors, so it no longer looks like a different, more "modern" app bolted
+  onto the cabinet. Practised nodes get a soft glow in their own color, the numeric overlay
+  uses the pixel face, and note-name labels only fade in once you've genuinely zoomed into
+  a small cluster instead of showing all of them at once as an unreadable wall of
+  overlapping text. Nodes also got more collision clearance now that they carry a badge and
+  sometimes a glow on top of what used to be a bare dot.
+- Fixed the cabinet not actually filling its pane: there were two separate layers of
+  padding fighting it (the wrap's own, and Obsidian's native pane padding underneath), a
+  `max-width` cap left over from the reading-width question flow, and an outset gold
+  border that needed a pixel of room beyond its own edge to render, which doesn't exist
+  once an element fills the pane exactly, so it was quietly getting clipped on the sides
+  with no margin left to spare.
+- Fixed interactive elements (filter chips, the "Back to menu" button) losing their
+  background on `:focus`/`:active`, which persists after a click unlike `:hover`, which
+  just fades when the cursor leaves. Obsidian's own button styling sets a theme-dependent
+  background on both, so on a light Obsidian theme these were going gold-text-on-white:
+  invisible. Also fixed a related bug this introduced: an active/selected filter chip
+  losing its gold "on" state right at the moment you clicked it, since `:focus`/`:active`
+  have higher CSS specificity than a single `.is-active` class.
+- Filter chips no longer wrap to a second line (a lone "Unlinked" stranded by itself) and
+  the settings page picked up the same accent language (a gold/ember gradient section
+  rule) without the full cabinet treatment, since you're configuring the plugin there, not
+  looking at the banner.
+
 ## 2.5.5
 
 - Fixed a due-only session ("Review N due now", the status bar, "Review due

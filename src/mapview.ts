@@ -20,7 +20,7 @@ import {
 	type SimulationLinkDatum,
 } from "d3-force";
 import type { LearningGraph, GraphNode, EdgeTier } from "./graph";
-import { nodeRadius } from "./graph";
+import { nodeRadius, gradeScore, formatGrade, type GradeFormat } from "./graph";
 
 export interface MapPalette {
 	unpracticed: string;
@@ -32,6 +32,53 @@ export interface MapPalette {
 	edgeProven: string;
 	text: string;
 	ring: string;
+	/** The canvas's own backdrop colour. Used for a thin ring around every node, so a
+	 * node stays legible where it overlaps an edge or another node, instead of a stroke
+	 * that would add data-weight ink of its own. */
+	surface: string;
+}
+
+/** What a node's colour encodes. "mastery" is the original 4-state status; the rest are
+ * continuous 0-1 metrics rendered as a gradient between two palette colours. */
+export type ColorMode = "mastery" | "recency" | "dueness" | "misconceptions";
+
+/** Numeric overlay next to each node: off, or a formatted grade score. */
+export type NumberMode = "off" | GradeFormat;
+
+/** Parse any CSS colour canvas would accept (#hex, #rgb, rgb(), rgba()) into 0-255 components.
+ * getComputedStyle resolves CSS custom properties to rgb()/rgba(), not the hex literals the
+ * palette's fallbacks use, so a gradient lerp needs to handle both forms, not just hex. */
+function parseColor(c: string): [number, number, number] {
+	const s = c.trim();
+	if (s.startsWith("#")) {
+		const hex = s.length === 4 ? s.replace(/[0-9a-f]/gi, (ch) => ch + ch) : s;
+		const n = parseInt(hex.slice(1, 7), 16);
+		return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+	}
+	const m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/.exec(s);
+	if (m) return [Number(m[1]), Number(m[2]), Number(m[3])];
+	return [128, 128, 128]; // unparseable: neutral grey rather than a crash
+}
+
+/** Linear-interpolate between two CSS colours, t clamped 0-1. */
+function lerpColor(a: string, b: string, t: number): string {
+	const ct = Math.min(1, Math.max(0, t));
+	const [r1, g1, b1] = parseColor(a);
+	const [r2, g2, b2] = parseColor(b);
+	const r = Math.round(r1 + (r2 - r1) * ct);
+	const g = Math.round(g1 + (g2 - g1) * ct);
+	const bl = Math.round(b1 + (b2 - b1) * ct);
+	return `rgb(${r}, ${g}, ${bl})`;
+}
+
+/** Black or white, whichever reads clearly on top of `bg` (WCAG relative luminance,
+ * threshold 0.5). A number badge drawn inside a node needs this: the node's fill swings
+ * from deep red to bright green to grey depending on colour mode, and a single fixed text
+ * colour (the theme's normal text colour) disappears against roughly half of that range. */
+function contrastText(bg: string): string {
+	const [r, g, b] = parseColor(bg);
+	const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+	return lum > 0.55 ? "#000000" : "#ffffff";
 }
 
 /** Display settings mirrored from the user's Obsidian graph (graph.json). Force values are
@@ -60,6 +107,49 @@ function nodeColour(state: GraphNode["state"], p: MapPalette): string {
 		default:
 			return p.unpracticed;
 	}
+}
+
+/** Days it takes a metric to fully redden, per non-mastery colour mode. Tuned so the
+ * gradient actually moves within a normal study cadence: staleness maxes out around a
+ * month untouched, overdue maxes out two weeks past due (FSRS intervals are usually much
+ * shorter than that, so "way overdue" should read as genuinely alarming, not routine). */
+const RECENCY_WINDOW_DAYS = 30;
+const OVERDUE_WINDOW_DAYS = 14;
+/** Misconception count that fully reddens a node. */
+const MISCONCEPTION_WINDOW = 3;
+
+const DAY_MS = 86_400_000;
+
+/** 0 (safe/green) to 1 (urgent/red) for a non-mastery colour mode. Null for an unpracticed
+ * node — the caller renders those as the plain unpracticed grey regardless of mode, since
+ * "never studied" isn't a position on any of these scales. */
+function badness(nd: GraphNode, mode: ColorMode, now: number): number | null {
+	if (nd.state === "unpracticed") return null;
+	switch (mode) {
+		case "recency": {
+			if (!nd.lastSeen) return null;
+			const days = (now - new Date(nd.lastSeen).getTime()) / DAY_MS;
+			return Math.min(1, Math.max(0, days / RECENCY_WINDOW_DAYS));
+		}
+		case "dueness": {
+			if (!nd.dueAt) return null;
+			const overdueDays = (now - new Date(nd.dueAt).getTime()) / DAY_MS;
+			return Math.min(1, Math.max(0, overdueDays / OVERDUE_WINDOW_DAYS));
+		}
+		case "misconceptions":
+			return Math.min(1, nd.misconceptions / MISCONCEPTION_WINDOW);
+		case "mastery":
+			return null;
+	}
+}
+
+/** Resolve a node's fill colour for the active colour mode: the original 4-state mastery
+ * colour, or a green-to-red gradient over a continuous metric (badness 0..1). */
+function nodeFillColour(nd: GraphNode, mode: ColorMode, p: MapPalette, now: number): string {
+	if (mode === "mastery") return nodeColour(nd.state, p);
+	const b = badness(nd, mode, now);
+	if (b === null) return p.unpracticed;
+	return lerpColor(p.known, p.struggling, b);
 }
 
 export class LearningMap {
@@ -91,6 +181,10 @@ export class LearningMap {
 	private userMoved = false;
 	private ap: GraphAppearance;
 
+	private colorMode: ColorMode = "mastery";
+	private numberMode: NumberMode = "off";
+	private coverageWeight = 0.6;
+
 	// Interaction.
 	private mode: "none" | "pan" | "drag" = "none";
 	private drag: SimNode | null = null;
@@ -111,8 +205,12 @@ export class LearningMap {
 		private onPersist?: (pos: Record<string, { x: number; y: number }>) => void,
 		settled = false,
 		appearance?: Partial<GraphAppearance>,
+		display?: { colorMode?: ColorMode; numberMode?: NumberMode; coverageWeight?: number },
 	) {
 		this.ap = { ...DEFAULT_APPEARANCE, ...(appearance ?? {}) };
+		if (display?.colorMode) this.colorMode = display.colorMode;
+		if (display?.numberMode) this.numberMode = display.numberMode;
+		if (display?.coverageWeight !== undefined) this.coverageWeight = display.coverageWeight;
 		this.win = canvas.ownerDocument.defaultView ?? window;
 		this.ctx = canvas.getContext("2d") as CanvasRenderingContext2D;
 
@@ -127,18 +225,26 @@ export class LearningMap {
 		// d3-force: Obsidian-like forces. Link strength defaults to 1/min(degree), which
 		// keeps hub nodes from collapsing; collision gives nodes breathing room.
 		this.sim = forceSimulation<SimNode, SimLink>(this.nodes)
-			.force("charge", forceManyBody<SimNode>().strength(-150).distanceMax(700))
+			.force("charge", forceManyBody<SimNode>().strength(-210).distanceMax(700))
 			.force(
 				"link",
 				forceLink<SimNode, SimLink>(this.links)
 					.id((d) => d.id)
-					.distance(46),
+					.distance(58),
 			)
-			.force("collide", forceCollide<SimNode>().radius((d) => this.radius(d) + 4).strength(0.85))
+			// More padding than a bare visual gap: this graph now also carries a numeric
+			// badge and (sometimes) a glow on top of each node, both of which need real
+			// clearance from the neighbour, not just enough to keep two plain dots apart.
+			.force("collide", forceCollide<SimNode>().radius((d) => this.radius(d) + 9).strength(0.9))
 			.force("x", forceX<SimNode>(0).strength(0.055))
 			.force("y", forceY<SimNode>(0).strength(0.055))
 			.velocityDecay(0.4)
-			.alpha(settled ? 0.15 : 1)
+			// A bit hotter than before (was 0.15) on an already-settled, saved layout: the
+			// collision radius just grew a fair amount (nodes now carry a badge + glow,
+			// not just a bare dot), and existing saved positions were packed for the old,
+			// tighter spacing. This lets it resettle into the new spacing over the next
+			// couple of sessions rather than barely nudging for weeks.
+			.alpha(settled ? 0.35 : 1)
 			.on("tick", () => this.requestDraw())
 			.on("end", () => {
 				if (!this.userMoved) this.fit();
@@ -150,10 +256,33 @@ export class LearningMap {
 		this.resize();
 		this.fit();
 		this.requestDraw();
+		// Canvas text doesn't repaint itself when a @font-face finishes loading (unlike
+		// DOM text) — if the very first draw() lands before "Grill Pixel" is decoded, the
+		// numeric overlay would silently fall back to the generic monospace font and stay
+		// that way until something else triggers a redraw. Force one once the font is
+		// confirmed ready, so the pixel face is never a race.
+		this.win.document.fonts?.load('9px "Grill Pixel"').finally(() => {
+			if (!this.disposed) this.requestDraw();
+		});
 	}
 
 	setHighlight(ids: Set<string> | null): void {
 		this.highlight = ids;
+		this.requestDraw();
+	}
+
+	/** Switch what node colour encodes. Redraws only — no re-layout, so flipping modes
+	 * doesn't disturb the simulation or the user's dragged positions. */
+	setColorMode(mode: ColorMode): void {
+		this.colorMode = mode;
+		this.requestDraw();
+	}
+
+	/** Switch the numeric overlay (off, or a grade format) and/or the coverage/accuracy
+	 * weighting it's computed with. Either argument may be omitted to leave it unchanged. */
+	setNumberDisplay(mode?: NumberMode, coverageWeight?: number): void {
+		if (mode !== undefined) this.numberMode = mode;
+		if (coverageWeight !== undefined) this.coverageWeight = coverageWeight;
 		this.requestDraw();
 	}
 
@@ -230,7 +359,10 @@ export class LearningMap {
 	}
 	private radius(nd: SimNode): number {
 		// Gentle size range so "covered" notes are only slightly larger, not oversized.
-		return nodeRadius(nd.strength, 4.5, 11) * this.ap.nodeScale;
+		// A bit larger across the board when the numeric overlay is on: "78%"/"B+" needs
+		// real room to sit inside the shape rather than spill past its edges.
+		const [minR, maxR] = this.numberMode === "off" ? [4.5, 11] : [7, 14];
+		return nodeRadius(nd.strength, minR, maxR) * this.ap.nodeScale;
 	}
 
 	/** Trace a node's shape: a rounded square for practised ("covered") notes — a filled-in
@@ -425,6 +557,7 @@ export class LearningMap {
 		const fset = this.focusSet;
 		const fid = this.focusNode?.id ?? null;
 		const ls = this.ap.lineScale;
+		const now = Date.now();
 
 		// Dim factors — deliberately gentle (Obsidian fades, it doesn't black out). Hover
 		// fades non-neighbours toward NODE_DIM as hv rises; scope-pick uses a fixed dim.
@@ -493,39 +626,75 @@ export class LearningMap {
 		}
 
 		// Nodes: practised notes are rounded squares (filled-in cells), un-practised ones
-		// plain dots. Scope-highlighted nodes get a glow so it's obvious what a session covers.
+		// plain dots. Practised nodes get a soft glow in their own colour — the same
+		// lit-vs-dormant language as the stat tiles and heatmap, so a "known" node reads
+		// as lit up rather than just a different flat fill. Scope-highlighted nodes get a
+		// brighter ring on top so it's obvious what a session covers. The numeric overlay
+		// (if on) is drawn right here in the pixel face, inside the same shape, in
+		// whichever of black/white actually reads against THIS node's fill colour.
+		if (this.numberMode !== "off") {
+			ctx.font = "9px \"Grill Pixel\", monospace";
+			ctx.textAlign = "center";
+			ctx.textBaseline = "middle";
+		}
 		for (const nd of this.nodes) {
 			const x = this.sx(nd);
 			const y = this.sy(nd);
 			const r = this.radius(nd);
 			const square = nd.state !== "unpracticed";
-			ctx.globalAlpha = dimNode(nd.id);
-			ctx.fillStyle = nodeColour(nd.state, this.palette);
+			const fill = nodeFillColour(nd, this.colorMode, this.palette, now);
+			const alpha = dimNode(nd.id);
+			ctx.globalAlpha = alpha;
+			ctx.fillStyle = fill;
 			if (litScope(nd.id)) {
 				ctx.shadowColor = this.palette.ring;
 				ctx.shadowBlur = 18;
+			} else if (square) {
+				ctx.shadowColor = fill;
+				ctx.shadowBlur = 7;
 			}
 			this.nodePath(x, y, r, square);
 			ctx.fill();
 			ctx.shadowBlur = 0;
+			// Surface ring: a thin stroke in the canvas's own backdrop colour around every
+			// node, so it stays legible where it overlaps an edge or another node — the
+			// separation comes from this ring, not from a heavier, data-coloured border.
+			ctx.strokeStyle = this.palette.surface;
+			ctx.lineWidth = 1.4;
+			this.nodePath(x, y, r, square);
+			ctx.stroke();
 			if (litScope(nd.id)) {
 				ctx.strokeStyle = this.palette.ring;
 				ctx.lineWidth = 2;
 				this.nodePath(x, y, r + 3, square);
 				ctx.stroke();
 			}
+			if (this.numberMode !== "off") {
+				const score = gradeScore(nd, this.coverageWeight);
+				if (score !== null && x >= -60 && x <= w + 60 && y >= -20 && y <= h + 20) {
+					ctx.globalAlpha = alpha;
+					ctx.fillStyle = contrastText(fill);
+					ctx.fillText(formatGrade(score, this.numberMode), x, y + 0.5);
+				}
+			}
 		}
 
 		// Labels — fade in as you zoom past the fit-to-frame zoom. Only the hovered node's
-		// name is forced on (faded in with the hover), like the native graph.
+		// name is forced on (faded in with the hover), like the native graph. The
+		// threshold is deliberately high and the ramp slow: at a moderate zoom a dense
+		// graph has dozens of nodes on screen at once, and showing all of their names
+		// together is a wall of overlapping text, not a legible label — better to hold
+		// off until the user has zoomed into a genuinely small cluster.
 		const zoom = this.scale / (this.fitScale || 1);
-		const threshold = Math.max(0.9, 1.35 - this.ap.textFade * 0.25);
-		const labelAlpha = Math.max(0, Math.min(1, (zoom - threshold) / 0.5));
+		const threshold = Math.max(1.6, 2.4 - this.ap.textFade * 0.25);
+		const labelAlpha = Math.max(0, Math.min(1, (zoom - threshold) / 1.1));
 		if (labelAlpha > 0.02 || (fid && hv > 0.02)) {
 			ctx.font = "11px var(--font-interface, sans-serif)";
 			ctx.textAlign = "center";
 			ctx.textBaseline = "top";
-			ctx.fillStyle = this.palette.text;
+			ctx.lineWidth = 3;
+			ctx.strokeStyle = this.palette.surface;
+			ctx.lineJoin = "round";
 			for (const nd of this.nodes) {
 				const x = this.sx(nd);
 				if (x < -60 || x > w + 60) continue;
@@ -534,7 +703,12 @@ export class LearningMap {
 				const la = nd.id === fid ? Math.max(hv, labelAlpha * dimNode(nd.id)) : labelAlpha * dimNode(nd.id);
 				if (la < 0.04) continue;
 				ctx.globalAlpha = la;
-				ctx.fillText(nd.id, x, y + this.radius(nd) + 3);
+				const ly = y + this.radius(nd) + 3;
+				// A dark halo (stroked before the fill) so the label reads against the dot
+				// grid and node glow behind it, instead of blending into a busy background.
+				ctx.strokeText(nd.id, x, ly);
+				ctx.fillStyle = this.palette.text;
+				ctx.fillText(nd.id, x, ly);
 			}
 		}
 		ctx.globalAlpha = 1;

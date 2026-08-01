@@ -14,7 +14,7 @@ I take a lot of notes and almost never go back to them. Re-reading a note isn't 
 
 Focus a session on a folder or tag from the **Study** dropdown; Grill weights it toward what you keep getting wrong and what's due, and a **Review N due** button drops you straight into what's ready.
 
-![A question drawn from a note, with your knowledge graph alongside it](docs/screenshot-question.png)
+![Grill's own learning graph next to Obsidian's native one, same vault: a completely different visual language, not just a themed panel](docs/screenshot-graph.png)
 
 ## What you get
 

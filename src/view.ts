@@ -5,7 +5,7 @@ import type GrillPlugin from "./main";
 import { adjudicateBridges, ConceptTarget, debriefSession, generateQuestions, Grade, gradeAnswer, LLMConfig, Question, supportsVision, Verdict } from "./llm";
 import { Concept, extractConcepts, localQuestionForConcept, localQuestions } from "./generate-local";
 import { BridgeMap, detectBridgeCandidates, pairKey } from "./bridges";
-import { buildGraph } from "./graph";
+import { buildGraph, formatGrade, gradeScore, type GraphNode } from "./graph";
 import { GraphAppearance, LearningMap, MapPalette } from "./mapview";
 import type { CachedQuestion, QuestionBank } from "./store";
 import {
@@ -238,12 +238,27 @@ export class SessionView extends ItemView {
 		this.renderOnboarding();
 	}
 
+	/** Push the current colour/number-overlay settings into an already-open graph, without
+	 * the re-layout a full re-render would cause — so changing a display setting doesn't
+	 * jostle the simulation or lose the user's dragged positions. No-op if the graph isn't
+	 * currently on screen. */
+	updateMapDisplay(): void {
+		if (!this.map) return;
+		const s = this.plugin.data.settings;
+		this.map.setColorMode(s.graphColorMode);
+		this.map.setNumberDisplay(s.graphNumberMode, s.graphCoverageWeight / 100);
+	}
+
 	/** First-run: choose which folders are Grill's study material + graph. */
 	private renderOnboarding(): void {
 		const wrap = this.root();
-		wrap.createDiv({ cls: "grill-score", text: "Welcome to Grill" });
+		// First impression, one-time, non-interactive-heavy — the same full cabinet as
+		// the start screen, not the subtle touch reserved for the actual study flow.
+		const screen = wrap.createDiv({ cls: "grill-arcade-screen" });
+		screen.createDiv({ cls: "grill-arcade-mark", text: "GRILL" });
+		screen.createDiv({ cls: "grill-score", text: "Welcome to Grill" });
 
-		const how = wrap.createEl("ul", { cls: "grill-onboard-how" });
+		const how = screen.createEl("ul", { cls: "grill-onboard-how" });
 		const point = (lead: string, rest: string): void => {
 			const li = how.createEl("li");
 			li.createEl("strong", { text: lead });
@@ -253,8 +268,8 @@ export class SessionView extends ItemView {
 		point("Watch your map fill in", "as you prove what you know.");
 		point("Study anything", "in one folder, a tag, or the whole vault.");
 
-		wrap.createDiv({ cls: "grill-section-label", text: "Which folders should Grill study?" });
-		wrap.createEl("p", {
+		screen.createDiv({ cls: "grill-section-label", text: "Which folders should Grill study?" });
+		screen.createEl("p", {
 			cls: "grill-meta",
 			text: "Tick some, or leave them all unticked to use your whole vault. You can change this any time in settings.",
 		});
@@ -265,13 +280,13 @@ export class SessionView extends ItemView {
 		const chosen = new Set<string>();
 
 		if (!folders.length) {
-			wrap.createEl("p", { cls: "grill-meta", text: "No folders found — Grill will use your whole vault." });
+			screen.createEl("p", { cls: "grill-meta", text: "No folders found — Grill will use your whole vault." });
 		} else {
 			const boxes: HTMLInputElement[] = [];
-			const controls = wrap.createDiv({ cls: "grill-onboard-controls" });
+			const controls = screen.createDiv({ cls: "grill-onboard-controls" });
 			const selectAll = controls.createEl("a", { cls: "grill-chip-link", text: "Select all" });
 			const clear = controls.createEl("a", { cls: "grill-chip-link", text: "Clear" });
-			const list = wrap.createDiv({ cls: "grill-onboard-folders" });
+			const list = screen.createDiv({ cls: "grill-onboard-folders" });
 			for (const path of folders) {
 				const row = list.createDiv({ cls: "grill-onboard-row" });
 				const cb = row.createEl("input", { attr: { type: "checkbox" } });
@@ -293,7 +308,7 @@ export class SessionView extends ItemView {
 			};
 		}
 
-		const btn = wrap.createEl("button", { text: "Get started", cls: "mod-cta grill-start-btn grill-primary-cta" });
+		const btn = screen.createEl("button", { text: "Get started", cls: "mod-cta grill-start-btn grill-primary-cta" });
 		btn.onclick = async () => {
 			this.plugin.data.settings.includedFolders = [...chosen];
 			this.plugin.data.settings.onboarded = true;
@@ -336,16 +351,21 @@ export class SessionView extends ItemView {
 		const eligible = this.allEligible();
 		this.pendingScope = null;
 
-		const statsEl = wrap.createDiv({ cls: "grill-stats grill-start-stats" });
-		const addStat = (label: string): HTMLElement => {
-			const tile = statsEl.createDiv({ cls: "grill-stat" });
+		// The arcade cabinet: everything on this screen lives on the lit CRT ground,
+		// framed in the banner's gold/ember double border. See .grill-arcade-screen.
+		const screen = wrap.createDiv({ cls: "grill-arcade-screen" });
+		screen.createDiv({ cls: "grill-arcade-mark", text: "GRILL" });
+
+		const statsEl = screen.createDiv({ cls: "grill-stats grill-start-stats" });
+		const addStat = (label: string, tone?: "correct" | "incorrect"): HTMLElement => {
+			const tile = statsEl.createDiv({ cls: tone ? `grill-stat grill-stat-${tone}` : "grill-stat" });
 			const value = tile.createDiv({ cls: "grill-stat-value" });
 			tile.createDiv({ cls: "grill-stat-label", text: label });
 			return value;
 		};
 		const notesStat = addStat("Notes");
-		const knownStat = addStat("Known");
-		const strugglingStat = addStat("Struggling");
+		const knownStat = addStat("Known", "correct");
+		const strugglingStat = addStat("Struggling", "incorrect");
 		const untestedStat = addStat("Untested");
 		const showCounts = (files: TFile[]): void => {
 			const counts = { untested: 0, struggling: 0, known: 0 };
@@ -361,7 +381,7 @@ export class SessionView extends ItemView {
 		// has no status bar, so this is the due signal there too.
 		const due = dueFiles(eligible, map);
 		if (due.length) {
-			const cta = wrap.createEl("button", { text: `Review ${due.length} due now`, cls: "mod-cta grill-due-cta" });
+			const cta = screen.createEl("button", { text: `Review ${due.length} due now`, cls: "mod-cta grill-due-cta" });
 			cta.onclick = () => {
 				this.sessionScope = due;
 				this.dueOnly = true;
@@ -378,7 +398,7 @@ export class SessionView extends ItemView {
 		const tags = listTags(this.app);
 		const hasScopeOptions = activeEligible || folders.length > 0 || tags.length > 0;
 
-		const scopeHeader = wrap.createDiv({ cls: "grill-scope-header" });
+		const scopeHeader = screen.createDiv({ cls: "grill-scope-header" });
 		scopeHeader.createSpan({ cls: "grill-section-label", text: "Scope" });
 		// A dropdown-style caret, not a collapse arrow: signals "this opens a list of
 		// options" the way a native <select> would, right next to the label it opens.
@@ -420,7 +440,7 @@ export class SessionView extends ItemView {
 		};
 
 		if (hasScopeOptions) {
-			const scopeBox = wrap.createDiv({ cls: "grill-onboard-folders grill-scope-collapsed" });
+			const scopeBox = screen.createDiv({ cls: "grill-onboard-folders grill-scope-collapsed" });
 			if (activeEligible && active) {
 				addScopeRow(scopeBox, `Current note: ${active.basename}`, { kind: "note", id: active.path });
 			}
@@ -438,7 +458,7 @@ export class SessionView extends ItemView {
 			};
 		}
 
-		const btn = wrap.createEl("button", { text: "Get grilled", cls: "mod-cta grill-start-btn grill-primary-cta" });
+		const btn = screen.createEl("button", { text: "Get grilled", cls: "mod-cta grill-start-btn grill-primary-cta" });
 		btn.onclick = () => {
 			this.sessionScope = this.pendingScope;
 			this.dueOnly = false;
@@ -446,17 +466,17 @@ export class SessionView extends ItemView {
 		};
 
 		// The learning graph: your notes, coloured in by what you've proven you know.
-		const mapWrap = wrap.createDiv({ cls: "grill-map-wrap" });
+		const mapWrap = screen.createDiv({ cls: "grill-map-wrap" });
 		void this.renderMap(mapWrap);
 
-		const dash = wrap.createDiv({ cls: "grill-meta grill-dash-link" });
+		const dash = screen.createDiv({ cls: "grill-meta grill-dash-link" });
 		const dashLink = dash.createSpan({ cls: "grill-chip-link", text: "View your progress" });
 		dashLink.onclick = () => this.showDashboard();
 
 		const recent = this.recentSessions();
 		if (recent.length) {
-			wrap.createDiv({ cls: "grill-section-label", text: "Recent sessions" });
-			const list = wrap.createDiv({ cls: "grill-recent" });
+			screen.createDiv({ cls: "grill-section-label", text: "Recent sessions" });
+			const list = screen.createDiv({ cls: "grill-recent" });
 			for (const f of recent) {
 				const fm = this.app.metadataCache.getFileCache(f)?.frontmatter;
 				const row = list.createDiv({ cls: "grill-recent-row" });
@@ -496,20 +516,27 @@ export class SessionView extends ItemView {
 	}
 
 	/** Node/edge colours resolved from the current theme (canvas can't read CSS vars). */
+	/** The graph now lives inside the arcade screen (see .grill-arcade-screen), which is
+	 * a fixed dark palette by design, not the active theme — so unlike before, this
+	 * reads Grill's own arcade tokens rather than theme/semantic ones. Canvas can't
+	 * resolve CSS variables itself, so they're still resolved here via getComputedStyle
+	 * and handed over as plain color strings; the fallbacks are the arcade hexes
+	 * directly, not theme-neutral guesses. */
 	private mapPalette(): MapPalette {
 		const view = this.contentEl.ownerDocument.defaultView ?? window;
 		const cs = view.getComputedStyle(this.contentEl);
 		const v = (name: string, fallback: string): string => cs.getPropertyValue(name).trim() || fallback;
 		return {
-			known: v("--grill-correct", "#3aa675"),
-			struggling: v("--grill-incorrect", "#e5484d"),
-			inProgress: v("--grill-partial", "#e0913a"),
-			unpracticed: v("--text-faint", "#8a8a8a"),
-			edge: v("--background-modifier-border", "#3a3a3a"),
-			edgeInherited: v("--text-muted", "#9a9a9a"),
-			edgeProven: v("--interactive-accent", "#ff7a45"),
-			text: v("--text-normal", "#eaeaea"),
-			ring: v("--interactive-accent", "#ff7a45"),
+			known: v("--grill-gold-lit", "#ffe98a"),
+			struggling: v("--grill-flame-hot", "#ff5a1f"),
+			inProgress: v("--grill-accent", "#ff8c2b"),
+			unpracticed: "#4a3018",
+			edge: v("--grill-grid", "#3a1c0a"),
+			edgeInherited: v("--grill-ember-dark", "#5c1400"),
+			edgeProven: v("--grill-gold", "#ffd23f"),
+			text: v("--grill-gold-lit", "#ffe98a"),
+			ring: v("--grill-gold", "#ffd23f"),
+			surface: v("--grill-screen-deep", "#0f0904"),
 		};
 	}
 
@@ -517,6 +544,7 @@ export class SessionView extends ItemView {
 	 * positions, builds and (re)lays out the graph, persists positions, and mounts the
 	 * canvas controller. Bounded to MAP_NODE_CAP nodes (practised notes + neighbours). */
 	private async renderMap(host: HTMLElement): Promise<void> {
+		const toolbar = host.createDiv({ cls: "grill-graph-toolbar" });
 		const canvas = host.createEl("canvas", { cls: "grill-graph" });
 		const status = host.createDiv({ cls: "grill-meta grill-map-status", text: "Loading your graph…" });
 		try {
@@ -527,6 +555,10 @@ export class SessionView extends ItemView {
 			for (const cm of Object.values(concepts)) {
 				if (nameSet.has(cm.note) && cm.correct + cm.partial + cm.incorrect > 0) practiced.add(cm.note);
 			}
+			const registry = await this.plugin.store.loadRegistry();
+			const activeByNote = activeMisconceptionsByNote(registry, [...nameSet]);
+			const misconceptionCounts: Record<string, number> = {};
+			for (const [note, tags] of Object.entries(activeByNote)) misconceptionCounts[note] = tags.length;
 
 			// Undirected links among eligible notes.
 			const linkSeen = new Set<string>();
@@ -561,7 +593,7 @@ export class SessionView extends ItemView {
 			const keepSet = new Set(names);
 			const links = allLinks.filter(([a, b]) => keepSet.has(a) && keepSet.has(b));
 
-			const graph = buildGraph(names, links, concepts);
+			const graph = buildGraph(names, links, concepts, undefined, misconceptionCounts);
 
 			// Restore saved positions (the live sim starts calm when it has them all, or
 			// settles organically when there are new nodes).
@@ -586,6 +618,7 @@ export class SessionView extends ItemView {
 				return;
 			}
 			const appearance = await this.readGraphAppearance();
+			const s = this.plugin.data.settings;
 			this.map?.dispose();
 			this.map = new LearningMap(
 				canvas,
@@ -595,7 +628,75 @@ export class SessionView extends ItemView {
 				(pos) => void this.plugin.store.saveGraphLayout(pos),
 				settled,
 				appearance,
+				{
+					colorMode: s.graphColorMode,
+					numberMode: s.graphNumberMode,
+					coverageWeight: s.graphCoverageWeight / 100,
+				},
 			);
+			// Smarter filtering: toggleable chips that isolate a subset of the graph by a
+			// signal colour alone can't cleanly show at once (e.g. "just what's overdue"),
+			// reusing the same dim/highlight the session-scope picker uses. Multiple active
+			// filters union (matches any), matching the scope picker's own combine rule.
+			const degree = new Map<string, number>();
+			for (const [a, b] of links) {
+				degree.set(a, (degree.get(a) ?? 0) + 1);
+				degree.set(b, (degree.get(b) ?? 0) + 1);
+			}
+			const nowMs = Date.now();
+			const STALE_DAYS = 14;
+			const filterDefs: { kind: string; label: string; match: (n: GraphNode) => boolean }[] = [
+				{ kind: "due", label: "Due", match: (n) => !!n.dueAt && new Date(n.dueAt).getTime() <= nowMs },
+				{ kind: "struggling", label: "Struggling", match: (n) => n.state === "struggling" },
+				{
+					kind: "stale",
+					label: `Stale (${STALE_DAYS}d+)`,
+					match: (n) =>
+						n.state !== "unpracticed" &&
+						!!n.lastSeen &&
+						(nowMs - new Date(n.lastSeen).getTime()) / 86_400_000 >= STALE_DAYS,
+				},
+				{ kind: "misconceptions", label: "Misconceptions", match: (n) => n.misconceptions > 0 },
+				{ kind: "orphan", label: "Unlinked", match: (n) => (degree.get(n.id) ?? 0) === 0 },
+			];
+			const activeFilters = new Set<string>();
+			const matchedSet = (): GraphNode[] =>
+				graph.nodes.filter((n) => filterDefs.some((f) => activeFilters.has(f.kind) && f.match(n)));
+			const chipRow = toolbar.createDiv({ cls: "grill-filter-row" });
+			const readout = toolbar.createDiv({ cls: "grill-meta grill-filter-readout" });
+			const updateReadout = (): void => {
+				if (!activeFilters.size) {
+					readout.setText("");
+					return;
+				}
+				// Phrased as what the filter DID (highlighted these on the map), not as a due
+				// count restated in the same words as the "Review N due now" button above —
+				// the two answer different questions (go review vs. see where on the map),
+				// so the text shouldn't read like the same fact said twice.
+				const matched = matchedSet();
+				let text = `${matched.length} note${matched.length === 1 ? "" : "s"} highlighted`;
+				if (s.graphNumberMode !== "off") {
+					const scored = matched
+						.map((n) => gradeScore(n, s.graphCoverageWeight / 100))
+						.filter((v): v is number => v !== null);
+					if (scored.length) {
+						const avg = scored.reduce((a, b) => a + b, 0) / scored.length;
+						text += `, averaging ${formatGrade(avg, s.graphNumberMode)}`;
+					}
+				}
+				readout.setText(text);
+			};
+			for (const f of filterDefs) {
+				const chip = chipRow.createEl("button", { cls: "grill-filter-chip", text: f.label });
+				chip.onclick = () => {
+					if (activeFilters.has(f.kind)) activeFilters.delete(f.kind);
+					else activeFilters.add(f.kind);
+					chip.toggleClass("is-active", activeFilters.has(f.kind));
+					this.map?.setHighlight(activeFilters.size ? new Set(matchedSet().map((n) => n.id)) : null);
+					updateReadout();
+				};
+			}
+
 			if (capped) {
 				host.createDiv({
 					cls: "grill-meta grill-map-status",
@@ -619,7 +720,8 @@ export class SessionView extends ItemView {
 		const map = this.plugin.mastery;
 		const eligible = this.allEligible();
 
-		const head = wrap.createDiv({ cls: "grill-meta-row" });
+		const screen = wrap.createDiv({ cls: "grill-arcade-screen" });
+		const head = screen.createDiv({ cls: "grill-meta-row" });
 		head.createSpan({ cls: "grill-score", text: "Your progress" });
 		const back = head.createSpan({ cls: "grill-chip-link", text: "Back" });
 		back.onclick = () => this.renderStart();
@@ -644,15 +746,15 @@ export class SessionView extends ItemView {
 		const dueNow = dueFiles(eligible, map).length;
 		const accuracy = answered ? Math.round((100 * correct) / answered) : 0;
 
-		const stats = wrap.createDiv({ cls: "grill-stats" });
-		const stat = (label: string, value: string): void => {
-			const s = stats.createDiv({ cls: "grill-stat" });
+		const stats = screen.createDiv({ cls: "grill-stats" });
+		const stat = (label: string, value: string, tone?: "correct" | "incorrect"): void => {
+			const s = stats.createDiv({ cls: tone ? `grill-stat grill-stat-${tone}` : "grill-stat" });
 			s.createDiv({ cls: "grill-stat-value", text: value });
 			s.createDiv({ cls: "grill-stat-label", text: label });
 		};
 		stat("due now", String(dueNow));
 		stat("due this week", String(dueWeek));
-		stat("known", String(counts.known));
+		stat("known", String(counts.known), "correct");
 		// 0% when nothing's been answered, so it reads consistently with the other
 		// stats (due/known all show 0 on a fresh vault) rather than a lone dash.
 		stat("accuracy", `${accuracy}%`);
@@ -670,11 +772,12 @@ export class SessionView extends ItemView {
 		const active = activeAll.slice(0, MISC_SHOWN_CAP);
 		const beaten = beatenAll.slice(0, MISC_SHOWN_CAP);
 
-		wrap.createDiv({ cls: "grill-section-label", text: "What you keep getting wrong" });
+		screen.createDiv({ cls: "grill-section-label", text: "What you keep getting wrong" });
+		const miscCard = screen.createDiv({ cls: "grill-card" });
 		if (!active.length) {
-			wrap.createDiv({ cls: "grill-meta", text: "Nothing recurring yet. It builds up as the grader spots patterns." });
+			miscCard.createDiv({ cls: "grill-meta", text: "Nothing recurring yet. It builds up as the grader spots patterns." });
 		} else {
-			const list = wrap.createDiv({ cls: "grill-misc-list" });
+			const list = miscCard.createDiv({ cls: "grill-misc-list" });
 			for (const c of active) {
 				const row = list.createDiv({ cls: "grill-misc-row" });
 				const rowHead = row.createDiv({ cls: "grill-misc-head" });
@@ -689,13 +792,13 @@ export class SessionView extends ItemView {
 				}
 			}
 			if (activeAll.length > active.length) {
-				wrap.createDiv({ cls: "grill-meta", text: `+${activeAll.length - active.length} more recurring` });
+				miscCard.createDiv({ cls: "grill-meta", text: `+${activeAll.length - active.length} more recurring` });
 			}
 		}
 		if (beaten.length) {
 			const more = beatenAll.length - beaten.length;
 			const suffix = more > 0 ? `, and ${more} more` : "";
-			wrap.createDiv({
+			miscCard.createDiv({
 				cls: "grill-meta grill-misc-beaten",
 				text: `Beaten: ${beaten.map((c) => c.label).join(", ")}${suffix}`,
 			});
@@ -706,10 +809,11 @@ export class SessionView extends ItemView {
 		const tested = Object.values(cmap).filter((c) => c.correct + c.partial + c.incorrect > 0);
 		if (tested.length) {
 			const known = tested.filter((c) => statusOf(c) === "known").length;
-			wrap.createDiv({ cls: "grill-section-label", text: "Concept coverage" });
-			wrap.createDiv({
+			screen.createDiv({ cls: "grill-section-label", text: "Concept coverage" });
+			const coverageCard = screen.createDiv({ cls: "grill-card" });
+			coverageCard.createDiv({
 				cls: "grill-meta",
-				text: `${tested.length} concepts tested · ${known} solid · ${tested.length - known} shaky`,
+				text: `${tested.length} concepts tested so far: ${known} solid, ${tested.length - known} still shaky.`,
 			});
 			const byNote = new Map<string, { tested: number; known: number }>();
 			for (const c of tested) {
@@ -722,12 +826,15 @@ export class SessionView extends ItemView {
 				.map(([note, e]) => ({ note, ...e, shaky: e.tested - e.known }))
 				.sort((a, b) => b.shaky - a.shaky)
 				.slice(0, 6);
-			const list = wrap.createDiv({ cls: "grill-summary-list" });
+			const list = coverageCard.createDiv({ cls: "grill-meter-list" });
 			for (const r of rows) {
-				const row = list.createDiv({ cls: "grill-summary-row" });
-				const link = row.createSpan({ cls: "grill-chip-link", text: r.note });
+				const row = list.createDiv({ cls: "grill-meter-row" });
+				const link = row.createSpan({ cls: "grill-meter-label grill-chip-link", text: r.note });
 				link.onclick = () => this.openNote(r.note);
-				row.createSpan({ cls: "grill-meta", text: `${r.known}/${r.tested} solid` });
+				const track = row.createDiv({ cls: "grill-meter-track" });
+				const pct = r.tested ? Math.round((100 * r.known) / r.tested) : 0;
+				track.createDiv({ cls: "grill-meter-fill" }).setCssStyles({ width: `${pct}%` });
+				row.createSpan({ cls: "grill-meter-value", text: `${r.known}/${r.tested}` });
 			}
 		}
 
@@ -735,20 +842,21 @@ export class SessionView extends ItemView {
 		const bridges = await this.plugin.store.loadBridges();
 		const linked = Object.values(bridges).filter((b) => b.status === "linked").length;
 		if (linked > 0) {
-			wrap.createDiv({ cls: "grill-section-label", text: "Connections made" });
-			wrap.createDiv({
-				cls: "grill-meta",
+			screen.createDiv({ cls: "grill-section-label", text: "Connections made" });
+			screen.createDiv({
+				cls: "grill-card grill-meta",
 				text: `Grill has helped you link ${linked} pair${linked === 1 ? "" : "s"} of notes you hadn't connected.`,
 			});
 		}
 
-		this.renderHeatmap(wrap);
+		this.renderHeatmap(screen);
 	}
 
 	/** GitHub-style grid of reviews done per day, from session-note frontmatter. */
 	private renderHeatmap(wrap: HTMLElement): void {
 		const pad = (n: number): string => String(n).padStart(2, "0");
 		const key = (d: Date): string => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+		const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 		const dir = `${this.plugin.data.settings.folder}/Sessions/`;
 		const perDay = new Map<string, number>();
@@ -763,10 +871,27 @@ export class SessionView extends ItemView {
 		}
 
 		wrap.createDiv({ cls: "grill-section-label", text: "Reviews (last 12 weeks)" });
-		const grid = wrap.createDiv({ cls: "grill-heatmap" });
+		const card = wrap.createDiv({ cls: "grill-card" });
+		const scroller = card.createDiv({ cls: "grill-heatmap-wrap" });
 		const today = new Date();
 		const level = (c: number): number => (c === 0 ? 0 : c < 3 ? 1 : c < 6 ? 2 : c < 10 ? 3 : 4);
-		for (let i = 83; i >= 0; i--) {
+		const DAYS = 84;
+		const WEEKS = DAYS / 7;
+
+		// Month labels: one per week-column, shown only on the column whose oldest (top)
+		// day starts a new month — otherwise a label every column would just repeat.
+		const monthsRow = scroller.createDiv({ cls: "grill-hm-months" });
+		let lastMonth = -1;
+		for (let w = 0; w < WEEKS; w++) {
+			const dayIndex = DAYS - 1 - w * 7; // the "i" of that column's top (oldest) cell
+			const d = new Date(today.getTime() - dayIndex * 86400_000);
+			const m = d.getMonth();
+			monthsRow.createSpan({ text: m !== lastMonth ? MONTH_NAMES[m] : "" });
+			lastMonth = m;
+		}
+
+		const grid = scroller.createDiv({ cls: "grill-heatmap" });
+		for (let i = DAYS - 1; i >= 0; i--) {
 			const d = new Date(today.getTime() - i * 86400_000);
 			const k = key(d);
 			const count = perDay.get(k) ?? 0;
@@ -774,6 +899,11 @@ export class SessionView extends ItemView {
 			cell.setAttr("aria-label", `${k}: ${count} review${count === 1 ? "" : "s"}`);
 			cell.setAttr("title", `${k}: ${count} review${count === 1 ? "" : "s"}`);
 		}
+
+		const legend = card.createDiv({ cls: "grill-hm-legend" });
+		legend.createSpan({ text: "Less" });
+		for (let lvl = 0; lvl <= 4; lvl++) legend.createDiv({ cls: `grill-hm-cell grill-hm-${lvl}` });
+		legend.createSpan({ text: "More" });
 	}
 
 	private renderLoading(title: string, detail: string): void {
@@ -925,11 +1055,11 @@ export class SessionView extends ItemView {
 
 		const row = card.createDiv({ cls: "grill-btn-row" });
 		if (!isMc) {
-			const submit = row.createEl("button", { text: selfGrade ? "Show answer" : "Submit", cls: "mod-cta" });
+			const submit = row.createEl("button", { text: selfGrade ? "Show answer" : "Submit", cls: "mod-cta grill-submit-btn" });
 			submit.onclick = () => doAction(false);
 		}
 		if (hints.length) {
-			const hintBtn = row.createEl("button", { text: "Hint" });
+			const hintBtn = row.createEl("button", { text: "Hint", cls: "grill-hint-btn" });
 			hintBtn.onclick = () => {
 				if (hintsUsed < hints.length) {
 					const h = hintBox.createDiv({ cls: "grill-hint" });
@@ -1004,7 +1134,7 @@ export class SessionView extends ItemView {
 		}
 		const btn = card.createEl("button", {
 			text: this.idx + 1 < this.targetCount ? "Next question" : "Finish session",
-			cls: "mod-cta",
+			cls: "mod-cta grill-submit-btn",
 		});
 		btn.onclick = () => void this.goToQuestion(this.idx + 1);
 		btn.focus();
@@ -1169,7 +1299,11 @@ export class SessionView extends ItemView {
 	private renderSummary(note: TFile | null, debrief?: SessionDebrief): void {
 		const wrap = this.root();
 		this.progressBar(wrap);
-		const card = wrap.createDiv({ cls: "grill-body" });
+		// The "high score" moment — studying is over by this point, so unlike the
+		// question flow itself, this can wear the full cabinet without competing with
+		// active reading/typing.
+		const screen = wrap.createDiv({ cls: "grill-arcade-screen" });
+		const card = screen.createDiv({ cls: "grill-body" });
 		const right = this.results.filter((r) => r.verdict === "correct").length;
 		if (this.dueOnly) card.createDiv({ cls: "grill-meta", text: "Due review" });
 		card.createDiv({ cls: "grill-score", text: `${right} of ${this.results.length} correct` });
@@ -1196,7 +1330,7 @@ export class SessionView extends ItemView {
 			a.onclick = () => void this.app.workspace.getLeaf(false).openFile(note);
 		}
 		const btnRow = card.createDiv({ cls: "grill-btn-row grill-start-btn grill-btn-row-fill" });
-		const again = btnRow.createEl("button", { text: "Study again", cls: "mod-cta" });
+		const again = btnRow.createEl("button", { text: "Study again", cls: "mod-cta grill-primary-cta" });
 		again.setAttr("aria-label", "Start a new adaptive session");
 		again.onclick = () => void this.startSession();
 		// Redo the exact same questions with no generation (grading still per the setting).
@@ -1206,7 +1340,7 @@ export class SessionView extends ItemView {
 			redo.setAttr("aria-label", "Redo the same questions with no AI generation");
 			redo.onclick = () => void this.startReplay(redoable);
 		}
-		const menu = btnRow.createEl("button", { text: "Back to menu" });
+		const menu = btnRow.createEl("button", { text: "Back to menu", cls: "grill-menu-btn" });
 		menu.onclick = () => {
 			this.sessionScope = null;
 			this.dueOnly = false;

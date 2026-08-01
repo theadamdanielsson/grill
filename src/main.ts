@@ -16,6 +16,7 @@ import { migrateResetScheduling } from "./concepts";
 import { dueFiles } from "./scope";
 import { GrillStore } from "./store";
 import { SessionView, VIEW_TYPE } from "./view";
+import type { ColorMode, NumberMode } from "./mapview";
 
 interface GrillSettings {
 	provider: ProviderId;
@@ -73,6 +74,14 @@ interface GrillSettings {
 	carefulGrade: boolean;
 	/** One-time flag: the note→concept scheduling reset has run. */
 	conceptsMigrated: boolean;
+	/** What the graph's node colour encodes: the default 4-state mastery colour, or a
+	 * green-to-red gradient over a continuous metric. */
+	graphColorMode: ColorMode;
+	/** Numeric grade overlay on graph nodes: off, or a display scale. */
+	graphNumberMode: NumberMode;
+	/** How much a note's grade score weighs coverage (finishing the note) vs accuracy
+	 * (how well you've done on the parts you've been tested on), 0-100. */
+	graphCoverageWeight: number;
 }
 
 interface PluginData {
@@ -112,6 +121,9 @@ function defaultSettings(): GrillSettings {
 		regenerateEvery: 3,
 		carefulGrade: false,
 		conceptsMigrated: false,
+		graphColorMode: "mastery",
+		graphNumberMode: "off",
+		graphCoverageWeight: 60,
 	};
 }
 
@@ -154,6 +166,13 @@ export default class GrillPlugin extends Plugin {
 		if (typeof s.regenerateEvery === "number") settings.regenerateEvery = s.regenerateEvery;
 		if (typeof s.carefulGrade === "boolean") settings.carefulGrade = s.carefulGrade;
 		if (typeof s.conceptsMigrated === "boolean") settings.conceptsMigrated = s.conceptsMigrated;
+		if (["mastery", "recency", "dueness", "misconceptions"].includes(s.graphColorMode as string)) {
+			settings.graphColorMode = s.graphColorMode as ColorMode;
+		}
+		if (["off", "percent", "letter"].includes(s.graphNumberMode as string)) {
+			settings.graphNumberMode = s.graphNumberMode as NumberMode;
+		}
+		if (typeof s.graphCoverageWeight === "number") settings.graphCoverageWeight = s.graphCoverageWeight;
 		const calibration = Array.isArray(stored?.calibration) ? stored!.calibration.filter(isCalPoint) : [];
 		this.data = { settings, calibration };
 
@@ -331,6 +350,14 @@ export default class GrillPlugin extends Plugin {
 		this.statusBar.setText(n > 0 ? `Grill: ${n} due` : "Grill");
 	}
 
+	/** Push a graph display-setting change (colour mode, number overlay, grade weighting)
+	 * into any already-open Grill pane's graph, live, without a full re-render. */
+	refreshMapDisplay(): void {
+		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
+			if (leaf.view instanceof SessionView) leaf.view.updateMapDisplay();
+		}
+	}
+
 	async startScoped(files: TFile[], dueOnly = false): Promise<void> {
 		await this.activateView();
 		const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
@@ -434,16 +461,27 @@ class GrillSettingTab extends PluginSettingTab {
 	): void {
 		const setting = new Setting(containerEl).setName(name);
 		if (desc) setting.setDesc(desc);
-		const valueEl = setting.controlEl.createSpan({ cls: "grill-slider-value", text: format(value) });
-		setting.addSlider((sl) =>
-			sl
+		// Obsidian 1.13 always shows the slider's value inline itself (setDynamicTooltip is
+		// deprecated because of it) and added setDisplayFormat to customize that display —
+		// so on 1.13+, adding our own value span next to it just prints the number twice.
+		// Feature-detected (not a minAppVersion bump) so this still renders correctly, just
+		// without the friendly formatting, on the older Obsidian versions Grill supports.
+		let valueEl: HTMLSpanElement | null = null;
+		setting.addSlider((sl) => {
+			const hasDisplayFormat = typeof (sl as unknown as { setDisplayFormat?: unknown }).setDisplayFormat === "function";
+			if (hasDisplayFormat) {
+				(sl as unknown as { setDisplayFormat: (f: (v: number) => string) => void }).setDisplayFormat(format);
+			} else {
+				valueEl = setting.controlEl.createSpan({ cls: "grill-slider-value", text: format(value) });
+			}
+			return sl
 				.setLimits(min, max, 1)
 				.setValue(value)
 				.onChange(async (v) => {
-					valueEl.setText(format(v));
+					valueEl?.setText(format(v));
 					await onChange(v);
-				}),
-		);
+				});
+		});
 	}
 
 	private async refreshModels(p: ProviderId): Promise<void> {
@@ -878,7 +916,10 @@ class GrillSettingTab extends PluginSettingTab {
 		new Setting(containerEl).setName("Appearance").setHeading();
 		containerEl.createEl("p", {
 			cls: "setting-item-description",
-			text: "Grill follows your theme. Fine-grained control (colors, width, spacing) is available via the community Style Settings plugin; the essentials are here.",
+			text: "The start screen and progress dashboard always use the banner's own colours, not your Obsidian " +
+				"theme, so they look the same on any theme. Everything else, sessions, grading, this settings page, " +
+				"still follows your theme. Fine-grained control (colors, width, spacing) is available via the " +
+				"community Style Settings plugin; the essentials are here.",
 		});
 
 		new Setting(containerEl)
@@ -909,6 +950,70 @@ class GrillSettingTab extends PluginSettingTab {
 					await this.plugin.persist();
 				}),
 			);
+
+		// ------------------------------------------------------------ Graph
+		new Setting(containerEl).setName("Graph").setHeading();
+
+		new Setting(containerEl)
+			.setName("Colour by")
+			.setDesc(
+				"Mastery is the default: grey untested, red struggling, amber in-progress, green known. The " +
+					"others colour every practised note on a green-to-red scale by a different signal, so you can " +
+					"spot what needs attention at a glance instead of reading it note by note.",
+			)
+			.addDropdown((d) =>
+				d
+					.addOption("mastery", "Mastery (default)")
+					.addOption("recency", "Recency: stale notes read red")
+					.addOption("dueness", "Due-ness: overdue notes read red")
+					.addOption("misconceptions", "Misconceptions: notes you keep getting wrong read red")
+					.setValue(s.graphColorMode)
+					.onChange(async (v) => {
+						s.graphColorMode = v as ColorMode;
+						await this.plugin.persist();
+						this.plugin.refreshMapDisplay();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Grade numbers on the graph")
+			.setDesc(
+				"Show a number on every practised node: your current coverage and accuracy on that note folded " +
+					"into one score, so you can read \"what would I score on this right now\" at a glance instead of " +
+					"just a colour. Untested notes show nothing.",
+			)
+			.addDropdown((d) =>
+				d
+					.addOption("off", "Off")
+					.addOption("percent", "Percent (78%)")
+					.addOption("letter", "Letter grade (B+)")
+					.setValue(s.graphNumberMode)
+					.onChange(async (v) => {
+						s.graphNumberMode = v as NumberMode;
+						await this.plugin.persist();
+						this.plugin.refreshMapDisplay();
+						this.display();
+					}),
+			);
+
+		if (s.graphNumberMode !== "off") {
+			this.sliderSetting(
+				containerEl,
+				"Grade weighting",
+				"How much the score weighs coverage (finishing the note) against accuracy (how well you've done " +
+					"on what's actually been tested). Left: pure accuracy, so one right answer can already read " +
+					"100%. Right: pure coverage, so the score stays low until most of the note is confirmed.",
+				0,
+				100,
+				s.graphCoverageWeight,
+				(v) => `${v}% coverage`,
+				async (v) => {
+					s.graphCoverageWeight = v;
+					await this.plugin.persist();
+					this.plugin.refreshMapDisplay();
+				},
+			);
+		}
 
 		// ------------------------------------------------------------ Storage
 		new Setting(containerEl).setName("Storage").setHeading();
