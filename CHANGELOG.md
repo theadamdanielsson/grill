@@ -1,5 +1,59 @@
 # Changelog
 
+## 2.5.5
+
+- Fixed a due-only session ("Review N due now", the status bar, "Review due
+  notes") being silently capped by the same `questionsPerSession` (default 5)
+  and `maxNotesPerSession` settings as a regular study session. A note doesn't
+  leave the due pile until *all* its due concepts are re-cleared, not just
+  one, so a backlog bigger than 5 could never actually shrink, no matter how
+  many due sessions you ran, and the button's "N due" promise silently only
+  reviewed a handful of them. Due sessions now size themselves to the actual
+  backlog instead.
+- Fixed session note-selection collapsing onto whichever folder happened to
+  sort first when a scope spanned several folders. The untested-notes bucket
+  picked candidates in raw vault order with no shuffling or topic-awareness,
+  so a broad scope could fill its whole session cap from one folder before a
+  second was ever reached. Notes are now interleaved by folder before
+  priority-bucketing.
+- Changed the default for "Reuse generated questions" from 0 (reuse the exact
+  same cached question forever) to 3, so a recurring concept gets a fresh
+  phrasing after a few repeats instead of the literal same text every time.
+  Existing installs keep whatever value they already have; this only changes
+  the default for new ones.
+- The AI question-writer now explicitly avoids testing a concept's own label,
+  title, heading, or section name — only the substantive content under it —
+  closing a gap where a sparse note's fallback concept (labelled by the note's
+  own title) could get quizzed as if the title itself were the material.
+- The AI question-writer now translates plain-text math notation from a
+  note's own writing (`pi^e`, `r_n`) into real LaTeX (`$\pi^e$`, `$r_n$`)
+  instead of copying it verbatim. Obsidian renders LaTeX natively; the old
+  instruction to use it "where it helps" was too soft for models to act on
+  when the source note itself wasn't already using it.
+- A due-only session's saved note and live summary now say so ("due review"),
+  instead of reading identically to a regular study session.
+- Session transcripts now write into monthly subfolders under `Grill/Sessions/`
+  instead of one flat folder, so daily use doesn't turn it into hundreds of
+  files.
+- The "What you keep getting wrong" and "Beaten" lists on the progress
+  dashboard are now capped to the ten most-relevant entries shown at once
+  (worst/most-recurring first), with a "+N more" indicator, instead of
+  growing to a permanent, ever-scrolling list. Nothing is deleted from the
+  underlying data.
+- Grill now shows a notice at the start of a session when "Send images to the
+  model" is on but the chosen model can't actually read images, instead of
+  silently degrading to text-only with no visible sign the toggle isn't doing
+  anything for that model.
+- Fixed multiple-choice answer buttons visually centering a short choice's
+  text while a longer, wrapped choice read left-aligned in the same question.
+  Buttons weren't given an explicit width, so a short choice's button shrank
+  to fit its own text, which centers the label inside a tight box even with
+  left alignment set.
+- Added Requirements, Installation, and an expanded Privacy and data use
+  section to the README, and a new `docs/troubleshooting.md` covering the
+  common issues above (and others) with what's actually happening under the
+  hood, not just a generic FAQ.
+
 ## 2.5.4
 
 - Fixed the knowledge graph getting stuck red instead of progressing red/grey to

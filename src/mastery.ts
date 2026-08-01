@@ -229,6 +229,38 @@ export function recordRating(map: MasteryMap, note: string, rating: Rating, now 
 	map[note] = m;
 }
 
+/** Round-robin note names across a grouping key (their parent folder), preserving
+ * each group's relative order. Candidate selection below is order-sensitive for
+ * untested notes (first-come, no re-sort), so without this a scope spanning
+ * several folders collapses onto whichever folder sorts first: it fills the
+ * whole session cap before a later folder is ever reached. */
+export function interleaveByFolder(names: string[], folderOf: (name: string) => string): string[] {
+	const byFolder = new Map<string, string[]>();
+	const order: string[] = [];
+	for (const n of names) {
+		const folder = folderOf(n);
+		let arr = byFolder.get(folder);
+		if (!arr) {
+			arr = [];
+			byFolder.set(folder, arr);
+			order.push(folder);
+		}
+		arr.push(n);
+	}
+	const out: string[] = [];
+	for (let round = 0, added = true; added; round++) {
+		added = false;
+		for (const folder of order) {
+			const arr = byFolder.get(folder);
+			if (arr && round < arr.length) {
+				out.push(arr[round]);
+				added = true;
+			}
+		}
+	}
+	return out;
+}
+
 /** Pick up to `cap` candidate notes for a session, by priority:
  *  1. struggling or overdue notes (oldest due first)
  *  2. untested notes

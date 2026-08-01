@@ -585,7 +585,7 @@ Question craft:
 - Answerable from the student's own notes, specific, and requiring genuine recall: never yes/no, never 'what does the note say'.
 - Self-contained: the student sees only the question text. Inline any data the question needs.
 - If a note contradicts your general knowledge, the note wins; ground questions in the note.
-- Math is welcome: use $...$ or $$...$$ LaTeX where it helps.
+- Any variable, formula, or equation in your question or answer must be real LaTeX ($...$ inline, $$...$$ for a standalone equation) — Obsidian renders it natively. This applies even when the student's own notes write math as plain text (e.g. "pi^e", "r_n", "i=r+pi^e"): translate that into proper LaTeX ($\\pi^e$, $r_n$, $i = r + \\pi^e$) rather than copying the plain-text notation verbatim.
 - Use plain punctuation and never use em dashes.
 
 Using note relationships:
@@ -828,7 +828,12 @@ export async function generateQuestions(
 	const rest =
 		`Write exactly one recall question for each of these ${targets.length} concepts. ` +
 		`In each question object set 'n' to the concept's number below. ` +
-		`Test that specific concept, aim for its stated difficulty, and ground every question in the notes above.\n\n` +
+		`Test that specific concept, aim for its stated difficulty, and ground every question in the notes above. ` +
+		`A concept's label names the material; it is not itself the material. Never write a question that asks ` +
+		`for the label, title, heading, or chapter/section name or number, or 'what is this note/section about' ` +
+		`- only test the substantive facts, definitions, vocabulary, or reasoning in its source text. If the source ` +
+		`text is too thin for a real content question, write the best content question it does support rather than ` +
+		`falling back to asking about the label itself.\n\n` +
 		`CONCEPTS:\n${conceptList}` +
 		(mode === "connections"
 			? "\n\nThis is a CONNECTIONS session. Where a concept names a linked note to connect to, write a question " +

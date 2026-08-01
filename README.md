@@ -78,13 +78,15 @@ Open Grill and you land on your **knowledge graph**: every note Grill studies, d
 
 This is a *learning* graph (what you've proven), which is a different thing from Obsidian's own graph of what you've written. On first run Grill asks which folders are its territory (leave it blank for the whole vault); change it any time under settings.
 
-## Cost and privacy
+## Privacy and data use
 
-It only ever talks to the provider you gave a key to. No account, no server of mine in the middle. Your notes, the questions, and your answers go to that provider so it can do its thing, which means it costs API tokens: more if you feed it more notes or ask for more questions, both of which you set.
+**What leaves your machine, and where it goes.** In AI mode, Grill sends the text of the notes in a session's scope, the questions it writes, your typed answers, and — only if you turn on "Send images to the model" and the model supports vision — embedded images, to whichever provider you configured, using your own API key. That's it: one network destination, the one you chose, governed by that provider's own privacy policy and data-retention terms, not Grill's (Grill has none of its own to speak of). There's no server of mine in the middle, no analytics, no telemetry, no account with Grill itself.
 
-Ollama is the exception. It runs on your machine, so nothing leaves it. The catch is that small local models write worse questions than the paid ones. 8B or bigger is fine.
+**Ollama is the exception:** it runs entirely on your machine, so nothing leaves it at all, at the cost of smaller local models writing weaker questions than the paid ones (8B or bigger is a reasonable floor). "From my notes" question mode plus self-grading sends nothing anywhere regardless of provider, since there's no model call at all — see [Without an API key](#without-an-api-key).
 
-Not sure which model to use, with a key or without? See [docs/models.md](docs/models.md) for recommendations by budget and by how much RAM your machine has.
+**What Grill stores, and where.** Everything Grill tracks about you — the FSRS schedule (`Grill/concepts.json`), your per-note history and misconception notes (`Grill/mastery.json`), and each session's transcript (`Grill/Sessions/`) — is written as plain files inside your own vault, not sent anywhere else, and syncs (or not) exactly however you already sync your vault. Delete the `Grill` folder to wipe all of it; delete or edit an individual note's entry in `mastery.json`/`concepts.json` to reset just that note. Your API key and settings live in the plugin's own local `data.json`, not in your notes — like most Obsidian plugins, that file is plaintext on disk, so treat it with the same care you'd give any locally-stored credential (don't sync `.obsidian/plugins/grill/data.json` somewhere untrusted).
+
+**Cost.** AI mode costs API tokens per session: more if you feed it more notes or ask for more questions, both of which you control in settings. Not sure which model to use, with a key or without? See [docs/models.md](docs/models.md) for recommendations by budget and by how much RAM your machine has.
 
 ## Worth knowing before you install
 
@@ -97,11 +99,23 @@ Not sure which model to use, with a key or without? See [docs/models.md](docs/mo
 
 Grill borrows your theme's colours and spacing so it doesn't clash. The settings cover the usual stuff (compact layout, the progress bar, hiding the note name so it doesn't give the answer away). If you want to fiddle further it exposes a few CSS variables and works with the Style Settings plugin.
 
-## Install
+## Requirements
 
-Look for "Grill" in Settings, Community plugins, Browse.
+- **Obsidian 1.8.0 or newer.** Grill checks this on load and won't run on an older build.
+- **Desktop or mobile** — it's not desktop-only, though writing long answers is obviously easier with a keyboard.
+- **One of, depending on how you want to study:**
+  - An API key from Anthropic, OpenAI, Google, DeepSeek, or any OpenAI-compatible endpoint (OpenRouter, Groq, LM Studio, ...), for AI-written questions and AI grading.
+  - [Ollama](https://ollama.com) installed locally, for the same but fully offline, no key, no cost.
+  - Neither: "From my notes" question mode plus self-grading needs no key, no install, no internet, and works entirely from your notes' own structure. See [Without an API key](#without-an-api-key) above.
+- No account with Grill itself, ever — there's nothing to sign up for.
 
-Or build it yourself:
+## Installation
+
+**From Obsidian (recommended):** Settings → Community plugins → Browse, search "Grill", Install, then Enable. If Community plugins are off, Settings → Community plugins → turn on "Turn on community plugins" first.
+
+**Manual install (a specific version, or before it's live in the community list):** download `main.js`, `manifest.json`, and `styles.css` from a [release](https://github.com/theadamdanielsson/grill/releases) and place all three in `<vault>/.obsidian/plugins/grill/` (create the folder if it doesn't exist), then reload Obsidian and enable Grill in Community plugins. [BRAT](https://github.com/TfTHacker/obsidian42-brat) automates this if you want to track updates without waiting for the community list.
+
+**Build it yourself:**
 
 ```sh
 npm install
@@ -109,6 +123,19 @@ npm run build
 ```
 
 then drop `main.js`, `manifest.json`, and `styles.css` into `<vault>/.obsidian/plugins/grill/`.
+
+After installing, open Grill (the flame icon, or the "Open Grill" command) — first run asks which folders it should cover.
+
+## Troubleshooting
+
+Short version of the common ones below; the full list, with what's actually happening under the hood, is in [docs/troubleshooting.md](docs/troubleshooting.md).
+
+- **"Couldn't find concepts to quiz in these notes."** The note has too little structure for Grill to pull questions from (no headings, bold terms, definitions, or existing flashcards). Add some structure, or switch questions to AI, which can work from prose.
+- **A note I aced doesn't turn green.** Green requires most of a note's individual concepts to each be answered correctly *twice*, spaced out — one lucky pass isn't enough to call it known. See the doc above for why, and what the map's colours actually mean.
+- **Due count doesn't shrink, or looks like it grew.** Make sure you're on the latest version — this was a real bug (due sessions were capped by the same small per-sitting question count as a normal session, so "Review N due" never actually cleared N) that's since been fixed.
+- **The same question keeps coming back.** Settings → "Reuse generated questions" — raise it above its default so a concept gets a fresh phrasing after a few repeats instead of the same cached one every time.
+- **A model isn't reading the images in my notes.** Not every model can — check Settings → "Send images to the model"'s description for which ones can, and Grill now tells you in-session when the model you picked can't.
+- **API errors, or grading looks wrong.** Double check the key and model name in settings; a model ID typo is the usual cause. Grading is a model's opinion, not gospel — it's usually right, but the expected answer is always shown so you can judge for yourself.
 
 ## License
 

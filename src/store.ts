@@ -41,6 +41,9 @@ export interface SessionMeta {
 	provider: string;
 	model: string;
 	startedAt: Date;
+	/** True when this session came from "Review N due now" / the due-queue status bar,
+	 * not a regular study session, so the note can say so instead of reading identically. */
+	dueOnly?: boolean;
 }
 
 export class GrillStore {
@@ -350,12 +353,16 @@ export class GrillStore {
 		debrief?: SessionDebrief,
 		redoQuestions: Question[] = [],
 	): Promise<TFile | null> {
-		const dir = normalizePath(`${this.folder()}/Sessions`);
-		await this.ensureFolder(this.folder());
-		await this.ensureFolder(dir);
-
 		const d = meta.startedAt;
 		const pad = (n: number) => String(n).padStart(2, "0");
+		// One subfolder per month: a daily-use vault writes a session note every
+		// sitting, so a flat Sessions/ folder turns into hundreds of files within a
+		// couple of months and floods Obsidian's file explorer, backlinks, and search.
+		const monthDir = normalizePath(`${this.folder()}/Sessions/${d.getFullYear()}-${pad(d.getMonth() + 1)}`);
+		await this.ensureFolder(this.folder());
+		await this.ensureFolder(normalizePath(`${this.folder()}/Sessions`));
+		await this.ensureFolder(monthDir);
+		const dir = monthDir;
 		const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}.${pad(d.getMinutes())}`;
 		const right = entries.filter((e) => e.verdict === "correct").length;
 
@@ -363,11 +370,12 @@ export class GrillStore {
 			"---",
 			`date: ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
 			`score: ${right}/${entries.length}`,
+			`type: ${meta.dueOnly ? "due review" : "study session"}`,
 			`provider: ${meta.provider}`,
 			`model: ${meta.model}`,
 			"---",
 			"",
-			`# Grill session ${stamp}`,
+			`# Grill ${meta.dueOnly ? "due review" : "session"} ${stamp}`,
 			"",
 		];
 

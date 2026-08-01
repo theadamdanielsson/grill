@@ -20,7 +20,7 @@ import {
 	reconcileConcepts,
 } from "./concepts";
 import { collectNoteImages, ImageInput } from "./images";
-import { NoteMastery, pickCandidates, QDifficulty, Rating, recordNoteStats, statusOf } from "./mastery";
+import { interleaveByFolder, NoteMastery, pickCandidates, QDifficulty, Rating, recordNoteStats, statusOf } from "./mastery";
 import {
 	buildSessionGraph,
 	expandSelectionWithLinks,
@@ -45,6 +45,13 @@ import { SessionEntry } from "./store";
 export const VIEW_TYPE = "grill-session";
 
 const NOTE_CHAR_CAP = 4000;
+/** Safety ceiling for a due-only session's question count. Due sessions must not be
+ * capped by `questionsPerSession` (that setting is for how much a study session asks
+ * per sitting, not how much of the due backlog gets cleared) — otherwise "Review N
+ * due now" silently only reviews the first `questionsPerSession` of them, a note with
+ * several due concepts never fully clears in one pass, and the due count can look like
+ * it barely moves (or grows, as more items lapse) no matter how many sessions you run. */
+const DUE_SESSION_CAP = 200;
 /** Questions generated per model call. Small batches cut the wait before the
  * first question and let the next batch prefetch while the user answers. */
 const BATCH = 2;
@@ -650,11 +657,18 @@ export class SessionView extends ItemView {
 		// stats (due/known all show 0 on a fresh vault) rather than a lone dash.
 		stat("accuracy", `${accuracy}%`);
 
-		// What you keep getting wrong.
+		// What you keep getting wrong. Both lists only ever grow (a canonical tag is
+		// never deleted, just marked resolved), so past a handful of months of daily
+		// use this section would otherwise become a permanently-scrolling wall. Cap
+		// what's shown — already-sorted worst/most-recurring first — to the section's
+		// actual purpose: today's live problems, not a lifetime transcript.
+		const MISC_SHOWN_CAP = 10;
 		const reg = await this.plugin.store.loadRegistry();
 		const top = topMisconceptions(reg, 100);
-		const active = top.filter((c) => c.status === "active");
-		const beaten = top.filter((c) => c.status === "resolved");
+		const activeAll = top.filter((c) => c.status === "active");
+		const beatenAll = top.filter((c) => c.status === "resolved");
+		const active = activeAll.slice(0, MISC_SHOWN_CAP);
+		const beaten = beatenAll.slice(0, MISC_SHOWN_CAP);
 
 		wrap.createDiv({ cls: "grill-section-label", text: "What you keep getting wrong" });
 		if (!active.length) {
@@ -674,9 +688,17 @@ export class SessionView extends ItemView {
 					}
 				}
 			}
+			if (activeAll.length > active.length) {
+				wrap.createDiv({ cls: "grill-meta", text: `+${activeAll.length - active.length} more recurring` });
+			}
 		}
 		if (beaten.length) {
-			wrap.createDiv({ cls: "grill-meta grill-misc-beaten", text: `Beaten: ${beaten.map((c) => c.label).join(", ")}` });
+			const more = beatenAll.length - beaten.length;
+			const suffix = more > 0 ? `, and ${more} more` : "";
+			wrap.createDiv({
+				cls: "grill-meta grill-misc-beaten",
+				text: `Beaten: ${beaten.map((c) => c.label).join(", ")}${suffix}`,
+			});
 		}
 
 		// Concept coverage: honest counts from the per-concept scheduler.
@@ -1093,6 +1115,7 @@ export class SessionView extends ItemView {
 				provider: usedAI && cfg ? cfg.provider : "local",
 				model: usedAI && cfg ? cfg.model : "deterministic",
 				startedAt: this.sessionStart,
+				dueOnly: this.dueOnly,
 			},
 			s.linkSessions,
 			debrief,
@@ -1148,6 +1171,7 @@ export class SessionView extends ItemView {
 		this.progressBar(wrap);
 		const card = wrap.createDiv({ cls: "grill-body" });
 		const right = this.results.filter((r) => r.verdict === "correct").length;
+		if (this.dueOnly) card.createDiv({ cls: "grill-meta", text: "Due review" });
 		card.createDiv({ cls: "grill-score", text: `${right} of ${this.results.length} correct` });
 
 		if (debrief) {
@@ -1548,8 +1572,17 @@ export class SessionView extends ItemView {
 			this.sessionInstructions = instr.preferences;
 			this.byName = new Map(files.map((f) => [f.basename, f]));
 			const byName = this.byName;
-			const seed = pickCandidates([...byName.keys()], this.plugin.mastery, s.maxNotesPerSession);
-			const names = expandSelectionWithLinks(this.app, seed, byName, this.plugin.mastery, s.maxNotesPerSession);
+			// Interleave by folder before priority-bucketing: pickCandidates's untested
+			// bucket preserves input order, so a scope spanning multiple folders would
+			// otherwise collapse onto whichever folder sorts first (see interleaveByFolder).
+			const orderedNames = interleaveByFolder([...byName.keys()], (n) => byName.get(n)?.parent?.path ?? "");
+			// Due-only sessions must not lose notes to this cap either: `sessionScope`
+			// already narrowed `byName` to exactly the due files, so capping the seed at
+			// maxNotesPerSession here would silently drop due notes before concepts are
+			// even picked (same class of bug as the questionsPerSession cap below).
+			const notesCap = this.dueOnly ? DUE_SESSION_CAP : s.maxNotesPerSession;
+			const seed = pickCandidates(orderedNames, this.plugin.mastery, notesCap);
+			const names = expandSelectionWithLinks(this.app, seed, byName, this.plugin.mastery, notesCap);
 			const vision = !!cfg && s.questionSource === "ai" && s.sendImages && supportsVision(cfg.provider, cfg.model);
 			this.sessionVision = vision;
 			this.noteText = {};
@@ -1569,6 +1602,16 @@ export class SessionView extends ItemView {
 				} else if (this.app.metadataCache.getFileCache(file)?.embeds?.length) {
 					this.notesWithUnsentImages.add(n);
 				}
+			}
+			// "Send images" is on, but the chosen model can't actually read them: the
+			// session still runs fine (the model is told to quiz text only), but silently
+			// — with no visible sign the toggle isn't doing anything for this model, it
+			// reads as "images are broken" rather than "this model doesn't support vision".
+			if (cfg && s.questionSource === "ai" && s.sendImages && !supportsVision(cfg.provider, cfg.model) && this.notesWithUnsentImages.size > 0) {
+				new Notice(
+					`Grill: ${cfg.model} can't read images, so this session will quiz on text only. Switch to a vision model (Claude, GPT-4o/5, Gemini, or a vision Ollama model) to include them.`,
+					8000,
+				);
 			}
 
 			const selectedFiles = names.map((n) => byName.get(n)).filter((f): f is TFile => !!f);
@@ -1596,7 +1639,7 @@ export class SessionView extends ItemView {
 			this.contagionUsed = 0;
 			this.contagionNotes.clear();
 			this.planCursor = 0;
-			const want = Math.max(1, s.questionsPerSession);
+			const want = this.dueOnly ? DUE_SESSION_CAP : Math.max(1, s.questionsPerSession);
 
 			// No-key mode can only use concepts that carry a deterministic question.
 			const pickable = s.questionSource === "local" ? allConcepts.filter((c) => c.local) : allConcepts;

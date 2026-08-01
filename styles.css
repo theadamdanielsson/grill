@@ -315,6 +315,11 @@
   margin-bottom: 0.5em;
 }
 .grill-mc-btn {
+  /* Explicit width, not just the row's flex stretch: a short choice's button
+     otherwise shrinks to fit its own text, which centers the label inside a
+     tight box even with text-align: left — so short answers read "centered"
+     while longer, wrapped ones read left-aligned in the same question. */
+  width: 100%;
   text-align: left;
   white-space: normal;
   height: auto;

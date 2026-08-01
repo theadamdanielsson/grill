@@ -109,7 +109,7 @@ function defaultSettings(): GrillSettings {
 		sounds: true,
 		graphInsights: true,
 		bridgesPerSession: 1,
-		regenerateEvery: 0,
+		regenerateEvery: 3,
 		carefulGrade: false,
 		conceptsMigrated: false,
 	};
