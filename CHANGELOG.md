@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.4.0
+
+- **Reads embedded PDFs.** A `![[worksheet.pdf]]` embed now gets its text pulled in and quizzed on
+  like any other note content, via Obsidian's own PDF engine — no new dependency, no bundled
+  worker. Worksheet-style PDFs get chunked on their own numbered items ("Question 7", "Problem 3")
+  when detectable, one concept per exercise, instead of arbitrary fixed-size slices; AI mode also
+  now actively prefers reusing a PDF's own question wording and worked solution over inventing a
+  new one, when the source material already has one.
+- Fixed a real crash: any prompt-bound text got hard-truncated at a fixed character count, which
+  could split a Unicode character in half (common in PDF-extracted math notation, e.g. italic
+  variables like 𝑌, 𝑃, 𝐺) and corrupt the request, surfacing as an opaque "failed to parse JSON"
+  API error. Truncation is now surrogate-pair-safe everywhere it happens, and one redundant,
+  overly-tight cap was removed rather than widened, trusting content that's already been sensibly
+  chunked upstream instead of cutting it again.
+- Fixed a misleading error when a specifically-picked note or folder came back empty: it used to
+  say "no markdown notes in this vault" even when the real cause was the selection sitting outside
+  Grill's configured folders. Now says so directly.
+
 ## 3.3.0
 
 - Fixed two silent bugs in the FSRS-4.5 scheduling math: initial stability for a

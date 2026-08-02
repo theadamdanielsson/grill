@@ -7,6 +7,7 @@
 
 import { requestUrl } from "obsidian";
 import type { ImageInput } from "./images";
+import { safeSlice } from "./text";
 import type { SessionDebrief, TagAssignment } from "./debrief";
 import type { BridgeCandidate, RawBridge } from "./bridges";
 
@@ -624,6 +625,7 @@ Question craft:
 - If a note contradicts your general knowledge, the note wins; ground questions in the note.
 - Any variable, formula, or equation in your question or answer must be real LaTeX ($...$ inline, $$...$$ for a standalone equation) — Obsidian renders it natively. This applies even when the student's own notes write math as plain text (e.g. "pi^e", "r_n", "i=r+pi^e"): translate that into proper LaTeX ($\\pi^e$, $r_n$, $i = r + \\pi^e$) rather than copying the plain-text notation verbatim.
 - Use plain punctuation and never use em dashes.
+- If the source material for a concept already contains a clearly-written question of its own (an exam, worksheet, or textbook problem — you'll recognize it, often numbered) prefer asking that actual question, verbatim or lightly cleaned up, over inventing a new one: it's already well-posed, and reusing it keeps the student's practice matched to their real material. If the source also shows a worked solution, ground modelAnswer and the rubric in that solution rather than deriving your own from scratch. If the source is closer to plain notes with no distinct question in it, write one as usual.
 
 Using note relationships:
 - When a LINKS section is provided, treat it as prerequisite structure. For a 'hard' concept you may write a synthesis question that connects it to a linked note, provided both are grounded in the notes above and answerable from them.
@@ -932,7 +934,16 @@ export async function generateQuestions(
 					? ` [connect to note "${t.connectTo}"]`
 					: "";
 			const format = mixFormats && t.targetType ? ` [format: ${t.targetType}]` : "";
-			return `${i + 1}. [note "${t.note}"] concept: "${t.label}" (aim: ${t.targetDifficulty})${format}${reprobe}${connect}\n   source: ${t.context.slice(0, 500)}`;
+			// No re-truncation here (there used to be a flat 500-char cut): every path
+			// that sets a concept's `context` already bounds it sensibly at its own source
+			// — a boundary-detected concept (generate-local.ts) to one exercise from a
+			// structured worksheet, however long that genuinely is; the no-boundary
+			// fallback to FALLBACK_CHUNK_SIZE; a heading/term/formula card to 500 chars of
+			// its own. Cutting it again here on top of that was an arbitrary second limit
+			// with no real reason behind it, and it was cutting multi-part questions
+			// (a, b, c...) off mid-way. A real chat with an LLM doesn't re-truncate
+			// something you already sized on purpose; neither should this.
+			return `${i + 1}. [note "${t.note}"] concept: "${t.label}" (aim: ${t.targetDifficulty})${format}${reprobe}${connect}\n   source: ${t.context}`;
 		})
 		.join("\n");
 	// Split so the notes+links (often identical across several batch calls in a
@@ -1190,7 +1201,7 @@ export async function adjudicateBridges(
 	const list = candidates
 		.map(
 			(c, i) =>
-				`${i + 1}. NOTE A "${c.a}": ${c.aText.slice(0, 500)}\n   NOTE B "${c.b}": ${c.bText.slice(0, 500)}`,
+				`${i + 1}. NOTE A "${c.a}": ${safeSlice(c.aText, 500)}\n   NOTE B "${c.b}": ${safeSlice(c.bText, 500)}`,
 		)
 		.join("\n\n");
 	const user =

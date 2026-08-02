@@ -55,12 +55,13 @@ Two separate mechanisms can cause this, and they stack:
 
 ## A model quizzed me on a chapter title or section name, not real material
 
-Should be rare and is guarded against in the prompt, but can still happen on a very sparse note
-(a note with almost no extractable structure falls back to treating the whole note as one
-concept, labelled by the note's own title). If you hit this, the fix is the same as for
-"couldn't find concepts": give the note some real structure — a heading with a sentence or two
-under it, a bold term, a definition line — so there's actual material to test instead of just a
-label.
+Fixed: a sparse note (almost no extractable structure) used to fall back to one concept labelled
+with the note's own file name, and the model sometimes asked about that label as if it were the
+topic. The fallback now labels itself from the actual first line of real content instead, and the
+prompt explicitly tells the model never to test a title, heading, or filename as if it were the
+subject. If you still hit this on a current version, the note likely has close to no real content
+at all (an empty note, or one that's essentially just a link) — give it some real structure, or
+some real prose, so there's actual material to test.
 
 ## A model isn't reading the images in my note
 
@@ -69,6 +70,38 @@ actually support vision (Claude, GPT-4o/GPT-5, Gemini, and vision-tagged Ollama 
 `llava` or `qwen2.5vl`); everything else silently gets text only, even with the toggle on. Grill
 now shows a notice at the start of a session when this happens, naming the model and why. If you
 want images included, switch to one of the vision-capable models above.
+
+## A PDF I embedded isn't being quizzed on
+
+Two separate requirements, either one missing means nothing gets extracted:
+
+1. **It has to be embedded, not just linked.** `![[worksheet.pdf]]` (with the `!`) is an embed;
+   `[[worksheet.pdf]]` (no `!`) is a plain link, and Grill only reads embeds, the same way Obsidian
+   only *renders* embeds inline. A note whose only content is that single embed line has nothing
+   else for Grill's parser to find, so it falls back to treating the PDF's own extracted text as
+   the note's content — see the next section for how that gets broken into questions.
+2. **It needs a real text layer.** Grill reads a PDF's text exactly the way you'd copy-paste it —
+   through Obsidian's own PDF engine (`loadPdfJs`), not OCR. A scanned page that's actually just a
+   picture of text, or a password-protected PDF, has no extractable text at all, so it's invisible
+   to Grill the same way it would be to Cmd/Ctrl-F inside Obsidian's own PDF viewer. If you can't
+   search the text in Obsidian's native PDF view, Grill can't read it either.
+
+It also only reads the first 40 pages of any single PDF — a safety cap against someone embedding
+an entire textbook, not something you'll hit on a normal worksheet or article.
+
+## A worksheet PDF only produced one or two questions, not one per exercise
+
+If the extracted text doesn't parse into headings/terms/definitions Grill recognizes (the common
+case for a PDF — it's flat prose to the parser, whatever visual structure the original PDF had),
+it falls back to chunking the raw text into schedulable pieces. If the worksheet numbers its own
+items in a recognizable way — "Question 7", "Problem 3", "Exercise 2" — Grill detects that and
+chunks on those boundaries, one concept per exercise. If it doesn't (a different numbering style,
+a different language, or just plain prose with no numbered items), it falls back to even-sized
+slices instead — still fully covers the document, just not aligned to its own structure. Either
+way, AI mode also actively prefers reusing the PDF's own question wording (and its worked solution
+as the answer key, if there is one) over inventing a new question from scratch, so a worksheet
+that's already well-posed tends to get asked close to verbatim regardless of which chunking path
+it went through.
 
 ## Math/formulas look like plain text (`pi^e`) instead of rendering properly
 

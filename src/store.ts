@@ -13,6 +13,7 @@ import { MasteryMap, Verdict, normalizeMastery } from "./mastery";
 import { DEFAULT_PERSONA, Question } from "./llm";
 import { MisconceptionRegistry, SessionDebrief } from "./debrief";
 import { ConceptMap } from "./concepts";
+import { safeSlice } from "./text";
 import { BridgeMap } from "./bridges";
 
 /** A generated question cached for reuse. `sourceHash` ties it to the concept's
@@ -134,15 +135,15 @@ export class GrillStore {
 			let preferences = "";
 			// Legacy file with no section headings: treat the whole thing as preferences.
 			if (pIdx === -1 && fIdx === -1) {
-				preferences = strip(raw).slice(0, cap);
+				preferences = safeSlice(strip(raw), cap);
 			} else {
 				if (pIdx !== -1) {
 					const end = fIdx > pIdx ? fIdx : raw.length;
-					persona = strip(raw.slice(pIdx + "## persona".length, end)).slice(0, cap);
+					persona = safeSlice(strip(raw.slice(pIdx + "## persona".length, end)), cap);
 				}
 				if (fIdx !== -1) {
 					const end = pIdx > fIdx ? pIdx : raw.length;
-					preferences = strip(raw.slice(fIdx + "## preferences".length, end)).slice(0, cap);
+					preferences = safeSlice(strip(raw.slice(fIdx + "## preferences".length, end)), cap);
 				}
 			}
 			// Expand any [[wikilinks]] by inlining the referenced notes, under one shared
@@ -184,7 +185,7 @@ export class GrillStore {
 				.replace(/<!--[\s\S]*?-->/g, "")
 				.trim();
 			if (!body) continue;
-			const slice = body.slice(0, budget.left);
+			const slice = safeSlice(body, budget.left);
 			budget.left -= slice.length;
 			out += `\n\nReferenced note "${linkpath}":\n${slice}${slice.length < body.length ? "\n[truncated]" : ""}`;
 		}

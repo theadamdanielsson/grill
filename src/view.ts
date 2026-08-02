@@ -20,6 +20,8 @@ import {
 	reconcileConcepts,
 } from "./concepts";
 import { collectNoteImages, ImageInput } from "./images";
+import { collectNotePdfText } from "./pdf";
+import { safeSlice } from "./text";
 import { interleaveByFolder, NoteMastery, pickCandidates, QDifficulty, Rating, recordNoteStats, statusOf } from "./mastery";
 import {
 	buildSessionGraph,
@@ -1555,7 +1557,7 @@ export class SessionView extends ItemView {
 			if (f) {
 				this.byName.set(n, f);
 				const raw = await this.app.vault.cachedRead(f);
-				this.noteText[n] = raw.length > NOTE_CHAR_CAP ? raw.slice(0, NOTE_CHAR_CAP) + "\n[truncated]" : raw;
+				this.noteText[n] = raw.length > NOTE_CHAR_CAP ? safeSlice(raw, NOTE_CHAR_CAP) + "\n[truncated]" : raw;
 			} else {
 				this.noteText[n] = "";
 			}
@@ -1768,7 +1770,7 @@ export class SessionView extends ItemView {
 					conceptId: `__bridge__:${key}`,
 					note: c.a,
 					label: c.bridgeConcept,
-					context: `${(this.noteText[c.a] ?? "").slice(0, 600)}\n\n${(this.noteText[c.b] ?? "").slice(0, 600)}`,
+					context: `${safeSlice(this.noteText[c.a] ?? "", 600)}\n\n${safeSlice(this.noteText[c.b] ?? "", 600)}`,
 					targetDifficulty: "hard",
 					connectTo: c.b,
 					bridge: true,
@@ -1839,7 +1841,18 @@ export class SessionView extends ItemView {
 		}
 		const files = this.mdFiles();
 		if (files.length === 0) {
-			new Notice("Grill: no markdown notes in this vault.");
+			// A deliberate scope (right-click "Grill this note/folder", or a specific
+			// note/folder picked in the panel) that comes up empty almost always means
+			// it's outside Grill's configured folders, not that the vault has no notes
+			// at all — that generic message was actively misleading for this case, so
+			// tell the student what's actually wrong instead.
+			const scoped = this.sessionScope && this.sessionScope.length > 0;
+			new Notice(
+				scoped
+					? "Grill: everything you picked is outside Grill's configured folders. Check Settings → Grill → \"Grill's folders\", or Excluded folders."
+					: "Grill: no markdown notes in this vault.",
+				8000,
+			);
 			return;
 		}
 		this.sessionStart = new Date();
@@ -1882,9 +1895,15 @@ export class SessionView extends ItemView {
 				const file = byName.get(n);
 				if (!file) continue;
 				const raw = await this.app.vault.cachedRead(file);
+				// A note that only embeds a PDF (`![[worksheet.pdf]]`) has real content, just
+				// none of it in the note's own markdown text — pull the PDF's text in as if
+				// it were typed there, so it's not invisible to both the structural parser and
+				// the AI prompt below (see pdf.ts; a no-op for notes with no PDF embeds).
+				const pdfText = await collectNotePdfText(this.app, file);
+				const text = pdfText ? `${raw}\n\n${pdfText}` : raw;
 				// Extract concepts from the FULL note; only the prompt context is truncated.
-				this.conceptsByNote.set(n, extractConcepts(n, raw, this.plugin.data.settings.questionFormats === "mixed"));
-				this.noteText[n] = raw.length > NOTE_CHAR_CAP ? raw.slice(0, NOTE_CHAR_CAP) + "\n[truncated]" : raw;
+				this.conceptsByNote.set(n, extractConcepts(n, text, this.plugin.data.settings.questionFormats === "mixed"));
+				this.noteText[n] = text.length > NOTE_CHAR_CAP ? safeSlice(text, NOTE_CHAR_CAP) + "\n[truncated]" : text;
 				if (vision) {
 					const imgs = await collectNoteImages(this.app, file, IMAGES_PER_NOTE_CAP);
 					if (imgs.length) this.noteImages[n] = imgs;

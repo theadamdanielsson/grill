@@ -18,6 +18,7 @@
  */
 
 import { Question } from "./llm";
+import { safeSlice } from "./text";
 
 /** The kind of structural element a concept was pulled from. */
 export type ConceptKind = "heading" | "term" | "definition" | "formula" | "card" | "note" | "authored";
@@ -349,7 +350,7 @@ function headingCard(heading: string, body: string): LocalItem | null {
 	if (isLinkDominated(body)) return null;
 	const trimmed = dewiki(body).trim();
 	if (trimmed.length < 25) return null;
-	const answer = trimmed.length > 500 ? trimmed.slice(0, 500).trim() + "…" : trimmed;
+	const answer = trimmed.length > 500 ? safeSlice(trimmed, 500).trim() + "…" : trimmed;
 	return { question: `Recall what you know about **${h}**.`, answer, kind: "heading", label: h };
 }
 
@@ -586,33 +587,83 @@ export function extractConcepts(note: string, text: string, mixFormats = false):
 			...(it.kind === "authored" ? { authored: true, rubric: it.rubric } : {}),
 		});
 	}
-	// A sparse or prose-heavy note still gets one schedulable concept the AI can
-	// range over. It has no `local` question (nothing deterministic to show).
+	// A sparse or prose-heavy note still gets schedulable concepts the AI can range
+	// over. It has no `local` question (nothing deterministic to show). Chunked, not
+	// one giant concept: a note this size in practice is usually a PDF embed's
+	// extracted text (see pdf.ts) run to many thousands of characters — a single
+	// concept capped at the first slice meant only the first ~page ever got quizzed,
+	// no matter how long the note actually was.
+	const FALLBACK_CHUNK_SIZE = 2000;
+	// A well-structured worksheet/exam (exactly what a PDF import tends to be) numbers
+	// its own items — "Question 7", "Problem 3", "Exercise 2" — which is a far better
+	// place to cut than an arbitrary character count: each chunk becomes exactly one
+	// exercise instead of a slice that might cut one in half or straddle two.
+	const QUESTION_BOUNDARY = /^(?:question|problem|exercise|q)\.?\s*\d+\b/i;
 	if (concepts.length < MIN_CONCEPTS_BEFORE_FALLBACK) {
 		const body = stripFrontmatter(text).replace(/<!--[\s\S]*?-->/g, "").trim();
 		// A note that's mostly links (a hub/MOC with no real prose of its own) genuinely
 		// has nothing to quiz — the knowledge lives in the notes it points to, so it
 		// shouldn't fall back to testing its own link list as if that were content.
 		if (body.length >= 40 && !isLinkDominated(body)) {
-			const id = `${note}::note:whole`;
-			if (!usedIds.has(id)) {
-				// Label content, not the file name. This label is sent to the model as
-				// "the concept" to test (see ConceptTarget in llm.ts) — the note name is
-				// already given separately, so using it again here as the "concept" told
-				// the model the topic WAS the file/organizational title, and it dutifully
-				// wrote questions about that ("what's covered under 05. Career 2?")
-				// instead of the actual material. Use the first real line of prose
-				// instead, falling back to the note name only if none is found.
-				const firstLine = cleanLabel(
-					body.split("\n").find((l) => wordCount(cleanLabel(l)) >= 3) ?? "",
-				);
+			const lines = body.split("\n");
+			const boundaries: { label: string; startLine: number }[] = [];
+			for (let i = 0; i < lines.length; i++) {
+				const t = lines[i].trim();
+				if (QUESTION_BOUNDARY.test(t)) boundaries.push({ label: safeSlice(cleanLabel(t), 80), startLine: i });
+			}
+			// Only trust it with at least two real boundaries — a single stray match
+			// (a formula that happens to start "Q1 =", say) isn't real document structure,
+			// and falling back to fixed-size chunking below is exactly as good for that.
+			let rawChunks: { label: string; text: string }[];
+			if (boundaries.length >= 2) {
+				rawChunks = boundaries.map((b, i) => ({
+					label: b.label,
+					text: lines.slice(b.startLine, boundaries[i + 1]?.startLine ?? lines.length).join("\n").trim(),
+				}));
+			} else {
+				// No detectable structure (plain prose, or a PDF that doesn't number its
+				// items) — the previous behavior: even-sized slices, chunked by codepoint
+				// so a slice boundary can't land mid-character (PDF-extracted worksheets
+				// are often full of astral math symbols like 𝑌, 𝑃, 𝐺).
+				const bodyChars = Array.from(body);
+				rawChunks = [];
+				for (let start = 0, i = 0; start < bodyChars.length; start += FALLBACK_CHUNK_SIZE, i++) {
+					const slice = bodyChars.slice(start, start + FALLBACK_CHUNK_SIZE).join("");
+					// Label content, not the file name. This label is sent to the model as
+					// "the concept" to test (see ConceptTarget in llm.ts) — the note name is
+					// already given separately, so using it again here as the "concept" told
+					// the model the topic WAS the file/organizational title, and it dutifully
+					// wrote questions about that ("what's covered under 05. Career 2?")
+					// instead of the actual material. Use the first real line of prose in
+					// THIS chunk instead, capped so a page with no line breaks at all can't
+					// hand back a paragraph as a "label"; fall back to the note name (plus a
+					// part number past the first chunk, so chunks stay distinguishable).
+					const firstLine = cleanLabel(
+						slice.split("\n").find((l) => {
+							const lt = l.trim();
+							// Same embed/table exclusion itemsForNote's main walk already applies —
+							// without it, a chunk starting right at a note's own `![[embed]]` line
+							// (the whole reason this note fell back to whole-note chunking at
+							// all) would pick that raw markup as its label.
+							return wordCount(cleanLabel(lt)) >= 3 && !/^(\||!\[)/.test(lt);
+						}) ?? "",
+					);
+					const label = safeSlice(firstLine, 80) || (i === 0 ? note : `${note} (part ${i + 1})`);
+					rawChunks.push({ label, text: slice });
+				}
+			}
+			for (let chunk = 0; chunk < rawChunks.length && concepts.length < ITEM_CAP_PER_NOTE; chunk++) {
+				const { label, text: slice } = rawChunks[chunk];
+				const id = `${note}::note:whole:${chunk}`;
+				if (usedIds.has(id) || !slice) continue;
+				usedIds.add(id);
 				concepts.push({
 					id,
 					note,
-					label: firstLine || note,
+					label,
 					kind: "note",
-					sourceHash: hashStr(body.slice(0, 2000)),
-					context: body.slice(0, 2000),
+					sourceHash: hashStr(slice),
+					context: slice,
 				});
 			}
 		}

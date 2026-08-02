@@ -25,6 +25,7 @@ Focus a session on a folder or tag from the **Study** dropdown; Grill weights it
 - **Fair grading:** answers are marked against a rubric written with the question: partial credit, three hints, and no confidently-wrong nitpicks.
 - **Finds links you're missing:** spots notes that belong together but aren't linked, and adds the `[[link]]` for you.
 - **Your own questions:** drop a `> [!grill]` callout into any note and Grill asks it verbatim.
+- **Reads embedded PDFs:** a `![[worksheet.pdf]]` embed isn't invisible to Grill — it pulls the PDF's text in and quizzes on it like any other note content, worked exercises included.
 - **Real spaced repetition:** FSRS scheduling per concept resurfaces what's due; edit a note and only the changed parts re-open.
 - **Your key, or fully offline:** Claude, GPT, Gemini, DeepSeek, any OpenAI-compatible endpoint (OpenRouter, Groq, LM Studio), local Ollama, or a no-key deterministic mode.
 
@@ -68,6 +69,12 @@ Sometimes you know exactly what you want to be asked. Drop a callout into any no
 
 Grill asks it verbatim, schedules it alongside everything else, and marks your typed answer against your rubric (or, when you don't write one, against the note). The `A:` and `rubric:` lines are both optional. Because it's a callout it folds away and never clutters your prose, and if you already keep `Question:: answer` flashcards, those still work as they always did.
 
+## PDFs
+
+A lot of real study material lives in a PDF, not a note: an exercise sheet, a lecture slide deck, a scanned reading. Embed one in a note (`![[worksheet.pdf]]`, not just a plain `[[link]]` — the `!` is what makes it an embed) and Grill pulls its text out and quizzes on it exactly like anything you'd typed yourself, no separate setup. If the PDF is itself a worksheet with its own numbered questions, Grill notices and prefers asking those over inventing new ones, using any worked solution in the PDF as the answer key.
+
+A few limits worth knowing: it reads up to 40 pages per PDF, text only (a scanned page with no real text layer under it, or a password-protected file, is invisible to it), and it's read via Obsidian's own PDF engine, so nothing extra gets installed.
+
 ## Telling it how to quiz you
 
 There's a file at `Grill/Instructions.md` (open it from the settings, or the "Open persona & instructions" command) with two parts. **Persona** is who Grill is and how it talks: the default is shown there, editable, so you can turn it into a strict examiner, a gentle Socratic guide, a blunt drill sergeant, whatever you like. **Instructions** is how you want to be quizzed and graded, in plain sentences: "Prefer numeric problems." "Ask me to explain things in my own words." "Be strict on terminology." "Accept bullet-point answers." Both get folded into every session; leave them blank for the defaults.
@@ -82,7 +89,7 @@ This is a *learning* graph (what you've proven), which is a different thing from
 
 ## Privacy and data use
 
-**What leaves your machine, and where it goes.** In AI mode, Grill sends the text of the notes in a session's scope, the questions it writes, your typed answers, and — only if you turn on "Send images to the model" and the model supports vision — embedded images, to whichever provider you configured, using your own API key. That's it: one network destination, the one you chose, governed by that provider's own privacy policy and data-retention terms, not Grill's (Grill has none of its own to speak of). There's no server of mine in the middle, no analytics, no telemetry, no account with Grill itself.
+**What leaves your machine, and where it goes.** In AI mode, Grill sends the text of the notes in a session's scope (including the extracted text of any PDFs they embed — see [PDFs](#pdfs)), the questions it writes, your typed answers, and — only if you turn on "Send images to the model" and the model supports vision — embedded images, to whichever provider you configured, using your own API key. That's it: one network destination, the one you chose, governed by that provider's own privacy policy and data-retention terms, not Grill's (Grill has none of its own to speak of). There's no server of mine in the middle, no analytics, no telemetry, no account with Grill itself.
 
 **Ollama is the exception:** it runs entirely on your machine, so nothing leaves it at all, at the cost of smaller local models writing weaker questions than the paid ones (8B or bigger is a reasonable floor). "From my notes" question mode plus self-grading sends nothing anywhere regardless of provider, since there's no model call at all — see [Without an API key](#without-an-api-key).
 
@@ -137,6 +144,7 @@ Short version of the common ones below; the full list, with what's actually happ
 - **Due count doesn't shrink, or looks like it grew.** Make sure you're on the latest version — this was a real bug (due sessions were capped by the same small per-sitting question count as a normal session, so "Review N due" never actually cleared N) that's since been fixed.
 - **The same question keeps coming back.** Settings → "Reuse generated questions" — raise it above its default so a concept gets a fresh phrasing after a few repeats instead of the same cached one every time.
 - **A model isn't reading the images in my notes.** Not every model can — check Settings → "Send images to the model"'s description for which ones can, and Grill now tells you in-session when the model you picked can't.
+- **A PDF isn't being quizzed on.** Check it's embedded, `![[file.pdf]]` with the `!`, not just linked. A scanned PDF with no real text underneath (or a password-protected one) has nothing for Grill to extract either — it needs an actual text layer, not just a picture of text.
 - **API errors, or grading looks wrong.** Double check the key and model name in settings; a model ID typo is the usual cause. Grading is a model's opinion, not gospel — it's usually right, but the expected answer is always shown so you can judge for yourself.
 
 ## License
