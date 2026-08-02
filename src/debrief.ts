@@ -44,8 +44,12 @@ export interface CanonMisconception {
 	count: number;
 	firstSeen: string;
 	lastSeen: string;
-	/** 'resolved' is set in step 3 when a re-probe is answered correctly. */
-	status: "active" | "resolved";
+	/** 'resolved' is set in step 3 when a re-probe is answered correctly. 'dismissed'
+	 * is set by the student from the dashboard, when the tag itself is bad (a grading
+	 * misfire, not a real confusion) — unlike 'resolved', a fresh observation of the
+	 * same tag does NOT reactivate it (see mergeAssignments), so a bad tag stays out
+	 * of the re-probe rotation for good instead of clawing its way back in. */
+	status: "active" | "resolved" | "dismissed";
 }
 
 export type MisconceptionRegistry = Record<string, CanonMisconception>;
@@ -91,6 +95,18 @@ export function resolveMisconception(reg: MisconceptionRegistry, tag: string, no
 	const c = reg[tag];
 	if (c && c.status !== "resolved") {
 		c.status = "resolved";
+		c.lastSeen = now.toISOString();
+	}
+}
+
+/** Mark a canonical misconception dismissed: the student says this tag is wrong
+ * (a bad grading call, not a real recurring confusion) and it should stop being
+ * re-probed. Permanent, unlike resolveMisconception — mergeAssignments only
+ * reactivates a 'resolved' tag on a fresh observation, never a dismissed one. */
+export function dismissMisconception(reg: MisconceptionRegistry, tag: string, now = new Date()): void {
+	const c = reg[tag];
+	if (c && c.status !== "dismissed") {
+		c.status = "dismissed";
 		c.lastSeen = now.toISOString();
 	}
 }

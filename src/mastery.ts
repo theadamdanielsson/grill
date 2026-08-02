@@ -16,7 +16,10 @@ export interface NoteMastery {
 	streak: number;
 	/** FSRS memory stability (days); null until first answer */
 	stability: number | null;
-	/** FSRS difficulty 0.1-1; null until first answer */
+	/** FSRS difficulty, native FSRS-4.5 scale 1 (easiest) - 10 (hardest); null until
+	 * first answer. A stored value <= 1 from a pre-fix record (the old code rescaled
+	 * this to 0.1-1 and saturated every concept at the clamp ceiling) self-heals on
+	 * its next `applyRating` touch — see the guard there. */
 	difficulty: number | null;
 	lastSeen: string | null; // ISO date
 	dueAt: string | null; // ISO date; null = never tested
@@ -24,6 +27,11 @@ export interface NoteMastery {
 	misconceptions: Record<string, number>;
 	/** Concept-derived note status, set by the aggregate; preferred by statusOf. */
 	aggStatus?: NoteStatus;
+	/** Basename of a linked prerequisite that's tested-struggling while THIS note
+	 * reads "known" on its own FSRS history, or null. A separate, honest signal —
+	 * never overwrites aggStatus, which stays the note's own undisturbed FSRS-derived
+	 * status. Set by SessionView.findWeakPrereq in view.ts. */
+	weakPrereq?: string | null;
 }
 
 export type MasteryMap = Record<string, NoteMastery>;
@@ -60,6 +68,7 @@ export function emptyMastery(): NoteMastery {
 		lastSeen: null,
 		dueAt: null,
 		misconceptions: {},
+		weakPrereq: null,
 	};
 }
 
@@ -160,12 +169,14 @@ export function toRating(verdict: Verdict, difficulty: QDifficulty = "medium"): 
 	return difficulty === "hard" ? 4 : 3;
 }
 
+/** S0(G) = w[G-1], the real FSRS-4.5 4-point initial-stability lookup — four
+ * independent values, one per first rating, not an interpolation between two. */
 function initialStability(rating: number): number {
-	return Math.max(MIN_STABILITY, W[0] + W[1] * (rating - 1));
+	return Math.max(MIN_STABILITY, W[rating - 1]);
 }
 
 function initialDifficulty(rating: number): number {
-	return clamp(W[4] - W[5] * (rating - 3), 0.1, 1);
+	return clamp(W[4] - W[5] * (rating - 3), 1, 10);
 }
 
 function nextStabilityAfterSuccess(stability: number, difficulty: number, r: number, rating: number): number {
@@ -182,8 +193,12 @@ function nextStabilityAfterFailure(stability: number, difficulty: number, r: num
 	);
 }
 
+/** D' = w7*D0(4) + (1-w7)*clamp(D - w6*(G-3), 1, 10) — the real FSRS-4.5
+ * mean-reversion term, gently pulling difficulty back toward the "brand-new Easy
+ * card" anchor each review instead of letting it drift unbounded. */
 function nextDifficulty(difficulty: number, rating: number): number {
-	return clamp(difficulty - W[6] * (rating - 3), 0.1, 1);
+	const reverted = clamp(difficulty - W[6] * (rating - 3), 1, 10);
+	return clamp(W[7] * initialDifficulty(4) + (1 - W[7]) * reverted, 1, 10);
 }
 
 export function optimalInterval(stability: number, desiredRetention = DESIRED_RETENTION): number {
@@ -214,7 +229,15 @@ export function applyRating(m: Schedulable, rating: number, now: Date, desiredRe
 		m.difficulty = initialDifficulty(rating);
 	} else {
 		const r = retrievability(m.stability, elapsedDays);
-		m.difficulty = nextDifficulty(m.difficulty, rating);
+		// Self-heal: a stored difficulty <= 1 is a legacy value from the pre-fix
+		// [0.1,1]-scale formula, which saturated to exactly 1.0 for every rating and
+		// therefore carries no real signal to preserve. Reseed it via the corrected
+		// initial-difficulty formula on this touch rather than rescaling it (a
+		// proportional rescale would map that saturated ceiling to the HARDEST end of
+		// the real scale, which is backwards). The fixed formulas can never themselves
+		// emit a value <= 1 (their floor is ~1.03), so this can never misfire against
+		// genuine post-fix data on any later touch.
+		m.difficulty = m.difficulty <= 1 ? initialDifficulty(rating) : nextDifficulty(m.difficulty, rating);
 		m.stability =
 			rating === 1
 				? nextStabilityAfterFailure(m.stability, m.difficulty, r)

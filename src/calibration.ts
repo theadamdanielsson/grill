@@ -18,9 +18,6 @@ export const CONFIDENCE_LEVELS: { label: string; value: number }[] = [
 	{ label: "Guessing", value: 0.3 },
 ];
 
-/** Keep only the most recent points, so calibration reflects current ability. */
-const CAL_CAP = 100;
-
 /** True when a stored value is a usable calibration point (guards loaded data).
  * Requires finite, in-range numbers so a hand-corrupted data.json can't poison the
  * Brier/bias arithmetic with NaN or out-of-range values. */
@@ -30,10 +27,12 @@ export function isCalPoint(v: unknown): v is CalPoint {
 	return Number.isFinite(p.c) && Number.isFinite(p.ok) && p.c >= 0 && p.c <= 1 && p.ok >= 0 && p.ok <= 1;
 }
 
-/** Append a point to the rolling buffer, capped to the most recent CAL_CAP. */
+/** Append a point to the buffer. Unbounded: a couple thousand {c,ok} pairs is
+ * nothing byte-wise, and a hard cap made the summary's "last N" freeze at the cap
+ * forever for any regular user, which read as calibration "stopping" once you'd
+ * answered enough confidence-tracked questions. */
 export function pushCalibration(buf: CalPoint[], c: number, ok: number): void {
 	buf.push({ c, ok });
-	if (buf.length > CAL_CAP) buf.splice(0, buf.length - CAL_CAP);
 }
 
 export interface CalibrationSummary {

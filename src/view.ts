@@ -31,6 +31,7 @@ import {
 import {
 	activeMisconceptionsByNote,
 	deterministicDebrief,
+	dismissMisconception,
 	mergeAssignments,
 	MisconceptionRegistry,
 	resolveMisconception,
@@ -754,7 +755,7 @@ export class SessionView extends ItemView {
 
 		// Stats derived from mastery.json.
 		const counts = { untested: 0, struggling: 0, known: 0 };
-		let correct = 0, answered = 0, dueWeek = 0;
+		let correct = 0, answered = 0, dueWeek = 0, knownShaky = 0;
 		const now = Date.now();
 		const weekMs = 7 * 86400_000;
 		for (const f of eligible) {
@@ -763,6 +764,7 @@ export class SessionView extends ItemView {
 			if (m) {
 				correct += m.correct;
 				answered += m.correct + m.partial + m.incorrect;
+				if (m.weakPrereq) knownShaky++;
 				if (m.dueAt) {
 					const d = new Date(m.dueAt).getTime();
 					if (d > now && d <= now + weekMs) dueWeek++;
@@ -784,6 +786,17 @@ export class SessionView extends ItemView {
 		// 0% when nothing's been answered, so it reads consistently with the other
 		// stats (due/known all show 0 on a fresh vault) rather than a lone dash.
 		stat("accuracy", `${accuracy}%`);
+
+		// A note can be honestly "known" on its own FSRS history while resting on a
+		// prerequisite that's still shaky (see findWeakPrereq) — surfaced here rather
+		// than folded into the "known" count above, which stays a pure, undisturbed
+		// FSRS readout.
+		if (knownShaky > 0) {
+			screen.createDiv({
+				cls: "grill-meta",
+				text: `${knownShaky} known note${knownShaky === 1 ? "" : "s"} rest${knownShaky === 1 ? "s" : ""} on a shaky prerequisite.`,
+			});
+		}
 
 		// What you keep getting wrong. Both lists only ever grow (a canonical tag is
 		// never deleted, just marked resolved), so past a handful of months of daily
@@ -808,7 +821,19 @@ export class SessionView extends ItemView {
 				const row = list.createDiv({ cls: "grill-misc-row" });
 				const rowHead = row.createDiv({ cls: "grill-misc-head" });
 				rowHead.createSpan({ cls: "grill-misc-label", text: c.label });
-				rowHead.createSpan({ cls: "grill-meta", text: `${c.count}×` });
+				const actions = rowHead.createDiv({ cls: "grill-misc-actions" });
+				actions.createSpan({ cls: "grill-meta", text: `${c.count}×` });
+				// Escape hatch for a bad grading call: the tag itself is wrong, not a real
+				// recurring confusion, so re-probing it forever (contagion, the nudge banner)
+				// just keeps surfacing a false positive. Dismiss removes it from the rotation
+				// for good — unlike a correct re-probe, it won't come back on its own.
+				const dismiss = actions.createSpan({ cls: "grill-chip-link grill-misc-dismiss", text: "Dismiss" });
+				dismiss.setAttribute("title", "Not a real mistake — stop re-probing this");
+				dismiss.onclick = async () => {
+					dismissMisconception(reg, c.tag);
+					await this.plugin.store.saveRegistry(reg);
+					void this.renderDashboard();
+				};
 				if (c.notes.length) {
 					const notes = row.createDiv({ cls: "grill-misc-notes" });
 					for (const n of c.notes.slice(0, 6)) {
@@ -2186,29 +2211,31 @@ export class SessionView extends ItemView {
 	}
 
 	/** Project the note's concept states back into its note-level status + due date,
-	 * then apply the graph-aware prerequisite penalty. */
+	 * and separately flag (without disturbing aggStatus) whether it rests on a
+	 * shaky prerequisite. */
 	private recomputeAggregate(note: string): void {
 		const m = this.plugin.mastery[note];
 		if (!m) return;
 		const agg = noteAggregate(this.conceptsByNote.get(note) ?? [], this.concepts);
 		m.aggStatus = agg.aggStatus;
 		m.dueAt = agg.dueAt;
-		this.applyPrereqPenalty(note, m);
+		m.weakPrereq = this.findWeakPrereq(note, m);
 	}
 
-	/** A note can't read as "known" while a tested prerequisite it links to is
-	 * struggling. Bounded: only tested-weak prerequisites count. */
-	private applyPrereqPenalty(note: string, m: NoteMastery): void {
-		if (m.aggStatus !== "known") return;
+	/** A note can read "known" on its own FSRS history while a tested prerequisite it
+	 * links to is struggling. Surfaced as a separate signal (NoteMastery.weakPrereq),
+	 * never folded into aggStatus — the note's own status stays honest, and due-queue
+	 * selection / prerequisite routing keep reading pure statusOf, unperturbed by this.
+	 * Bounded: only tested-weak prerequisites count; first one found wins. */
+	private findWeakPrereq(note: string, m: NoteMastery): string | null {
+		if (m.aggStatus !== "known") return null;
 		const file = this.byName.get(note);
-		if (!file) return;
+		if (!file) return null;
 		for (const pre of outgoingBasenames(this.app, file)) {
 			const pm = this.plugin.mastery[pre];
-			if (pm && statusOf(pm) === "struggling") {
-				m.aggStatus = "struggling";
-				return;
-			}
+			if (pm && statusOf(pm) === "struggling") return pre;
 		}
+		return null;
 	}
 
 	/** Structural difficulty seed: a brand-new (untested) concept starts one rung up

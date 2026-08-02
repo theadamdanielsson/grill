@@ -1282,6 +1282,19 @@ settings:
   font-weight: var(--font-semibold, 600);
   font-size: var(--font-ui-small);
 }
+.grill-misc-actions {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6em;
+  flex-shrink: 0;
+}
+.grill-misc-dismiss {
+  font-size: var(--font-ui-smaller);
+  opacity: 0.7;
+}
+.grill-misc-dismiss:hover {
+  opacity: 1;
+}
 .grill-misc-notes {
   display: flex;
   flex-wrap: wrap;

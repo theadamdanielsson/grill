@@ -596,10 +596,20 @@ export function extractConcepts(note: string, text: string, mixFormats = false):
 		if (body.length >= 40 && !isLinkDominated(body)) {
 			const id = `${note}::note:whole`;
 			if (!usedIds.has(id)) {
+				// Label content, not the file name. This label is sent to the model as
+				// "the concept" to test (see ConceptTarget in llm.ts) — the note name is
+				// already given separately, so using it again here as the "concept" told
+				// the model the topic WAS the file/organizational title, and it dutifully
+				// wrote questions about that ("what's covered under 05. Career 2?")
+				// instead of the actual material. Use the first real line of prose
+				// instead, falling back to the note name only if none is found.
+				const firstLine = cleanLabel(
+					body.split("\n").find((l) => wordCount(cleanLabel(l)) >= 3) ?? "",
+				);
 				concepts.push({
 					id,
 					note,
-					label: note,
+					label: firstLine || note,
 					kind: "note",
 					sourceHash: hashStr(body.slice(0, 2000)),
 					context: body.slice(0, 2000),

@@ -1,5 +1,25 @@
 # Changelog
 
+## 3.3.0
+
+- Fixed two silent bugs in the FSRS-4.5 scheduling math: initial stability for a
+  first Good/Easy answer was computed from a 2-point interpolation instead of the
+  real 4-point lookup, and difficulty was rescaled onto the wrong range, which
+  nearly zeroed out its intended effect on how fast stability grows after a correct
+  answer and dropped the mean-reversion term entirely. Existing concepts self-heal
+  on their next review; no reset needed.
+- Fixed a note's mastery status getting silently overwritten by a linked
+  prerequisite's status. It's still tracked, just as its own separate "rests on a
+  shaky prerequisite" signal (shown on the dashboard) instead of masquerading as the
+  note's own FSRS-derived status.
+- Fixed the AI question generator sometimes asking about a note's own title or
+  organizational placement instead of its content, when the note didn't parse into
+  structured concepts.
+- Added a "Dismiss" action on the dashboard's recurring-mistakes list, for when the
+  tag itself is a bad grading call rather than a real recurring confusion.
+- Fixed calibration (the "how sure are you" tracking) permanently freezing at your
+  last 100 confidence-tracked answers instead of reflecting your full history.
+
 ## 3.2.1
 
 - Fixed hub/index notes (mostly links to other notes) generating quiz questions about
