@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.5.0
+
+- Faster-feeling sessions: the loading screen between questions and while grading now
+  only appears if the wait actually runs past a third of a second, so a quick response
+  never flashes a loading screen just to immediately swap it away again. When it does
+  show, it now names what it's actually writing a question about instead of a generic
+  "just a moment."
+- Submit, Next, and the other answer-submission controls now give instant feedback the
+  moment you click (or hit Cmd/Ctrl+Enter) instead of nothing happening until the
+  response comes back, and can no longer be double-clicked into a duplicate submission.
+
 ## 3.4.0
 
 - **Reads embedded PDFs.** A `![[worksheet.pdf]]` embed now gets its text pulled in and quizzed on

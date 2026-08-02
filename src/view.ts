@@ -967,6 +967,27 @@ export class SessionView extends ItemView {
 		box.createEl("p", { text: detail, cls: "grill-meta" });
 	}
 
+	/** Milliseconds a wait must run before the full loading screen takes over. A call
+	 * that resolves faster than this (a cache-warm generation, an already-fast grade)
+	 * never shows it at all — swapping to a loading screen and immediately swapping
+	 * away again reads as flicker, not feedback. The click that started the wait
+	 * already got its own instant acknowledgment (the button that triggered it
+	 * disables synchronously, before this ever runs), so nothing here is needed for
+	 * "did my click register" — this only gates the heavier, "this is genuinely
+	 * taking a moment" screen-takeover. */
+	private static readonly LOADING_DEBOUNCE_MS = 350;
+
+	/** Run `work`, only rendering the loading screen if it's still running after the
+	 * debounce window. */
+	private async withDebouncedLoading<T>(title: string, detail: string, work: () => Promise<T>): Promise<T> {
+		const timer = window.setTimeout(() => this.renderLoading(title, detail), SessionView.LOADING_DEBOUNCE_MS);
+		try {
+			return await work();
+		} finally {
+			window.clearTimeout(timer);
+		}
+	}
+
 	private progressBar(wrap: HTMLElement): void {
 		if (!this.plugin.data.settings.showProgress) return;
 		const bar = wrap.createDiv({ cls: "grill-progress" });
@@ -1190,6 +1211,11 @@ export class SessionView extends ItemView {
 		const skip = row.createEl("button", { text: "I don't know", cls: "grill-quiet-btn" });
 
 		doAction = (giveUp: boolean) => {
+			// Instant ack regardless of entry point (Submit click, Cmd/Ctrl+Enter, the
+			// blank-input Enter chain, "I don't know") and blocks a double-submit while
+			// grading runs. mc/tf buttons disable their own row separately on click,
+			// before doAction even runs; this covers submit/hint/skip uniformly.
+			row.querySelectorAll("button").forEach((b) => ((b as HTMLButtonElement).disabled = true));
 			let answer = "";
 			if (!giveUp) {
 				if (isMc || isTf) answer = this.mcPicked;
@@ -1273,7 +1299,10 @@ export class SessionView extends ItemView {
 			text: this.idx + 1 < this.targetCount ? "Next question" : "Finish session",
 			cls: "mod-cta grill-submit-btn",
 		});
-		btn.onclick = () => void this.goToQuestion(this.idx + 1);
+		btn.onclick = () => {
+			btn.disabled = true; // instant ack, independent of whether a wait follows; also blocks a double-click
+			void this.goToQuestion(this.idx + 1);
+		};
 		btn.focus();
 	}
 
@@ -1292,6 +1321,8 @@ export class SessionView extends ItemView {
 		const row = card.createDiv({ cls: "grill-btn-row grill-btn-row-fill" });
 		const yes = row.createEl("button", { text: "Yes, one more", cls: "mod-cta" });
 		yes.onclick = () => {
+			yes.disabled = true;
+			no.disabled = true;
 			if (pending.kind === "prerequisite") this.commitRoutedTarget(pending.route, pending.fromNote);
 			else this.commitContagionTarget(pending.route, pending.fromNote);
 			void this.goToQuestion(this.idx + 1);
@@ -1349,7 +1380,6 @@ export class SessionView extends ItemView {
 
 		let debrief = deterministicDebrief(this.results);
 		if (cfg && usedAI && s.sessionDebrief && sessionNodes.length > 0) {
-			this.renderLoading("Writing your debrief", "Summarising how the session went.");
 			try {
 				const reg = this.registry;
 				const rawTags = this.results
@@ -1363,7 +1393,11 @@ export class SessionView extends ItemView {
 					})
 					.join("\n");
 				const existingCanon = Object.values(reg).map((c) => ({ tag: c.tag, label: c.label }));
-				const out = await debriefSession(cfg, transcript, sessionNodes, existingCanon, rawTags, this.sessionPersona);
+				const out = await this.withDebouncedLoading(
+					"Writing your debrief",
+					"Summarising how the session went.",
+					() => debriefSession(cfg, transcript, sessionNodes, existingCanon, rawTags, this.sessionPersona),
+				);
 				debrief = out.debrief;
 				if (out.assignments.length) {
 					mergeAssignments(reg, out.assignments);
@@ -1808,9 +1842,19 @@ export class SessionView extends ItemView {
 		this.idx = idx;
 		while (this.questions.length <= idx) {
 			const before = this.questions.length;
-			this.renderLoading("Writing your next question", "Just a moment.");
+			// Name what's actually happening rather than a static "just a moment" — a
+			// blank spinner reads as stuck; naming the concept it's drawing on doesn't
+			// make the call any faster, but a visible, specific target measurably cuts
+			// how slow a wait *feels*, especially the very first calls of a session
+			// against fresh content (no prompt-cache hit yet — see generateQuestions'
+			// cacheable/rest split in llm.ts, which only pays off on a note's 2nd+ touch).
+			const next = this.targets[this.planCursor];
 			try {
-				await this.loadNextBatch();
+				await this.withDebouncedLoading(
+					"Writing your next question",
+					next ? `On ${next.note}: ${next.label}` : "Just a moment.",
+					() => this.loadNextBatch(),
+				);
 			} catch (e) {
 				new Notice(`Grill: ${(e as Error).message}`, 8000);
 				this.renderStart();
@@ -2056,9 +2100,12 @@ export class SessionView extends ItemView {
 		} else {
 			const cfg = this.plugin.llmConfig();
 			if (!cfg) return;
-			this.renderLoading("Grading your answer", "Checking it against your note and the rubric.");
 			try {
-				const g = await this.gradeMaybeCareful(cfg, q, answer);
+				const g = await this.withDebouncedLoading(
+					"Grading your answer",
+					"Checking it against your note and the rubric.",
+					() => this.gradeMaybeCareful(cfg, q, answer),
+				);
 				verdict = g.verdict;
 				feedback = g.feedback;
 				misconceptionTag = g.misconceptionTag;
