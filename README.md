@@ -29,6 +29,8 @@ Focus a session on a folder or tag from the **Study** dropdown; Grill weights it
 - **Real spaced repetition:** FSRS scheduling per concept resurfaces what's due; edit a note and only the changed parts re-open.
 - **Your key, or fully offline:** Claude, GPT, Gemini, DeepSeek, any OpenAI-compatible endpoint (OpenRouter, Groq, LM Studio), local Ollama, or a no-key deterministic mode.
 
+Full detail on how each of these actually works — scheduling, the knowledge graph, missing-link detection, custom questions, PDFs, persona/instructions — is in **[docs/features.md](docs/features.md)**, not down here.
+
 ![A partially correct answer, graded with specific feedback and the expected answer](docs/screenshot-feedback.png)
 
 ## Without an API key
@@ -39,63 +41,12 @@ If you've already got flashcards written in your notes, Grill uses them as-is: S
 
 It's only as good as your notes are structured: definition-heavy, well-headed notes make sharp questions; a wall of prose makes weak ones. When you want questions written about your notes rather than pulled from them, or you want your actual writing marked, point Grill at a model. You can also mix the two, e.g. AI writes the questions and you grade yourself, to halve what a session costs.
 
-## What it keeps track of
+## Documentation
 
-Grill schedules you per concept, not per note. It pulls the concepts out of a note (its headings, definitions, bold terms, formulas, and any flashcards you've already written) and tracks each one on its own. That matters for anything bigger than a one-idea note: a chapter note doesn't count as "known" because you got one lucky question right, it keeps coming back until you've actually been tested across its parts. Each concept rides FSRS, the spaced-repetition algorithm Anki switched to: get it right and it won't come up again for a while, get it wrong and it's back next time. The questions climb in difficulty as you go, easy while a concept is new, harder once you've recalled it a few times spaced out. And if you edit a note, only the concepts you actually changed re-open for review; the rest stay put.
-
-The schedule lives in `Grill/concepts.json`, and your per-note history and the misconception notes in `Grill/mastery.json`, both plain files in your vault. Each session also gets saved as a normal note under `Grill/Sessions/`, linked to whatever it quizzed you on, so a note's backlinks show its quiz history. The "Open progress dashboard" command puts it together: what you keep getting wrong, your coverage per note, and a heatmap of your reviews.
-
-Your API key and the settings sit in the plugin's own data, not scattered through your notes.
-
-## How it adapts
-
-Miss a question and Grill doesn't just mark it wrong and move on. If the note you missed builds on another through your `[[links]]`, and you're shaky on that foundation, Grill pulls it in next, quizzes you on it, and tells you why you were sent there, then carries on where you left off. A wrong answer is a signal about what you're missing underneath, not just a score.
-
-It's also fussy about its own questions. Before one reaches you it's checked for the usual model slop, yes/no questions, hints that give the game away, questions that aren't actually grounded in your note, and quietly dropped if it fails. No extra model call, so it works the same on a local model as on a paid one.
-
-## Links you haven't made yet
-
-Because your notes live in a graph, Grill can also find the links you *haven't* made. In an AI session it looks for two of your notes that clearly belong together but aren't linked, quizzes you on the connection, and offers a one-tap **Link these notes** button that writes the `[[link]]` into the note for you. Answer it and your graph gets a little denser: the AI working *inside* your graph, not beside it. You can turn it off, or change how many it adds per session, in settings.
-
-## Writing your own questions
-
-Sometimes you know exactly what you want to be asked. Drop a callout into any note:
-
-```
-> [!grill] Why does IFRS 16 move operating leases on-balance-sheet?
-> A: They become a right-of-use asset and a lease liability.
-> rubric: mentions right-of-use asset, lease liability, on-balance-sheet
-```
-
-Grill asks it verbatim, schedules it alongside everything else, and marks your typed answer against your rubric (or, when you don't write one, against the note). The `A:` and `rubric:` lines are both optional. Because it's a callout it folds away and never clutters your prose, and if you already keep `Question:: answer` flashcards, those still work as they always did.
-
-## PDFs
-
-A lot of real study material lives in a PDF, not a note: an exercise sheet, a lecture slide deck, a scanned reading. Embed one in a note (`![[worksheet.pdf]]`, not just a plain `[[link]]` — the `!` is what makes it an embed) and Grill pulls its text out and quizzes on it exactly like anything you'd typed yourself, no separate setup. If the PDF is itself a worksheet with its own numbered questions, Grill notices and prefers asking those over inventing new ones, using any worked solution in the PDF as the answer key.
-
-A few limits worth knowing: it reads up to 40 pages per PDF, text only (a scanned page with no real text layer under it, or a password-protected file, is invisible to it), and it's read via Obsidian's own PDF engine, so nothing extra gets installed.
-
-## Telling it how to quiz you
-
-There's a file at `Grill/Instructions.md` (open it from the settings, or the "Open persona & instructions" command) with two parts. **Persona** is who Grill is and how it talks: the default is shown there, editable, so you can turn it into a strict examiner, a gentle Socratic guide, a blunt drill sergeant, whatever you like. **Instructions** is how you want to be quizzed and graded, in plain sentences: "Prefer numeric problems." "Ask me to explain things in my own words." "Be strict on terminology." "Accept bullet-point answers." Both get folded into every session; leave them blank for the defaults.
-
-Changing the persona only changes Grill's voice. How questions are built and how answers are scored is fixed by the engine, so your grades stay consistent no matter what you write.
-
-## Your knowledge graph
-
-Open Grill and you land on your **knowledge graph**: every note Grill studies, drawn as a map. It starts grey. As you practise, each note colours in by how well you know it (green known, amber shaky) and grows with how durably you know it, and the links between notes you've both learned brighten. It's the same idea as a fill-in-the-map game: you're colouring in your own knowledge by proving you've learned it. Pick a folder or tag and that slice lights up so you can see exactly what a session will cover; finish the session and watch the map change.
-
-This is a *learning* graph (what you've proven), which is a different thing from Obsidian's own graph of what you've written. On first run Grill asks which folders are its territory (leave it blank for the whole vault); change it any time under settings.
-
-## Privacy and data use
-
-**What leaves your machine, and where it goes.** In AI mode, Grill sends the text of the notes in a session's scope (including the extracted text of any PDFs they embed — see [PDFs](#pdfs)), the questions it writes, your typed answers, and — only if you turn on "Send images to the model" and the model supports vision — embedded images, to whichever provider you configured, using your own API key. That's it: one network destination, the one you chose, governed by that provider's own privacy policy and data-retention terms, not Grill's (Grill has none of its own to speak of). There's no server of mine in the middle, no analytics, no telemetry, no account with Grill itself.
-
-**Ollama is the exception:** it runs entirely on your machine, so nothing leaves it at all, at the cost of smaller local models writing weaker questions than the paid ones (8B or bigger is a reasonable floor). "From my notes" question mode plus self-grading sends nothing anywhere regardless of provider, since there's no model call at all — see [Without an API key](#without-an-api-key).
-
-**What Grill stores, and where.** Everything Grill tracks about you — the FSRS schedule (`Grill/concepts.json`), your per-note history and misconception notes (`Grill/mastery.json`), and each session's transcript (`Grill/Sessions/`) — is written as plain files inside your own vault, not sent anywhere else, and syncs (or not) exactly however you already sync your vault. Delete the `Grill` folder to wipe all of it; delete or edit an individual note's entry in `mastery.json`/`concepts.json` to reset just that note. Your API key and settings live in the plugin's own local `data.json`, not in your notes — like most Obsidian plugins, that file is plaintext on disk, so treat it with the same care you'd give any locally-stored credential (don't sync `.obsidian/plugins/grill/data.json` somewhere untrusted).
-
-**Cost.** AI mode costs API tokens per session: more if you feed it more notes or ask for more questions, both of which you control in settings. Not sure which model to use, with a key or without? See [docs/models.md](docs/models.md) for recommendations by budget and by how much RAM your machine has.
+- **[docs/features.md](docs/features.md)** — how scheduling, the knowledge graph, missing-link detection, custom questions, PDFs, and persona/instructions actually work.
+- **[docs/privacy.md](docs/privacy.md)** — exactly what leaves your machine, where it goes, and what Grill stores.
+- **[docs/models.md](docs/models.md)** — which model to use, by budget and by how much RAM your machine has.
+- **[docs/troubleshooting.md](docs/troubleshooting.md)** — the mechanics behind the common "is this a bug" questions.
 
 ## Worth knowing before you install
 
@@ -103,10 +54,6 @@ This is a *learning* graph (what you've proven), which is a different thing from
 - It's only as good as your notes. Half-written notes make half-baked questions.
 - The grading is a model's opinion, not gospel. It's usually right, but not always, so it always shows you the expected answer. Trust yourself over it.
 - Local models are the weak link. Good for privacy, not for the best questions.
-
-## Look and feel
-
-Grill borrows your theme's colours and spacing so it doesn't clash. The settings cover the usual stuff (compact layout, the progress bar, hiding the note name so it doesn't give the answer away). If you want to fiddle further it exposes a few CSS variables and works with the Style Settings plugin.
 
 ## Requirements
 
@@ -141,11 +88,14 @@ Short version of the common ones below; the full list, with what's actually happ
 
 - **"Couldn't find concepts to quiz in these notes."** The note has too little structure for Grill to pull questions from (no headings, bold terms, definitions, or existing flashcards). Add some structure, or switch questions to AI, which can work from prose.
 - **A note I aced doesn't turn green.** Green requires most of a note's individual concepts to each be answered correctly *twice*, spaced out — one lucky pass isn't enough to call it known. See the doc above for why, and what the map's colours actually mean.
-- **Due count doesn't shrink, or looks like it grew.** Make sure you're on the latest version — this was a real bug (due sessions were capped by the same small per-sitting question count as a normal session, so "Review N due" never actually cleared N) that's since been fixed.
 - **The same question keeps coming back.** Settings → "Reuse generated questions" — raise it above its default so a concept gets a fresh phrasing after a few repeats instead of the same cached one every time.
 - **A model isn't reading the images in my notes.** Not every model can — check Settings → "Send images to the model"'s description for which ones can, and Grill now tells you in-session when the model you picked can't.
 - **A PDF isn't being quizzed on.** Check it's embedded, `![[file.pdf]]` with the `!`, not just linked. A scanned PDF with no real text underneath (or a password-protected one) has nothing for Grill to extract either — it needs an actual text layer, not just a picture of text.
 - **API errors, or grading looks wrong.** Double check the key and model name in settings; a model ID typo is the usual cause. Grading is a model's opinion, not gospel — it's usually right, but the expected answer is always shown so you can judge for yourself.
+
+## Privacy and cost
+
+Grill only talks to the model provider you configure, with your own key — no server of mine in the middle, no analytics, no account. Full breakdown of what leaves your machine and what Grill stores locally: **[docs/privacy.md](docs/privacy.md)**.
 
 ## License
 
