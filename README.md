@@ -4,6 +4,8 @@
 
 I take a lot of notes and almost never go back to them. Re-reading a note isn't the same as remembering it, and I couldn't be bothered to turn everything into flashcards, so Grill quizzes me on the notes I've already got.
 
+![Grill's home screen: pick a scope and get grilled](docs/screenshot-home.png)
+
 ![Grill: open it, start a session, answer, get graded with specific feedback](docs/grill-demo.gif)
 
 ## How to use it
