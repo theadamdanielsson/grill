@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.2.1
+
+- Fixed hub/index notes (mostly links to other notes) generating quiz questions about
+  the link list itself instead of the knowledge those links point to. Headings and
+  lines dominated by wikilinks are no longer treated as content.
+- Fixed sessions getting stuck reviewing the same small set of notes indefinitely on
+  larger vaults: "struggling" notes had no limit on how much of a session's candidate
+  pool they could claim, so a real review backlog could crowd out untested material
+  forever. Untested notes and concepts now always get a guaranteed share of each
+  session.
+- Fixed "Notes considered per session" silently truncating sessions you scope
+  yourself (a chosen note/folder, or due review) — those now always consider
+  everything you picked. The cap only applies to the unscoped auto-session, and its
+  setting description no longer wrongly implies it affects API cost.
+- Removed dead note-level scheduling and prompt-building code left over from the
+  concept-level scheduling migration, plus an unused scope-encoding helper.
+
 ## 3.2.0
 
 - **"Review frequency" setting**: controls how aggressively the schedule keeps things

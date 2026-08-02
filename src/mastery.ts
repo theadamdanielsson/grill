@@ -261,26 +261,6 @@ export function recordNoteStats(
 	map[note] = m;
 }
 
-export function recordAnswer(
-	map: MasteryMap,
-	note: string,
-	verdict: Verdict,
-	misconceptionTag?: string,
-	now = new Date(),
-): void {
-	const m = map[note] ?? emptyMastery();
-	applyRating(m, toRating(verdict), now);
-	if (misconceptionTag) m.misconceptions[misconceptionTag] = (m.misconceptions[misconceptionTag] ?? 0) + 1;
-	map[note] = m;
-}
-
-/** Record a self-graded review (no LLM): the user's own Again/Hard/Good/Easy rating. */
-export function recordRating(map: MasteryMap, note: string, rating: Rating, now = new Date()): void {
-	const m = map[note] ?? emptyMastery();
-	applyRating(m, rating, now);
-	map[note] = m;
-}
-
 /** Round-robin note names across a grouping key (their parent folder), preserving
  * each group's relative order. Candidate selection below is order-sensitive for
  * untested notes (first-come, no re-sort), so without this a scope spanning
@@ -318,6 +298,30 @@ export function interleaveByFolder(names: string[], folderOf: (name: string) => 
  *  2. untested notes
  *  3. known notes not yet due (only if space remains), least-recently-seen first
  */
+/** Share of a capped candidate pool reserved for untested material, regardless of how
+ * large the due/struggling backlog is. Without this, "struggling" candidates (anything
+ * not yet confirmed known — see `statusOf`) queue-jump ahead of every untested one with
+ * no limit on how many of them there can be, so in a large vault a handful of hard notes
+ * can permanently fill the entire cap and starve the rest of the vault out of rotation
+ * forever: confirmed in the wild on a 460-note vault where 84% of notes had zero
+ * exposure after 32 sessions because a few "struggling" grammar notes never stopped
+ * winning priority. Reserving a minimum share guarantees fresh content keeps entering
+ * rotation even when the review backlog alone could fill every session. */
+const NEW_CONTENT_RESERVE_SHARE = 0.3;
+
+/** Build a capped, priority-ordered selection from three priority-ordered buckets,
+ * guaranteeing `fresh` a minimum share of `cap` (see `NEW_CONTENT_RESERVE_SHARE`)
+ * instead of letting `priority` crowd it out entirely when the backlog is large.
+ * Leftover room (priority smaller than its allotment, or fresh smaller than its
+ * reserve) is backfilled from whatever's left, in priority > fresh > overflow order. */
+export function reserveFreshSlots<T>(priority: T[], fresh: T[], overflow: T[], cap: number): T[] {
+	const freshReserve = Math.min(fresh.length, Math.ceil(cap * NEW_CONTENT_RESERVE_SHARE));
+	const priorityTaken = priority.slice(0, Math.max(0, cap - freshReserve));
+	const freshTaken = fresh.slice(0, freshReserve);
+	const filler = [...priority.slice(priorityTaken.length), ...fresh.slice(freshTaken.length), ...overflow];
+	return [...priorityTaken, ...freshTaken, ...filler].slice(0, cap);
+}
+
 export function pickCandidates(allNotes: string[], map: MasteryMap, cap: number, now = new Date()): string[] {
 	const due: string[] = [];
 	const untested: string[] = [];
@@ -331,41 +335,5 @@ export function pickCandidates(allNotes: string[], map: MasteryMap, cap: number,
 	}
 	due.sort((a, b) => (map[a]?.dueAt ?? "").localeCompare(map[b]?.dueAt ?? ""));
 	rest.sort((a, b) => (map[a]?.lastSeen ?? "").localeCompare(map[b]?.lastSeen ?? ""));
-	return [...due, ...untested, ...rest].slice(0, cap);
-}
-
-/** Bloom-tier target difficulty per note, given its mastery state. */
-export function targetDifficulty(m: NoteMastery | undefined, now = new Date()): string {
-	const s = statusOf(m);
-	if (s === "untested") return "easy_or_medium_recall";
-	if (s === "struggling") return "easy_probe_the_misconception";
-	if (m?.dueAt && new Date(m.dueAt) <= now) return "medium_or_hard_application";
-	return "medium_recall_or_application";
-}
-
-/** Misconception tags seen at least `min` times for a note. */
-export function recurringMisconceptions(m: NoteMastery | undefined, min = 2): string[] {
-	if (!m) return [];
-	return Object.entries(m.misconceptions)
-		.filter(([, n]) => n >= min)
-		.sort((a, b) => b[1] - a[1])
-		.map(([t]) => t);
-}
-
-/** Structured per-note state block included in the tutor prompt. */
-export function masteryPromptBlock(map: MasteryMap, notes: string[]): string {
-	const out: Record<string, unknown> = {};
-	for (const n of notes) {
-		const m = map[n];
-		out[n] = {
-			status: statusOf(m),
-			correct: m?.correct ?? 0,
-			partial: m?.partial ?? 0,
-			incorrect: m?.incorrect ?? 0,
-			last_seen: m?.lastSeen?.slice(0, 10) ?? null,
-			target_difficulty: targetDifficulty(m),
-			recurring_misconceptions: recurringMisconceptions(m),
-		};
-	}
-	return JSON.stringify(out, null, 1);
+	return reserveFreshSlots(due, untested, rest, cap);
 }

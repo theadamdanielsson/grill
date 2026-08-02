@@ -45,13 +45,16 @@ import { SessionEntry } from "./store";
 export const VIEW_TYPE = "grill-session";
 
 const NOTE_CHAR_CAP = 4000;
-/** Safety ceiling for a due-only session's question count. Due sessions must not be
- * capped by `questionsPerSession` (that setting is for how much a study session asks
- * per sitting, not how much of the due backlog gets cleared) — otherwise "Review N
- * due now" silently only reviews the first `questionsPerSession` of them, a note with
- * several due concepts never fully clears in one pass, and the due count can look like
- * it barely moves (or grows, as more items lapse) no matter how many sessions you run. */
-const DUE_SESSION_CAP = 200;
+/** Sanity ceiling, not a meaningful UX cap, used wherever a session must not be capped
+ * by the normal per-sitting settings: a due-only session's question count (due sessions
+ * must not be capped by `questionsPerSession` — that setting is for how much a study
+ * session asks per sitting, not how much of the due backlog gets cleared, otherwise
+ * "Review N due now" silently only reviews the first `questionsPerSession` of them, a
+ * note with several due concepts never fully clears in one pass, and the due count can
+ * look like it barely moves no matter how many sessions you run) and any explicitly
+ * scoped session's note count (`maxNotesPerSession` is for auto-selecting a slice of
+ * the WHOLE vault, not for truncating notes the user deliberately chose). */
+const NO_MEANINGFUL_CAP = 200;
 /** Questions generated per model call. Small batches cut the wait before the
  * first question and let the next batch prefetch while the user answers. */
 const BATCH = 2;
@@ -1832,11 +1835,16 @@ export class SessionView extends ItemView {
 			// bucket preserves input order, so a scope spanning multiple folders would
 			// otherwise collapse onto whichever folder sorts first (see interleaveByFolder).
 			const orderedNames = interleaveByFolder([...byName.keys()], (n) => byName.get(n)?.parent?.path ?? "");
-			// Due-only sessions must not lose notes to this cap either: `sessionScope`
-			// already narrowed `byName` to exactly the due files, so capping the seed at
-			// maxNotesPerSession here would silently drop due notes before concepts are
-			// even picked (same class of bug as the questionsPerSession cap below).
-			const notesCap = this.dueOnly ? DUE_SESSION_CAP : s.maxNotesPerSession;
+			// maxNotesPerSession exists to bound an AUTO-selected slice of the whole
+			// vault (the unscoped "let Grill choose" session) — it has no business
+			// truncating a session the user explicitly scoped themselves ("Grill this
+			// note/folder", or the due queue): `sessionScope` already narrowed `byName`
+			// to exactly what they picked, so capping the seed here would silently drop
+			// notes they deliberately chose before concepts are even picked (same class
+			// of bug as the questionsPerSession cap below). Scoped sessions still get a
+			// large ceiling, not truly unbounded, as a sanity cap on reading/extracting
+			// an unreasonable number of full notes in one go.
+			const notesCap = this.sessionScope ? NO_MEANINGFUL_CAP : s.maxNotesPerSession;
 			const seed = pickCandidates(orderedNames, this.plugin.mastery, notesCap);
 			const names = expandSelectionWithLinks(this.app, seed, byName, this.plugin.mastery, notesCap);
 			const vision = !!cfg && s.questionSource === "ai" && s.sendImages && supportsVision(cfg.provider, cfg.model);
@@ -1895,7 +1903,7 @@ export class SessionView extends ItemView {
 			this.contagionUsed = 0;
 			this.contagionNotes.clear();
 			this.planCursor = 0;
-			const want = this.dueOnly ? DUE_SESSION_CAP : Math.max(1, s.questionsPerSession);
+			const want = this.dueOnly ? NO_MEANINGFUL_CAP : Math.max(1, s.questionsPerSession);
 
 			// No-key mode can only use concepts that carry a deterministic question.
 			const pickable = s.questionSource === "local" ? allConcepts.filter((c) => c.local) : allConcepts;

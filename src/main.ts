@@ -845,7 +845,12 @@ class GrillSettingTab extends PluginSettingTab {
 		this.sliderSetting(
 			containerEl,
 			"Notes considered per session",
-			"How many notes (chosen by due date and weakness) are sent as context. Fewer is faster and cheaper; more gives the questions greater variety. Default suits most vaults.",
+			"How many notes (chosen by due date and weakness) Grill reads and scans for concepts before picking " +
+				"this session's questions — only the 1-2 notes behind each question are ever actually sent to the " +
+				"model, so this doesn't affect cost. Fewer is faster to start a session; more gives the scheduler a " +
+				"wider pool to pick fresh material from on a large vault. Default suits most vaults. Doesn't apply " +
+				"when you scope a session yourself (a chosen note/folder, or due review) — those always consider " +
+				"everything you picked.",
 			1,
 			totalNotes,
 			notesValue,

@@ -14,18 +14,6 @@ export interface Scope {
 	id: string;
 }
 
-/** Encode a scope as a dropdown option value, e.g. "folder:Chapters/Ch1". */
-export function encodeScope(s: Scope): string {
-	return s.kind === "all" ? "all" : `${s.kind}:${s.id}`;
-}
-
-export function decodeScope(value: string): Scope {
-	if (value === "all") return { kind: "all", id: "" };
-	const i = value.indexOf(":");
-	const kind = value.slice(0, i) as ScopeKind;
-	return { kind, id: value.slice(i + 1) };
-}
-
 /** Every folder that contains at least one eligible note, ancestors included,
  * sorted by path. Selecting an ancestor scopes to all its descendants. */
 export function listFolders(eligible: TFile[]): string[] {

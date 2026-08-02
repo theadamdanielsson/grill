@@ -107,6 +107,26 @@ function cleanLabel(s: string): string {
 	return dewiki(s).replace(/[:#*_]+$/, "").trim();
 }
 
+/** Words contributed by wikilink targets/aliases within raw (pre-dewiki) markup. */
+function linkWordCount(raw: string): number {
+	let n = 0;
+	WIKILINK_RE.lastIndex = 0;
+	let m: RegExpExecArray | null;
+	while ((m = WIKILINK_RE.exec(raw))) n += wordCount(m[2] ?? m[1]);
+	return n;
+}
+
+/** True when a span of raw markup is dominated by wikilinks rather than the note's
+ * own prose — the "- [[A]]\n- [[B]]\n- [[C]]" shape of a hub/MOC note's link list, or
+ * a "See also [[X]], [[Y]]" cross-reference line. A concept built from link-dominated
+ * text just asks which note is linked where, not anything the student actually knows,
+ * so callers use this to bail out before treating such text as content. */
+function isLinkDominated(raw: string): boolean {
+	const total = wordCount(dewiki(raw));
+	if (total === 0) return false;
+	return linkWordCount(raw) / total >= 0.5;
+}
+
 function stripFrontmatter(text: string): string {
 	if (text.startsWith("---\n")) {
 		const end = text.indexOf("\n---", 4);
@@ -243,6 +263,10 @@ function autoClozeCards(line: string, mixFormats: boolean): LocalItem[] {
 	if (marks.some((k) => k.kind === "anki" || k.kind === "highlight" || k.kind === "curly")) return []; // explicit wins
 	const auto = marks.filter((k) => k.kind === "bold" || k.kind === "wikilink");
 	if (!auto.length) return [];
+	// A line where wikilinks dominate the word count reads as a reference/hub list
+	// ("- [[A]]", "See also [[X]], [[Y]]"), not a claim worth testing recall of —
+	// blanking one link's title just asks which note is linked, not anything known.
+	if (marks.some((k) => k.kind === "wikilink") && isLinkDominated(line)) return [];
 	return buildClozeCards(display, auto, true, mixFormats);
 }
 
@@ -320,6 +344,9 @@ function formulaCard(line: string, context: string, mixFormats: boolean): LocalI
 function headingCard(heading: string, body: string): LocalItem | null {
 	const h = cleanLabel(heading);
 	if (!h || GENERIC_HEADINGS.has(h.toLowerCase()) || wordCount(h) > 8) return null;
+	// A section that's mostly a list of links to other notes (a hub/MOC section) has no
+	// content of its own to recall — the notes it points to are where the knowledge is.
+	if (isLinkDominated(body)) return null;
 	const trimmed = dewiki(body).trim();
 	if (trimmed.length < 25) return null;
 	const answer = trimmed.length > 500 ? trimmed.slice(0, 500).trim() + "…" : trimmed;
@@ -563,7 +590,10 @@ export function extractConcepts(note: string, text: string, mixFormats = false):
 	// range over. It has no `local` question (nothing deterministic to show).
 	if (concepts.length < MIN_CONCEPTS_BEFORE_FALLBACK) {
 		const body = stripFrontmatter(text).replace(/<!--[\s\S]*?-->/g, "").trim();
-		if (body.length >= 40) {
+		// A note that's mostly links (a hub/MOC with no real prose of its own) genuinely
+		// has nothing to quiz — the knowledge lives in the notes it points to, so it
+		// shouldn't fall back to testing its own link list as if that were content.
+		if (body.length >= 40 && !isLinkDominated(body)) {
 			const id = `${note}::note:whole`;
 			if (!usedIds.has(id)) {
 				concepts.push({

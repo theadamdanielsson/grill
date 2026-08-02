@@ -20,6 +20,7 @@ import {
 	NoteStatus,
 	QDifficulty,
 	Rating,
+	reserveFreshSlots,
 	Schedulable,
 	statusOf,
 	toRating,
@@ -213,7 +214,7 @@ export function pickConcepts(
 		const remaining = Math.max(0, newConceptsPerDay - newConceptsIntroducedSince(map, todayStart));
 		untestedPool = untested.slice(0, remaining);
 	}
-	return [...interleaveByNote(due), ...interleaveByNote(untestedPool), ...interleaveByNote(rest)].slice(0, cap);
+	return reserveFreshSlots(interleaveByNote(due), interleaveByNote(untestedPool), interleaveByNote(rest), cap);
 }
 
 /** Concept-derived note status + soonest due date, over the note's CURRENT
