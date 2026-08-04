@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.6.0
+
+- **Load-balanced review scheduling.** Fuzzed due dates now prefer whichever day
+  within the jitter window already has the fewest reviews landing on it, instead of
+  picking randomly — spreads review load across days instead of just avoiding an
+  exact same-day pileup.
+- **Keyboard shortcut**: Enter/Space now advances past the feedback screen once
+  you've been graded, instead of needing to click "Next question" every time.
+
 ## 3.5.0
 
 - Faster-feeling sessions: the loading screen between questions and while grading now

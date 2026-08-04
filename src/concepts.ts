@@ -16,6 +16,7 @@
 import { Concept, ConceptKind } from "./generate-local";
 import {
 	applyRating,
+	DueDateHistogram,
 	MasteryMap,
 	NoteStatus,
 	QDifficulty,
@@ -100,9 +101,10 @@ export function recordConceptAnswer(
 	difficulty: QDifficulty,
 	now = new Date(),
 	desiredRetention?: number,
+	dueDateHistogram?: DueDateHistogram,
 ): void {
 	const cm = map[conceptId];
-	if (cm) applyRating(cm, toRating(verdict, difficulty), now, desiredRetention);
+	if (cm) applyRating(cm, toRating(verdict, difficulty), now, desiredRetention, dueDateHistogram);
 }
 
 /** Self-grade path: the user's own Again/Hard/Good/Easy rating is the signal. */
@@ -112,9 +114,10 @@ export function recordConceptRating(
 	rating: Rating,
 	now = new Date(),
 	desiredRetention?: number,
+	dueDateHistogram?: DueDateHistogram,
 ): void {
 	const cm = map[conceptId];
-	if (cm) applyRating(cm, rating, now, desiredRetention);
+	if (cm) applyRating(cm, rating, now, desiredRetention, dueDateHistogram);
 }
 
 /** Round-robin concepts across their notes (preserving each note's given order),

@@ -206,12 +206,62 @@ export function optimalInterval(stability: number, desiredRetention = DESIRED_RE
 	return Math.max(1, Math.min(interval, MAX_INTERVAL_DAYS));
 }
 
-/** Anki-style interval fuzz so same-session items don't all resurface the same day. */
-export function fuzzInterval(days: number): number {
+function dayKey(date: Date): string {
+	return date.toISOString().slice(0, 10);
+}
+
+/** How many concepts already land on a given due date (YYYY-MM-DD), built once per
+ * session from the full concept map (see loadNextBatch's caller in view.ts) so
+ * fuzzInterval's day choice can prefer the least-crowded day within its jitter
+ * window instead of pure randomness. Optional everywhere it's threaded through:
+ * omitting it is the original pure-random fuzz, unaffected. */
+export type DueDateHistogram = Map<string, number>;
+
+export function buildDueDateHistogram(dueAts: Iterable<string | null>): DueDateHistogram {
+	const hist: DueDateHistogram = new Map();
+	for (const dueAt of dueAts) {
+		if (!dueAt) continue;
+		const key = dueAt.slice(0, 10);
+		hist.set(key, (hist.get(key) ?? 0) + 1);
+	}
+	return hist;
+}
+
+/** Anki-style interval fuzz so same-session items don't all resurface the same day.
+ * With a due-date histogram supplied, picks the least-crowded whole day within the
+ * jitter window instead of a random offset in it — smooths review load across days
+ * rather than merely avoiding an exact-day collision. (The idea comes from
+ * obsidian-spaced-repetition's load-balancing histogram, which that plugin built
+ * but only wired into its legacy SM-2 path, never its FSRS one — this wires it all
+ * the way through.) Ties broken randomly among equally least-crowded days. Falls
+ * back to the original pure-random jitter when no histogram is given, or the
+ * window is too narrow to have more than one whole-day candidate. */
+export function fuzzInterval(days: number, now = new Date(), histogram?: DueDateHistogram): number {
 	if (days < 2.5) return days;
-	if (days < 7) return Math.max(2, days + (Math.random() - 0.5) * 2);
-	const pct = days < 30 ? 0.15 : 0.05;
-	const range = days * pct;
+	const range = days < 7 ? 1 : days * (days < 30 ? 0.15 : 0.05);
+	if (histogram) {
+		const loDay = Math.ceil(Math.max(2, days - range));
+		const hiDay = Math.floor(days + range);
+		if (hiDay > loDay) {
+			let best: number[] = [];
+			let bestCount = Infinity;
+			for (let d = loDay; d <= hiDay; d++) {
+				const count = histogram.get(dayKey(new Date(now.getTime() + d * 86400_000))) ?? 0;
+				if (count < bestCount) {
+					bestCount = count;
+					best = [d];
+				} else if (count === bestCount) {
+					best.push(d);
+				}
+			}
+			const chosen = best[Math.floor(Math.random() * best.length)];
+			// Reserve the chosen day immediately so several ratings applied in the same
+			// session (a whole batch coming due together) spread out against each other,
+			// not just against days that were already crowded before the session started.
+			histogram.set(dayKey(new Date(now.getTime() + chosen * 86400_000)), bestCount + 1);
+			return chosen;
+		}
+	}
 	return Math.max(2, days + (Math.random() - 0.5) * 2 * range);
 }
 
@@ -221,8 +271,16 @@ export function fuzzInterval(days: number): number {
  * difficulty, counters, streak and due date. Runs at note or concept level.
  * `desiredRetention` is the user's "Review frequency" setting (falls back to the
  * FSRS-standard 0.9 default when omitted, e.g. for callers that don't thread settings
- * through). */
-export function applyRating(m: Schedulable, rating: number, now: Date, desiredRetention = DESIRED_RETENTION): void {
+ * through). `dueDateHistogram`, when passed, load-balances the fuzzed due date
+ * against everything else already due (see `fuzzInterval`); omit it for the
+ * original pure-random fuzz. */
+export function applyRating(
+	m: Schedulable,
+	rating: number,
+	now: Date,
+	desiredRetention = DESIRED_RETENTION,
+	dueDateHistogram?: DueDateHistogram,
+): void {
 	const elapsedDays = m.lastSeen ? (now.getTime() - new Date(m.lastSeen).getTime()) / 86400_000 : 0;
 	if (m.stability === null || m.difficulty === null) {
 		m.stability = initialStability(rating);
@@ -259,7 +317,7 @@ export function applyRating(m: Schedulable, rating: number, now: Date, desiredRe
 	if (rating === 1) {
 		m.dueAt = now.toISOString(); // immediately due again
 	} else {
-		const days = fuzzInterval(optimalInterval(m.stability, desiredRetention));
+		const days = fuzzInterval(optimalInterval(m.stability, desiredRetention), now, dueDateHistogram);
 		m.dueAt = new Date(now.getTime() + days * 86400_000).toISOString();
 	}
 

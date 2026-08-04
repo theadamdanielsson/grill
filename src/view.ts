@@ -22,7 +22,17 @@ import {
 import { collectNoteImages, ImageInput } from "./images";
 import { collectNotePdfText } from "./pdf";
 import { safeSlice } from "./text";
-import { interleaveByFolder, NoteMastery, pickCandidates, QDifficulty, Rating, recordNoteStats, statusOf } from "./mastery";
+import {
+	buildDueDateHistogram,
+	DueDateHistogram,
+	interleaveByFolder,
+	NoteMastery,
+	pickCandidates,
+	QDifficulty,
+	Rating,
+	recordNoteStats,
+	statusOf,
+} from "./mastery";
 import {
 	buildSessionGraph,
 	expandSelectionWithLinks,
@@ -161,6 +171,10 @@ export class SessionView extends ItemView {
 	private registry: MisconceptionRegistry = {};
 	/** Per-concept scheduling state (the source of truth for scheduling). */
 	private concepts: ConceptMap = {};
+	/** How many concepts already land on each due date, built once at session start
+	 * from the full concept map — lets fuzzInterval spread newly-scheduled reviews
+	 * across less-crowded days instead of pure random jitter. See applyGrade. */
+	private dueDateHistogram: DueDateHistogram = new Map();
 	/** Each selected note's current concepts, for recomputing its aggregate. */
 	private conceptsByNote = new Map<string, Concept[]>();
 	/** Concept lookup by id, for prebuilt (authored / cached) questions. */
@@ -248,6 +262,37 @@ export class SessionView extends ItemView {
 	async onOpen(): Promise<void> {
 		if (!this.plugin.data.settings.onboarded) this.renderOnboarding();
 		else this.renderStart();
+		this.registerDomEvent(document, "keydown", (e) => this.handleSessionKeydown(e));
+	}
+
+	/** Enter/Space advances past the feedback screen, matching the "press enter to
+	 * continue" convention most quiz/flashcard tools use. One persistent listener,
+	 * gated by current DOM state rather than re-registered per render (Obsidian's
+	 * Component cleanup runs on view close, not on each re-render, so a per-render
+	 * registration would accumulate duplicate listeners over a session). Guarded
+	 * the way a well-tested reference implementation (obsidian-spaced-repetition's
+	 * review keydown handler) does: bail before touching anything unless the key
+	 * actually means something right now, so it never fights typing.
+	 * `.grill-verdict` only exists once a question has been graded (never during
+	 * answering), and `.grill-route-consent` marks the "take one more question?"
+	 * sub-screen, which has its own two buttons, not a single "advance" — excluded
+	 * so this never fires the wrong one. The button itself is already focused (see
+	 * `renderFeedback`'s `btn.focus()`) the moment feedback renders, and a focused
+	 * `<button>` natively fires its own click on Enter/Space — so if it's still
+	 * focused, do nothing and let that native behavior handle it; this listener is
+	 * only a fallback for once focus has moved elsewhere (e.g. clicking the note
+	 * chip to peek at it), where nothing would otherwise respond to Enter/Space. */
+	private handleSessionKeydown(e: KeyboardEvent): void {
+		if (e.metaKey || e.ctrlKey || e.altKey) return;
+		if (e.key !== "Enter" && e.key !== " ") return;
+		const target = e.target as HTMLElement | null;
+		if (target && (target.tagName === "TEXTAREA" || target.tagName === "INPUT")) return;
+		const root = this.contentEl;
+		if (!root.querySelector(".grill-verdict") || root.querySelector(".grill-route-consent")) return;
+		const btn = root.querySelector<HTMLButtonElement>(".grill-submit-btn");
+		if (!btn || btn.disabled || document.activeElement === btn) return;
+		e.preventDefault();
+		btn.click();
 	}
 
 	/** Called after mastery finishes loading asynchronously post-launch: `this.plugin.mastery`
@@ -1981,6 +2026,10 @@ export class SessionView extends ItemView {
 			for (const cs of this.conceptsByNote.values()) allConcepts.push(...cs);
 			reconcileConcepts(this.concepts, allConcepts);
 			this.conceptById = new Map(allConcepts.map((c) => [c.id, c]));
+			// Snapshot of the whole vault's due-date distribution, not just this
+			// session's concepts — a newly-scheduled review should spread against
+			// everything already due, not just what happens to be in today's batch.
+			this.dueDateHistogram = buildDueDateHistogram(Object.values(this.concepts).map((c) => c.dueAt));
 
 			this.questions = [];
 			this.results = [];
@@ -2243,8 +2292,19 @@ export class SessionView extends ItemView {
 		const cid = q.conceptId;
 		if (cid && this.concepts[cid]) {
 			const retention = this.plugin.data.settings.desiredRetention / 100;
-			if (rating !== null) recordConceptRating(this.concepts, cid, rating, new Date(), retention);
-			else recordConceptAnswer(this.concepts, cid, verdict, q.difficulty ?? "medium", new Date(), retention);
+			if (rating !== null) {
+				recordConceptRating(this.concepts, cid, rating, new Date(), retention, this.dueDateHistogram);
+			} else {
+				recordConceptAnswer(
+					this.concepts,
+					cid,
+					verdict,
+					q.difficulty ?? "medium",
+					new Date(),
+					retention,
+					this.dueDateHistogram,
+				);
+			}
 		}
 		recordNoteStats(this.plugin.mastery, q.node, verdict, misconceptionTag);
 		this.recomputeAggregate(q.node);
