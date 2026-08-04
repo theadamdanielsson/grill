@@ -1059,6 +1059,31 @@ export class SessionView extends ItemView {
 		}
 	}
 
+	/** The long-session escape hatch: a due queue can run to 50+ questions, and without
+	 * this the only way out mid-run is closing the pane outright — which works (onClose
+	 * flushes), but looks and feels like abandoning progress rather than a supported way
+	 * to stop. Every question already answered already updated its schedule in memory
+	 * (see applyGrade); this just surfaces the same path a full session's last question
+	 * takes, early. */
+	private renderEndSessionLink(card: HTMLElement): void {
+		const row = card.createDiv({ cls: "grill-end-session-row" });
+		const link = row.createSpan({ cls: "grill-chip-link", text: "End session for now" });
+		link.onclick = () => void this.endSessionEarly();
+	}
+
+	/** Stop short of the full target count: keep every question already answered (its
+	 * schedule update already applied — see applyGrade), close out the session exactly
+	 * as reaching the last question would (session note, debrief, summary screen), and
+	 * simply never reach the rest. They stay due/untested, to resurface next session. */
+	private async endSessionEarly(): Promise<void> {
+		if (!this.results.length) {
+			this.renderStart();
+			return;
+		}
+		this.targetCount = this.results.length;
+		await this.finishSession();
+	}
+
 	private renderQuestion(): void {
 		const wrap = this.root();
 		this.progressBar(wrap);
@@ -1068,6 +1093,7 @@ export class SessionView extends ItemView {
 		const meta = card.createDiv({ cls: "grill-meta-row" });
 		meta.createSpan({ cls: "grill-meta", text: `Question ${this.idx + 1} of ${this.targetCount}` });
 		if (!this.plugin.data.settings.hideNoteName) meta.createSpan({ cls: "grill-chip", text: q.node });
+		this.renderEndSessionLink(card);
 
 		// Connections mode: make the bridge legible. Names are the point of the mode,
 		// but honour "hide note name" so we never leak the answer.
@@ -1335,6 +1361,9 @@ export class SessionView extends ItemView {
 		const chip = meta.createSpan({ cls: "grill-chip grill-chip-link", text: r.node });
 		chip.onclick = () => this.openNote(r.node);
 		chip.setAttr("aria-label", "Open note");
+		// Not on the route-consent screen (the last question only): its own "No" already
+		// ends the session the same way.
+		if (!pendingExtension) this.renderEndSessionLink(card);
 
 		const qEl = card.createDiv({ cls: "grill-question grill-question-small" });
 		this.md(r.question, qEl);

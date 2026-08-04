@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.7.1
+
+- **"End session for now."** A long due queue (50, 100+ questions) had no way out
+  short of closing the pane outright — which actually saved your progress, but gave no
+  confirmation or summary, so it read as abandoning it. This link, shown next to the
+  note name on every question and feedback screen, closes out the session normally
+  (session note, summary, debrief) using whatever you've answered so far; the rest
+  just stays due for next time.
+
 ## 3.7.0
 
 - **Accurate "due" counts.** The status bar, dashboard, and start-screen "Review due
