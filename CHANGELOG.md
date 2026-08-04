@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.7.0
+
+- **Accurate "due" counts.** The status bar, dashboard, and start-screen "Review due
+  now" button all counted notes with at least one due concept, not the concepts
+  themselves — a note due on its earliest concept but sitting on several due ones
+  showed as 1 while the queue it launched quizzed all of them. All three now show the
+  real number of concepts about to be reviewed.
+- **"Bad question."** Every AI-generated question now has a "Bad question" button next
+  to "I don't know": a wrong, broken, or nonsensical question gets deleted from the
+  cache for good (a fresh one is generated next time), doesn't count as an answer, and
+  doesn't touch that concept's schedule. Previously a bad cached question could keep
+  rotating back into review indefinitely.
+
 ## 3.6.0
 
 - **Load-balanced review scheduling.** Fuzzed due dates now prefer whichever day

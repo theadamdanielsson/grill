@@ -66,6 +66,21 @@ function emptyConcept(c: Concept): ConceptMastery {
 	};
 }
 
+/** Count of concepts actually due right now, across whichever notes `isEligible`
+ * admits. This is the real size of what a due-only session (see `pickConcepts`'s
+ * `dueOnly` branch) will queue — unlike a note-level "due" count (a note's soonest
+ * due concept), which undercounts whenever a note has more than one due concept,
+ * so the number shown before a due session starts doesn't match what it delivers. */
+export function dueConceptCount(concepts: ConceptMap, isEligible: (note: string) => boolean, now = new Date()): number {
+	let n = 0;
+	for (const cm of Object.values(concepts)) {
+		if (!conceptTested(cm) || !cm.dueAt || new Date(cm.dueAt) > now) continue;
+		if (!isEligible(cm.note)) continue;
+		n++;
+	}
+	return n;
+}
+
 export function conceptTested(cm: ConceptMastery | undefined): boolean {
 	return !!cm && cm.correct + cm.partial + cm.incorrect > 0;
 }

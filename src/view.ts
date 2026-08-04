@@ -13,6 +13,7 @@ import {
 	ConceptMastery,
 	conceptTargetDifficulty,
 	conceptTested,
+	dueConceptCount,
 	noteAggregate,
 	pickConcepts,
 	recordConceptAnswer,
@@ -452,9 +453,15 @@ export class SessionView extends ItemView {
 
 		// Highest-intent action first: one tap straight into the due queue. Mobile
 		// has no status bar, so this is the due signal there too.
+		// `due` (notes) seeds which notes' concepts get extracted for the session;
+		// the button's own count is concept-level, matching what that session
+		// actually queues (see GrillPlugin.dueCount's doc comment) rather than the
+		// smaller number of notes that merely CONTAIN a due concept.
 		const due = dueFiles(eligible, map);
-		if (due.length) {
-			const cta = screen.createEl("button", { text: `Review ${due.length} due now`, cls: "mod-cta grill-due-cta" });
+		const dueNames = new Set(due.map((f) => f.basename));
+		const dueNow = dueConceptCount(this.plugin.concepts, (note) => dueNames.has(note));
+		if (dueNow) {
+			const cta = screen.createEl("button", { text: `Review ${dueNow} due now`, cls: "mod-cta grill-due-cta" });
 			cta.onclick = () => {
 				this.sessionScope = due;
 				this.dueOnly = true;
@@ -818,7 +825,10 @@ export class SessionView extends ItemView {
 				}
 			}
 		}
-		const dueNow = dueFiles(eligible, map).length;
+		// Concept-level, not note-level: matches what clicking into the due queue
+		// actually delivers (see GrillPlugin.dueCount's doc comment).
+		const eligibleNames = new Set(eligible.map((f) => f.basename));
+		const dueNow = dueConceptCount(this.plugin.concepts, (note) => eligibleNames.has(note));
 		const accuracy = answered ? Math.round((100 * correct) / answered) : 0;
 
 		const stats = screen.createDiv({ cls: "grill-stats" });
@@ -1254,6 +1264,16 @@ export class SessionView extends ItemView {
 			};
 		}
 		const skip = row.createEl("button", { text: "I don't know", cls: "grill-quiet-btn" });
+		// Authored questions are the user's own writing, verbatim from the note — nothing
+		// generated to flag, nothing cached to purge.
+		if (!q.authored) {
+			const bad = row.createEl("button", { text: "Bad question", cls: "grill-quiet-btn grill-bad-question-btn" });
+			bad.setAttribute("title", "Wrong, broken, or nonsensical — delete it and move on, no penalty");
+			bad.onclick = () => {
+				row.querySelectorAll("button").forEach((b) => ((b as HTMLButtonElement).disabled = true));
+				void this.reportBadQuestion();
+			};
+		}
 
 		doAction = (giveUp: boolean) => {
 			// Instant ack regardless of entry point (Submit click, Cmd/Ctrl+Enter, the
@@ -1916,6 +1936,32 @@ export class SessionView extends ItemView {
 		if (this.questions.length < this.targetCount) void this.loadNextBatch().catch(() => undefined);
 	}
 
+	/** "Bad question": the current question is wrong, broken, or nonsensical — an AI
+	 * generation defect, not something to hold against the student. Purges the specific
+	 * cached variant so it can never be served again (a fresh one will be generated next
+	 * time this concept comes up), drops it from this session without recording an
+	 * answer or touching the concept's schedule, and shrinks the promised total by one
+	 * — same shortfall handling loadNextBatch already uses when the validator drops a
+	 * target. */
+	private async reportBadQuestion(): Promise<void> {
+		const q = this.questions[this.idx];
+		if (q.conceptId) {
+			const bank = this.questionBank[q.conceptId];
+			if (bank) {
+				const kept = bank.filter((e) => e.question !== q.question);
+				if (kept.length !== bank.length) {
+					this.questionBank[q.conceptId] = kept;
+					this.bankDirty = true;
+				}
+			}
+		}
+		this.questions.splice(this.idx, 1);
+		this.targetCount = Math.max(this.questions.length, this.targetCount - 1);
+		new Notice("Grill: question deleted. Won't come back, and it doesn't count against you.");
+		await this.flush();
+		await this.goToQuestion(this.idx);
+	}
+
 	private async startSession(): Promise<void> {
 		this.replayMode = false;
 		const s = this.plugin.data.settings;
@@ -2021,7 +2067,10 @@ export class SessionView extends ItemView {
 
 			// Concept layer: reconcile the extracted concepts (create new ones,
 			// re-open any whose source text changed), then pick which to test.
-			this.concepts = await this.plugin.store.loadConcepts();
+			// Same object handed to the plugin so in-session rating updates (mutated
+			// in place, not reassigned) stay visible to its due-count/dashboard readers
+			// without a separate re-sync.
+			this.concepts = this.plugin.concepts = await this.plugin.store.loadConcepts();
 			const allConcepts: Concept[] = [];
 			for (const cs of this.conceptsByNote.values()) allConcepts.push(...cs);
 			reconcileConcepts(this.concepts, allConcepts);

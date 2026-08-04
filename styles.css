@@ -678,6 +678,12 @@
 .grill-quiet-btn:hover {
   color: var(--text-normal);
 }
+.grill-bad-question-btn {
+  margin-left: 0;
+}
+.grill-bad-question-btn:hover {
+  color: var(--text-error);
+}
 /* Subtle arcade on the actual working surface: a light touch, not the cabinet — this is
    where you're reading and typing, so it stays on your theme's own background/contrast
    and just picks up Grill's accent instead of Obsidian's generic blue mod-cta. No pixel

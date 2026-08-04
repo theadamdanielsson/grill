@@ -12,7 +12,7 @@ import {
 import { MasteryMap } from "./mastery";
 import { CalPoint, isCalPoint } from "./calibration";
 import { LLMConfig, PROVIDERS, ProviderId, Question, listModels, testModel } from "./llm";
-import { migrateResetScheduling } from "./concepts";
+import { ConceptMap, dueConceptCount, migrateResetScheduling } from "./concepts";
 import { dueFiles } from "./scope";
 import { GrillStore } from "./store";
 import { SessionView, VIEW_TYPE } from "./view";
@@ -146,6 +146,10 @@ export default class GrillPlugin extends Plugin {
 	store!: GrillStore;
 	/** In-memory mastery cache; source of truth is <folder>/mastery.json. */
 	mastery: MasteryMap = {};
+	/** In-memory concept-schedule cache; source of truth is <folder>/concepts.json.
+	 * SessionView points this at its own (freshly loaded) map when a session starts,
+	 * so in-session rating updates stay visible here without a separate re-sync. */
+	concepts: ConceptMap = {};
 
 	async onload(): Promise<void> {
 		const stored = (await this.loadData()) as Partial<PluginData> | null;
@@ -315,6 +319,7 @@ export default class GrillPlugin extends Plugin {
 		this.app.workspace.onLayoutReady(() => {
 			void (async () => {
 				this.mastery = await this.store.loadMastery();
+				this.concepts = await this.store.loadConcepts();
 				// One-time move to concept-level scheduling: keep stats, reset scheduling.
 				if (!this.data.settings.conceptsMigrated) {
 					migrateResetScheduling(this.mastery);
@@ -371,22 +376,17 @@ export default class GrillPlugin extends Plugin {
 		return false;
 	}
 
-	/** Count of notes currently worth reviewing (past their scheduled review date).
-	 * `dueAt` alone is authoritative: applyRating already keeps it in sync (now on
-	 * a miss, pushed out on a hit), so a separate "struggling" check would keep a
-	 * just-answered-correctly item glued to the due count until its SECOND
-	 * consecutive correct answer (the "known" streak), which reads as the due
-	 * pile ignoring a correct answer. */
+	/** Count of concepts currently due for review — the real size of what clicking
+	 * into the due queue will deliver (see `dueConceptCount` and `pickConcepts`'s
+	 * `dueOnly` branch). Deliberately NOT a count of due notes: a note's rolled-up
+	 * `dueAt` (see `noteAggregate`) is the EARLIEST of its concepts' due dates, so
+	 * counting notes undercounts whenever a note has more than one concept due at
+	 * once — the number shown wouldn't match the queue it launches. */
 	dueCount(): number {
-		const now = new Date();
-		let n = 0;
-		for (const f of this.app.vault.getMarkdownFiles()) {
-			if (this.isExcluded(f.path)) continue;
-			const m = this.mastery[f.basename];
-			if (!m) continue;
-			if (m.dueAt && new Date(m.dueAt) <= now) n += 1;
-		}
-		return n;
+		const eligibleNames = new Set(
+			this.app.vault.getMarkdownFiles().filter((f) => !this.isExcluded(f.path)).map((f) => f.basename),
+		);
+		return dueConceptCount(this.concepts, (note) => eligibleNames.has(note));
 	}
 
 	refreshStatusBar(): void {
