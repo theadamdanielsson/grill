@@ -1,5 +1,16 @@
 # Changelog
 
+## 4.0.0
+
+- **Redesigned the feedback screen.** The verdict is now a colored badge with an icon
+  instead of a plain text line, and "your answer" plus the grader's feedback sit
+  together inside a bordered card. The expected answer and "Explain this" now live in
+  a second card underneath — real visual grouping instead of one long stack of
+  undifferentiated text.
+- **"Explain this" now returns three short, labeled parts** — What went wrong, The
+  rule, and an Example — instead of one 2-4 paragraph block of prose, so a fuller
+  explanation reads as a structured breakdown instead of a wall of text.
+
 ## 3.9.0
 
 - **Editing a note no longer resets its scheduling.** Previously, any change to a

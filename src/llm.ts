@@ -151,6 +151,15 @@ export interface Grade {
 	misconceptionTag: string;
 }
 
+/** Structured "Explain this" output — distinct short fields, not one prose blob, so the
+ * feedback screen can render each as its own labeled block instead of a wall of text. */
+export interface Explanation {
+	whatWentWrong: string;
+	theRule: string;
+	/** "" when no natural worked example applies — same convention as debriefSchema's `pattern`. */
+	example: string;
+}
+
 /** Whether this provider and model can read image inputs. */
 export function supportsVision(provider: ProviderId, model: string): boolean {
 	switch (provider) {
@@ -1166,23 +1175,34 @@ export async function gradeAnswer(
  * schema below only asks for `explanation`. Losing that cache hit is the right trade for
  * not shipping a leaky explanation. */
 const EXPLAIN_RULES = `The student got a question wrong (or gave up) and, after reading the feedback and any
-hints already shown, still doesn't understand. Write a fuller explanation that actually
-walks through the reasoning, grounded in the NOTE given below (quote or paraphrase the
-relevant part of the note rather than inventing an outside explanation). When no expected
-answer was supplied, treat the NOTE as the sole source of truth.
+hints already shown, still doesn't understand. Write a fuller explanation, grounded in the
+NOTE given below (quote or paraphrase the relevant part rather than inventing an outside
+explanation). When no expected answer was supplied, treat the NOTE as the sole source of truth.
 
-Output ONLY the explanation itself, as plain prose the student reads directly: 2 to 4
-short paragraphs, no headers, no bullet lists, no restating the question. Never write
-internal labels or field names such as "verdict:", "feedback:", or "misconceptionTag:",
-and never output a bare snake_case tag on its own line — those are grading internals the
-student must never see. Use plain punctuation and never use em or en dashes.`;
+Output three short, distinct fields, each 1 to 3 sentences — the structure is what makes
+this readable, so do not pad any field into a paragraph:
+- whatWentWrong: specifically what the student's answer got wrong or missed, citing their
+  actual answer, not a generic restatement of the question.
+- theRule: the underlying concept or rule that resolves it, stated plainly, as something to
+  remember next time.
+- example: one concrete worked example or application of the rule, grounded in the note. Empty
+  string if no natural worked example applies to this question.
+
+Never write internal labels or field names such as "verdict:", "feedback:", or
+"misconceptionTag:", and never output a bare snake_case tag on its own line — those are
+grading internals the student must never see. Use plain punctuation and never use em or en
+dashes.`;
 
 const explainSystem = (persona: string): string => `${persona.trim() || DEFAULT_PERSONA}\n\n${EXPLAIN_RULES}`;
 
 const EXPLAIN_SCHEMA = {
 	type: "object",
-	properties: { explanation: { type: "string" } },
-	required: ["explanation"],
+	properties: {
+		whatWentWrong: { type: "string" },
+		theRule: { type: "string" },
+		example: { type: "string" },
+	},
+	required: ["whatWentWrong", "theRule", "example"],
 	additionalProperties: false,
 };
 
@@ -1214,7 +1234,7 @@ export async function explainQuestion(
 	hintsShown: string[] = [],
 	images: ImageInput[] = [],
 	persona: string = DEFAULT_PERSONA,
-): Promise<string> {
+): Promise<Explanation> {
 	const cacheable = `NOTE '${q.node}':\n${noteText}\n\n`;
 	const referenceGuidance = q.modelAnswer.trim()
 		? `EXPECTED ANSWER: ${q.modelAnswer}`
@@ -1231,9 +1251,15 @@ export async function explainQuestion(
 		hintsBlock +
 		"Explain it more fully.";
 	const data = (await callJSON(cfg, explainSystem(persona), { cacheable, rest }, EXPLAIN_SCHEMA, 2000, images)) as {
-		explanation: string;
+		whatWentWrong: string;
+		theRule: string;
+		example: string;
 	};
-	return stripGradingLeaks(cleanText(data.explanation ?? ""));
+	return {
+		whatWentWrong: stripGradingLeaks(cleanText(data.whatWentWrong ?? "")),
+		theRule: stripGradingLeaks(cleanText(data.theRule ?? "")),
+		example: stripGradingLeaks(cleanText(data.example ?? "")),
+	};
 }
 
 // ------------------------------------------------------------------ bridge adjudication

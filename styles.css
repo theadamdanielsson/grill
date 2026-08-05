@@ -188,6 +188,12 @@
   --grill-grid: #3a1c0a;
   --grill-radius-s: 3px;
   --grill-radius-m: 5px;
+  /* Spacing scale for the study flow (question/feedback/explanation) only — existing
+   * ad hoc em values elsewhere in this file are untouched. */
+  --grill-space-xs: 0.25em;
+  --grill-space-sm: 0.5em;
+  --grill-space-md: 0.85em;
+  --grill-space-lg: 1.25em;
 }
 /* Panel card: an ember-bordered box on the screen's own dark ground, the language every
  * dashboard section and the graph wrap shares. */
@@ -196,6 +202,20 @@
   border-radius: var(--grill-radius-m);
   background: var(--grill-screen-deep);
   padding: 0.85em 0.95em;
+}
+/* Plain-flow card: same bordered-box shape as .grill-card, but built from theme tokens
+ * instead of the fixed arcade palette, so it's usable on the question/feedback/
+ * explanation screens without pulling in ember/screen colors — see the design note on
+ * .grill-arcade-screen above for why those screens don't share a palette with this one. */
+.grill-flow-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m, var(--grill-radius-m));
+  background: var(--background-secondary);
+  padding: var(--grill-space-md);
+  margin: var(--grill-space-md) 0;
+}
+.grill-flow-card + .grill-flow-card {
+  margin-top: var(--grill-space-sm);
 }
 /* Full-width, consistent CTAs. */
 .grill-view .grill-start-btn,
@@ -837,30 +857,89 @@
 .grill-v-partial { color: var(--color-orange); }
 .grill-v-incorrect { color: var(--color-red); }
 .grill-v-skipped { color: var(--text-muted); }
+/* Verdict badge: a real pill (icon + tinted background) instead of the plain colored
+ * text line above — .grill-verdict/.grill-v-* stay exactly as they are (still used by
+ * the progress-bar dots and summary rows), so the badge shape and its tinted background
+ * are scoped to this second, additive class instead of touching those. */
+.grill-verdict-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  padding: 0.25em 0.7em 0.25em 0.55em;
+  border-radius: 999px;
+  font-weight: var(--font-semibold, 600);
+  font-size: var(--font-ui-small);
+  margin-bottom: var(--grill-space-sm);
+}
+.grill-verdict-badge .grill-verdict-icon {
+  display: flex;
+  flex-shrink: 0;
+}
+.grill-verdict-badge .grill-verdict-icon svg {
+  width: 14px;
+  height: 14px;
+}
+/* Tint at ~14% opacity for the pill fill, keeping text/icon at full color — same
+ * color-mix idiom already used elsewhere in this file (e.g. .grill-tf-btn borders).
+ * Still reads --grill-correct/partial/incorrect (see the customization section below),
+ * so a Style-Settings retint keeps working unchanged. */
+.grill-verdict-badge.grill-v-correct { background: color-mix(in srgb, var(--grill-correct) 14%, transparent); }
+.grill-verdict-badge.grill-v-partial { background: color-mix(in srgb, var(--grill-partial) 14%, transparent); }
+.grill-verdict-badge.grill-v-incorrect { background: color-mix(in srgb, var(--grill-incorrect) 14%, transparent); }
+.grill-verdict-badge.grill-v-skipped { background: var(--background-modifier-border); }
+.grill-block-label {
+  font-size: var(--font-ui-smaller, 0.85em);
+  font-weight: var(--font-semibold, 600);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  margin-bottom: 0.2em;
+}
+.grill-your-answer {
+  margin-top: var(--grill-space-sm);
+}
 .grill-your-answer blockquote {
   margin: 0.25em 0;
   padding-left: 0.75em;
   border-left: 2px solid var(--background-modifier-border);
   color: var(--text-muted);
 }
-.grill-feedback p { margin: 0.25em 0 0; }
-.grill-model-answer {
-  margin: 0.75em 0;
-  font-size: var(--font-ui-medium);
+.grill-feedback {
+  margin-top: var(--grill-space-sm);
 }
-.grill-model-answer p { margin: 0; }
+.grill-feedback p { margin: 0.25em 0 0; }
+.grill-feedback p:first-child { margin-top: 0; }
+.grill-model-answer { font-size: var(--font-ui-medium); }
+.grill-review-card .grill-model-answer p { margin: 0; }
 .grill-view .grill-explain-box {
-  margin: 0.75em 0;
+  margin-top: var(--grill-space-md);
 }
 .grill-explanation {
-  margin: 0.5em 0 0;
+  margin-top: var(--grill-space-md);
+  padding-top: var(--grill-space-md);
+  border-top: 1px solid var(--background-modifier-border);
+}
+.grill-explanation-block {
+  margin-bottom: var(--grill-space-sm);
+}
+.grill-explanation-block:last-child { margin-bottom: 0; }
+.grill-explanation-block p { margin: 0; font-size: var(--font-ui-medium); }
+/* Coordinated spacing for structural markdown a model might emit inside these two
+ * cards (lists, an occasional heading) — previously unstyled, falling through to
+ * generic Obsidian reading-view defaults with no card-aware spacing. */
+.grill-verdict-card ul, .grill-verdict-card ol,
+.grill-review-card ul, .grill-review-card ol {
+  margin: 0.35em 0;
+  padding-left: 1.3em;
+}
+.grill-verdict-card li, .grill-review-card li { margin: 0.2em 0; }
+.grill-verdict-card h1, .grill-verdict-card h2, .grill-verdict-card h3,
+.grill-verdict-card h4, .grill-verdict-card h5, .grill-verdict-card h6,
+.grill-review-card h1, .grill-review-card h2, .grill-review-card h3,
+.grill-review-card h4, .grill-review-card h5, .grill-review-card h6 {
   font-size: var(--font-ui-medium);
-}
-.grill-explanation p {
-  margin: 0.5em 0 0;
-}
-.grill-explanation p:first-child {
-  margin-top: 0;
+  font-weight: var(--font-semibold, 600);
+  margin: 0.6em 0 0.2em;
 }
 
 /* ---------------------------------------------------------------- summary */

@@ -1358,6 +1358,13 @@ export class SessionView extends ItemView {
 		return { text: "Incorrect", cls: "grill-v-incorrect" };
 	}
 
+	private verdictIcon(r: QuestionResult): string {
+		if (r.gaveUp) return "circle-help";
+		if (r.verdict === "correct") return "circle-check";
+		if (r.verdict === "partial") return "circle-minus";
+		return "circle-x";
+	}
+
 	private renderFeedback(r: QuestionResult, pendingExtension: PendingExtension | null = null): void {
 		if (this.plugin.data.settings.sounds) playSfx(r.verdict); // correct / partial / incorrect
 		const wrap = this.root();
@@ -1375,22 +1382,39 @@ export class SessionView extends ItemView {
 		const qEl = card.createDiv({ cls: "grill-question grill-question-small" });
 		this.md(r.question, qEl);
 
+		// The verdict card: badge + your answer + grader feedback — "what happened".
+		const verdictCard = card.createDiv({ cls: "grill-flow-card grill-verdict-card" });
 		const v = this.verdictLabel(r);
-		card.createDiv({ cls: `grill-verdict ${v.cls}`, text: v.text });
+		const badge = verdictCard.createDiv({ cls: `grill-verdict-badge ${v.cls}` });
+		setIcon(badge.createSpan({ cls: "grill-verdict-icon" }), this.verdictIcon(r));
+		badge.createSpan({ text: v.text });
 		if (!r.gaveUp && r.answer) {
-			const ans = card.createDiv({ cls: "grill-your-answer" });
+			verdictCard.createDiv({ cls: "grill-block-label", text: "Your answer" });
+			const ans = verdictCard.createDiv({ cls: "grill-your-answer" });
 			this.md(`> ${r.answer.split("\n").join("\n> ")}`, ans);
 		}
 		if (r.feedback) {
-			const fb = card.createDiv({ cls: "grill-feedback" });
-			this.md(r.feedback, fb);
-		}
-		if (r.verdict !== "correct" && r.modelAnswer) {
-			const ma = card.createDiv({ cls: "grill-model-answer" });
-			this.md(`**Expected answer:** ${r.modelAnswer}`, ma);
+			const fb = verdictCard.createDiv({ cls: "grill-feedback" });
+			// Display-only split on the grader's own "line 1 / line 2" convention (see
+			// GRADER_RULES) — no schema change, just rendering each line as its own block
+			// when the model included the break, one block otherwise.
+			for (const line of r.feedback.split("\n").map((l) => l.trim()).filter(Boolean)) {
+				this.md(line, fb.createDiv({ cls: "grill-feedback-line" }));
+			}
 		}
 
-		if (!pendingExtension) this.offerExplanation(card, r);
+		// The review card: expected answer + on-demand explanation — "what to study".
+		// Only rendered when it would actually have something in it.
+		const showExpectedAnswer = r.verdict !== "correct" && !!r.modelAnswer;
+		const showExplain = !pendingExtension && this.canExplain(r);
+		if (showExpectedAnswer || showExplain) {
+			const reviewCard = card.createDiv({ cls: "grill-flow-card grill-review-card" });
+			if (showExpectedAnswer) {
+				reviewCard.createDiv({ cls: "grill-block-label", text: "Expected answer" });
+				this.md(r.modelAnswer, reviewCard.createDiv({ cls: "grill-model-answer" }));
+			}
+			if (showExplain) this.offerExplanation(reviewCard, r);
+		}
 
 		if (r.missingLink && r.connectTo) this.offerLink(card, r.node, r.connectTo);
 
@@ -1434,14 +1458,20 @@ export class SessionView extends ItemView {
 		no.onclick = () => void this.finishSession();
 	}
 
+	/** Whether "Explain this" has anything to offer: an LLM is configured, this isn't a
+	 * replay (noteText isn't loaded then), and the answer wasn't already correct. Shared
+	 * between `renderFeedback` (deciding whether to render the review card at all) and
+	 * `offerExplanation` itself, so the two checks can't drift apart. */
+	private canExplain(r: QuestionResult): boolean {
+		return !this.replayMode && r.verdict !== "correct" && !!this.plugin.llmConfig();
+	}
+
 	/** "Explain this": the rescue action for when the feedback/hints/expected-answer above
-	 * still leave the student stuck — one contextual LLM call, not a chat, rendered inline.
-	 * Hidden entirely (no disabled state) whenever there's no LLM configured, during a
-	 * replay (noteText isn't loaded then), or when the answer was already correct — matching
-	 * the `r.verdict !== "correct"` guard already used for the "Expected answer" block above. */
+	 * still leave the student stuck — one contextual LLM call, not a chat, rendered inline
+	 * as three labeled parts instead of one prose blob. */
 	private offerExplanation(card: HTMLElement, r: QuestionResult): void {
-		const cfg = this.plugin.llmConfig();
-		if (!cfg || this.replayMode || r.verdict === "correct") return;
+		if (!this.canExplain(r)) return;
+		const cfg = this.plugin.llmConfig()!;
 		const q = this.questions[this.idx]; // same source Question that produced r
 		const box = card.createDiv({ cls: "grill-explain-box" });
 		const btn = box.createEl("button", { text: "Explain this", cls: "grill-hint-btn" });
@@ -1466,7 +1496,9 @@ export class SessionView extends ItemView {
 					this.sessionPersona,
 				);
 				const out = box.createDiv({ cls: "grill-explanation" });
-				this.md(explanation, out);
+				this.explanationBlock(out, "What went wrong", explanation.whatWentWrong);
+				this.explanationBlock(out, "The rule", explanation.theRule);
+				this.explanationBlock(out, "Example", explanation.example);
 				btn.remove();
 			} catch (e) {
 				new Notice(`Grill: ${(e as Error).message}`, 8000);
@@ -1476,6 +1508,15 @@ export class SessionView extends ItemView {
 				window.clearTimeout(stageTimer);
 			}
 		};
+	}
+
+	/** One labeled sub-block of a structured Explanation; skipped when the model left the
+	 * field empty (the `example` field's documented empty-string case). */
+	private explanationBlock(parent: HTMLElement, label: string, text: string): void {
+		if (!text) return;
+		const block = parent.createDiv({ cls: "grill-explanation-block" });
+		block.createDiv({ cls: "grill-block-label", text: label });
+		this.md(text, block);
 	}
 
 	/** A missing-link question offers to write the `[[link]]` into the graph — the
@@ -2376,13 +2417,14 @@ export class SessionView extends ItemView {
 		const qEl = card.createDiv({ cls: "grill-question grill-question-small" });
 		this.md(q.question, qEl);
 
+		const revealCard = card.createDiv({ cls: "grill-flow-card grill-review-card" });
 		if (!gaveUp && answer) {
-			const ans = card.createDiv({ cls: "grill-your-answer" });
+			revealCard.createDiv({ cls: "grill-block-label", text: "Your answer" });
+			const ans = revealCard.createDiv({ cls: "grill-your-answer" });
 			this.md(`> ${answer.split("\n").join("\n> ")}`, ans);
 		}
-
-		const ma = card.createDiv({ cls: "grill-model-answer" });
-		this.md(`**Answer:** ${q.modelAnswer}`, ma);
+		revealCard.createDiv({ cls: "grill-block-label", text: "Answer" });
+		this.md(q.modelAnswer, revealCard.createDiv({ cls: "grill-model-answer" }));
 
 		card.createDiv({ cls: "grill-meta grill-selfgrade-prompt", text: "How did you do?" });
 		const rateRow = card.createDiv({ cls: "grill-btn-row grill-selfgrade-row" });
