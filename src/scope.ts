@@ -4,7 +4,7 @@
  */
 
 import { App, TFile, getAllTags } from "obsidian";
-import { MasteryMap } from "./mastery";
+import { ConceptMap, dueNotes } from "./concepts";
 
 export type ScopeKind = "all" | "due" | "folder" | "tag" | "note";
 
@@ -48,25 +48,21 @@ export function listTags(app: App, limit = 40): { tag: string; count: number }[]
 		.slice(0, limit);
 }
 
-/** Notes past their scheduled review date. `dueAt` alone is authoritative (see
- * `GrillPlugin.dueCount`): a separate "struggling" check would keep a
- * just-answered-correctly note in the due pile until its second consecutive
- * correct answer, which reads as a correct answer being ignored. */
-export function dueFiles(eligible: TFile[], mastery: MasteryMap, now = new Date()): TFile[] {
-	return eligible.filter((f) => {
-		const m = mastery[f.basename];
-		if (!m) return false;
-		return !!m.dueAt && new Date(m.dueAt) <= now;
-	});
+/** Notes with at least one currently-due, tested concept — live from concept data
+ * (see `dueNotes` in concepts.ts), not the note-level mastery.dueAt rollup cache,
+ * which only refreshes when a note is next answered and can otherwise undercount. */
+export function dueFiles(eligible: TFile[], concepts: ConceptMap, now = new Date()): TFile[] {
+	const due = dueNotes(concepts, () => true, now);
+	return eligible.filter((f) => due.has(f.basename));
 }
 
 /** Resolve a scope to the eligible notes it covers. */
-export function filesForScope(app: App, scope: Scope, eligible: TFile[], mastery: MasteryMap = {}): TFile[] {
+export function filesForScope(app: App, scope: Scope, eligible: TFile[], concepts: ConceptMap = {}): TFile[] {
 	switch (scope.kind) {
 		case "all":
 			return eligible;
 		case "due":
-			return dueFiles(eligible, mastery);
+			return dueFiles(eligible, concepts);
 		case "note":
 			return eligible.filter((f) => f.path === scope.id);
 		case "folder":

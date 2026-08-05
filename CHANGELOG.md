@@ -1,5 +1,18 @@
 # Changelog
 
+## 4.4.1
+
+- Fixed three different "due" counts disagreeing at once (e.g. 17 on the start screen's
+  "Review due now" vs. 21 in the status bar): `dueFiles` — which picks the actual notes
+  for a due session, the "Scope: Due" option, and the start-screen button's count — was
+  reading the note-level `mastery.dueAt` rollup, a cache only refreshed when a note is
+  next answered. A note whose concept became due since its last visit could silently
+  miss it. Rewrote it to compute live from concept data directly, the same way the
+  map's own due-highlighting already did correctly.
+- "Untested" is now a plain chip identical to Due/Learning/etc. (no count in the label,
+  no distinct border color), positioned right after Due instead of a visually distinct
+  chip before it.
+
 ## 4.4.0
 
 - **"Mark correct."** When the deterministic or AI grader gets one wrong, a quiet

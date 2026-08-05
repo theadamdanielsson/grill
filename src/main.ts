@@ -426,7 +426,7 @@ export default class GrillPlugin extends Plugin {
 	/** Start a session on exactly the notes that are due or struggling. */
 	async startDueSession(): Promise<void> {
 		const eligible = this.app.vault.getMarkdownFiles().filter((f) => !this.isExcluded(f.path));
-		const due = dueFiles(eligible, this.mastery);
+		const due = dueFiles(eligible, this.concepts);
 		if (!due.length) {
 			new Notice("Grill: nothing due right now. Nice work.");
 			await this.activateView();

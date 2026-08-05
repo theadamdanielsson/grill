@@ -104,6 +104,23 @@ export function dueConceptCount(concepts: ConceptMap, isEligible: (note: string)
 	return n;
 }
 
+/** Notes with at least one currently-due, tested concept — computed live from concept
+ * data directly, the same way graph.ts's own node dueAt already does (min tested
+ * concept dueAt, recomputed fresh every call). Deliberately NOT the note-level
+ * mastery.dueAt rollup (see noteAggregate): that field is a cache, only refreshed by
+ * recomputeAggregate when the note is next answered, so a note whose concept became
+ * due since its last visit silently doesn't show up in it until it's touched again —
+ * exactly the kind of drift a due-picking function can't afford. */
+export function dueNotes(concepts: ConceptMap, isEligible: (note: string) => boolean, now = new Date()): Set<string> {
+	const notes = new Set<string>();
+	for (const cm of Object.values(concepts)) {
+		if (!conceptTested(cm) || !cm.dueAt || new Date(cm.dueAt) > now) continue;
+		if (!isEligible(cm.note)) continue;
+		notes.add(cm.note);
+	}
+	return notes;
+}
+
 export function conceptTested(cm: ConceptMastery | undefined): boolean {
 	return !!cm && cm.correct + cm.partial + cm.incorrect > 0;
 }

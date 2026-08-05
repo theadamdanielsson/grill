@@ -514,13 +514,6 @@
   margin-top: 0.3em;
   min-height: 1.2em;
 }
-/* Same small chip as Due/Learning/etc., but a standing flame-colored border (not the
- * gold is-active glow, which would misread as "currently toggled on") to hint it's a
- * different kind of chip — a one-tap action, not a highlight toggle. */
-.grill-untested-chip {
-  border-color: var(--grill-flame);
-  color: var(--grill-gold);
-}
 
 /* First-run onboarding: choose Grill's folders. */
 .grill-onboard-how {

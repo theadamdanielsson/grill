@@ -544,7 +544,7 @@ export class SessionView extends ItemView {
 		// the button's own count is concept-level, matching what that session
 		// actually queues (see GrillPlugin.dueCount's doc comment) rather than the
 		// smaller number of notes that merely CONTAIN a due concept.
-		const due = dueFiles(eligible, map);
+		const due = dueFiles(eligible, this.plugin.concepts);
 		const dueNames = new Set(due.map((f) => f.basename));
 		const dueNow = dueConceptCount(this.plugin.concepts, (note) => dueNames.has(note));
 		if (dueNow) {
@@ -587,7 +587,7 @@ export class SessionView extends ItemView {
 			}
 			const byPath = new Map<string, TFile>();
 			for (const scope of checked) {
-				for (const f of filesForScope(this.app, scope, eligible, map)) byPath.set(f.path, f);
+				for (const f of filesForScope(this.app, scope, eligible, this.plugin.concepts)) byPath.set(f.path, f);
 			}
 			const files = [...byPath.values()];
 			this.pendingScope = files;
@@ -839,18 +839,6 @@ export class SessionView extends ItemView {
 			const matchedSet = (): GraphNode[] =>
 				graph.nodes.filter((n) => filterDefs.some((f) => activeFilters.has(f.kind) && f.match(n)));
 			const chipRow = toolbar.createDiv({ cls: "grill-filter-row" });
-			// Same small chip style as Due/Learning/Stale/etc. below, sitting in the same
-			// row — but unlike those (which only highlight matching nodes in place), this
-			// one leaves the map and starts a session, over every untested note vault-wide
-			// (not just whichever ones made it onto a possibly-capped graph).
-			const untestedFiles = eligible.filter((f) => statusOf(this.plugin.mastery[f.basename]) === "untested");
-			if (untestedFiles.length) {
-				const untestedChip = chipRow.createEl("button", {
-					cls: "grill-filter-chip grill-untested-chip",
-					text: `Grill ${untestedFiles.length} untested`,
-				});
-				untestedChip.onclick = () => void this.startScopedSession(untestedFiles);
-			}
 			const readout = toolbar.createDiv({ cls: "grill-meta grill-filter-readout" });
 			const updateReadout = (): void => {
 				if (!activeFilters.size) {
@@ -874,7 +862,7 @@ export class SessionView extends ItemView {
 				}
 				readout.setText(text);
 			};
-			for (const f of filterDefs) {
+			const createFilterChip = (f: (typeof filterDefs)[number]): void => {
 				const chip = chipRow.createEl("button", { cls: "grill-filter-chip", text: f.label });
 				chip.onclick = () => {
 					if (activeFilters.has(f.kind)) activeFilters.delete(f.kind);
@@ -883,7 +871,18 @@ export class SessionView extends ItemView {
 					this.map?.setHighlight(activeFilters.size ? new Set(matchedSet().map((n) => n.id)) : null);
 					updateReadout();
 				};
+			};
+			createFilterChip(filterDefs[0]); // Due
+			// Right after Due, same plain chip style as the rest — no visual distinction —
+			// but unlike the toggle chips (which only highlight matches in place), this one
+			// leaves the map and starts a session, over every untested note vault-wide (not
+			// just whichever ones made it onto a possibly-capped graph).
+			const untestedFiles = eligible.filter((f) => statusOf(this.plugin.mastery[f.basename]) === "untested");
+			if (untestedFiles.length) {
+				const untestedChip = chipRow.createEl("button", { cls: "grill-filter-chip", text: "Untested" });
+				untestedChip.onclick = () => void this.startScopedSession(untestedFiles);
 			}
+			for (const f of filterDefs.slice(1)) createFilterChip(f);
 
 			if (capped) {
 				host.createDiv({
