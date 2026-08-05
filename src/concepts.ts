@@ -28,12 +28,35 @@ import {
 	Verdict,
 } from "./mastery";
 
+/** One logged review: elapsed time since the previous one and the FSRS rating actually
+ * applied. Not read by anything yet — groundwork for eventually fitting FSRS's 17
+ * weights (see the fixed defaults in mastery.ts) to this vault's own review data
+ * instead of the global defaults, the way Anki's optimizer personalizes per user. */
+export interface ReviewLogEntry {
+	t: string;
+	elapsedDays: number;
+	rating: number;
+}
+
 export interface ConceptMastery extends Schedulable {
 	note: string;
 	label: string;
 	kind: ConceptKind;
 	/** Source hash at last review; a mismatch means the note's content changed. */
 	sourceHash: string | null;
+	/** Raw review history, logged starting from whenever this field was added —
+	 * existing concepts backfill an empty log, not a reconstructed one. Unbounded, like
+	 * calibration.ts's buffer: a personal vault's total review count over years is
+	 * nothing byte-wise. */
+	reviewLog?: ReviewLogEntry[];
+}
+
+/** Appends one entry to `cm.reviewLog`, using the elapsed time since its OLD `lastSeen`
+ * — must run before `applyRating` overwrites it. Same elapsed-time formula `applyRating`
+ * computes internally; duplicated here since it doesn't expose that value back out. */
+function logReview(cm: ConceptMastery, now: Date, rating: number): void {
+	const elapsedDays = cm.lastSeen ? (now.getTime() - new Date(cm.lastSeen).getTime()) / 86400_000 : 0;
+	(cm.reviewLog ??= []).push({ t: now.toISOString(), elapsedDays, rating });
 }
 
 export type ConceptMap = Record<string, ConceptMastery>;
@@ -85,10 +108,15 @@ export function conceptTested(cm: ConceptMastery | undefined): boolean {
 	return !!cm && cm.correct + cm.partial + cm.incorrect > 0;
 }
 
-/** Create records for new concepts and re-open recall for any whose source text
- * changed since last review (note-evolution). Orphaned records are left in the
- * map (kept for stats) but simply won't be in `concepts` so they aren't scheduled. */
-export function reconcileConcepts(map: ConceptMap, concepts: Concept[], now = new Date()): void {
+/** Create records for new concepts; existing ones just get their current label/kind/hash
+ * refreshed. Editing a note is the student's own call, not a signal to distrust their
+ * prior recall of it: a content change does NOT reset or discount stability, difficulty,
+ * streak, or dueAt — scheduling is left exactly as it was. Only the hash moves, so the
+ * next question generated for this concept reflects the new text; if an edit really did
+ * make the old material stale, that's the student's to judge next time it comes up, not
+ * an unrequested reset sprung on them now. Orphaned records are left in the map (kept
+ * for stats) but simply won't be in `concepts` so they aren't scheduled. */
+export function reconcileConcepts(map: ConceptMap, concepts: Concept[]): void {
 	for (const c of concepts) {
 		const existing = map[c.id];
 		if (!existing) {
@@ -98,17 +126,14 @@ export function reconcileConcepts(map: ConceptMap, concepts: Concept[], now = ne
 		existing.label = c.label;
 		existing.kind = c.kind;
 		existing.note = c.note;
-		if (existing.sourceHash && existing.sourceHash !== c.sourceHash) {
-			existing.stability = null;
-			existing.difficulty = null;
-			existing.streak = 0;
-			existing.dueAt = now.toISOString(); // content changed → due now
-		}
 		existing.sourceHash = c.sourceHash;
 	}
 }
 
-/** AI path: verdict + question difficulty → difficulty-aware rating. */
+/** AI path: verdict + question difficulty → difficulty-aware rating. `confidence` (0-1,
+ * from the opt-in "how sure are you?" check; null when it's off or wasn't answered this
+ * time) lets a genuinely-guessed correct answer land as Hard instead of Good/Easy — see
+ * toRating's doc comment. */
 export function recordConceptAnswer(
 	map: ConceptMap,
 	conceptId: string,
@@ -117,9 +142,13 @@ export function recordConceptAnswer(
 	now = new Date(),
 	desiredRetention?: number,
 	dueDateHistogram?: DueDateHistogram,
+	confidence: number | null = null,
 ): void {
 	const cm = map[conceptId];
-	if (cm) applyRating(cm, toRating(verdict, difficulty), now, desiredRetention, dueDateHistogram);
+	if (!cm) return;
+	const rating = toRating(verdict, difficulty, confidence);
+	logReview(cm, now, rating);
+	applyRating(cm, rating, now, desiredRetention, dueDateHistogram);
 }
 
 /** Self-grade path: the user's own Again/Hard/Good/Easy rating is the signal. */
@@ -132,7 +161,9 @@ export function recordConceptRating(
 	dueDateHistogram?: DueDateHistogram,
 ): void {
 	const cm = map[conceptId];
-	if (cm) applyRating(cm, rating, now, desiredRetention, dueDateHistogram);
+	if (!cm) return;
+	logReview(cm, now, rating);
+	applyRating(cm, rating, now, desiredRetention, dueDateHistogram);
 }
 
 /** Round-robin concepts across their notes (preserving each note's given order),

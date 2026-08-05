@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.9.0
+
+- **Editing a note no longer resets its scheduling.** Previously, any change to a
+  concept's tested text (even a typo fix) wiped its stability, difficulty, and streak
+  back to "never tested" and forced it due immediately. Editing your own notes is your
+  call, not a signal to distrust your prior recall of them — a content change now only
+  updates what's asked next time; your schedule for it is untouched.
+- **A guessed-but-correct answer can now land as "Hard."** In AI-graded mode, a correct
+  answer previously could only ever be scored Good or Easy — there was no way to record
+  "I got it right, but I was guessing," unlike self-grade mode's native Again/Hard/
+  Good/Easy buttons. With the "how sure are you?" confidence check on, a correct answer
+  you rated "Guessing" now earns Hard instead, a smaller stability gain reflecting the
+  shakier recall.
+- Concepts now log raw review history (elapsed time + rating per review) going forward.
+  Not used by anything yet — groundwork for eventually fitting FSRS's scheduling
+  parameters to your own review data instead of the fixed global defaults.
+
 ## 3.8.1
 
 - Fixed "Explain this" (3.8.0) leaking internal grading jargon into the explanation

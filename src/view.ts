@@ -2434,6 +2434,9 @@ export class SessionView extends ItemView {
 					new Date(),
 					retention,
 					this.dueDateHistogram,
+					// Read before captureConfidence (called after applyGrade returns) clears it —
+					// a genuinely-guessed correct answer should land as Hard, not Good/Easy.
+					this.pendingConfidence,
 				);
 			}
 		}

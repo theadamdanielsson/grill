@@ -115,7 +115,7 @@ const W = [0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0
  * intervals = things come due more often = progress feels faster, at the cost of more
  * reviews; higher = longer intervals, fewer but higher-stakes reviews. */
 const DESIRED_RETENTION = 0.9;
-const MIN_STABILITY = 0.1;
+export const MIN_STABILITY = 0.1;
 const MAX_INTERVAL_DAYS = 365;
 
 function clamp(v: number, min: number, max: number): number {
@@ -158,14 +158,32 @@ export function isLeech(m: Schedulable): boolean {
 	return m.incorrect >= LEECH_MIN_INCORRECT && (m.stability === null || m.stability < S_SOLID);
 }
 
+/** A stated confidence at or below this reads as "I was guessing" — matches
+ * calibration.ts's CONFIDENCE_LEVELS "Guessing" value (0.3) exactly, not just close to
+ * it, so a correct-but-guessed answer reliably lands as Hard below. Not imported from
+ * calibration.ts to avoid a scheduling-math module depending on a UI-labels module;
+ * this file just needs the number, which is a stable, deliberate constant on both sides. */
+const LOW_CONFIDENCE = 0.3;
+
 /** Verdict → FSRS rating (1=again, 2=hard, 3=good, 4=easy), difficulty-aware on
  * the reward side only: a hard question answered right is stronger evidence, so
  * it earns a longer interval (rating 4). A miss or partial is never upgraded into
  * a success — doing so would extend the interval on a wrong answer, which the
- * 4-point scale can't avoid, so failures always re-show soon. */
-export function toRating(verdict: Verdict, difficulty: QDifficulty = "medium"): number {
+ * 4-point scale can't avoid, so failures always re-show soon.
+ *
+ * `confidence` (0-1, from the opt-in "how sure are you?" check) fills a real gap in
+ * AI-graded mode: without it, a correct answer can only ever land as Good or Easy,
+ * never Hard — there's no way to record "I got it right, but I was guessing," which
+ * self-grade mode's native Again/Hard/Good/Easy buttons can express directly. A
+ * genuinely low-confidence correct answer is real evidence the recall was effortful,
+ * so it earns Hard instead of Good/Easy. Only overrides on that one clear signal
+ * (exactly "Guessing", not the middling "Think so") so it doesn't second-guess a
+ * confident answer; `null` (the check is off, or wasn't answered this time) falls
+ * straight back to the difficulty-tag heuristic, unchanged. */
+export function toRating(verdict: Verdict, difficulty: QDifficulty = "medium", confidence: number | null = null): number {
 	if (verdict === "incorrect") return 1;
 	if (verdict === "partial") return 2;
+	if (confidence !== null && confidence <= LOW_CONFIDENCE) return 2;
 	return difficulty === "hard" ? 4 : 3;
 }
 
