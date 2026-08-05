@@ -849,6 +849,19 @@
   font-size: var(--font-ui-medium);
 }
 .grill-model-answer p { margin: 0; }
+.grill-view .grill-explain-box {
+  margin: 0.75em 0;
+}
+.grill-explanation {
+  margin: 0.5em 0 0;
+  font-size: var(--font-ui-medium);
+}
+.grill-explanation p {
+  margin: 0.5em 0 0;
+}
+.grill-explanation p:first-child {
+  margin-top: 0;
+}
 
 /* ---------------------------------------------------------------- summary */
 .grill-score {

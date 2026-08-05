@@ -2,7 +2,7 @@
 
 import { ItemView, MarkdownRenderer, Notice, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
-import { adjudicateBridges, ConceptTarget, debriefSession, generateQuestions, Grade, gradeAnswer, LLMConfig, Question, supportsVision, Verdict } from "./llm";
+import { adjudicateBridges, ConceptTarget, debriefSession, explainQuestion, generateQuestions, Grade, gradeAnswer, LLMConfig, Question, supportsVision, Verdict } from "./llm";
 import { Concept, ConceptKind, extractConcepts, localQuestionForConcept, localQuestions } from "./generate-local";
 import { BridgeMap, detectBridgeCandidates, pairKey } from "./bridges";
 import { buildGraph, formatGrade, gradeScore, type GraphNode } from "./graph";
@@ -1390,6 +1390,8 @@ export class SessionView extends ItemView {
 			this.md(`**Expected answer:** ${r.modelAnswer}`, ma);
 		}
 
+		if (!pendingExtension) this.offerExplanation(card, r);
+
 		if (r.missingLink && r.connectTo) this.offerLink(card, r.node, r.connectTo);
 
 		if (pendingExtension) {
@@ -1430,6 +1432,43 @@ export class SessionView extends ItemView {
 		};
 		const no = row.createEl("button", { text: "No, go to review" });
 		no.onclick = () => void this.finishSession();
+	}
+
+	/** "Explain this": the rescue action for when the feedback/hints/expected-answer above
+	 * still leave the student stuck — one contextual LLM call, not a chat, rendered inline.
+	 * Hidden entirely (no disabled state) whenever there's no LLM configured, during a
+	 * replay (noteText isn't loaded then), or when the answer was already correct — matching
+	 * the `r.verdict !== "correct"` guard already used for the "Expected answer" block above. */
+	private offerExplanation(card: HTMLElement, r: QuestionResult): void {
+		const cfg = this.plugin.llmConfig();
+		if (!cfg || this.replayMode || r.verdict === "correct") return;
+		const q = this.questions[this.idx]; // same source Question that produced r
+		const box = card.createDiv({ cls: "grill-explain-box" });
+		const btn = box.createEl("button", { text: "Explain this", cls: "grill-hint-btn" });
+		btn.onclick = async () => {
+			btn.disabled = true;
+			btn.setText("Explaining...");
+			try {
+				const hintsShown = [q.hints.tier1, q.hints.tier2, q.hints.tier3].slice(0, r.hintsUsed).filter(Boolean);
+				const explanation = await explainQuestion(
+					cfg,
+					q,
+					this.noteText[r.node] ?? "",
+					r.answer,
+					r.feedback,
+					hintsShown,
+					this.noteImages[r.node] ?? [],
+					this.sessionPersona,
+				);
+				const out = box.createDiv({ cls: "grill-explanation" });
+				this.md(explanation, out);
+				btn.remove();
+			} catch (e) {
+				new Notice(`Grill: ${(e as Error).message}`, 8000);
+				btn.disabled = false;
+				btn.setText("Explain this");
+			}
+		};
 	}
 
 	/** A missing-link question offers to write the `[[link]]` into the graph — the

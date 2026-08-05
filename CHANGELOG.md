@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.8.0
+
+- **"Explain this."** When the feedback, hints, and expected answer on a wrong (or
+  skipped) answer still don't clear things up, an "Explain this" button on the feedback
+  screen gets a fuller, grounded explanation without leaving Obsidian — one contextual
+  call using the question, your answer, and the note itself, not a chat. Needs an LLM
+  configured; hidden otherwise, and independent of your question/grading mode settings,
+  since this is exactly the rescue path for a stuck local-questions or self-grading user
+  who has a key configured.
+
 ## 3.7.2
 
 Cleanup only, no behaviour change — addresses warnings from the Obsidian plugin
