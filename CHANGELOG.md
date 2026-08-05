@@ -1,5 +1,16 @@
 # Changelog
 
+## 4.2.1
+
+- Fixed the verdict flame icon (4.2.0) failing Obsidian's plugin review: it was set via
+  `innerHTML`, which the reviewer flags as unsafe even for fully static, hardcoded
+  markup. It's now built as real SVG DOM nodes instead of an HTML string.
+- Fixed "select all that apply" questions restating their own options as a numbered
+  list inside the question text, duplicating the same options shown right below as
+  clickable buttons — looked like the question was listed twice because it was. The
+  generation prompt now explicitly says not to, with a cheap deterministic check
+  dropping any question that does it anyway.
+
 ## 4.2.0
 
 - **A real Grill icon on the verdict badge**, replacing the generic Lucide circle-check/

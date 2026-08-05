@@ -103,9 +103,24 @@ const FLAME_ICON_CELLS: [number, number][] = [
 	[3, 9],
 	[4, 9],
 ];
-const FLAME_ICON_SVG = `<svg viewBox="0 0 7 10" shape-rendering="crispEdges" fill="currentColor" xmlns="http://www.w3.org/2000/svg">${FLAME_ICON_CELLS.map(
-	([x, y]) => `<rect x="${x}" y="${y}" width="1" height="1"/>`,
-).join("")}</svg>`;
+/** Builds the flame icon as real SVG DOM nodes, not an innerHTML string — Obsidian's
+ * plugin review flags raw innerHTML assignment as unsafe even for fully static,
+ * hardcoded content like this, so every cell is its own createElementNS'd <rect>. */
+function renderFlameIcon(container: HTMLElement): void {
+	const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+	svg.setAttribute("viewBox", "0 0 7 10");
+	svg.setAttribute("shape-rendering", "crispEdges");
+	svg.setAttribute("fill", "currentColor");
+	for (const [x, y] of FLAME_ICON_CELLS) {
+		const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+		rect.setAttribute("x", String(x));
+		rect.setAttribute("y", String(y));
+		rect.setAttribute("width", "1");
+		rect.setAttribute("height", "1");
+		svg.appendChild(rect);
+	}
+	container.appendChild(svg);
+}
 
 const NOTE_CHAR_CAP = 4000;
 /** Sanity ceiling, not a meaningful UX cap, used wherever a session must not be capped
@@ -1428,7 +1443,7 @@ export class SessionView extends ItemView {
 		const verdictCard = card.createDiv({ cls: "grill-flow-card grill-verdict-card" });
 		const v = this.verdictLabel(r);
 		const badge = verdictCard.createDiv({ cls: `grill-verdict-badge ${v.cls}` });
-		badge.createSpan({ cls: "grill-verdict-icon" }).innerHTML = FLAME_ICON_SVG;
+		renderFlameIcon(badge.createSpan({ cls: "grill-verdict-icon" }));
 		badge.createSpan({ text: v.text });
 		if (!r.gaveUp && r.answer) {
 			verdictCard.createDiv({ cls: "grill-block-label", text: "Your answer" });

@@ -676,7 +676,10 @@ const FORMAT_MIX_INSTRUCTIONS =
 	"- 'multi' (select all that apply): question asks for every option that fits; 'choices' has 4-6 options in " +
 	"random order, 'correctChoices' lists the exact text of every correct one (2 or more, and strictly fewer " +
 	"than the full option count — there must be at least one wrong option). Only use 'multi' when the concept " +
-	"has a genuine set of several correct items among plausible distractors, not a single right answer.\n" +
+	"has a genuine set of several correct items among plausible distractors, not a single right answer. The " +
+	"options are shown separately as clickable buttons — 'question' must NOT enumerate or restate them (no " +
+	"\"1) ... 2) ... 3) ...\" list inside the question text); write only the lead-in prompt itself (e.g. any " +
+	"scenario/data the options are about, then \"Select all statements that...\"), never the statements.\n" +
 	"- 'match' (matching): question asks the student to match related pairs; 'pairs' has 3-5 {left, right} " +
 	"entries (e.g. term→definition, cause→effect, step→outcome), each left and each right unique within the " +
 	"list. Only use 'match' when the concept is genuinely a set of parallel relationships, not one fact.";
@@ -858,6 +861,11 @@ const OPEN_CUE =
 	/\b(why|how|explain|describe|what|which|who|whom|whose|when|where|name|list|give|calculate|derive|compare|contrast|define|outline|state|show|prove|justify|verify|demonstrate|argue)\b/i;
 const MC_STEM =
 	/\b(which of the following|which statement (best|correctly)|select the (correct|best)|all of the following|none of the following)\b/i;
+/** Two or more "1)"/"2)"-style markers: a 'multi' question enumerating its own options
+ * inline in the question text, duplicating what's already rendered as separate
+ * clickable buttons (see FORMAT_MIX_INSTRUCTIONS' 'multi' bullet, which now tells the
+ * model not to do this — this is the belt-and-suspenders backstop). */
+const NUMBERED_OPTIONS = /\b[1-9]\)\s/g;
 
 /** Deterministic quality gate for one built question against its source excerpt.
  * Returns a short reason to DROP the question, or null if it passes. Model-free and
@@ -888,6 +896,7 @@ export function questionDefect(q: Question, source: string): string | null {
 			if (!q.correctChoices || q.correctChoices.length < 2) return "multi needs 2+ correct choices";
 			if (!q.correctChoices.every((c) => q.choices!.includes(c))) return "multi correctChoices not among choices";
 			if (q.correctChoices.length >= q.choices.length) return "multi with no wrong option";
+			if ((text.match(NUMBERED_OPTIONS) ?? []).length >= 2) return "multi restates its options in the question text";
 			break;
 		}
 		case "match": {
