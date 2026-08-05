@@ -1,5 +1,16 @@
 # Changelog
 
+## 4.1.0
+
+- **Using a hint now caps the rating at Hard.** A correct answer reached only after a
+  hint was real assistance, not independent recall — previously it scheduled exactly
+  like an unassisted correct answer, identically to the "how sure are you?" confidence
+  gap this closes the same way, but unconditionally (no setting needed).
+- **No-key and self-authored (`> [!grill]`) questions can now reach "hard" difficulty**
+  and therefore earn an Easy rating on a well-established concept, matching how
+  AI-generated questions already work. Previously every no-key/authored question was
+  hardcoded to "medium" forever, regardless of how solid the concept was.
+
 ## 4.0.1
 
 - The "Correct" badge no longer has a tinted pill background — it read as a generic

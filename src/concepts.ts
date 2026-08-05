@@ -132,8 +132,9 @@ export function reconcileConcepts(map: ConceptMap, concepts: Concept[]): void {
 
 /** AI path: verdict + question difficulty → difficulty-aware rating. `confidence` (0-1,
  * from the opt-in "how sure are you?" check; null when it's off or wasn't answered this
- * time) lets a genuinely-guessed correct answer land as Hard instead of Good/Easy — see
- * toRating's doc comment. */
+ * time) lets a genuinely-guessed correct answer land as Hard instead of Good/Easy, and
+ * `hintsUsed` does the same unconditionally when any hint was used — see toRating's doc
+ * comment for both. */
 export function recordConceptAnswer(
 	map: ConceptMap,
 	conceptId: string,
@@ -143,10 +144,11 @@ export function recordConceptAnswer(
 	desiredRetention?: number,
 	dueDateHistogram?: DueDateHistogram,
 	confidence: number | null = null,
+	hintsUsed = 0,
 ): void {
 	const cm = map[conceptId];
 	if (!cm) return;
-	const rating = toRating(verdict, difficulty, confidence);
+	const rating = toRating(verdict, difficulty, confidence, hintsUsed);
 	logReview(cm, now, rating);
 	applyRating(cm, rating, now, desiredRetention, dueDateHistogram);
 }

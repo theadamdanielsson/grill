@@ -179,11 +179,21 @@ const LOW_CONFIDENCE = 0.3;
  * so it earns Hard instead of Good/Easy. Only overrides on that one clear signal
  * (exactly "Guessing", not the middling "Think so") so it doesn't second-guess a
  * confident answer; `null` (the check is off, or wasn't answered this time) falls
- * straight back to the difficulty-tag heuristic, unchanged. */
-export function toRating(verdict: Verdict, difficulty: QDifficulty = "medium", confidence: number | null = null): number {
+ * straight back to the difficulty-tag heuristic, unchanged.
+ *
+ * `hintsUsed` closes the same gap unconditionally, with no setting to opt into: a
+ * correct answer reached only after a hint was real assistance, not independent
+ * recall, regardless of how confident the student then felt — so any hint at all
+ * (no threshold; even one is real help) also caps the rating at Hard. */
+export function toRating(
+	verdict: Verdict,
+	difficulty: QDifficulty = "medium",
+	confidence: number | null = null,
+	hintsUsed = 0,
+): number {
 	if (verdict === "incorrect") return 1;
 	if (verdict === "partial") return 2;
-	if (confidence !== null && confidence <= LOW_CONFIDENCE) return 2;
+	if ((confidence !== null && confidence <= LOW_CONFIDENCE) || hintsUsed > 0) return 2;
 	return difficulty === "hard" ? 4 : 3;
 }
 

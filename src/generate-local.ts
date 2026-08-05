@@ -18,6 +18,7 @@
  */
 
 import { Question } from "./llm";
+import { QDifficulty } from "./mastery";
 import { safeSlice } from "./text";
 
 /** The kind of structural element a concept was pulled from. */
@@ -672,14 +673,19 @@ export function extractConcepts(note: string, text: string, mixFormats = false):
 }
 
 /** The no-key question for a concept (its deterministic card), tagged with the
- * concept id. Null for the note fallback, which has no fixed question. */
-export function localQuestionForConcept(c: Concept): Question | null {
+ * concept id. Null for the note fallback, which has no fixed question. `difficulty`
+ * defaults to "medium" for callers with no scheduling context to seed it from, but
+ * every real caller passes the concept's actual target difficulty (see view.ts's
+ * `conceptTargetDifficulty`) — without this, a no-key/authored question could never
+ * reach "hard" and therefore never earn an Easy FSRS rating, unlike an AI-generated
+ * question on the same concept. */
+export function localQuestionForConcept(c: Concept, difficulty: QDifficulty = "medium"): Question | null {
 	if (!c.local) return null;
 	return {
 		node: c.note,
 		conceptId: c.id,
 		question: c.local.question,
-		difficulty: "medium",
+		difficulty,
 		modelAnswer: c.local.answer,
 		acceptableAnswers: [],
 		commonErrors: [],
@@ -689,12 +695,18 @@ export function localQuestionForConcept(c: Concept): Question | null {
 	};
 }
 
-/** Render no-key questions for already-selected concepts, in order, up to count. */
-export function localQuestions(concepts: Concept[], count: number): Question[] {
+/** Render no-key questions for already-selected concepts, in order, up to count.
+ * `difficultyOf`, when given, seeds each question's difficulty from the concept's own
+ * scheduling state instead of the flat "medium" default — see `localQuestionForConcept`. */
+export function localQuestions(
+	concepts: Concept[],
+	count: number,
+	difficultyOf?: (c: Concept) => QDifficulty,
+): Question[] {
 	const out: Question[] = [];
 	for (const c of concepts) {
 		if (out.length >= count) break;
-		const q = localQuestionForConcept(c);
+		const q = localQuestionForConcept(c, difficultyOf?.(c));
 		if (q) out.push(q);
 	}
 	return out;

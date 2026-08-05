@@ -1937,7 +1937,7 @@ export class SessionView extends ItemView {
 	private buildPrebuilt(t: ConceptTarget): Question | null {
 		const c = this.conceptById.get(t.conceptId);
 		if (c?.authored) {
-			const q = localQuestionForConcept(c);
+			const q = localQuestionForConcept(c, conceptTargetDifficulty(this.concepts[c.id]));
 			if (q) {
 				q.routedFrom = t.routedFrom ?? q.routedFrom;
 				q.contagionFrom = t.contagionFrom ?? q.contagionFrom;
@@ -2255,7 +2255,9 @@ export class SessionView extends ItemView {
 			});
 
 			if (s.questionSource === "local") {
-				this.questions = localQuestions(this.sessionConcepts, this.targetCount);
+				this.questions = localQuestions(this.sessionConcepts, this.targetCount, (c) =>
+					conceptTargetDifficulty(this.concepts[c.id]),
+				);
 				this.renderQuestion();
 				return;
 			}
@@ -2339,7 +2341,7 @@ export class SessionView extends ItemView {
 				return;
 			}
 		}
-		await this.applyGrade(q, verdict, null, misconceptionTag || undefined);
+		await this.applyGrade(q, verdict, null, misconceptionTag || undefined, hintsUsed);
 		this.captureConfidence(verdict);
 		// Missed it: route to a weak prerequisite next, if this note builds on one, or
 		// check whether the same confusion applies to a linked neighbor. Mid-session this
@@ -2456,6 +2458,7 @@ export class SessionView extends ItemView {
 		verdict: Verdict,
 		rating: Rating | null,
 		misconceptionTag: string | undefined,
+		hintsUsed = 0,
 	): Promise<void> {
 		// Replay is practice-only: never touch the schedule or stats.
 		if (this.replayMode) return;
@@ -2482,6 +2485,7 @@ export class SessionView extends ItemView {
 					// Read before captureConfidence (called after applyGrade returns) clears it —
 					// a genuinely-guessed correct answer should land as Hard, not Good/Easy.
 					this.pendingConfidence,
+					hintsUsed,
 				);
 			}
 		}
@@ -2661,8 +2665,9 @@ export class SessionView extends ItemView {
 		};
 		if (local) {
 			// No lazy generation in no-key mode: build the deterministic question now
-			// and splice it in as the very next question.
-			const built = localQuestions([concept], 1);
+			// and splice it in as the very next question. Matches the AI path's explicit
+			// "easy" above — a shaky-foundation prerequisite check, not a stretch question.
+			const built = localQuestions([concept], 1, () => "easy");
 			if (!built.length) return false; // no deterministic question for this concept
 			built[0].routedFrom = fromNote;
 			this.questions.splice(this.idx + 1, 0, built[0]);
