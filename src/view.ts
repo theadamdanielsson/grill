@@ -1458,12 +1458,13 @@ export class SessionView extends ItemView {
 		no.onclick = () => void this.finishSession();
 	}
 
-	/** Whether "Explain this" has anything to offer: an LLM is configured, this isn't a
-	 * replay (noteText isn't loaded then), and the answer wasn't already correct. Shared
-	 * between `renderFeedback` (deciding whether to render the review card at all) and
-	 * `offerExplanation` itself, so the two checks can't drift apart. */
+	/** Whether "Explain this" has anything to offer: an LLM is configured and this isn't a
+	 * replay (noteText isn't loaded then). Available on every verdict, including correct
+	 * — a correct answer can still want a fuller "why" than the terse grader feedback
+	 * gave. Shared between `renderFeedback` (deciding whether to render the review card
+	 * at all) and `offerExplanation` itself, so the two checks can't drift apart. */
 	private canExplain(r: QuestionResult): boolean {
-		return !this.replayMode && r.verdict !== "correct" && !!this.plugin.llmConfig();
+		return !this.replayMode && !!this.plugin.llmConfig();
 	}
 
 	/** "Explain this": the rescue action for when the feedback/hints/expected-answer above
@@ -1491,13 +1492,14 @@ export class SessionView extends ItemView {
 					this.noteText[r.node] ?? "",
 					r.answer,
 					r.feedback,
+					r.verdict,
 					hintsShown,
 					this.noteImages[r.node] ?? [],
 					this.sessionPersona,
 				);
 				const out = box.createDiv({ cls: "grill-explanation" });
 				this.explanationBlock(out, "What went wrong", explanation.whatWentWrong);
-				this.explanationBlock(out, "The rule", explanation.theRule);
+				this.explanationBlock(out, "Key concept", explanation.keyConcept);
 				this.explanationBlock(out, "Example", explanation.example);
 				btn.remove();
 			} catch (e) {
@@ -1630,9 +1632,10 @@ export class SessionView extends ItemView {
 			gaps.createDiv({ cls: "grill-debrief-label", text: "To review" });
 			for (const g of debrief.gaps) {
 				const row = gaps.createDiv({ cls: "grill-debrief-gap" });
-				this.md(`**${g.concept}** — ${g.why}`, row.createDiv({ cls: "grill-debrief-gap-text" }));
-				const chip = row.createSpan({ cls: "grill-chip grill-chip-link", text: g.note });
-				chip.onclick = () => this.openNote(g.note);
+				// A real wikilink inline, not a separate chip: Obsidian's own markdown
+				// renderer resolves and makes [[note]] clickable, so the note reference
+				// reads as part of the sentence instead of a disconnected element after it.
+				this.md(`**${g.concept}** — ${g.why} ([[${g.note}]])`, row.createDiv({ cls: "grill-debrief-gap-text" }));
 			}
 		}
 		if (debrief.strengths.length) {

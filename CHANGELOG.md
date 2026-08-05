@@ -1,5 +1,18 @@
 # Changelog
 
+## 4.0.1
+
+- The "Correct" badge no longer has a tinted pill background — it read as a generic
+  "AI-generated app" cliché; it's now an understated icon + label, while partial/
+  incorrect keep the tinted pill.
+- **"Explain this" now works on correct answers too**, not just wrong ones — sometimes
+  you want the fuller "why" even when you got it right.
+- Renamed the "The rule" field to "Key concept": not every question has a rule (plain
+  factual recall doesn't), so the label was overspecific for what the field actually
+  covers.
+- The session debrief's "To review" list now links each concept's note inline as a
+  real `[[wikilink]]` in parentheses, instead of a separate chip after the text.
+
 ## 4.0.0
 
 - **Redesigned the feedback screen.** The verdict is now a colored badge with an icon

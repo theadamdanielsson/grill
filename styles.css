@@ -883,10 +883,16 @@
  * color-mix idiom already used elsewhere in this file (e.g. .grill-tf-btn borders).
  * Still reads --grill-correct/partial/incorrect (see the customization section below),
  * so a Style-Settings retint keeps working unchanged. */
-.grill-verdict-badge.grill-v-correct { background: color-mix(in srgb, var(--grill-correct) 14%, transparent); }
 .grill-verdict-badge.grill-v-partial { background: color-mix(in srgb, var(--grill-partial) 14%, transparent); }
 .grill-verdict-badge.grill-v-incorrect { background: color-mix(in srgb, var(--grill-incorrect) 14%, transparent); }
 .grill-verdict-badge.grill-v-skipped { background: var(--background-modifier-border); }
+/* "Correct" reads better understated than as a bright all-good pill — that's the one
+ * badge shape recognizable enough from AI-generated UI that it reads as generic rather
+ * than earned. Partial/incorrect keep the tinted pill; only correct drops the fill. */
+.grill-verdict-badge.grill-v-correct {
+  background: none;
+  padding: 0;
+}
 .grill-block-label {
   font-size: var(--font-ui-smaller, 0.85em);
   font-weight: var(--font-semibold, 600);
