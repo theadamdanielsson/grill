@@ -922,6 +922,24 @@
 }
 .grill-explanation-block:last-child { margin-bottom: 0; }
 .grill-explanation-block p { margin: 0; font-size: var(--font-ui-medium); }
+.grill-diagram {
+  overflow-x: auto;
+}
+.grill-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+.grill-note-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--grill-space-sm);
+}
+.grill-note-images img {
+  max-width: 100%;
+  max-height: 220px;
+  border-radius: var(--grill-radius-m);
+  border: 1px solid var(--background-modifier-border);
+}
 /* Coordinated spacing for structural markdown a model might emit inside these two
  * cards (lists, an occasional heading) — previously unstyled, falling through to
  * generic Obsidian reading-view defaults with no card-aware spacing. */

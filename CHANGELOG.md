@@ -1,5 +1,16 @@
 # Changelog
 
+## 4.5.0
+
+- **"Explain this" can now draw a diagram and show your own images.** When a diagram
+  would actually clarify the concept, the explanation includes a small Mermaid flowchart
+  alongside the usual three fields — grounded in the note, not decorative, and dropped
+  silently if it fails to render rather than showing broken output. If the note itself
+  embeds an image, up to two of them are pulled in alongside the explanation too — your
+  own diagram or screenshot, not a generated one, resolved directly from the vault
+  rather than through Obsidian's embed renderer (which doesn't reliably hydrate embeds
+  inside a custom view).
+
 ## 4.4.2
 
 - "Untested" on the map no longer jumps straight into a session on click. It now

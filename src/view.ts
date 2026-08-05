@@ -20,7 +20,7 @@ import {
 	recordConceptRating,
 	reconcileConcepts,
 } from "./concepts";
-import { collectNoteImages, ImageInput } from "./images";
+import { collectNoteImages, ImageInput, IMG_EXT } from "./images";
 import { collectNotePdfText } from "./pdf";
 import { safeSlice } from "./text";
 import {
@@ -1615,6 +1615,8 @@ export class SessionView extends ItemView {
 				this.explanationBlock(out, "What went wrong", explanation.whatWentWrong);
 				this.explanationBlock(out, "Key concept", explanation.keyConcept);
 				this.explanationBlock(out, "Example", explanation.example);
+				await this.renderDiagramBlock(out, explanation.diagram);
+				await this.renderNoteImages(out, r.node);
 				btn.remove();
 			} catch (e) {
 				new Notice(`Grill: ${(e as Error).message}`, 8000);
@@ -1633,6 +1635,59 @@ export class SessionView extends ItemView {
 		const block = parent.createDiv({ cls: "grill-explanation-block" });
 		block.createDiv({ cls: "grill-block-label", text: label });
 		this.md(text, block);
+	}
+
+	/** Renders the model's optional Mermaid diagram. Mermaid parses asynchronously after
+	 * MarkdownRenderer.render's own promise resolves, and a malformed diagram (an LLM
+	 * output, not vetted syntax) renders as an inline error box rather than throwing —
+	 * so this renders off-screen first and only promotes the result if an actual <svg>
+	 * appeared, silently dropping the block otherwise instead of showing broken output. */
+	private async renderDiagramBlock(parent: HTMLElement, diagram: string): Promise<void> {
+		if (!diagram) return;
+		const scratch = document.createElement("div");
+		scratch.style.cssText = "position:absolute;visibility:hidden;pointer-events:none;";
+		document.body.appendChild(scratch);
+		try {
+			await MarkdownRenderer.render(this.app, "```mermaid\n" + diagram + "\n```", scratch, "", this);
+			let svg: Element | null = null;
+			for (let i = 0; i < 10 && !svg; i++) {
+				await new Promise((r) => window.setTimeout(r, 150));
+				svg = scratch.querySelector("svg");
+			}
+			if (!svg) return;
+			const block = parent.createDiv({ cls: "grill-explanation-block" });
+			block.createDiv({ cls: "grill-block-label", text: "Diagram" });
+			block.createDiv({ cls: "grill-diagram" }).appendChild(svg.cloneNode(true));
+		} finally {
+			scratch.remove();
+		}
+	}
+
+	/** Surfaces up to two images the note itself embeds, alongside the explanation — the
+	 * student's own diagram/screenshot, not a generated one. Resolved directly via
+	 * `getResourcePath` rather than rendering `![[link]]` through MarkdownRenderer: a
+	 * custom ItemView doesn't reliably hydrate `.internal-embed` placeholders, so going
+	 * straight to a real <img src> sidesteps that failure mode entirely. */
+	private async renderNoteImages(parent: HTMLElement, noteName: string): Promise<void> {
+		const file = this.byName.get(noteName);
+		if (!file) return;
+		const embeds = this.app.metadataCache.getFileCache(file)?.embeds ?? [];
+		const paths: string[] = [];
+		for (const e of embeds) {
+			const dest = this.app.metadataCache.getFirstLinkpathDest(e.link, file.path);
+			if (!dest || !IMG_EXT.has(dest.extension.toLowerCase())) continue;
+			if (!paths.includes(dest.path)) paths.push(dest.path);
+			if (paths.length >= 2) break;
+		}
+		if (!paths.length) return;
+		const block = parent.createDiv({ cls: "grill-explanation-block" });
+		block.createDiv({ cls: "grill-block-label", text: "From your note" });
+		const holder = block.createDiv({ cls: "grill-note-images" });
+		for (const path of paths) {
+			const dest = this.app.vault.getAbstractFileByPath(path);
+			if (!(dest instanceof TFile)) continue;
+			holder.createEl("img", { attr: { src: this.app.vault.getResourcePath(dest) } });
+		}
 	}
 
 	/** A missing-link question offers to write the `[[link]]` into the graph — the

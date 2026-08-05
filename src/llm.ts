@@ -161,6 +161,11 @@ export interface Explanation {
 	keyConcept: string;
 	/** "" when no natural worked example applies — same convention as debriefSchema's `pattern`. */
 	example: string;
+	/** Raw Mermaid body (no ```mermaid fence — the caller adds that), "" when no
+	 * diagram genuinely helps. Deliberately constrained (see EXPLAIN_RULES): LLM-
+	 * generated Mermaid is a well-documented source of render failures, so this is
+	 * scoped to the shapes most likely to actually parse, not "draw whatever helps". */
+	diagram: string;
 }
 
 /** Whether this provider and model can read image inputs. */
@@ -1191,8 +1196,8 @@ already shown gave them — whether they got it right, partially right, or wrong
 the NOTE given below (quote or paraphrase the relevant part rather than inventing an outside
 explanation). When no expected answer was supplied, treat the NOTE as the sole source of truth.
 
-Output three short, distinct fields, each 1 to 3 sentences — the structure is what makes
-this readable, so do not pad any field into a paragraph:
+Output four short, distinct fields — the structure is what makes this readable, so do not
+pad any field into a paragraph:
 - whatWentWrong: specifically what the student's answer got wrong or missed, citing their
   actual answer. Empty string if the answer was already fully correct — there's nothing to
   correct, don't invent something.
@@ -1201,6 +1206,26 @@ this readable, so do not pad any field into a paragraph:
   Not every question has a "rule": for plain factual recall, just state the fact clearly.
 - example: one concrete worked example or application, grounded in the note. Empty string
   if no natural worked example applies to this question.
+- diagram: a Mermaid diagram ONLY when the concept is genuinely a process, a sequence, a
+  relationship, or a comparison that a diagram makes clearer than prose — most questions do
+  NOT need one; empty string is the common case, not a fallback to avoid. When you do write
+  one:
+  - Output ONLY the Mermaid body (no \`\`\`mermaid fence, no explanation before or after).
+  - Start with exactly "flowchart TD" or "flowchart LR" — no other diagram type.
+  - No styling, no classDef, no colors. Plain nodes and edges only.
+  - At most 8 nodes.
+  - Quote any node or edge label containing punctuation like {}[]()&, or if it's more than
+    a couple of words: A["like this"], not A[like this].
+  - Example of the exact shape expected:
+    flowchart TD
+        A["Start"] --> B{"Condition?"}
+        B -->|Yes| C["Outcome one"]
+        B -->|No| D["Outcome two"]
+
+whatWentWrong, keyConcept, and example are each normally 1 to 3 sentences of plain prose,
+each still short — but light markdown (a bolded term, a short list, an inline LaTeX formula
+in $...$) is fine when it genuinely clarifies. Don't add headers, and don't restructure a
+field into a list just to look more thorough.
 
 Never write internal labels or field names such as "verdict:", "feedback:", or
 "misconceptionTag:", and never output a bare snake_case tag on its own line — those are
@@ -1215,8 +1240,9 @@ const EXPLAIN_SCHEMA = {
 		whatWentWrong: { type: "string" },
 		keyConcept: { type: "string" },
 		example: { type: "string" },
+		diagram: { type: "string" },
 	},
-	required: ["whatWentWrong", "keyConcept", "example"],
+	required: ["whatWentWrong", "keyConcept", "example", "diagram"],
 	additionalProperties: false,
 };
 
@@ -1271,11 +1297,16 @@ export async function explainQuestion(
 		whatWentWrong: string;
 		keyConcept: string;
 		example: string;
+		diagram: string;
 	};
 	return {
 		whatWentWrong: stripGradingLeaks(cleanText(data.whatWentWrong ?? "")),
 		keyConcept: stripGradingLeaks(cleanText(data.keyConcept ?? "")),
 		example: stripGradingLeaks(cleanText(data.example ?? "")),
+		// Not stripGradingLeaks: that filter drops any bare single-token line, which a
+		// valid Mermaid body can legitimately contain (a lone node id continuation) —
+		// the grading-leak risk it guards against doesn't apply to a diagram-only field.
+		diagram: cleanText(data.diagram ?? "").trim(),
 	};
 }
 

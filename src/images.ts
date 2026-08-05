@@ -11,7 +11,7 @@ export interface ImageInput {
 	dataBase64: string;
 }
 
-const IMG_EXT = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
+export const IMG_EXT = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
 const MEDIA: Record<string, string> = {
 	png: "image/png",
 	jpg: "image/jpeg",
