@@ -1,5 +1,17 @@
 # Changelog
 
+## 4.2.0
+
+- **A real Grill icon on the verdict badge**, replacing the generic Lucide circle-check/
+  circle-x every other app uses: a small pixel flame (same crisp-block technique as the
+  hero art), one shape, colored per verdict. No pill background on any verdict anymore —
+  the flame itself carries the color now, so a tinted background behind it was redundant.
+- Fixed the "select all that apply" and matching question types' feedback: a wrong
+  answer used to just repeat the full correct answer a second time (already shown right
+  below in "Expected answer"), which read as two parts of the screen disagreeing rather
+  than one useful diagnosis. It now names exactly what you picked that didn't belong and
+  what you missed, for free, no LLM call.
+
 ## 4.1.0
 
 - **Using a hint now caps the rating at Hard.** A correct answer reached only after a

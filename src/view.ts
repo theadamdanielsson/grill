@@ -58,6 +58,55 @@ import { SessionEntry } from "./store";
 
 export const VIEW_TYPE = "grill-session";
 
+/** Grill's own flame silhouette for the verdict badge (7x10, crisp pixel blocks — the
+ * same shape-rendering technique used in the plugin's hero art) instead of a generic
+ * Lucide circle-check/circle-x, which every other app also uses. One shape for every
+ * verdict; only the badge's own text color (.grill-v-correct/partial/incorrect/skipped)
+ * differentiates it, via currentColor, so a Style Settings retint still works. */
+const FLAME_ICON_CELLS: [number, number][] = [
+	[3, 0],
+	[3, 1],
+	[4, 1],
+	[2, 2],
+	[3, 2],
+	[4, 2],
+	[2, 3],
+	[3, 3],
+	[4, 3],
+	[5, 3],
+	[1, 4],
+	[2, 4],
+	[3, 4],
+	[4, 4],
+	[5, 4],
+	[1, 5],
+	[2, 5],
+	[3, 5],
+	[4, 5],
+	[5, 5],
+	[1, 6],
+	[2, 6],
+	[3, 6],
+	[4, 6],
+	[5, 6],
+	[6, 6],
+	[1, 7],
+	[2, 7],
+	[3, 7],
+	[4, 7],
+	[5, 7],
+	[2, 8],
+	[3, 8],
+	[4, 8],
+	[5, 8],
+	[2, 9],
+	[3, 9],
+	[4, 9],
+];
+const FLAME_ICON_SVG = `<svg viewBox="0 0 7 10" shape-rendering="crispEdges" fill="currentColor" xmlns="http://www.w3.org/2000/svg">${FLAME_ICON_CELLS.map(
+	([x, y]) => `<rect x="${x}" y="${y}" width="1" height="1"/>`,
+).join("")}</svg>`;
+
 const NOTE_CHAR_CAP = 4000;
 /** Sanity ceiling, not a meaningful UX cap, used wherever a session must not be capped
  * by the normal per-sitting settings: a due-only session's question count (due sessions
@@ -1358,13 +1407,6 @@ export class SessionView extends ItemView {
 		return { text: "Incorrect", cls: "grill-v-incorrect" };
 	}
 
-	private verdictIcon(r: QuestionResult): string {
-		if (r.gaveUp) return "circle-help";
-		if (r.verdict === "correct") return "circle-check";
-		if (r.verdict === "partial") return "circle-minus";
-		return "circle-x";
-	}
-
 	private renderFeedback(r: QuestionResult, pendingExtension: PendingExtension | null = null): void {
 		if (this.plugin.data.settings.sounds) playSfx(r.verdict); // correct / partial / incorrect
 		const wrap = this.root();
@@ -1386,7 +1428,7 @@ export class SessionView extends ItemView {
 		const verdictCard = card.createDiv({ cls: "grill-flow-card grill-verdict-card" });
 		const v = this.verdictLabel(r);
 		const badge = verdictCard.createDiv({ cls: `grill-verdict-badge ${v.cls}` });
-		setIcon(badge.createSpan({ cls: "grill-verdict-icon" }), this.verdictIcon(r));
+		badge.createSpan({ cls: "grill-verdict-icon" }).innerHTML = FLAME_ICON_SVG;
 		badge.createSpan({ text: v.text });
 		if (!r.gaveUp && r.answer) {
 			verdictCard.createDiv({ cls: "grill-block-label", text: "Your answer" });
@@ -2305,24 +2347,47 @@ export class SessionView extends ItemView {
 			verdict = answer.trim().toLowerCase() === q.modelAnswer.trim().toLowerCase() ? "correct" : "incorrect";
 			feedback = verdict === "correct" ? "Correct." : `Not quite. The answer is "${q.modelAnswer}".`;
 		} else if (q.type === "multi") {
-			const correct = new Set((q.correctChoices ?? []).map((c) => c.trim().toLowerCase()));
-			const chosen = new Set((multiPicks ?? []).map((c) => c.trim().toLowerCase()));
+			// Name the specific misses/extras instead of just dumping the model answer a
+			// second time — the "Expected answer" block below already shows that string
+			// verbatim, so repeating it here added nothing and read as two systems
+			// disagreeing rather than one giving you the actual diagnosis.
+			const norm = (s: string) => s.trim().toLowerCase();
+			const correctChoices = q.correctChoices ?? [];
+			const chosenChoices = multiPicks ?? [];
+			const correct = new Set(correctChoices.map(norm));
+			const chosen = new Set(chosenChoices.map(norm));
 			let hits = 0;
 			for (const c of correct) if (chosen.has(c)) hits++;
 			const misses = correct.size - hits;
-			const extras = [...chosen].filter((c) => !correct.has(c)).length;
-			const wrong = misses + extras;
+			const extraItems = chosenChoices.filter((c) => !correct.has(norm(c)));
+			const missedItems = correctChoices.filter((c) => !chosen.has(norm(c)));
+			const wrong = misses + extraItems.length;
 			if (wrong === 0) verdict = "correct";
 			else if (hits > 0 && wrong <= Math.max(1, Math.ceil(correct.size / 2))) verdict = "partial";
 			else verdict = "incorrect";
-			feedback = verdict === "correct" ? "Correct — every one." : `Correct answer: ${q.modelAnswer}.`;
+			if (verdict === "correct") {
+				feedback = "Correct — every one.";
+			} else {
+				const lines: string[] = [];
+				if (extraItems.length) {
+					lines.push(`"${extraItems.join('", "')}" ${extraItems.length > 1 ? "don't" : "doesn't"} belong.`);
+				}
+				if (missedItems.length) lines.push(`Missing: ${missedItems.join(", ")}.`);
+				feedback = lines.join(" ");
+			}
 		} else if (q.type === "match") {
 			const pairs = q.pairs ?? [];
-			const hits = pairs.filter(
-				(p) => (matchPicks?.[p.left] ?? "").trim().toLowerCase() === p.right.trim().toLowerCase(),
-			).length;
+			const wrongPairs = pairs.filter(
+				(p) => (matchPicks?.[p.left] ?? "").trim().toLowerCase() !== p.right.trim().toLowerCase(),
+			);
+			const hits = pairs.length - wrongPairs.length;
 			verdict = hits === pairs.length ? "correct" : hits > 0 ? "partial" : "incorrect";
-			feedback = verdict === "correct" ? "Every pair correct." : `Correct pairing: ${q.modelAnswer}.`;
+			feedback =
+				verdict === "correct"
+					? "Every pair correct."
+					: wrongPairs
+							.map((p) => `"${p.left}" should match "${p.right}", not "${matchPicks?.[p.left] || "(unmatched)"}".`)
+							.join(" ");
 		} else {
 			const cfg = this.plugin.llmConfig();
 			if (!cfg) return;
