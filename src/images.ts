@@ -9,9 +9,13 @@ import { App, TFile } from "obsidian";
 export interface ImageInput {
 	mediaType: string;
 	dataBase64: string;
+	/** Vault path this was resolved from — lets a caller that asks the model to pick
+	 * "which of these images" (e.g. explainQuestion's relevantImageIndex) map its answer
+	 * back to a real file to display, without re-resolving anything. */
+	path: string;
 }
 
-export const IMG_EXT = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
+const IMG_EXT = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
 const MEDIA: Record<string, string> = {
 	png: "image/png",
 	jpg: "image/jpeg",
@@ -41,7 +45,7 @@ function loadImage(url: string): Promise<HTMLImageElement> {
 
 /** Downscale to a sane edge length and re-encode, so a 4000px screenshot doesn't
  * cost a fortune in image tokens. Falls back to the raw bytes on any failure. */
-async function encode(bytes: ArrayBuffer, mediaType: string, maxEdge = 1400): Promise<ImageInput> {
+async function encode(bytes: ArrayBuffer, mediaType: string, maxEdge = 1400): Promise<Omit<ImageInput, "path">> {
 	try {
 		const url = URL.createObjectURL(new Blob([bytes], { type: mediaType }));
 		try {
@@ -85,7 +89,7 @@ export async function collectNoteImages(app: App, file: TFile, cap: number): Pro
 		try {
 			const bytes = await app.vault.readBinary(dest);
 			if (bytes.byteLength > 12_000_000) continue; // skip enormous originals
-			out.push(await encode(bytes, MEDIA[ext] ?? "image/png"));
+			out.push({ ...(await encode(bytes, MEDIA[ext] ?? "image/png")), path: dest.path });
 		} catch {
 			/* unreadable attachment; skip */
 		}

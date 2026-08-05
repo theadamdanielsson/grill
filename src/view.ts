@@ -20,7 +20,7 @@ import {
 	recordConceptRating,
 	reconcileConcepts,
 } from "./concepts";
-import { collectNoteImages, ImageInput, IMG_EXT } from "./images";
+import { collectNoteImages, ImageInput } from "./images";
 import { collectNotePdfText } from "./pdf";
 import { safeSlice } from "./text";
 import {
@@ -1616,7 +1616,7 @@ export class SessionView extends ItemView {
 				this.explanationBlock(out, "Key concept", explanation.keyConcept);
 				this.explanationBlock(out, "Example", explanation.example);
 				await this.renderDiagramBlock(out, explanation.diagram);
-				await this.renderNoteImages(out, r.node);
+				await this.renderRelevantImage(out, explanation.relevantImagePath);
 				btn.remove();
 			} catch (e) {
 				new Notice(`Grill: ${(e as Error).message}`, 8000);
@@ -1663,29 +1663,30 @@ export class SessionView extends ItemView {
 		}
 	}
 
-	/** Surfaces up to two images the note itself embeds, alongside the explanation — the
-	 * student's own diagram/screenshot, not a generated one. Resolved directly via
-	 * `getResourcePath` rather than rendering `![[link]]` through MarkdownRenderer: a
-	 * custom ItemView doesn't reliably hydrate `.internal-embed` placeholders, so going
-	 * straight to a real <img src> sidesteps that failure mode entirely. */
-	private async renderNoteImages(parent: HTMLElement, noteName: string): Promise<void> {
-		const file = this.byName.get(noteName);
-		if (!file) return;
-		const embeds = this.app.metadataCache.getFileCache(file)?.embeds ?? [];
-		const paths: string[] = [];
-		for (const e of embeds) {
-			const dest = this.app.metadataCache.getFirstLinkpathDest(e.link, file.path);
-			if (!dest || !IMG_EXT.has(dest.extension.toLowerCase())) continue;
-			if (!paths.includes(dest.path)) paths.push(dest.path);
-			if (paths.length >= 2) break;
-		}
-		if (!paths.length) return;
+	/** Shows the single note-embedded image the model judged relevant to this specific
+	 * question ("" for the common case of none — see Explanation.relevantImagePath).
+	 * Renders a real `![[embed]]` first so Obsidian's native click-to-zoom works, same
+	 * as any other embed in the vault; only falls back to a plain <img> if that embed
+	 * doesn't hydrate in time (a custom ItemView doesn't always resolve `.internal-embed`
+	 * placeholders the way the main markdown view does). */
+	private async renderRelevantImage(parent: HTMLElement, path: string): Promise<void> {
+		if (!path) return;
+		const dest = this.app.vault.getAbstractFileByPath(path);
+		if (!(dest instanceof TFile)) return;
 		const block = parent.createDiv({ cls: "grill-explanation-block" });
 		block.createDiv({ cls: "grill-block-label", text: "From your note" });
 		const holder = block.createDiv({ cls: "grill-note-images" });
-		for (const path of paths) {
-			const dest = this.app.vault.getAbstractFileByPath(path);
-			if (!(dest instanceof TFile)) continue;
+		await MarkdownRenderer.render(this.app, `![[${dest.path}]]`, holder, dest.path, this);
+		let hydrated = false;
+		for (let i = 0; i < 10; i++) {
+			if (holder.querySelector("img")) {
+				hydrated = true;
+				break;
+			}
+			await new Promise((r) => window.setTimeout(r, 100));
+		}
+		if (!hydrated) {
+			holder.empty();
 			holder.createEl("img", { attr: { src: this.app.vault.getResourcePath(dest) } });
 		}
 	}

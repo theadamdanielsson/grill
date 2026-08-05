@@ -166,6 +166,12 @@ export interface Explanation {
 	 * generated Mermaid is a well-documented source of render failures, so this is
 	 * scoped to the shapes most likely to actually parse, not "draw whatever helps". */
 	diagram: string;
+	/** Vault path of the one note-embedded image (of the ones sent as vision input) the
+	 * model judged actually relevant to THIS question, "" for the common case of none.
+	 * Picked by the model rather than "first images in the note" — a note can embed
+	 * many unrelated images across its length, and document order has no relation to
+	 * which one this particular question is about. */
+	relevantImagePath: string;
 }
 
 /** Whether this provider and model can read image inputs. */
@@ -1191,12 +1197,21 @@ export async function gradeAnswer(
  * like "verdict: partial" or a bare "auxiliary_choice_reflexives" tag) even though the
  * schema below only asks for `explanation`. Losing that cache hit is the right trade for
  * not shipping a leaky explanation. */
-const EXPLAIN_RULES = `The student wants a fuller explanation of this question than the feedback and any hints
+function explainRules(imageCount: number): string {
+	const imageBlock =
+		imageCount > 0
+			? `\n- relevantImageIndex: you were shown ${imageCount} image${imageCount > 1 ? "s" : ""} embedded in the note ` +
+				`(index 0${imageCount > 1 ? ` to ${imageCount - 1}` : ""}). Output the index of the ONE image that is genuinely ` +
+				`the same diagram, chart, or content this specific question is about — not just any image from the note. Output -1 ` +
+				`if none of them are actually relevant to this question, which is the common case: most questions don't have a ` +
+				`matching image, and showing an unrelated one is worse than showing none.\n`
+			: "";
+	return `The student wants a fuller explanation of this question than the feedback and any hints
 already shown gave them — whether they got it right, partially right, or wrong. Ground it in
 the NOTE given below (quote or paraphrase the relevant part rather than inventing an outside
 explanation). When no expected answer was supplied, treat the NOTE as the sole source of truth.
 
-Output four short, distinct fields — the structure is what makes this readable, so do not
+Output these short, distinct fields — the structure is what makes this readable, so do not
 pad any field into a paragraph:
 - whatWentWrong: specifically what the student's answer got wrong or missed, citing their
   actual answer. Empty string if the answer was already fully correct — there's nothing to
@@ -1220,8 +1235,7 @@ pad any field into a paragraph:
     flowchart TD
         A["Start"] --> B{"Condition?"}
         B -->|Yes| C["Outcome one"]
-        B -->|No| D["Outcome two"]
-
+        B -->|No| D["Outcome two"]${imageBlock}
 whatWentWrong, keyConcept, and example are each normally 1 to 3 sentences of plain prose,
 each still short — but light markdown (a bolded term, a short list, an inline LaTeX formula
 in $...$) is fine when it genuinely clarifies. Don't add headers, and don't restructure a
@@ -1231,20 +1245,25 @@ Never write internal labels or field names such as "verdict:", "feedback:", or
 "misconceptionTag:", and never output a bare snake_case tag on its own line — those are
 grading internals the student must never see. Use plain punctuation and never use em or en
 dashes.`;
+}
 
-const explainSystem = (persona: string): string => `${persona.trim() || DEFAULT_PERSONA}\n\n${EXPLAIN_RULES}`;
+const explainSystem = (persona: string, imageCount: number): string =>
+	`${persona.trim() || DEFAULT_PERSONA}\n\n${explainRules(imageCount)}`;
 
-const EXPLAIN_SCHEMA = {
-	type: "object",
-	properties: {
+function explainSchema(imageCount: number): Record<string, unknown> {
+	const properties: Record<string, unknown> = {
 		whatWentWrong: { type: "string" },
 		keyConcept: { type: "string" },
 		example: { type: "string" },
 		diagram: { type: "string" },
-	},
-	required: ["whatWentWrong", "keyConcept", "example", "diagram"],
-	additionalProperties: false,
-};
+	};
+	const required = ["whatWentWrong", "keyConcept", "example", "diagram"];
+	if (imageCount > 0) {
+		properties.relevantImageIndex = { type: "integer", minimum: -1, maximum: imageCount - 1 };
+		required.push("relevantImageIndex");
+	}
+	return { type: "object", properties, required, additionalProperties: false };
+}
 
 /** Belt-and-suspenders, like cleanText: strip any grading-internal leak an explanation
  * might still echo despite EXPLAIN_RULES — both the labeled form ("verdict: partial")
@@ -1293,12 +1312,21 @@ export async function explainQuestion(
 		`FEEDBACK ALREADY SHOWN TO THE STUDENT: ${feedback || "(none)"}\n\n` +
 		hintsBlock +
 		"Explain it more fully.";
-	const data = (await callJSON(cfg, explainSystem(persona), { cacheable, rest }, EXPLAIN_SCHEMA, 2000, images)) as {
+	const data = (await callJSON(
+		cfg,
+		explainSystem(persona, images.length),
+		{ cacheable, rest },
+		explainSchema(images.length),
+		2000,
+		images,
+	)) as {
 		whatWentWrong: string;
 		keyConcept: string;
 		example: string;
 		diagram: string;
+		relevantImageIndex?: number;
 	};
+	const idx = data.relevantImageIndex;
 	return {
 		whatWentWrong: stripGradingLeaks(cleanText(data.whatWentWrong ?? "")),
 		keyConcept: stripGradingLeaks(cleanText(data.keyConcept ?? "")),
@@ -1307,6 +1335,7 @@ export async function explainQuestion(
 		// valid Mermaid body can legitimately contain (a lone node id continuation) —
 		// the grading-leak risk it guards against doesn't apply to a diagram-only field.
 		diagram: cleanText(data.diagram ?? "").trim(),
+		relevantImagePath: typeof idx === "number" && idx >= 0 ? (images[idx]?.path ?? "") : "",
 	};
 }
 

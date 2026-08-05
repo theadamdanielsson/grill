@@ -1,5 +1,17 @@
 # Changelog
 
+## 4.5.2
+
+- Fixed the note-image shown in "Explain this" being effectively random: it used to
+  grab the first image embed in the note by document order, with no relation to the
+  actual question. Now the model is shown the note's images and asked which one (if
+  any) actually matches this specific question — "" for the common case of none,
+  instead of an arbitrary unrelated diagram or screenshot.
+- Fixed that image not being clickable to enlarge: it was a plain `<img>` tag, which
+  has none of Obsidian's native click-to-zoom wiring. Now rendered as a real embed
+  first (so zoom works like anywhere else in the vault), only falling back to a plain
+  tag if that embed fails to hydrate.
+
 ## 4.5.1
 
 - Fixed a plugin-review failure: the off-screen scratch element used to test-render
