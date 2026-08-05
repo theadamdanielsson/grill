@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.3.0
+
+- **"Grill N untested"** on the map: a one-tap button that starts a session over every
+  untested note, vault-wide (not just whatever's rendered on a possibly-capped graph).
+  Unlike the filter chips next to it, which only highlight matching notes in place, this
+  one leaves the map and starts quizzing.
+
 ## 4.2.1
 
 - Fixed the verdict flame icon (4.2.0) failing Obsidian's plugin review: it was set via

@@ -446,6 +446,12 @@
   background-image: radial-gradient(circle, rgba(255, 178, 50, 0.11) 1px, transparent 1.4px);
   background-size: 15px 15px;
 }
+/* One-tap start into every untested note at once — unlike the filter chips below (which
+ * only highlight in place), this leaves the map and starts a session, so it gets the same
+ * full-width CTA treatment as "Review N due now" rather than sitting inline as a chip. */
+.grill-untested-cta {
+  margin-bottom: 0.5em;
+}
 /* One continuous row, always — wrapping wasted more space (a lone "Unlinked" stranded
    on its own second line) than it saved, so scroll horizontally instead of wrapping when
    the pane's too narrow for all five at once. */

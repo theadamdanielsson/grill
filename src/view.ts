@@ -811,6 +811,18 @@ export class SessionView extends ItemView {
 				{ kind: "leeches", label: "Stuck", match: (n) => n.leeches > 0 },
 				{ kind: "orphan", label: "Unlinked", match: (n) => (degree.get(n.id) ?? 0) === 0 },
 			];
+			// A vault-wide untested count, not the (possibly capped) map's own node set —
+			// "Stale" above only highlights in place, but this one leaves the map and
+			// starts a session, so it must reliably cover every untested note, not just
+			// whichever ones happened to make it onto a capped graph.
+			const untestedFiles = eligible.filter((f) => statusOf(this.plugin.mastery[f.basename]) === "untested");
+			if (untestedFiles.length) {
+				const untestedBtn = toolbar.createEl("button", {
+					cls: "grill-due-cta grill-untested-cta",
+					text: `Grill ${untestedFiles.length} untested`,
+				});
+				untestedBtn.onclick = () => void this.startScopedSession(untestedFiles);
+			}
 			const activeFilters = new Set<string>();
 			const matchedSet = (): GraphNode[] =>
 				graph.nodes.filter((n) => filterDefs.some((f) => activeFilters.has(f.kind) && f.match(n)));
