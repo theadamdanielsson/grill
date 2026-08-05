@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.8.1
+
+- Fixed "Explain this" (3.8.0) leaking internal grading jargon into the explanation
+  text itself — a stray `verdict: partial` line, or a bare `misconceptionTag` value
+  like `auxiliary_choice_reflexives` with no label at all. Caused by reusing the
+  grader's own system prompt to ride its prompt cache; it now has its own prompt
+  (losing that cache hit, which is the right trade) plus a defensive filter for
+  either leak shape.
+- "Explain this" now shows a specific, staged status ("Reading your answer and the
+  note...", then "Writing an explanation...") instead of a static "Explaining..."
+  frozen for the whole wait.
+
 ## 3.8.0
 
 - **"Explain this."** When the feedback, hints, and expected answer on a wrong (or

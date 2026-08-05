@@ -1447,7 +1447,12 @@ export class SessionView extends ItemView {
 		const btn = box.createEl("button", { text: "Explain this", cls: "grill-hint-btn" });
 		btn.onclick = async () => {
 			btn.disabled = true;
-			btn.setText("Explaining...");
+			// Named stages, not a frozen "Explaining...", matching loadNextBatch's own
+			// "say what it's actually doing" approach (see withDebouncedLoading's callers) —
+			// there's no real token stream to show (requestUrl is a buffered, non-streaming
+			// call), so this is honest staged status text, not a fake typing animation.
+			btn.setText("Reading your answer and the note...");
+			const stageTimer = window.setTimeout(() => btn.setText("Writing an explanation..."), 1200);
 			try {
 				const hintsShown = [q.hints.tier1, q.hints.tier2, q.hints.tier3].slice(0, r.hintsUsed).filter(Boolean);
 				const explanation = await explainQuestion(
@@ -1467,6 +1472,8 @@ export class SessionView extends ItemView {
 				new Notice(`Grill: ${(e as Error).message}`, 8000);
 				btn.disabled = false;
 				btn.setText("Explain this");
+			} finally {
+				window.clearTimeout(stageTimer);
 			}
 		};
 	}
