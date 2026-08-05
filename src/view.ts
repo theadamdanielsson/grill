@@ -575,29 +575,29 @@ export class SessionView extends ItemView {
 		// Created below, but referenced from recompute() — that only ever runs from a
 		// checkbox's onchange, after this whole render has finished and btn exists.
 		let btn: HTMLButtonElement;
+		// Shared by the Scope checkboxes below AND the map's own "Untested" chip (see
+		// renderMap's onSelectScope param) — selecting a scope from either place means
+		// the same thing: highlight it, show its counts, and name it on the button, so
+		// "Get grilled" always says exactly what it's about to do rather than a generic
+		// label that looked the same whether or not a scope was active.
+		const applyScope = (files: TFile[] | null, summary: string): void => {
+			this.pendingScope = files;
+			showCounts(files ?? eligible);
+			this.map?.setHighlight(files ? new Set(files.map((f) => f.basename)) : null);
+			scopeSummary.setText(summary);
+			btn.setText(files ? `Grill ${files.length} selected` : "Get grilled");
+		};
 		const checked: Scope[] = [];
 		const recompute = (): void => {
 			if (!checked.length) {
-				this.pendingScope = null;
-				showCounts(eligible);
-				this.map?.setHighlight(null);
-				scopeSummary.setText("Whole vault");
-				btn.setText("Get grilled");
+				applyScope(null, "Whole vault");
 				return;
 			}
 			const byPath = new Map<string, TFile>();
 			for (const scope of checked) {
 				for (const f of filesForScope(this.app, scope, eligible, this.plugin.concepts)) byPath.set(f.path, f);
 			}
-			const files = [...byPath.values()];
-			this.pendingScope = files;
-			showCounts(files);
-			this.map?.setHighlight(new Set(files.map((f) => f.basename)));
-			scopeSummary.setText(`${checked.length} selected`);
-			// Names what the button is actually about to do (grill exactly the ticked
-			// scope), not the generic "Get grilled" — the same confusion the map's own
-			// "Get grilled" vs "Grill N untested" pairing already made unambiguous.
-			btn.setText(`Grill ${files.length} selected`);
+			applyScope([...byPath.values()], `${checked.length} selected`);
 		};
 		const addScopeRow = (parent: HTMLElement, label: string, scope: Scope): void => {
 			const row = parent.createDiv({ cls: "grill-onboard-row" });
@@ -642,7 +642,7 @@ export class SessionView extends ItemView {
 
 		// The learning graph: your notes, coloured in by what you've proven you know.
 		const mapWrap = screen.createDiv({ cls: "grill-map-wrap" });
-		void this.renderMap(mapWrap);
+		void this.renderMap(mapWrap, applyScope);
 
 		const dash = screen.createDiv({ cls: "grill-meta grill-dash-link" });
 		const dashLink = dash.createSpan({ cls: "grill-chip-link", text: "View your progress" });
@@ -717,8 +717,12 @@ export class SessionView extends ItemView {
 
 	/** Draw the learning graph over the eligible notes into `host`. Loads concepts + saved
 	 * positions, builds and (re)lays out the graph, persists positions, and mounts the
-	 * canvas controller. Bounded to MAP_NODE_CAP nodes (practised notes + neighbours). */
-	private async renderMap(host: HTMLElement): Promise<void> {
+	 * canvas controller. Bounded to MAP_NODE_CAP nodes (practised notes + neighbours).
+	 * `onSelectScope(files, label)` is how the map's own "Untested" chip hands a scope
+	 * back up to the start screen's "Get grilled" button — `null` files means "whole
+	 * vault" (matches the Scope checkboxes' own convention; see renderStart's
+	 * `applyScope`, the single shared implementation). */
+	private async renderMap(host: HTMLElement, onSelectScope: (files: TFile[] | null, label: string) => void): Promise<void> {
 		const toolbar = host.createDiv({ cls: "grill-graph-toolbar" });
 		const canvas = host.createEl("canvas", { cls: "grill-graph" });
 		const status = host.createDiv({ cls: "grill-meta grill-map-status", text: "Loading your graph…" });
@@ -873,14 +877,20 @@ export class SessionView extends ItemView {
 				};
 			};
 			createFilterChip(filterDefs[0]); // Due
-			// Right after Due, same plain chip style as the rest — no visual distinction —
-			// but unlike the toggle chips (which only highlight matches in place), this one
-			// leaves the map and starts a session, over every untested note vault-wide (not
-			// just whichever ones made it onto a possibly-capped graph).
+			// Right after Due, same plain chip style and same toggle behavior as the rest:
+			// clicking it selects the scope (highlights on the map, updates "Get grilled" to
+			// "Grill N selected") rather than jumping straight into a session — the same
+			// choose-then-commit flow the Scope checkboxes above already use, not a
+			// one-tap shortcut that skips it. Clicking again reverts to the whole vault.
 			const untestedFiles = eligible.filter((f) => statusOf(this.plugin.mastery[f.basename]) === "untested");
 			if (untestedFiles.length) {
 				const untestedChip = chipRow.createEl("button", { cls: "grill-filter-chip", text: "Untested" });
-				untestedChip.onclick = () => void this.startScopedSession(untestedFiles);
+				let untestedActive = false;
+				untestedChip.onclick = () => {
+					untestedActive = !untestedActive;
+					untestedChip.toggleClass("is-active", untestedActive);
+					onSelectScope(untestedActive ? untestedFiles : null, untestedActive ? "Untested" : "Whole vault");
+				};
 			}
 			for (const f of filterDefs.slice(1)) createFilterChip(f);
 

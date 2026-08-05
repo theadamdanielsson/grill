@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.4.2
+
+- "Untested" on the map no longer jumps straight into a session on click. It now
+  selects the scope instead — highlights on the map, "Get grilled" becomes "Grill N
+  selected" — the same choose-then-commit flow the Scope checkboxes already use.
+  Click again to revert to the whole vault.
+
 ## 4.4.1
 
 - Fixed three different "due" counts disagreeing at once (e.g. 17 on the start screen's
