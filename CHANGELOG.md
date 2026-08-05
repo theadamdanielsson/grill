@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.5.1
+
+- Fixed a plugin-review failure: the off-screen scratch element used to test-render
+  Mermaid diagrams (added in 4.5.0) set its styles directly instead of through a CSS
+  class, which the Obsidian review linter flags as unsafe regardless of how static the
+  values are. Moved it to a real class.
+
 ## 4.5.0
 
 - **"Explain this" can now draw a diagram and show your own images.** When a diagram

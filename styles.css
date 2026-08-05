@@ -922,6 +922,11 @@
 }
 .grill-explanation-block:last-child { margin-bottom: 0; }
 .grill-explanation-block p { margin: 0; font-size: var(--font-ui-medium); }
+.grill-diagram-scratch {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+}
 .grill-diagram {
   overflow-x: auto;
 }

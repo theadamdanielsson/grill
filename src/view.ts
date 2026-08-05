@@ -1645,7 +1645,7 @@ export class SessionView extends ItemView {
 	private async renderDiagramBlock(parent: HTMLElement, diagram: string): Promise<void> {
 		if (!diagram) return;
 		const scratch = document.createElement("div");
-		scratch.style.cssText = "position:absolute;visibility:hidden;pointer-events:none;";
+		scratch.addClass("grill-diagram-scratch");
 		document.body.appendChild(scratch);
 		try {
 			await MarkdownRenderer.render(this.app, "```mermaid\n" + diagram + "\n```", scratch, "", this);
