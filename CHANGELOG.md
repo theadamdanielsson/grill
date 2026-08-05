@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.7.2
+
+Cleanup only, no behaviour change — addresses warnings from the Obsidian plugin
+review that had degraded the listing to "Caution":
+- Replaced four `:has()` CSS selectors (flagged for potential selector-invalidation
+  performance cost) with plain classes set at render time, since in every case the
+  condition was already known in JS when the element was created.
+- Removed three unnecessary type assertions and one unhandled/floating promise.
+
 ## 3.7.1
 
 - **"End session for now."** A long due queue (50, 100+ questions) had no way out

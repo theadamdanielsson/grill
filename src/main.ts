@@ -200,7 +200,7 @@ export default class GrillPlugin extends Plugin {
 		if (s.graphCoverageWeight === 60) settings.graphCoverageWeight = 15;
 		if (typeof s.desiredRetention === "number") settings.desiredRetention = s.desiredRetention;
 		if (typeof s.newConceptsPerDay === "number") settings.newConceptsPerDay = s.newConceptsPerDay;
-		const calibration = Array.isArray(stored?.calibration) ? stored!.calibration.filter(isCalPoint) : [];
+		const calibration = Array.isArray(stored?.calibration) ? stored.calibration.filter(isCalPoint) : [];
 		this.data = { settings, calibration };
 
 		this.store = new GrillStore(this.app, () => this.data.settings.folder);

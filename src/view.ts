@@ -325,7 +325,7 @@ export class SessionView extends ItemView {
 
 	/** First-run: choose which folders are Grill's study material + graph. */
 	private renderOnboarding(): void {
-		const wrap = this.root();
+		const wrap = this.root(true);
 		// First impression, one-time, non-interactive-heavy — the same full cabinet as
 		// the start screen, not the subtle touch reserved for the actual study flow.
 		const screen = wrap.createDiv({ cls: "grill-arcade-screen" });
@@ -392,15 +392,22 @@ export class SessionView extends ItemView {
 		};
 	}
 
-	private root(): HTMLElement {
+	/** `arcade` is true only for the three screens that build a `.grill-arcade-screen`
+	 * child (onboarding, start, dashboard) — it drives their cabinet-fills-the-pane
+	 * layout via a plain class toggle here rather than a `:has()` selector in CSS,
+	 * which the same three callers would otherwise force the browser to re-evaluate
+	 * against every layout change. */
+	private root(arcade = false): HTMLElement {
 		// Tear down the map's canvas loop / observers whenever a screen re-renders.
 		this.map?.dispose();
 		this.map = null;
 		const el = this.contentEl;
 		el.empty();
 		el.addClass("grill-view");
+		el.toggleClass("grill-arcade-mode", arcade);
 		const wrap = el.createDiv({ cls: "grill-wrap" });
 		wrap.toggleClass("grill-compact", this.plugin.data.settings.compact);
+		wrap.toggleClass("grill-arcade-mode", arcade);
 		return wrap;
 	}
 
@@ -420,7 +427,7 @@ export class SessionView extends ItemView {
 	}
 
 	private renderStart(): void {
-		const wrap = this.root();
+		const wrap = this.root(true);
 		const map = this.plugin.mastery;
 		const eligible = this.allEligible();
 		this.pendingScope = null;
@@ -797,7 +804,7 @@ export class SessionView extends ItemView {
 	}
 
 	private async renderDashboard(): Promise<void> {
-		const wrap = this.root();
+		const wrap = this.root(true);
 		const map = this.plugin.mastery;
 		const eligible = this.allEligible();
 
@@ -1178,7 +1185,7 @@ export class SessionView extends ItemView {
 		const multiSelected = new Set<string>();
 		const matchPicks: Record<string, string> = {};
 		if (isMc || isTf) {
-			const mcRow = card.createDiv({ cls: "grill-mc-row" });
+			const mcRow = card.createDiv({ cls: isTf ? "grill-mc-row grill-mc-row-tf" : "grill-mc-row" });
 			const options = isTf ? ["True", "False"] : [...(q.choices as string[])].sort(() => Math.random() - 0.5);
 			for (const choice of options) {
 				const b = mcRow.createEl("button", { text: choice, cls: isTf ? "grill-mc-btn grill-tf-btn" : "grill-mc-btn" });
@@ -1296,7 +1303,7 @@ export class SessionView extends ItemView {
 			const bad = row.createEl("button", { text: "Bad question", cls: "grill-quiet-btn grill-bad-question-btn" });
 			bad.setAttribute("title", "Wrong, broken, or nonsensical — delete it and move on, no penalty");
 			bad.onclick = () => {
-				row.querySelectorAll("button").forEach((b) => ((b as HTMLButtonElement).disabled = true));
+				row.querySelectorAll("button").forEach((b) => (b.disabled = true));
 				void this.reportBadQuestion();
 			};
 		}
@@ -1306,7 +1313,7 @@ export class SessionView extends ItemView {
 			// blank-input Enter chain, "I don't know") and blocks a double-submit while
 			// grading runs. mc/tf buttons disable their own row separately on click,
 			// before doAction even runs; this covers submit/hint/skip uniformly.
-			row.querySelectorAll("button").forEach((b) => ((b as HTMLButtonElement).disabled = true));
+			row.querySelectorAll("button").forEach((b) => (b.disabled = true));
 			let answer = "";
 			if (!giveUp) {
 				if (isMc || isTf) answer = this.mcPicked;

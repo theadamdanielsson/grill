@@ -214,7 +214,7 @@ export class LearningMap {
 		this.win = canvas.ownerDocument.defaultView ?? window;
 		this.ctx = canvas.getContext("2d") as CanvasRenderingContext2D;
 
-		this.nodes = graph.nodes as SimNode[];
+		this.nodes = graph.nodes;
 		for (const nd of this.nodes) this.byId.set(nd.id, nd);
 		this.links = graph.edges.map((e) => ({ source: e.a, target: e.b, tier: e.tier }));
 		for (const e of graph.edges) {
@@ -261,7 +261,7 @@ export class LearningMap {
 		// numeric overlay would silently fall back to the generic monospace font and stay
 		// that way until something else triggers a redraw. Force one once the font is
 		// confirmed ready, so the pixel face is never a race.
-		this.win.document.fonts?.load('9px "Grill Pixel"').finally(() => {
+		void this.win.document.fonts?.load('9px "Grill Pixel"').finally(() => {
 			if (!this.disposed) this.requestDraw();
 		});
 	}

@@ -13,7 +13,7 @@
    of the raw pane background still showing outside it. Both need to go, with the
    cabinet supplying equivalent internal padding instead so content sits the same
    distance from the frame as before — just with the frame now reaching the real edges. */
-.grill-view:has(.grill-arcade-screen) {
+.grill-view.grill-arcade-mode {
   padding: 0;
 }
 /* The 40em reading-width cap makes sense for the question/answer flow (prose wants a
@@ -22,10 +22,10 @@
    pane background exposed on both sides. The cabinet's own content (a 4-column stat
    grid, full-width buttons, a canvas) all scale with available width without becoming
    unreadable the way running prose would, so it can just fill whatever width it's given. */
-.grill-wrap:has(> .grill-arcade-screen) {
+.grill-wrap.grill-arcade-mode {
   max-width: none;
 }
-.grill-wrap:has(> .grill-arcade-screen) {
+.grill-wrap.grill-arcade-mode {
   padding: 0;
 }
 
@@ -727,7 +727,7 @@
 /* True/false: the same mc row/button, just forced into a side-by-side pair instead of
    a stacked column, with a fixed (not answer-dependent) left-border tint on each side
    so it doesn't leak which one is correct. */
-.grill-mc-row:has(.grill-tf-btn) {
+.grill-mc-row-tf {
   flex-direction: row;
 }
 .grill-tf-btn {
