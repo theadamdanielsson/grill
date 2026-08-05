@@ -1,5 +1,20 @@
 # Changelog
 
+## 4.4.0
+
+- **"Mark correct."** When the deterministic or AI grader gets one wrong, a quiet
+  "Mark correct" button next to the verdict badge fixes it properly: the concept's
+  FSRS schedule is restored to its pre-answer state and replayed as a correct answer
+  (not just relabeled), note-level stats and any misconception tally are corrected too,
+  and the session summary/debrief reflect the fix. Only offered right after the answer
+  that produced it, and only for AI/deterministic grading — self-grade mode's own
+  Again/Hard/Good/Easy is already the ground truth, nothing to override.
+- Fixed "Grill N untested" (4.3.0) rendering as a big banner above the map's filter
+  chips instead of sitting in that row as a small chip like the others.
+- "Get grilled" now reads **"Grill N selected"** once you've ticked a folder/tag/note
+  in Scope, so the button says what it's actually about to do instead of a generic
+  label that looked the same whether or not a scope was active.
+
 ## 4.3.0
 
 - **"Grill N untested"** on the map: a one-tap button that starts a session over every

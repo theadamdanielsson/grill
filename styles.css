@@ -446,12 +446,6 @@
   background-image: radial-gradient(circle, rgba(255, 178, 50, 0.11) 1px, transparent 1.4px);
   background-size: 15px 15px;
 }
-/* One-tap start into every untested note at once — unlike the filter chips below (which
- * only highlight in place), this leaves the map and starts a session, so it gets the same
- * full-width CTA treatment as "Review N due now" rather than sitting inline as a chip. */
-.grill-untested-cta {
-  margin-bottom: 0.5em;
-}
 /* One continuous row, always — wrapping wasted more space (a lone "Unlinked" stranded
    on its own second line) than it saved, so scroll horizontally instead of wrapping when
    the pane's too narrow for all five at once. */
@@ -519,6 +513,13 @@
 .grill-filter-readout {
   margin-top: 0.3em;
   min-height: 1.2em;
+}
+/* Same small chip as Due/Learning/etc., but a standing flame-colored border (not the
+ * gold is-active glow, which would misread as "currently toggled on") to hint it's a
+ * different kind of chip — a one-tap action, not a highlight toggle. */
+.grill-untested-chip {
+  border-color: var(--grill-flame);
+  color: var(--grill-gold);
 }
 
 /* First-run onboarding: choose Grill's folders. */
@@ -863,6 +864,14 @@
 .grill-v-partial { color: var(--color-orange); }
 .grill-v-incorrect { color: var(--color-red); }
 .grill-v-skipped { color: var(--text-muted); }
+/* Badge on the left, "Mark correct" (when offered) pushed to the right via
+ * .grill-quiet-btn's own margin-left: auto — same row-with-a-trailing-action layout
+ * already used for the hint/skip/bad-question row on the question screen. */
+.grill-verdict-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--grill-space-sm);
+}
 /* Verdict badge: Grill's own flame icon (see FLAME_ICON_SVG in view.ts) plus the
  * verdict text — no pill/tinted background on any variant. An earlier version tinted
  * a pill behind partial/incorrect (keeping only correct plain); dropped entirely once
@@ -874,7 +883,6 @@
   gap: 0.4em;
   font-weight: var(--font-semibold, 600);
   font-size: var(--font-ui-small);
-  margin-bottom: var(--grill-space-sm);
 }
 .grill-verdict-badge .grill-verdict-icon {
   display: flex;

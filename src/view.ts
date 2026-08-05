@@ -305,6 +305,22 @@ export class SessionView extends ItemView {
 	/** The confidence the user picked for the current question (0..1), or null. Only
 	 * used when the confidence check is on; captured into calibration on grade. */
 	private pendingConfidence: number | null = null;
+	/** Snapshot of the just-graded concept's pre-answer FSRS state, taken right before
+	 * `applyGrade` mutates it, so a wrong verdict can be corrected via "Mark correct"
+	 * without hand-rolling an FSRS "undo": restore this, then replay the exact same
+	 * scheduling call with verdict forced to "correct". Single-use and overwritten each
+	 * answer (null for self-grade, where the student's own rating IS the ground truth,
+	 * and for missing-link questions, which have no concept schedule to correct). */
+	private pendingOverride: {
+		conceptId: string;
+		conceptSnapshot: ConceptMastery;
+		note: string;
+		originalVerdict: Verdict;
+		originalMisconceptionTag: string | undefined;
+		difficulty: QDifficulty;
+		confidence: number | null;
+		hintsUsed: number;
+	} | null = null;
 	/** The choice clicked on a multiple-choice question, captured for `doAction` to
 	 * read as its "answer" — mc has no textarea to read from. */
 	private mcPicked = "";
@@ -556,6 +572,9 @@ export class SessionView extends ItemView {
 		scopeHeader.createSpan({ cls: "grill-scope-caret", text: "⌄" });
 		const scopeSummary = scopeHeader.createSpan({ cls: "grill-meta grill-scope-summary", text: "Whole vault" });
 
+		// Created below, but referenced from recompute() — that only ever runs from a
+		// checkbox's onchange, after this whole render has finished and btn exists.
+		let btn: HTMLButtonElement;
 		const checked: Scope[] = [];
 		const recompute = (): void => {
 			if (!checked.length) {
@@ -563,6 +582,7 @@ export class SessionView extends ItemView {
 				showCounts(eligible);
 				this.map?.setHighlight(null);
 				scopeSummary.setText("Whole vault");
+				btn.setText("Get grilled");
 				return;
 			}
 			const byPath = new Map<string, TFile>();
@@ -574,6 +594,10 @@ export class SessionView extends ItemView {
 			showCounts(files);
 			this.map?.setHighlight(new Set(files.map((f) => f.basename)));
 			scopeSummary.setText(`${checked.length} selected`);
+			// Names what the button is actually about to do (grill exactly the ticked
+			// scope), not the generic "Get grilled" — the same confusion the map's own
+			// "Get grilled" vs "Grill N untested" pairing already made unambiguous.
+			btn.setText(`Grill ${files.length} selected`);
 		};
 		const addScopeRow = (parent: HTMLElement, label: string, scope: Scope): void => {
 			const row = parent.createDiv({ cls: "grill-onboard-row" });
@@ -609,7 +633,7 @@ export class SessionView extends ItemView {
 			};
 		}
 
-		const btn = screen.createEl("button", { text: "Get grilled", cls: "mod-cta grill-start-btn grill-primary-cta" });
+		btn = screen.createEl("button", { text: "Get grilled", cls: "mod-cta grill-start-btn grill-primary-cta" });
 		btn.onclick = () => {
 			this.sessionScope = this.pendingScope;
 			this.dueOnly = false;
@@ -811,22 +835,22 @@ export class SessionView extends ItemView {
 				{ kind: "leeches", label: "Stuck", match: (n) => n.leeches > 0 },
 				{ kind: "orphan", label: "Unlinked", match: (n) => (degree.get(n.id) ?? 0) === 0 },
 			];
-			// A vault-wide untested count, not the (possibly capped) map's own node set —
-			// "Stale" above only highlights in place, but this one leaves the map and
-			// starts a session, so it must reliably cover every untested note, not just
-			// whichever ones happened to make it onto a capped graph.
-			const untestedFiles = eligible.filter((f) => statusOf(this.plugin.mastery[f.basename]) === "untested");
-			if (untestedFiles.length) {
-				const untestedBtn = toolbar.createEl("button", {
-					cls: "grill-due-cta grill-untested-cta",
-					text: `Grill ${untestedFiles.length} untested`,
-				});
-				untestedBtn.onclick = () => void this.startScopedSession(untestedFiles);
-			}
 			const activeFilters = new Set<string>();
 			const matchedSet = (): GraphNode[] =>
 				graph.nodes.filter((n) => filterDefs.some((f) => activeFilters.has(f.kind) && f.match(n)));
 			const chipRow = toolbar.createDiv({ cls: "grill-filter-row" });
+			// Same small chip style as Due/Learning/Stale/etc. below, sitting in the same
+			// row — but unlike those (which only highlight matching nodes in place), this
+			// one leaves the map and starts a session, over every untested note vault-wide
+			// (not just whichever ones made it onto a possibly-capped graph).
+			const untestedFiles = eligible.filter((f) => statusOf(this.plugin.mastery[f.basename]) === "untested");
+			if (untestedFiles.length) {
+				const untestedChip = chipRow.createEl("button", {
+					cls: "grill-filter-chip grill-untested-chip",
+					text: `Grill ${untestedFiles.length} untested`,
+				});
+				untestedChip.onclick = () => void this.startScopedSession(untestedFiles);
+			}
 			const readout = toolbar.createDiv({ cls: "grill-meta grill-filter-readout" });
 			const updateReadout = (): void => {
 				if (!activeFilters.size) {
@@ -1454,9 +1478,21 @@ export class SessionView extends ItemView {
 		// The verdict card: badge + your answer + grader feedback — "what happened".
 		const verdictCard = card.createDiv({ cls: "grill-flow-card grill-verdict-card" });
 		const v = this.verdictLabel(r);
-		const badge = verdictCard.createDiv({ cls: `grill-verdict-badge ${v.cls}` });
+		const badgeRow = verdictCard.createDiv({ cls: "grill-verdict-row" });
+		const badge = badgeRow.createDiv({ cls: `grill-verdict-badge ${v.cls}` });
 		renderFlameIcon(badge.createSpan({ cls: "grill-verdict-icon" }));
 		badge.createSpan({ text: v.text });
+		// The grader/deterministic path got this one wrong: single-use, so it's only
+		// offered right after the answer that produced it (see pendingOverride's doc
+		// comment) — not on an older question, and never for self-grade (your own
+		// rating already is the ground truth there).
+		if (r.verdict !== "correct" && this.pendingOverride) {
+			const markBtn = badgeRow.createEl("button", { text: "Mark correct", cls: "grill-quiet-btn" });
+			markBtn.onclick = () => {
+				markBtn.disabled = true;
+				void this.markCorrect(r);
+			};
+		}
 		if (!r.gaveUp && r.answer) {
 			verdictCard.createDiv({ cls: "grill-block-label", text: "Your answer" });
 			const ans = verdictCard.createDiv({ cls: "grill-your-answer" });
@@ -2552,6 +2588,9 @@ export class SessionView extends ItemView {
 		misconceptionTag: string | undefined,
 		hintsUsed = 0,
 	): Promise<void> {
+		// Cleared by default; only the AI/deterministic-verdict path below (re)populates
+		// it. Never carries over from a previous question.
+		this.pendingOverride = null;
 		// Replay is practice-only: never touch the schedule or stats.
 		if (this.replayMode) return;
 		// A missing-link bridge question is outside FSRS scheduling: it isn't a note
@@ -2564,8 +2603,23 @@ export class SessionView extends ItemView {
 		if (cid && this.concepts[cid]) {
 			const retention = this.plugin.data.settings.desiredRetention / 100;
 			if (rating !== null) {
+				// Self-grade: the student's own Again/Hard/Good/Easy already IS the ground
+				// truth (no third-party verdict to second-guess), so no override snapshot.
 				recordConceptRating(this.concepts, cid, rating, new Date(), retention, this.dueDateHistogram);
 			} else {
+				// Snapshot the pre-answer state before mutating it — see pendingOverride's
+				// doc comment. structuredClone is safe here: ConceptMastery is plain JSON
+				// data (numbers/strings/a flat array), nothing that doesn't survive a clone.
+				this.pendingOverride = {
+					conceptId: cid,
+					conceptSnapshot: structuredClone(this.concepts[cid]),
+					note: q.node,
+					originalVerdict: verdict,
+					originalMisconceptionTag: misconceptionTag,
+					difficulty: q.difficulty ?? "medium",
+					confidence: this.pendingConfidence,
+					hintsUsed,
+				};
 				recordConceptAnswer(
 					this.concepts,
 					cid,
@@ -2584,6 +2638,63 @@ export class SessionView extends ItemView {
 		recordNoteStats(this.plugin.mastery, q.node, verdict, misconceptionTag);
 		this.recomputeAggregate(q.node);
 		this.dirty = true; // flushed at session end / pane close
+	}
+
+	/** "Mark correct": the deterministic/AI grader got this one wrong. Restores the
+	 * concept to its pre-answer snapshot (see pendingOverride) and replays the exact
+	 * same scheduling call with verdict forced to "correct" — no hand-rolled FSRS
+	 * "undo" math, just the normal correct-path logic run from the real prior state.
+	 * Also corrects the note-level counters/misconception tally, then re-renders the
+	 * feedback screen from scratch so the badge, "Expected answer" visibility, and
+	 * everything else fall out consistently rather than being patched by hand.
+	 *
+	 * Known, accepted limitation: if the wrong verdict already triggered a
+	 * prerequisite-routing or misconception-contagion question spliced into the
+	 * session, this does not un-splice it. Asking one extra check question that turns
+	 * out to have been unnecessary is harmless; unwinding it mid-flight risks
+	 * desyncing planCursor against the questions array. Not chasing that edge case. */
+	private async markCorrect(r: QuestionResult): Promise<void> {
+		const o = this.pendingOverride;
+		if (!o || r.verdict === "correct") return;
+		const cm = this.concepts[o.conceptId];
+		if (cm) {
+			Object.assign(cm, structuredClone(o.conceptSnapshot));
+			const retention = this.plugin.data.settings.desiredRetention / 100;
+			recordConceptAnswer(
+				this.concepts,
+				o.conceptId,
+				"correct",
+				o.difficulty,
+				new Date(),
+				retention,
+				this.dueDateHistogram,
+				o.confidence,
+				o.hintsUsed,
+			);
+		}
+		// Correct note-level counters: undo the wrong bucket, credit the right one, and
+		// remove the misconception tally if a tag was recorded off the wrong verdict.
+		const m = this.plugin.mastery[o.note];
+		if (m) {
+			if (o.originalVerdict === "partial") m.partial = Math.max(0, m.partial - 1);
+			else if (o.originalVerdict === "incorrect") m.incorrect = Math.max(0, m.incorrect - 1);
+			m.correct += 1;
+			if (o.originalMisconceptionTag) {
+				const remaining = (m.misconceptions[o.originalMisconceptionTag] ?? 0) - 1;
+				if (remaining <= 0) delete m.misconceptions[o.originalMisconceptionTag];
+				else m.misconceptions[o.originalMisconceptionTag] = remaining;
+			}
+		}
+		this.recomputeAggregate(o.note);
+		// Same object reference already sitting in this.results, so the session summary
+		// and end-of-session debrief transcript see the correction for free.
+		r.verdict = "correct";
+		r.feedback = "Marked correct by you.";
+		r.misconceptionTag = undefined;
+		this.pendingOverride = null;
+		this.dirty = true;
+		await this.flush();
+		this.renderFeedback(r, null);
 	}
 
 	/** Persist all session state at once (concepts, mastery, registry). Called at
