@@ -74,6 +74,11 @@ interface GrillSettings {
 	carefulGrade: boolean;
 	/** One-time flag: the note→concept scheduling reset has run. */
 	conceptsMigrated: boolean;
+	/** One-time flag: legacy installs have had their stored old shipped defaults
+	 * (graphNumberMode "off", newConceptsPerDay 0) carried to the current defaults.
+	 * Guards the migration so it fires exactly once — after it, the user can freely
+	 * pick "off" / 0 again without being re-flipped on the next launch. */
+	legacyDefaultsMigrated: boolean;
 	/** What the graph's node colour encodes: the default 4-state mastery colour, or a
 	 * green-to-red gradient over a continuous metric. */
 	graphColorMode: ColorMode;
@@ -134,10 +139,11 @@ function defaultSettings(): GrillSettings {
 		carefulGrade: false,
 		conceptsMigrated: false,
 		graphColorMode: "mastery",
-		graphNumberMode: "off",
+		graphNumberMode: "percent",
 		graphCoverageWeight: 15,
 		desiredRetention: 90,
-		newConceptsPerDay: 0,
+		newConceptsPerDay: 20,
+		legacyDefaultsMigrated: false,
 	};
 }
 
@@ -200,6 +206,19 @@ export default class GrillPlugin extends Plugin {
 		if (s.graphCoverageWeight === 60) settings.graphCoverageWeight = 15;
 		if (typeof s.desiredRetention === "number") settings.desiredRetention = s.desiredRetention;
 		if (typeof s.newConceptsPerDay === "number") settings.newConceptsPerDay = s.newConceptsPerDay;
+		if (typeof s.legacyDefaultsMigrated === "boolean") settings.legacyDefaultsMigrated = s.legacyDefaultsMigrated;
+		// One-time upgrade for legacy installs. persist() writes the whole settings
+		// object, so an existing user has the old shipped defaults saved to disk —
+		// changing defaultSettings() alone never reaches them. Carry the two changed
+		// defaults across exactly once (percentages visible on the graph; a sane
+		// new-concepts cap), then set the flag so a deliberate later choice of "off" or
+		// 0 sticks instead of being re-flipped every launch. Fresh installs already hold
+		// the new defaults, so this is a no-op for them beyond setting the flag.
+		if (!settings.legacyDefaultsMigrated) {
+			if (settings.graphNumberMode === "off") settings.graphNumberMode = "percent";
+			if (settings.newConceptsPerDay === 0) settings.newConceptsPerDay = 20;
+			settings.legacyDefaultsMigrated = true;
+		}
 		const calibration = Array.isArray(stored?.calibration) ? stored.calibration.filter(isCalPoint) : [];
 		this.data = { settings, calibration };
 
@@ -1056,7 +1075,7 @@ class GrillSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Colour by")
 			.setDesc(
-				"Mastery is the default: grey untested, red learning, amber in-progress, green known. The " +
+				"Mastery is the default: grey untested, red learning, green known. The " +
 					"others colour every practised note on a green-to-red scale by a different signal, so you can " +
 					"spot what needs attention at a glance instead of reading it note by note.",
 			)
