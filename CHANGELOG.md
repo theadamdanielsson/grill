@@ -1,5 +1,20 @@
 # Changelog
 
+## 4.5.4
+
+- **Hitting the daily new-concept limit no longer looks like a broken vault.** With the
+  new 20/day cap (4.5.3), studying one note to the limit and then opening a second,
+  never-quizzed note would come back empty with "couldn't find concepts to quiz — add
+  bold terms, headings…" — advice that's flat wrong, since the concepts are fine and
+  just gated by the daily limit. That case now says so plainly: you've hit today's limit
+  of N new concepts, come back tomorrow or raise it in Settings.
+- **"Weak prerequisite" flags are honest again.** After the note-status change in 4.5.3,
+  a note counted as resting on a "shaky foundation" whenever a prerequisite was merely
+  still-in-progress — not actually being missed. The prerequisite checks (the map's
+  known-but-shaky signal and first-question difficulty seeding) now look at whether a
+  prerequisite has genuinely been missed, so a foundation you're steadily learning no
+  longer reads as shaky.
+
 ## 4.5.3
 
 - **Notes you'd started studying no longer show as "Untested."** A note's status is
