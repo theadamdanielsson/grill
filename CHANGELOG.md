@@ -1,5 +1,25 @@
 # Changelog
 
+## 4.5.3
+
+- **Notes you'd started studying no longer show as "Untested."** A note's status is
+  rolled up from its concepts, and any note not yet at full "known" coverage was
+  collapsed into the same grey "untested" bucket as notes you'd never touched. That
+  meant the "Untested" filter served up concepts you'd already been quizzed on, and the
+  Untested count didn't drop after a session. Now a single answered concept moves a note
+  to "Learning" (red); only genuinely never-quizzed notes stay grey. The filter and the
+  count finally mean what they say. On upgrade, notes you've partly studied turn from
+  grey to red — that's the corrected state showing through, not a regression.
+- **The graph shows a percentage on each concept by default.** The numeric overlay
+  (off / percent / letter) used to default to off. New installs now start on percent,
+  and existing installs are moved to it once on upgrade. Prefer a clean graph? Switch it
+  back under Settings → "Colour by" and your choice sticks.
+- **New material is capped at 20 fresh concepts per day by default** (was uncapped). An
+  uncapped queue lets a large vault flood your review backlog faster than you can
+  actually work through it — the classic spaced-repetition burnout. 20/day is a saner
+  default; set it back to 0 under Settings for no cap. Existing installs move to 20 once
+  on upgrade, then respect whatever you pick.
+
 ## 4.5.2
 
 - Fixed the note-image shown in "Explain this" being effectively random: it used to
