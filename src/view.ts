@@ -11,6 +11,7 @@ import type { CachedQuestion, QuestionBank } from "./store";
 import {
 	ConceptMap,
 	ConceptMastery,
+	blockedByDailyCap,
 	conceptTargetDifficulty,
 	conceptTested,
 	dueConceptCount,
@@ -2391,10 +2392,14 @@ export class SessionView extends ItemView {
 			const pickable = s.questionSource === "local" ? allConcepts.filter((c) => c.local) : allConcepts;
 			this.sessionConcepts = pickConcepts(pickable, this.concepts, want, this.dueOnly, new Date(), s.newConceptsPerDay);
 			if (this.sessionConcepts.length === 0) {
+				const cappedOut =
+					!this.dueOnly && blockedByDailyCap(pickable, this.concepts, s.newConceptsPerDay, new Date());
 				new Notice(
-					s.questionSource === "local"
-						? "Grill: couldn't build questions from these notes' structure. Add some bold terms, headings, definitions or formulas, or switch questions to AI."
-						: "Grill: couldn't find concepts to quiz in these notes.",
+					cappedOut
+						? `Grill: that's all the new material for today — you've hit your daily limit of ${s.newConceptsPerDay} new concepts. Come back tomorrow, or raise "New concepts per day" in Settings.`
+						: s.questionSource === "local"
+							? "Grill: couldn't build questions from these notes' structure. Add some bold terms, headings, definitions or formulas, or switch questions to AI."
+							: "Grill: couldn't find concepts to quiz in these notes.",
 					10000,
 				);
 				this.renderStart();
@@ -2809,10 +2814,18 @@ export class SessionView extends ItemView {
 		const file = this.byName.get(note);
 		if (!file) return null;
 		for (const pre of outgoingBasenames(this.app, file)) {
-			const pm = this.plugin.mastery[pre];
-			if (pm && statusOf(pm) === "struggling") return pre;
+			if (this.genuinelyStruggling(pre)) return pre;
 		}
 		return null;
+	}
+
+	/** Genuinely shaky, not merely mid-learning: a miss is on record and the note
+	 * hasn't re-consolidated to "known". Note-level statusOf "struggling" is too broad
+	 * for a weak-foundation flag — since the status rework it also covers touched-but-
+	 * not-yet-known notes, which are progressing fine and shouldn't read as shaky. */
+	private genuinelyStruggling(note: string): boolean {
+		const m = this.plugin.mastery[note];
+		return !!m && m.incorrect + m.partial > 0 && statusOf(m) !== "known";
 	}
 
 	/** Structural difficulty seed: a brand-new (untested) concept starts one rung up
@@ -2836,9 +2849,8 @@ export class SessionView extends ItemView {
 		if (base !== "easy" || conceptTested(cm)) return base; // only seed the first exposure
 		const prereqs = graph.adjacency[note]?.linksTo ?? [];
 		if (!prereqs.length) return base;
-		const statuses = prereqs.map((p) => statusOf(this.plugin.mastery[p]));
-		if (statuses.some((s) => s === "struggling")) return "easy"; // shaky foundation: stay easy
-		return statuses.some((s) => s === "known") ? "medium" : base; // a solid foundation: start up
+		if (prereqs.some((p) => this.genuinelyStruggling(p))) return "easy"; // genuinely shaky foundation: stay easy
+		return prereqs.some((p) => statusOf(this.plugin.mastery[p]) === "known") ? "medium" : base; // a solid foundation: start up
 	}
 
 	/** Record the current question's confidence-vs-outcome point, if the confidence

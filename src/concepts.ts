@@ -285,6 +285,24 @@ export function pickConcepts(
 	return reserveFreshSlots(interleaveByNote(due), interleaveByNote(untestedPool), interleaveByNote(rest), cap);
 }
 
+/** True when a (non-due) session came back empty ONLY because the daily new-concept
+ * cap is spent: the scope DOES hold untested concepts, but the day's new-concept
+ * budget is used up and there's nothing due/review to fall back on. Lets the UI say
+ * "that's all for today" instead of the misleading "no quizzable concepts here" —
+ * which otherwise sends users reformatting notes that are perfectly fine. Only
+ * meaningful with a cap set (0 = no cap = never the blocker). */
+export function blockedByDailyCap(
+	concepts: Concept[],
+	map: ConceptMap,
+	newConceptsPerDay: number,
+	now = new Date(),
+): boolean {
+	if (newConceptsPerDay <= 0) return false;
+	if (!concepts.some((c) => !conceptTested(map[c.id]))) return false;
+	const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+	return newConceptsIntroducedSince(map, todayStart) >= newConceptsPerDay;
+}
+
 /** Concept-derived note status + soonest due date, over the note's CURRENT
  * concepts only (orphans excluded). This is what note-level surfaces read. */
 export function noteAggregate(concepts: Concept[], map: ConceptMap): { aggStatus: NoteStatus; dueAt: string | null } {
