@@ -43,6 +43,13 @@ export interface BridgeRecord {
 	bridgeConcept: string;
 	status: BridgeStatus;
 	lastSeen: string;
+	/** The text of the last bridge question actually asked for this pair, if any. A
+	 * bridge question is otherwise never banked (see rememberGenerated in view.ts —
+	 * novel/un-scheduled content, not reused across reviews like a concept question),
+	 * so without this a pair that goes unanswered one session and gets re-suggested
+	 * the next has no memory at all: same "the model forgets what it already asked"
+	 * gap as concepts had before priorQuestions, just on this separate code path. */
+	lastQuestion?: string;
 }
 
 export type BridgeMap = Record<string, BridgeRecord>;

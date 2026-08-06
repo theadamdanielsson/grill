@@ -749,6 +749,12 @@ export interface ConceptTarget {
 	bridge?: boolean;
 	/** The adjudicated relationship a bridge question should probe. */
 	bridgeConcept?: string;
+	/** Prior question texts already asked for this exact concept (same source text),
+	 * shown to the model so a regenerated variant is actually different rather than a
+	 * near-restatement — the model has no memory between calls, so without this it
+	 * commonly reconverges on the same obvious phrasing for a narrow concept (a single
+	 * formula, a single vocab term). Capped and freshness-filtered by the caller. */
+	priorQuestions?: string[];
 }
 
 /** `mixFormats` gates the 'type'/'choices' fields entirely — not just the prose
@@ -951,7 +957,6 @@ export async function generateQuestions(
 	images: ImageInput[] = [],
 	instructions = "",
 	linksBlock = "",
-	mode: "standard" | "connections" = "standard",
 	persona: string = DEFAULT_PERSONA,
 	mixFormats = false,
 	formatCounts: Partial<Record<string, number>> = {},
@@ -966,6 +971,9 @@ export async function generateQuestions(
 					? ` [connect to note "${t.connectTo}"]`
 					: "";
 			const format = mixFormats && t.targetType ? ` [format: ${t.targetType}]` : "";
+			const avoid = t.priorQuestions?.length
+				? ` [already asked for this concept, write a genuinely different angle or phrasing — do not restate: ${t.priorQuestions.map((q) => `"${q}"`).join(" / ")}]`
+				: "";
 			// No re-truncation here (there used to be a flat 500-char cut): every path
 			// that sets a concept's `context` already bounds it sensibly at its own source
 			// — a boundary-detected concept (generate-local.ts) to one exercise from a
@@ -975,7 +983,7 @@ export async function generateQuestions(
 			// with no real reason behind it, and it was cutting multi-part questions
 			// (a, b, c...) off mid-way. A real chat with an LLM doesn't re-truncate
 			// something you already sized on purpose; neither should this.
-			return `${i + 1}. [note "${t.note}"] concept: "${t.label}" (aim: ${t.targetDifficulty})${format}${reprobe}${connect}\n   source: ${t.context}`;
+			return `${i + 1}. [note "${t.note}"] concept: "${t.label}" (aim: ${t.targetDifficulty})${format}${reprobe}${connect}${avoid}\n   source: ${t.context}`;
 		})
 		.join("\n");
 	// Split so the notes+links (often identical across several batch calls in a
@@ -995,12 +1003,6 @@ export async function generateQuestions(
 		`text is too thin for a real content question, write the best content question it does support rather than ` +
 		`falling back to asking about the label itself.\n\n` +
 		`CONCEPTS:\n${conceptList}` +
-		(mode === "connections"
-			? "\n\nThis is a CONNECTIONS session. Where a concept names a linked note to connect to, write a question " +
-				"that tests the RELATIONSHIP between them: how one builds on, explains, contrasts with, causes, or depends " +
-				"on the other. A correct answer must require understanding how the two connect, not either note alone. Keep " +
-				"it a single focused question, and keep both sides grounded in and answerable from the notes above."
-			: "") +
 		(hasBridge
 			? "\n\nFor any concept marked [BRIDGE]: the two named notes are NOT linked in the student's vault but share the " +
 				"stated latent relationship. Write a question that makes the student discover and articulate that relationship, " +

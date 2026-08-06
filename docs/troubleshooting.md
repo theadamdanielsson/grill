@@ -44,7 +44,12 @@ Two separate mechanisms can cause this, and they stack:
    concept's next review instead of paying for a fresh model call every time. Settings →
    **"Reuse generated questions"** controls this: at its default of "Always reuse," you'll see the
    literal same question every time that concept resurfaces. Raise it (try 3-5) and a fresh
-   variant gets written after that many repeats.
+   variant gets written after that many repeats. A "fresh" variant used to only mean a new model
+   call, not necessarily different wording — the model had no memory of what it had already
+   written for that concept, so a regenerated question could land as a near-restatement of the one
+   it was replacing. Fixed in a recent update: the model is now shown what it's already asked and
+   told to write a genuinely different angle, with a second check that catches near-duplicates even
+   if it doesn't comply.
 2. **A small studied slice.** If your session scope (or the vault) is large but only a handful of
    notes ever actually get selected into a session, the same few concepts recur simply because
    they're the only ones in rotation. This was also a real bug — the note-selection order wasn't

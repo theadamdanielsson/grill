@@ -1,5 +1,25 @@
 # Changelog
 
+## 4.5.5
+
+- **Regenerated questions actually write something new now, not just a new model call.**
+  Every question call is stateless — the model has no memory between calls — so when a
+  concept came up for a fresh variant (after "Reuse generated questions" was exceeded, or
+  on first exposure), it had no idea what it had already written for that concept and
+  would often land on nearly the same phrasing again, especially for narrow concepts (a
+  single formula, a single term) with only one obvious way to ask about them. The model
+  is now shown its last few questions for that concept and told to write a genuinely
+  different angle, with a second, code-side check that catches near-duplicates even if it
+  doesn't comply — those get folded back into the existing variant instead of adding a
+  near-identical one to the rotation.
+- **Missing-link ("bridge") questions get the same fix.** These aren't cached for reuse
+  like normal questions, so a note pair that got suggested but wasn't reached before the
+  session ended had no memory at all and could get an equally repetitive question the
+  next time it resurfaced. It now remembers the last one it asked and passes that along
+  too.
+- Removed a "connections" question mode left over from an earlier, since-removed feature
+  — it had full prompt-building logic but nothing in the app ever triggered it.
+
 ## 4.5.4
 
 - **Hitting the daily new-concept limit no longer looks like a broken vault.** With the

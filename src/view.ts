@@ -209,8 +209,39 @@ type PendingExtension =
 
 /** Most cached question variants kept per concept, to bound questions.json growth. */
 const MAX_VARIANTS = 8;
+/** Most prior question texts shown to the model when regenerating a concept, so the
+ * "already asked, write something different" hint stays a bounded prompt addition
+ * even once a concept's bank is near MAX_VARIANTS deep. */
+const MAX_PRIOR_SHOWN = 3;
+/** Word-overlap (Jaccard) threshold above which a freshly generated question is
+ * treated as a near-restatement of an existing bank variant rather than a genuinely
+ * new one. Deliberately loose (not exact-match) — models restate with light rewording
+ * (swapped synonyms, reordered clauses) far more often than verbatim repeats. */
+const NEAR_DUPLICATE_THRESHOLD = 0.75;
 /** Cap on learning-graph nodes laid out + drawn, so a huge vault stays responsive. */
 const MAP_NODE_CAP = 600;
+
+/** Lightweight, dependency-free duplicate detector: Jaccard similarity over
+ * normalized word sets. Deliberately not exact-string matching — a model asked to
+ * write "something different" usually still restates the same question with a
+ * synonym swapped or a clause reordered, which exact match would let straight
+ * through. Symmetric and cheap enough to run on every generated question. */
+function questionSimilarity(a: string, b: string): number {
+	const words = (s: string): Set<string> =>
+		new Set(
+			s
+				.toLowerCase()
+				.replace(/[^a-z0-9\s]/g, " ")
+				.split(/\s+/)
+				.filter(Boolean),
+		);
+	const wa = words(a);
+	const wb = words(b);
+	if (!wa.size || !wb.size) return 0;
+	let shared = 0;
+	for (const w of wa) if (wb.has(w)) shared++;
+	return shared / (wa.size + wb.size - shared);
+}
 
 export class SessionView extends ItemView {
 	plugin: GrillPlugin;
@@ -2017,6 +2048,14 @@ export class SessionView extends ItemView {
 						this.planCursor += 1;
 					}
 					if (!batch.length) continue; // next loop handles the prebuilt target
+					// Every target here is about to be generated fresh (isPrebuilt/cacheHit
+					// already ruled out reuse) — tell the model what's already been asked for
+					// each one so it doesn't reconverge on the same phrasing (see priorQuestionsFor).
+					// Bridge targets carry their own priorQuestions, set when appendBridgeTargets
+					// pushed them (their conceptId is a synthetic "__bridge__:pair" key, not a
+					// real concept, so priorQuestionsFor would look it up in the concept bank,
+					// find nothing, and wrongly clobber it back to empty).
+					for (const t of batch) if (!t.bridge) t.priorQuestions = this.priorQuestionsFor(t.conceptId);
 					const { text: batchNotesText, images: batchImages } = this.notesForBatch(batch);
 					// Tally formats already generated this session (not just this batch), so a
 					// batch several calls in can be steered toward whichever types haven't
@@ -2033,7 +2072,6 @@ export class SessionView extends ItemView {
 						batchImages,
 						this.sessionInstructions,
 						this.linksBlock,
-						"standard",
 						this.sessionPersona,
 						this.plugin.data.settings.questionFormats === "mixed",
 						formatCounts,
@@ -2090,6 +2128,23 @@ export class SessionView extends ItemView {
 		return pick;
 	}
 
+	/** Question texts already on record for this exact concept (same source text),
+	 * most-recently-shown first, capped to MAX_PRIOR_SHOWN — passed to the model as
+	 * "already asked, don't restate" context so a regenerated variant is actually new.
+	 * Stale-hash entries (note has since changed) are excluded: they describe content
+	 * the model isn't being asked about anymore. */
+	private priorQuestionsFor(conceptId: string): string[] {
+		const c = this.conceptById.get(conceptId);
+		if (!c) return [];
+		const bank = this.questionBank[conceptId];
+		if (!bank || !bank.length) return [];
+		return bank
+			.filter((e) => e.sourceHash === c.sourceHash)
+			.sort((a, b) => (b.lastShownAt ?? "").localeCompare(a.lastShownAt ?? ""))
+			.slice(0, MAX_PRIOR_SHOWN)
+			.map((e) => e.question);
+	}
+
 	/** Whether a target needs no model call (user-authored, or a cache hit). Must agree
 	 * with buildPrebuilt: an authored concept counts only if it actually has a question,
 	 * otherwise loadNextBatch could spin on a target it can neither build nor batch. A
@@ -2132,14 +2187,30 @@ export class SessionView extends ItemView {
 
 	/** Cache freshly generated questions per concept for reuse on later reviews. Skips
 	 * authored (verbatim) and bridge (novel, un-scheduled) questions, prunes stale-hash
-	 * variants, and caps the number kept per concept. */
+	 * variants, dedupes near-restatements against what's already banked, and caps the
+	 * number kept per concept. */
 	private rememberGenerated(qs: Question[]): void {
 		for (const q of qs) {
 			if (!q.conceptId || q.missingLink) continue;
 			const c = this.conceptById.get(q.conceptId);
 			if (!c || c.authored) continue;
 			const kept = (this.questionBank[q.conceptId] ?? []).filter((e) => e.sourceHash === c.sourceHash);
-			kept.push({ ...q, sourceHash: c.sourceHash, timesShown: 1, lastShownAt: new Date().toISOString() });
+			// The model can ignore the "already asked, write something different" prompt
+			// hint (priorQuestionsFor) — if what came back is a near-restatement of a
+			// variant already banked, treat this as another showing of THAT variant rather
+			// than a new one. Keeps rotation genuinely varied and stops MAX_VARIANTS slots
+			// filling up with near-duplicates of each other. Only affects what's persisted
+			// for future reuse; the question actually served this turn is unchanged.
+			const dup = kept.find((e) => questionSimilarity(e.question, q.question) >= NEAR_DUPLICATE_THRESHOLD);
+			if (dup) {
+				dup.timesShown += 1;
+				dup.lastShownAt = new Date().toISOString();
+			} else {
+				kept.push({ ...q, sourceHash: c.sourceHash, timesShown: 1, lastShownAt: new Date().toISOString() });
+			}
+			// Written unconditionally on both paths: `kept` is already pruned to fresh-hash
+			// entries above, and skipping this on the dup path would silently stop that
+			// pruning from ever landing whenever a batch happens to produce a near-duplicate.
 			this.questionBank[q.conceptId] = kept.slice(-MAX_VARIANTS);
 			this.bankDirty = true;
 		}
@@ -2160,7 +2231,20 @@ export class SessionView extends ItemView {
 				const key = pairKey(c.a, c.b);
 				const prev = this.bridges[key];
 				if (prev && prev.status !== "suggested") continue; // already resolved
-				this.bridges[key] = { a: c.a, b: c.b, bridgeConcept: c.bridgeConcept, status: "suggested", lastSeen: now };
+				// Re-suggesting a pair that was suggested but never reached last time (session
+				// ended before it came up): carry its lastQuestion forward through this
+				// re-suggestion (nothing has answered it yet, so nothing new to record over
+				// it) and pass it to the model as an "already asked" hint — a bridge question
+				// is never banked (see rememberGenerated), so without this the model has no
+				// memory of it and can regenerate a near-identical one every time it resurfaces.
+				this.bridges[key] = {
+					a: c.a,
+					b: c.b,
+					bridgeConcept: c.bridgeConcept,
+					status: "suggested",
+					lastSeen: now,
+					lastQuestion: prev?.lastQuestion,
+				};
 				this.bridgesDirty = true;
 				this.targets.push({
 					conceptId: `__bridge__:${key}`,
@@ -2171,6 +2255,7 @@ export class SessionView extends ItemView {
 					connectTo: c.b,
 					bridge: true,
 					bridgeConcept: c.bridgeConcept,
+					priorQuestions: prev?.lastQuestion ? [prev.lastQuestion] : undefined,
 				});
 				this.targetCount += 1;
 				added += 1;
@@ -2181,16 +2266,20 @@ export class SessionView extends ItemView {
 	}
 
 	/** Record that a bridge question was answered (or its link written), keyed by the
-	 * note pair, so the pair isn't re-surfaced and the dashboard can count links made. */
-	private recordBridgeResult(fromNote: string, toNote: string, status: "answered" | "linked"): void {
+	 * note pair, so the pair isn't re-surfaced and the dashboard can count links made.
+	 * `lastQuestion` (passed on the "answered" call, which always has the question in
+	 * scope) is kept so a pair that goes unanswered and gets re-suggested later can
+	 * tell the model what it already asked — see appendBridgeTargets. */
+	private recordBridgeResult(fromNote: string, toNote: string, status: "answered" | "linked", lastQuestion?: string): void {
 		const key = pairKey(fromNote, toNote);
 		const rec = this.bridges[key];
 		const now = new Date().toISOString();
 		if (rec) {
 			if (rec.status !== "linked") rec.status = status; // a written link is terminal
 			rec.lastSeen = now;
+			if (lastQuestion) rec.lastQuestion = lastQuestion;
 		} else {
-			this.bridges[key] = { a: fromNote, b: toNote, bridgeConcept: "", status, lastSeen: now };
+			this.bridges[key] = { a: fromNote, b: toNote, bridgeConcept: "", status, lastSeen: now, lastQuestion };
 		}
 		this.bridgesDirty = true;
 	}
@@ -2666,7 +2755,7 @@ export class SessionView extends ItemView {
 		// A missing-link bridge question is outside FSRS scheduling: it isn't a note
 		// concept, so it must not touch concept or note mastery. Record the pair instead.
 		if (q.missingLink) {
-			if (q.connectTo) this.recordBridgeResult(q.node, q.connectTo, "answered");
+			if (q.connectTo) this.recordBridgeResult(q.node, q.connectTo, "answered", q.question);
 			return;
 		}
 		const cid = q.conceptId;
