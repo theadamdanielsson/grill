@@ -420,10 +420,12 @@ function parseGrillCallout(lines: string[], start: number): { item: LocalItem; n
 // cap is permanently invisible to the scheduler, no matter how many sessions run, since
 // the walk below stops scanning once it's collected this many items (first N in
 // document order). Was 12, which silently truncated any content-dense note (a
-// vocabulary list, a long glossary) to only ever quiz its first ~12 terms forever;
-// raised well past realistic note sizes so pacing, not this cap, is what limits a
-// session.
-const ITEM_CAP_PER_NOTE = 80;
+// vocabulary list, a long glossary) to only ever quiz its first ~12 terms forever; then
+// 80, which turned out to be the same failure mode one size up — a real hand-authored
+// drill sheet (a `[!grill]` callout worksheet covering every tense of a topic) can
+// exceed 80 on its own. Raised again, well past realistic note sizes, so pacing, not
+// this cap, is what limits a session.
+const ITEM_CAP_PER_NOTE = 200;
 
 function itemsForNote(text: string, cap: number, mixFormats: boolean): LocalItem[] {
 	const body = stripFrontmatter(text).replace(/<!--[\s\S]*?-->/g, "");

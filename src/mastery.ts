@@ -117,6 +117,15 @@ const W = [0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0
 const DESIRED_RETENTION = 0.9;
 export const MIN_STABILITY = 0.1;
 const MAX_INTERVAL_DAYS = 365;
+/** Minimum relearning gap after an "Again" (rating 1), in minutes. Not 0: a concept
+ * marked due at the exact fail instant is due again the moment ANY new session opens,
+ * however soon that is — session picking always drains the due bucket before untested
+ * material, so a handful of early fails in a content-dense note (a long drill sheet)
+ * could dominate every session's opening slots indefinitely, with the note's other,
+ * never-tested majority never getting a look-in. A short buffer (still same-day, still
+ * well ahead of a real review interval) breaks that immediate-loop failure mode while
+ * keeping "Again" material the first thing due once it actually resurfaces. */
+const AGAIN_RELEARN_MINUTES = 10;
 
 function clamp(v: number, min: number, max: number): number {
 	return Math.min(max, Math.max(min, v));
@@ -343,7 +352,7 @@ export function applyRating(
 	}
 
 	if (rating === 1) {
-		m.dueAt = now.toISOString(); // immediately due again
+		m.dueAt = new Date(now.getTime() + AGAIN_RELEARN_MINUTES * 60_000).toISOString(); // relearn shortly, not this instant
 	} else {
 		const days = fuzzInterval(optimalInterval(m.stability, desiredRetention), now, dueDateHistogram);
 		m.dueAt = new Date(now.getTime() + days * 86400_000).toISOString();

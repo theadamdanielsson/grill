@@ -1,5 +1,21 @@
 # Changelog
 
+## 4.5.7
+
+- **Fixed a wrong-answer loop on content-dense notes.** A concept marked "Again" was
+  scheduled `dueAt` to the exact instant it was answered — "immediately due again" —
+  so it was due the moment ANY new session opened, however soon that was. Session
+  picking always drains the due bucket before untested material, so a handful of early
+  misses on a long note (a multi-tense drill sheet, a big vocabulary list) could
+  dominate every session's opening questions indefinitely, in the same order, while
+  the note's untested majority never got a look-in. "Again" now gets a short (10
+  minute) relearning buffer instead of a zero-day one, same as it always has for every
+  other rating.
+- **Raised the per-note concept cap from 80 to 200.** A note past the cap has its
+  trailing content permanently invisible to the scheduler, no matter how many sessions
+  run. 80 was already a raise from an original cap of 12 for the same reason: a real
+  hand-authored `[!grill]` drill sheet can exceed it on its own.
+
 ## 4.5.6
 
 - **Sessions now surface genuinely due notes instead of stale ones.** Which notes got
