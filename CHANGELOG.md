@@ -1,5 +1,21 @@
 # Changelog
 
+## 4.6.0
+
+- **Added a "Multiple choice only" question format option.** Question formats was
+  previously Write-only or Mixed — Mixed rotates through mc/blank/tf/multi/match/write
+  by a fixed, deterministic schedule (not the model's own discretion; see 4.5.x notes
+  below on why), which meant there was no way to actually get every question as
+  multiple-choice, no matter what you asked for. This adds it as a real third mode:
+  Settings -> Question formats -> "Multiple choice only".
+- **Fixed the Instructions note overpromising on format.** Its own template told you
+  to write format preferences ("question style, format, difficulty, strictness") as
+  plain sentences there — but format is enforced in code (the fixed rotation above),
+  not left to the model, so a prose instruction like "only multiple choice" could
+  never reliably stick. The template now says so directly and points at the real
+  control (Settings -> Question formats), while making clear style/difficulty/
+  strictness genuinely are honoured from prose, unlike format.
+
 ## 4.5.7
 
 - **Fixed a wrong-answer loop on content-dense notes.** A concept marked "Again" was

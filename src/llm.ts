@@ -966,6 +966,7 @@ export async function generateQuestions(
 	persona: string = DEFAULT_PERSONA,
 	mixFormats = false,
 	formatCounts: Partial<Record<string, number>> = {},
+	varyFormats = true,
 ): Promise<Question[]> {
 	const hasBridge = targets.some((t) => t.bridge);
 	const conceptList = targets
@@ -1020,7 +1021,10 @@ export async function generateQuestions(
 				"conflict with the rules above.\n" +
 				`<preferences>\n${instructions}\n</preferences>`
 			: "") +
-		(mixFormats ? FORMAT_MIX_INSTRUCTIONS + formatNudge(formatCounts) : "");
+		// formatNudge actively steers toward whatever format hasn't appeared yet, which
+		// is exactly wrong for a fixed single format (e.g. "mc only") — every target
+		// already carries that same [format: X] tag, so there's nothing to vary toward.
+		(mixFormats ? FORMAT_MIX_INSTRUCTIONS + (varyFormats ? formatNudge(formatCounts) : "") : "");
 	type RawQ = Omit<Question, "node" | "conceptId"> & { n?: number };
 	const data = (await callJSON(cfg, tutorSystem(persona), { cacheable, rest }, questionsSchema(mixFormats), 8000, images)) as {
 		questions: RawQ[];

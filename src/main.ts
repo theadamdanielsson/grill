@@ -50,7 +50,7 @@ interface GrillSettings {
 	/** Question formats: plain free-response only, or a mix that also includes
 	 * multiple-choice and fill-in-the-blank. "Mixed" costs a bit more prompt (AI mode)
 	 * per generation call, so it's a real toggle, not baked in unconditionally. */
-	questionFormats: "write" | "mixed";
+	questionFormats: "write" | "mixed" | "mc";
 	/** End-of-session AI debrief (one extra call per session). Off falls back to
 	 * a deterministic summary. Ignored for no-key sessions (always deterministic). */
 	sessionDebrief: boolean;
@@ -181,7 +181,7 @@ export default class GrillPlugin extends Plugin {
 		if (typeof s.sendImages === "boolean") settings.sendImages = s.sendImages;
 		if (s.questionSource === "ai" || s.questionSource === "local") settings.questionSource = s.questionSource;
 		if (s.gradingMode === "ai" || s.gradingMode === "self") settings.gradingMode = s.gradingMode;
-		if (s.questionFormats === "write" || s.questionFormats === "mixed") settings.questionFormats = s.questionFormats;
+		if (s.questionFormats === "write" || s.questionFormats === "mixed" || s.questionFormats === "mc") settings.questionFormats = s.questionFormats;
 		if (typeof s.sessionDebrief === "boolean") settings.sessionDebrief = s.sessionDebrief;
 		if (typeof s.confidenceCheck === "boolean") settings.confidenceCheck = s.confidenceCheck;
 		if (typeof s.sounds === "boolean") settings.sounds = s.sounds;
@@ -661,16 +661,20 @@ class GrillSettingTab extends PluginSettingTab {
 			.setDesc(
 				"Mixed adds multiple-choice, fill-in-the-blank, true/false, select-all-that-apply, and matching " +
 					"alongside the usual write-in-the-box questions, picked per concept based on what actually fits it. " +
-					"In AI mode this costs a little extra prompt on every question batch, so it's a real toggle, not " +
-					"just always on.",
+					"Multiple choice only always uses 'mc' (falling back to another structured format only when a " +
+					"concept genuinely can't be posed as a single-answer choice). In AI mode either non-Write option " +
+					"costs a little extra prompt on every question batch, so it's a real toggle, not just always on. " +
+					"This is a hard setting, not something the Instructions note can override — a free-text preference " +
+					"like \"only multiple choice\" there won't reliably stick; use this dropdown instead.",
 			)
 			.addDropdown((d) =>
 				d
 					.addOption("mixed", "Mixed (write, multiple-choice, fill-in-the-blank, true/false, and more)")
+					.addOption("mc", "Multiple choice only")
 					.addOption("write", "Write only")
 					.setValue(s.questionFormats)
 					.onChange(async (v) => {
-						s.questionFormats = v === "write" ? "write" : "mixed";
+						s.questionFormats = v === "write" ? "write" : v === "mc" ? "mc" : "mixed";
 						await this.plugin.persist();
 					}),
 			);

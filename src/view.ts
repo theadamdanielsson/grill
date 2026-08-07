@@ -2094,8 +2094,9 @@ export class SessionView extends ItemView {
 						this.sessionInstructions,
 						this.linksBlock,
 						this.sessionPersona,
-						this.plugin.data.settings.questionFormats === "mixed",
+						this.plugin.data.settings.questionFormats !== "write",
 						formatCounts,
+						this.plugin.data.settings.questionFormats === "mixed",
 					);
 					// The cursor already advanced past this whole batch (targets consumed,
 					// not questions produced — see above), so any target the validator
@@ -2455,7 +2456,7 @@ export class SessionView extends ItemView {
 				const pdfText = await collectNotePdfText(this.app, file);
 				const text = pdfText ? `${raw}\n\n${pdfText}` : raw;
 				// Extract concepts from the FULL note; only the prompt context is truncated.
-				this.conceptsByNote.set(n, extractConcepts(n, text, this.plugin.data.settings.questionFormats === "mixed"));
+				this.conceptsByNote.set(n, extractConcepts(n, text, this.plugin.data.settings.questionFormats !== "write"));
 				this.noteText[n] = text.length > NOTE_CHAR_CAP ? safeSlice(text, NOTE_CHAR_CAP) + "\n[truncated]" : text;
 				if (vision) {
 					const imgs = await collectNoteImages(this.app, file, IMAGES_PER_NOTE_CAP);
@@ -2532,7 +2533,10 @@ export class SessionView extends ItemView {
 			// misconception on at most ONE concept per note, so it isn't over-asked.
 			const activeByNote = activeMisconceptionsByNote(this.registry, names);
 			const misconceptionUsed = new Set<string>();
-			const mixFormats = s.questionFormats === "mixed";
+			const mixFormats = s.questionFormats !== "write";
+			// "mc" is a fixed single format, not a rotation: every target is forced to
+			// "mc" directly rather than going through seedType's FORMAT_ROTATION (which
+			// exists to vary formats — the opposite of what "mc only" asks for).
 			this.targets = this.sessionConcepts.slice(0, this.targetCount).map((c, i) => {
 				let activeMisconception: string | undefined;
 				if (!misconceptionUsed.has(c.note)) {
@@ -2545,7 +2549,7 @@ export class SessionView extends ItemView {
 					label: c.label,
 					context: c.context,
 					targetDifficulty: this.seedDifficulty(this.concepts[c.id], c.note, graph),
-					targetType: mixFormats ? this.seedType(c.kind, i) : undefined,
+					targetType: !mixFormats ? undefined : s.questionFormats === "mc" ? "mc" : this.seedType(c.kind, i),
 					activeMisconception,
 				};
 			});
