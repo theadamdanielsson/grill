@@ -1,5 +1,28 @@
 # Changelog
 
+## 4.5.6
+
+- **Sessions now surface genuinely due notes instead of stale ones.** Which notes got
+  picked for a session leaned on the note-level mastery cache, which only refreshes
+  when that note is next answered — so in a large, actively-studied vault, a note
+  whose concepts had since become due could stay stuck in low-priority rotation
+  indefinitely, because the one thing that would surface it (getting picked) never
+  got the chance to run. Session picking now checks live concept data instead.
+- **Fixed a possible double-submit on fast keyboard input.** Pressing Cmd/Ctrl+Enter
+  twice quickly (or key-repeat) on a free-text answer could fire two grading calls
+  for the same answer and double-count it toward your stats.
+- Fixed a PDF-embed edge case where several failed/corrupt PDFs in one note could
+  bypass the per-note parse cap instead of being bounded by it.
+- Fixed hand-written `[!grill]` callouts silently losing, or misfiling into the
+  answer, a rubric that wrapped onto a second line.
+- Fixed a rare case where two different concepts on the same note could collide onto
+  the same internal id, silently dropping the second instead of scheduling it.
+- Fixed a perfect-session confetti burst that could keep animating briefly after the
+  session pane was closed.
+- Two notes sharing the exact same filename in different folders now resolve
+  predictably instead of arbitrarily, and Grill warns on startup if your vault has
+  any such pair (it tracks progress by filename, not folder).
+
 ## 4.5.5
 
 - **Regenerated questions actually write something new now, not just a new model call.**
