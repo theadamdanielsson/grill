@@ -17,6 +17,7 @@ import {
 	dueConceptCount,
 	noteAggregate,
 	pickConcepts,
+	priorityNotes,
 	recordConceptAnswer,
 	recordConceptRating,
 	reconcileConcepts,
@@ -290,6 +291,10 @@ export class SessionView extends ItemView {
 	private replayMode = false;
 	/** The live learning-graph canvas controller on the start screen, if any. */
 	private map: LearningMap | null = null;
+	/** Stops the in-flight confetti burst, if `celebrate` was called and hasn't
+	 * finished on its own yet — invoked from onClose so closing the pane mid-burst
+	 * doesn't leave it animating over the app after the view is gone. */
+	private confettiStop: (() => void) | null = null;
 	/** The concepts this session tests, in order. */
 	private sessionConcepts: Concept[] = [];
 	/** Concept targets for the AI generator (one question each, by construction). */
@@ -1321,6 +1326,13 @@ export class SessionView extends ItemView {
 		// Assigned below; declared early so the mc/tf choice buttons (built before the
 		// hint/skip row, and which auto-submit on click) can already call it.
 		let doAction: (giveUp: boolean) => void = () => undefined;
+		// True once doAction has run once for this question. Disabling the row's buttons
+		// (below) blocks a second *click* — browsers don't dispatch click to a disabled
+		// button — but does nothing for the keyboard entry points (Cmd/Ctrl+Enter on the
+		// textarea, Enter on the last blank input), which call doAction directly and can
+		// double-fire on key repeat. This flag is the actual guard; the button-disabling
+		// is just the visible feedback.
+		let actionTaken = false;
 
 		let ta: HTMLTextAreaElement | null = null;
 		const multiSelected = new Set<string>();
@@ -1453,7 +1465,11 @@ export class SessionView extends ItemView {
 			// Instant ack regardless of entry point (Submit click, Cmd/Ctrl+Enter, the
 			// blank-input Enter chain, "I don't know") and blocks a double-submit while
 			// grading runs. mc/tf buttons disable their own row separately on click,
-			// before doAction even runs; this covers submit/hint/skip uniformly.
+			// before doAction even runs; this covers submit/hint/skip uniformly. The
+			// actionTaken check (not just the disabling below) is what actually blocks
+			// a second call — see its declaration above.
+			if (actionTaken) return;
+			actionTaken = true;
 			row.querySelectorAll("button").forEach((b) => (b.disabled = true));
 			let answer = "";
 			if (!giveUp) {
@@ -1761,7 +1777,7 @@ export class SessionView extends ItemView {
 			const debrief = deterministicDebrief(this.results);
 			const perfect = this.results.length > 0 && this.results.every((r) => r.verdict === "correct" && !r.gaveUp);
 			if (s.sounds) playSfx(perfect ? "perfect" : "complete");
-			if (perfect && s.sounds) celebrate(this.contentEl.ownerDocument);
+			if (perfect && s.sounds) this.confettiStop = celebrate(this.contentEl.ownerDocument);
 			this.renderSummary(null, debrief);
 			return;
 		}
@@ -1818,7 +1834,7 @@ export class SessionView extends ItemView {
 		// confetti; any other completed session gets a gentle finish cue.
 		const perfect = this.results.length > 0 && this.results.every((r) => r.verdict === "correct" && !r.gaveUp);
 		if (s.sounds) playSfx(perfect ? "perfect" : "complete");
-		if (perfect && s.sounds) celebrate(this.contentEl.ownerDocument);
+		if (perfect && s.sounds) this.confettiStop = celebrate(this.contentEl.ownerDocument);
 		this.renderSummary(note, debrief);
 	}
 
@@ -1978,9 +1994,14 @@ export class SessionView extends ItemView {
 		this.noteText = {};
 		this.byName = new Map();
 		for (const n of new Set(this.questions.map((q) => q.node))) {
+			// If two eligible files share this basename (see duplicateBasenames in
+			// scope.ts — Grill can't otherwise tell them apart), resolve deterministically
+			// by path instead of whichever the vault happens to enumerate first, so a
+			// replay doesn't silently pull text from a different file each time it's run.
 			const f = this.app.vault
 				.getMarkdownFiles()
-				.find((file) => file.basename === n && !this.plugin.isExcluded(file.path));
+				.filter((file) => file.basename === n && !this.plugin.isExcluded(file.path))
+				.sort((a, b) => a.path.localeCompare(b.path))[0];
 			if (f) {
 				this.byName.set(n, f);
 				const raw = await this.app.vault.cachedRead(f);
@@ -2388,8 +2409,18 @@ export class SessionView extends ItemView {
 			const instr = await this.plugin.store.loadInstructions();
 			this.sessionPersona = instr.persona;
 			this.sessionInstructions = instr.preferences;
-			this.byName = new Map(files.map((f) => [f.basename, f]));
+			// If two files here share a basename (see duplicateBasenames in scope.ts —
+			// Grill's mastery/concepts persistence can't tell them apart either way),
+			// resolve deterministically by path — first-wins, sorted — rather than
+			// whichever the vault happened to enumerate/filter to last.
+			this.byName = new Map();
+			for (const f of [...files].sort((a, b) => a.path.localeCompare(b.path))) {
+				if (!this.byName.has(f.basename)) this.byName.set(f.basename, f);
+			}
 			const byName = this.byName;
+			// Loaded here, ahead of pickCandidates below, so it can prioritize off live
+			// concept data (see priorityNotes) instead of the note-level mastery cache.
+			this.concepts = this.plugin.concepts = await this.plugin.store.loadConcepts();
 			// Interleave by folder before priority-bucketing: pickCandidates's untested
 			// bucket preserves input order, so a scope spanning multiple folders would
 			// otherwise collapse onto whichever folder sorts first (see interleaveByFolder).
@@ -2404,7 +2435,8 @@ export class SessionView extends ItemView {
 			// large ceiling, not truly unbounded, as a sanity cap on reading/extracting
 			// an unreasonable number of full notes in one go.
 			const notesCap = this.sessionScope ? NO_MEANINGFUL_CAP : s.maxNotesPerSession;
-			const seed = pickCandidates(orderedNames, this.plugin.mastery, notesCap);
+			const priority = priorityNotes(this.concepts, (note) => byName.has(note));
+			const seed = pickCandidates(orderedNames, this.plugin.mastery, notesCap, priority);
 			const names = expandSelectionWithLinks(this.app, seed, byName, this.plugin.mastery, notesCap);
 			const vision = !!cfg && s.questionSource === "ai" && s.sendImages && supportsVision(cfg.provider, cfg.model);
 			this.sessionVision = vision;
@@ -2455,8 +2487,8 @@ export class SessionView extends ItemView {
 			// re-open any whose source text changed), then pick which to test.
 			// Same object handed to the plugin so in-session rating updates (mutated
 			// in place, not reassigned) stay visible to its due-count/dashboard readers
-			// without a separate re-sync.
-			this.concepts = this.plugin.concepts = await this.plugin.store.loadConcepts();
+			// without a separate re-sync. (Loaded earlier, above, so pickCandidates could
+			// use it too — not reloaded here.)
 			const allConcepts: Concept[] = [];
 			for (const cs of this.conceptsByNote.values()) allConcepts.push(...cs);
 			reconcileConcepts(this.concepts, allConcepts);
@@ -2878,6 +2910,8 @@ export class SessionView extends ItemView {
 	async onClose(): Promise<void> {
 		this.map?.dispose();
 		this.map = null;
+		this.confettiStop?.();
+		this.confettiStop = null;
 		await this.flush();
 	}
 

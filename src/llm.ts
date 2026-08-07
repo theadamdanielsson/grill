@@ -901,6 +901,12 @@ export function questionDefect(q: Question, source: string): string | null {
 			const blanks = text.match(/_{3,}/g) ?? [];
 			if (blanks.length === 0) return "blank question missing a blank marker";
 			if (blanks.length > 3) return "blank question has too many blanks";
+			// modelAnswer is contracted (see FORMAT_MIX_INSTRUCTIONS) to list each blank's
+			// answer in left-to-right order, separated by " / " — if a model drops or
+			// merges one, the answer shown to the student afterward no longer lines up
+			// one-to-one with the inputs they actually filled in.
+			const segments = q.modelAnswer.split(" / ").filter((s) => s.trim());
+			if (segments.length !== blanks.length) return "blank count doesn't match modelAnswer segments";
 			break;
 		}
 		case "tf":

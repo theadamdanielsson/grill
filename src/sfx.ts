@@ -93,8 +93,12 @@ export function playSfx(kind: Sfx): void {
 }
 
 /** A short confetti burst over the whole window. Self-removes after ~2.2s. Pass the
- * session view's document so it lands in the right window when popped out. */
-export function celebrate(doc: Document = document): void {
+ * session view's document so it lands in the right window when popped out. Returns a
+ * stop function that cancels the animation and removes the canvas immediately — call
+ * it from the view's onClose so a burst started right before the pane closes doesn't
+ * keep animating over the app for up to 2.2s after the view (and its canvas) should be
+ * gone; a no-op if the burst has already finished on its own. */
+export function celebrate(doc: Document = document): () => void {
 	const win = doc.defaultView ?? window;
 	// Obsidian's createEl helper + a CSS class (no inline styles), appended to the
 	// session's own document so it lands in the right window when popped out.
@@ -104,8 +108,16 @@ export function celebrate(doc: Document = document): void {
 	const c = canvas.getContext("2d");
 	if (!c) {
 		canvas.remove();
-		return;
+		return () => undefined;
 	}
+	let stopped = false;
+	let rafId = 0;
+	const stop = (): void => {
+		if (stopped) return;
+		stopped = true;
+		win.cancelAnimationFrame(rafId);
+		canvas.remove();
+	};
 	const colors = ["#ff6b6b", "#feca57", "#48dbfb", "#1dd1a1", "#f368e0", "#ffffff"];
 	const parts = Array.from({ length: 150 }, () => ({
 		x: w / 2 + (Math.random() - 0.5) * w * 0.25,
@@ -135,8 +147,9 @@ export function celebrate(doc: Document = document): void {
 			c.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.6);
 			c.restore();
 		}
-		if (elapsed < 2200) win.requestAnimationFrame(tick);
-		else canvas.remove();
+		if (elapsed < 2200) rafId = win.requestAnimationFrame(tick);
+		else stop();
 	};
-	win.requestAnimationFrame(tick);
+	rafId = win.requestAnimationFrame(tick);
+	return stop;
 }

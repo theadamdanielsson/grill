@@ -376,7 +376,12 @@ function parseGrillCallout(lines: string[], start: number): { item: LocalItem; n
 	if (title) qLines.push(title);
 	let answer = "";
 	let rubric = "";
-	let sawField = false;
+	// Which field a plain continuation line belongs to — the field most recently
+	// introduced by an "A:"/"answer:"/"rubric:" line, not just "was any field seen
+	// yet": a rubric that wraps onto a second line needs its continuation routed to
+	// `rubric`, not merged into (or, if `answer` is still empty, silently dropped
+	// from) `answer`.
+	let lastField: "answer" | "rubric" | null = null;
 	let i = start + 1;
 	for (; i < lines.length; i++) {
 		const t = lines[i].trim();
@@ -386,17 +391,18 @@ function parseGrillCallout(lines: string[], start: number): { item: LocalItem; n
 		const rm = /^rubric\s*:\s*(.*)$/i.exec(content);
 		if (am) {
 			answer = am[1].trim();
-			sawField = true;
+			lastField = "answer";
 			continue;
 		}
 		if (rm) {
 			rubric = rm[1].trim();
-			sawField = true;
+			lastField = "rubric";
 			continue;
 		}
 		if (!content) continue;
-		if (!sawField) qLines.push(content);
-		else if (answer) answer = `${answer} ${content}`.trim();
+		if (!lastField) qLines.push(content);
+		else if (lastField === "answer") answer = `${answer} ${content}`.trim();
+		else rubric = `${rubric} ${content}`.trim();
 	}
 	const question = qLines.join(" ").trim();
 	if (!question) return null;
@@ -567,13 +573,22 @@ export function extractConcepts(note: string, text: string, mixFormats = false):
 	const items = itemsForNote(text, ITEM_CAP_PER_NOTE, mixFormats);
 	const concepts: Concept[] = [];
 	const usedIds = new Set<string>();
+	const labelById = new Map<string, string>();
 	for (const it of items) {
 		// Same note+kind+label is treated as the same concept (first wins), so ids
 		// are position-independent and stable across edits — a later dedup can't
 		// reassign one concept's history to another.
-		const id = `${note}::${it.kind}:${slug(it.label)}`;
-		if (usedIds.has(id)) continue;
+		const base = `${note}::${it.kind}:${slug(it.label)}`;
+		// slug() is lossy (strips all punctuation, truncates past 48 chars), so two
+		// genuinely DIFFERENT labels can land on the same base id — without this check
+		// the second one was silently dropped and never became schedulable. Only
+		// disambiguate when the collision is real (a different label claiming an
+		// already-used id); the common case — the same label re-extracted — still
+		// resolves to the original, unsuffixed id, so no existing concept gets renamed.
+		const id = usedIds.has(base) && labelById.get(base) !== it.label ? `${base}-${hashStr(it.label).slice(0, 6)}` : base;
+		if (usedIds.has(id) && labelById.get(id) === it.label) continue;
 		usedIds.add(id);
+		labelById.set(id, it.label);
 		concepts.push({
 			id,
 			note,

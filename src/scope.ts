@@ -48,6 +48,24 @@ export function listTags(app: App, limit = 40): { tag: string; count: number }[]
 		.slice(0, limit);
 }
 
+/** Basenames that belong to more than one eligible file (Obsidian allows the same
+ * filename in different folders). Grill's mastery/concepts persistence and its
+ * whole file-resolution layer (this module, links.ts, main.ts's due-count/exclusion
+ * checks) identify a note by basename, matching the mastery map — so two files
+ * sharing one silently share one scheduling/progress record too, and whichever file
+ * a given lookup resolves to isn't guaranteed stable. Not a fix for that (it'd mean
+ * migrating the whole persisted schema to full paths); this just makes the situation
+ * detectable so it can be surfaced instead of failing silently. */
+export function duplicateBasenames(files: TFile[]): string[] {
+	const seen = new Set<string>();
+	const dupes = new Set<string>();
+	for (const f of files) {
+		if (seen.has(f.basename)) dupes.add(f.basename);
+		else seen.add(f.basename);
+	}
+	return [...dupes].sort((a, b) => a.localeCompare(b));
+}
+
 /** Notes with at least one currently-due, tested concept — live from concept data
  * (see `dueNotes` in concepts.ts), not the note-level mastery.dueAt rollup cache,
  * which only refreshes when a note is next answered and can otherwise undercount. */

@@ -403,7 +403,10 @@ export function interleaveByFolder(names: string[], folderOf: (name: string) => 
 }
 
 /** Pick up to `cap` candidate notes for a session, by priority:
- *  1. struggling or overdue notes (oldest due first)
+ *  1. struggling or overdue notes (oldest due first) — from `priority`, the live
+ *     concept-level signal (see `priorityNotes` in concepts.ts), NOT the note-level
+ *     mastery cache: that cache only refreshes when a note is next answered, so it
+ *     silently misses notes whose concepts became due/struggling since their last visit.
  *  2. untested notes
  *  3. known notes not yet due (only if space remains), least-recently-seen first
  */
@@ -431,18 +434,21 @@ export function reserveFreshSlots<T>(priority: T[], fresh: T[], overflow: T[], c
 	return [...priorityTaken, ...freshTaken, ...filler].slice(0, cap);
 }
 
-export function pickCandidates(allNotes: string[], map: MasteryMap, cap: number, now = new Date()): string[] {
+export function pickCandidates(
+	allNotes: string[],
+	map: MasteryMap,
+	cap: number,
+	priority: Map<string, string | null> = new Map(),
+): string[] {
 	const due: string[] = [];
 	const untested: string[] = [];
 	const rest: string[] = [];
 	for (const n of allNotes) {
-		const m = map[n];
-		const s = statusOf(m);
-		if (s === "untested") untested.push(n);
-		else if (s === "struggling" || (m?.dueAt && new Date(m.dueAt) <= now)) due.push(n);
+		if (priority.has(n)) due.push(n);
+		else if (statusOf(map[n]) === "untested") untested.push(n);
 		else rest.push(n);
 	}
-	due.sort((a, b) => (map[a]?.dueAt ?? "").localeCompare(map[b]?.dueAt ?? ""));
+	due.sort((a, b) => (priority.get(a) ?? "").localeCompare(priority.get(b) ?? ""));
 	rest.sort((a, b) => (map[a]?.lastSeen ?? "").localeCompare(map[b]?.lastSeen ?? ""));
 	return reserveFreshSlots(due, untested, rest, cap);
 }

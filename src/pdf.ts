@@ -65,7 +65,11 @@ export async function collectNotePdfText(app: App, file: TFile): Promise<string>
 	const out: string[] = [];
 	const seen = new Set<string>();
 	for (const e of embeds) {
-		if (out.length >= MAX_PDFS_PER_NOTE) break;
+		// Bound on distinct PDFs ATTEMPTED, not merely ones that parsed successfully —
+		// `seen` grows the moment we commit to trying one, before we know if it'll fail
+		// (corrupt/encrypted/scanned-image-only), so a run of failures can't make the
+		// cap a no-op and blow through the parse-cost budget it exists to bound.
+		if (seen.size >= MAX_PDFS_PER_NOTE) break;
 		const dest = app.metadataCache.getFirstLinkpathDest(e.link, file.path);
 		if (!dest || dest.extension.toLowerCase() !== "pdf" || seen.has(dest.path)) continue;
 		seen.add(dest.path);

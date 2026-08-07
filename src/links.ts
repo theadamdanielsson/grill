@@ -45,14 +45,23 @@ export function outgoingBasenames(app: App, file: TFile): string[] {
  * whose both ends are in `files` are kept, so the model sees relationships it
  * can actually act on this session. */
 export function buildSessionGraph(app: App, files: TFile[]): SessionGraph {
+	// Note identity here (and across the mastery/concepts persistence layer) is
+	// basename, not path — see the file-level comment. If `files` ever contains two
+	// files that share a basename (Obsidian allows it across folders), keep only the
+	// first: letting the second one silently clobber the first's adjacency entry below
+	// would merge two unrelated files' links into one shared entry, rather than just
+	// dropping the duplicate.
+	const primary = new Map<string, TFile>();
+	for (const f of files) if (!primary.has(f.basename)) primary.set(f.basename, f);
+
 	const byPath = new Map<string, TFile>();
-	for (const f of files) byPath.set(f.path, f);
+	for (const f of primary.values()) byPath.set(f.path, f);
 
 	const adjacency: Record<string, NoteLinks> = {};
-	for (const f of files) adjacency[f.basename] = { linksTo: [], linkedFrom: [] };
+	for (const f of primary.values()) adjacency[f.basename] = { linksTo: [], linkedFrom: [] };
 
 	const resolved = app.metadataCache.resolvedLinks;
-	for (const f of files) {
+	for (const f of primary.values()) {
 		const targets = resolved[f.path] ?? {};
 		for (const targetPath of Object.keys(targets)) {
 			const dest = byPath.get(targetPath);

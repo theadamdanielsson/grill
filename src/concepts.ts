@@ -121,6 +121,32 @@ export function dueNotes(concepts: ConceptMap, isEligible: (note: string) => boo
 	return notes;
 }
 
+/** Notes with at least one struggling or currently-due concept, mapped to the
+ * earliest relevant dueAt among them (null if the only match is a struggling
+ * concept that has no schedule yet). This is the live, concept-level version of
+ * the "struggling or overdue" bucket `pickCandidates` prioritizes — computed
+ * fresh from concept data directly, the same way `dueNotes` is, and for the
+ * same reason: the note-level mastery cache (aggStatus/dueAt) only refreshes
+ * when the note is next answered, so relying on it here would silently
+ * deprioritize a note whose concepts became due or started struggling since
+ * the cache was last set — exactly the notes this bucket exists to surface. */
+export function priorityNotes(
+	concepts: ConceptMap,
+	isEligible: (note: string) => boolean,
+	now = new Date(),
+): Map<string, string | null> {
+	const notes = new Map<string, string | null>();
+	for (const cm of Object.values(concepts)) {
+		if (!isEligible(cm.note)) continue;
+		const overdue = !!cm.dueAt && new Date(cm.dueAt) <= now;
+		if (statusOf(cm) !== "struggling" && !overdue) continue;
+		const dueAt = overdue ? cm.dueAt : null;
+		const existing = notes.get(cm.note);
+		if (existing === undefined || (dueAt && (!existing || dueAt < existing))) notes.set(cm.note, dueAt);
+	}
+	return notes;
+}
+
 export function conceptTested(cm: ConceptMastery | undefined): boolean {
 	return !!cm && cm.correct + cm.partial + cm.incorrect > 0;
 }

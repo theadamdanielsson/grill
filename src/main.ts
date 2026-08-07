@@ -13,7 +13,7 @@ import { MasteryMap } from "./mastery";
 import { CalPoint, isCalPoint } from "./calibration";
 import { LLMConfig, PROVIDERS, ProviderId, Question, listModels, testModel } from "./llm";
 import { ConceptMap, dueConceptCount, migrateResetScheduling } from "./concepts";
-import { dueFiles } from "./scope";
+import { dueFiles, duplicateBasenames } from "./scope";
 import { GrillStore } from "./store";
 import { SessionView, VIEW_TYPE } from "./view";
 import type { ColorMode, NumberMode } from "./mapview";
@@ -347,6 +347,7 @@ export default class GrillPlugin extends Plugin {
 					await this.persist();
 				}
 				this.refreshStatusBar();
+				this.warnOnDuplicateBasenames();
 				// A pane already open at this point rendered its start screen from the
 				// empty mastery placeholder (see refreshIfOnStartScreen) — bring it up to
 				// date now that the real data has loaded.
@@ -393,6 +394,24 @@ export default class GrillPlugin extends Plugin {
 			if (e && (path === e || path.startsWith(`${e}/`))) return true;
 		}
 		return false;
+	}
+
+	/** One-time startup check (see `duplicateBasenames`): if two of Grill's eligible
+	 * notes share a filename, Grill's basename-keyed mastery/concepts can't tell them
+	 * apart, so their scheduling/progress silently mixes together and which file wins
+	 * a given lookup isn't guaranteed stable. Not fixable without a schema migration —
+	 * this just makes it visible instead of a silent, confusing mastery-map glitch. */
+	private warnOnDuplicateBasenames(): void {
+		const eligible = this.app.vault.getMarkdownFiles().filter((f) => !this.isExcluded(f.path));
+		const dupes = duplicateBasenames(eligible);
+		if (!dupes.length) return;
+		const shown = dupes.slice(0, 5).join(", ");
+		const more = dupes.length > 5 ? ` and ${dupes.length - 5} more` : "";
+		new Notice(
+			`Grill: ${dupes.length} filename${dupes.length > 1 ? "s" : ""} appear on more than one note in Grill's scope (${shown}${more}). ` +
+				"Grill tracks progress by filename, not folder, so notes sharing a name share one progress record. Rename one of each pair to keep them separate.",
+			12000,
+		);
 	}
 
 	/** Count of concepts currently due for review — the real size of what clicking
