@@ -66,10 +66,15 @@ interface GrillSettings {
 	graphInsights: boolean;
 	/** How many missing-link bridge questions to add per session (0 disables). */
 	bridgesPerSession: number;
-	/** Question cache: reuse a generated question for a due concept. 0 = always reuse
-	 * (only regenerate when the note changes or the bank is empty); N = also write a
-	 * fresh variant after a cached one has been shown N times, for variety. */
-	regenerateEvery: number;
+	/** Question cache: a same-day re-show (the FSRS relearn loop, or reviewing the
+	 * same concept twice in one sitting) always reuses the cached text — that's a
+	 * real "you just saw this minutes ago" repeat, not a memory test. A later day's
+	 * review always gets a freshly written variant instead, since asking someone to
+	 * recall a concept days later by recognizing the identical sentence they saw
+	 * before isn't testing recall. This flag opts back into the old always-reuse
+	 * behavior (across days too) for anyone who wants to minimize model calls over
+	 * freshness. */
+	reuseAcrossDays: boolean;
 	/** Careful grading: grade an answer with a small consensus of calls (opt-in,
 	 * higher cost) to reduce leniency error. Off by default. */
 	carefulGrade: boolean;
@@ -136,7 +141,7 @@ function defaultSettings(): GrillSettings {
 		sounds: true,
 		graphInsights: true,
 		bridgesPerSession: 1,
-		regenerateEvery: 3,
+		reuseAcrossDays: false,
 		carefulGrade: false,
 		conceptsMigrated: false,
 		graphColorMode: "mastery",
@@ -192,7 +197,15 @@ export default class GrillPlugin extends Plugin {
 		if (typeof s.sounds === "boolean") settings.sounds = s.sounds;
 		if (typeof s.graphInsights === "boolean") settings.graphInsights = s.graphInsights;
 		if (typeof s.bridgesPerSession === "number") settings.bridgesPerSession = s.bridgesPerSession;
-		if (typeof s.regenerateEvery === "number") settings.regenerateEvery = s.regenerateEvery;
+		// One-time migration: "Reuse generated questions" used to be a 0-10 count of
+		// same-text repeats before a fresh variant was written. Under the new model
+		// (below), only the old maximum-reuse extreme (0, "Always reuse") still means
+		// anything — carry that one forward as reuseAcrossDays; every other stored
+		// count adopts the new same-day-only default. An explicit reuseAcrossDays
+		// already on disk (a newer install) wins over this migration.
+		const legacyRegenerateEvery = (s as Record<string, unknown>).regenerateEvery;
+		if (typeof legacyRegenerateEvery === "number") settings.reuseAcrossDays = legacyRegenerateEvery === 0;
+		if (typeof s.reuseAcrossDays === "boolean") settings.reuseAcrossDays = s.reuseAcrossDays;
 		if (typeof s.carefulGrade === "boolean") settings.carefulGrade = s.carefulGrade;
 		if (typeof s.conceptsMigrated === "boolean") settings.conceptsMigrated = s.conceptsMigrated;
 		if (["mastery", "recency", "dueness", "misconceptions"].includes(s.graphColorMode as string)) {
@@ -1051,29 +1064,31 @@ class GrillSettingTab extends PluginSettingTab {
 			);
 		}
 
-		this.sliderSetting(
-			containerEl,
-			"Reuse generated questions",
-			"AI questions are cached per concept and reused on review, so a due concept isn't rewritten by a fresh " +
-				"API call every time. 0 reuses the same question until you edit the note; a higher number writes a new " +
-				"variant after a question has been shown that many times, for variety.",
-			0,
-			10,
-			Math.min(Math.max(s.regenerateEvery, 0), 10),
-			(v) => (v === 0 ? "Always reuse" : `Every ${v}`),
-			async (v) => {
-				s.regenerateEvery = v;
-				await this.plugin.persist();
-			},
-		);
+		new Setting(containerEl)
+			.setName("Reuse questions across days")
+			.setDesc(
+				"Off (default): a concept due for review always gets a freshly written question once a new day has " +
+					"passed since you last saw it — recognizing the identical sentence you read days ago isn't a real " +
+					"memory test. Reviewing the same concept again within the same day (e.g. right after getting it " +
+					"wrong) still reuses the cached question either way, since that's a genuine 'you just saw this' " +
+					"repeat, not a spaced review. Turn this on to reuse cached questions across days too and minimize " +
+					"model calls, at the cost of eventually seeing the same phrasing again on a real review.",
+			)
+			.addToggle((t) =>
+				t.setValue(s.reuseAcrossDays).onChange(async (v) => {
+					s.reuseAcrossDays = v;
+					await this.plugin.persist();
+				}),
+			);
 
 		new Setting(containerEl)
 			.setName("Clear cached questions")
 			.setDesc(
-				"Forces every concept to write a fresh question next time it's due, instead of waiting to " +
-					"naturally cycle through 'Reuse generated questions' above. Useful right after a Grill update " +
-					"changes how questions are written (a new format, a prompt fix) so it reaches concepts you've " +
-					"already studied a lot, not just new ones. Doesn't affect a session already open.",
+				"Forces every concept to write a fresh question next time it's due, instead of waiting for its next " +
+					"new-day review (or, with 'Reuse questions across days' on above, indefinitely). Useful right " +
+					"after a Grill update changes how questions are written (a new format, a prompt fix) so it " +
+					"reaches concepts you've already studied a lot, not just new ones. Doesn't affect a session " +
+					"already open.",
 			)
 			.addButton((b) =>
 				b.setButtonText("Clear").onClick(async () => {

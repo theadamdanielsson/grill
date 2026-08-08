@@ -1,5 +1,31 @@
 # Changelog
 
+## 4.9.0
+
+- **"Bad question" now works after answering too, not just before.** The pre-answer
+  version ("wrong, broken, or nonsensical — delete it and move on") only ever
+  covered a question you'd already answered, undoing a grading decision has to
+  contend with the FSRS state it already updated. Added the after-answering
+  version on both grading paths: the AI-graded feedback screen (next to "Mark
+  correct") restores the concept to its exact pre-answer snapshot, undoes the
+  note-level counters/misconception tally, and purges the cached question so it's
+  never served again; self-grade's reveal screen (before you rate yourself) needs
+  no restore since nothing's scored yet, so it's the same simple delete as the
+  pre-answer version.
+- **Reworked question-cache reuse from a shown-count to a same-day rule.** "Reuse
+  generated questions" used to be a 0-10 count of literal repeats before a fresh
+  variant was written, with no connection to whether reusing the same text
+  actually made sense at that point. Replaced it with a real rule: a same-day
+  re-show (the FSRS relearn loop after "Again", or reviewing a concept twice in
+  one sitting) still reuses the cached text, since that's a genuine "you just saw
+  this" repeat, not a memory test — but once a calendar day has passed, a due
+  concept always gets a freshly written question, because recognizing the
+  identical sentence you read days ago isn't a real test of recall. The old
+  setting is now a single toggle, "Reuse questions across days" (off by default),
+  for anyone who wants to trade freshness for fewer model calls. Existing
+  installs with the old setting maxed to "Always reuse" migrate straight into
+  that toggle; every other value adopts the new same-day-only default.
+
 ## 4.8.0
 
 - **Reasoning models no longer default to `reasoning_effort: "low"`.** Every

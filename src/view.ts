@@ -222,6 +222,14 @@ const NEAR_DUPLICATE_THRESHOLD = 0.75;
 /** Cap on learning-graph nodes laid out + drawn, so a huge vault stays responsive. */
 const MAP_NODE_CAP = 600;
 
+/** Local calendar day equality (not a 24h window) — matches applyRating's own
+ * midnight-to-midnight FSRS convention (see mastery.ts), so "reviewed again today"
+ * means the same thing for question-cache reuse as it does for the relearn-buffer
+ * math already keying off that boundary. */
+function sameCalendarDay(a: Date, b: Date): boolean {
+	return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
 /** Lightweight, dependency-free duplicate detector: Jaccard similarity over
  * normalized word sets. Deliberately not exact-string matching — a model asked to
  * write "something different" usually still restates the same question with a
@@ -1550,6 +1558,18 @@ export class SessionView extends ItemView {
 				void this.markCorrect(r);
 			};
 		}
+		// Same single-use restriction as "Mark correct" (pendingOverride), same
+		// authored/bridge exclusion as the pre-answer version, and skipped on the
+		// route-consent screen — discarding the question there would pull the rug out
+		// from under the yes/no choice being offered below.
+		if (!pendingExtension && !this.questions[this.idx].authored && this.pendingOverride) {
+			const badBtn = badgeRow.createEl("button", { text: "Bad question", cls: "grill-quiet-btn" });
+			badBtn.setAttribute("title", "Wrong, broken, or nonsensical — delete it and move on, no penalty");
+			badBtn.onclick = () => {
+				badBtn.disabled = true;
+				void this.discardAnsweredQuestion(r);
+			};
+		}
 		if (!r.gaveUp && r.answer) {
 			verdictCard.createDiv({ cls: "grill-block-label", text: "Your answer" });
 			const ans = verdictCard.createDiv({ cls: "grill-your-answer" });
@@ -2136,14 +2156,16 @@ export class SessionView extends ItemView {
 
 	/** A cached question for this concept that is safe to reuse now, or null. Requires a
 	 * bank entry whose source hash still matches the concept (note unchanged); rotates to
-	 * the least-shown variant. With "reuse generated questions" set above 0, a variant
-	 * that has been shown that many times forces a miss so a fresh variant is written —
-	 * unconditionally, even once the bank already holds MAX_VARIANTS: rememberGenerated
-	 * evicts the oldest to keep storage bounded, so this never grows unboundedly. Forcing
-	 * a miss only below the storage cap (the previous behaviour) meant a concept that had
-	 * ever accumulated a full bank would rotate the same fixed set of variants forever,
-	 * with no way to pick up a later generator improvement (a new question type, a
-	 * prompt fix) short of the note's content changing. */
+	 * the least-shown variant.
+	 *
+	 * Reuse is gated on elapsed time, not a shown-count: a same-day re-show (the FSRS
+	 * relearn loop after "Again", or reviewing the same concept twice in one sitting) is
+	 * a genuine "you just saw this minutes ago" repeat, so it always reuses the cached
+	 * text — there's nothing to test by rewording it. Once a calendar day has passed,
+	 * this IS a spaced review, and recognizing the identical sentence from days ago isn't
+	 * a real test of recall, so a fresh variant is written instead unless the student has
+	 * opted into `reuseAcrossDays` to minimize model calls. Either way this never grows
+	 * unboundedly: rememberGenerated evicts the oldest past MAX_VARIANTS. */
 	private cacheHit(conceptId: string): CachedQuestion | null {
 		const c = this.conceptById.get(conceptId);
 		if (!c || c.authored) return null; // authored questions are verbatim, not banked
@@ -2155,8 +2177,8 @@ export class SessionView extends ItemView {
 			(a, b) => a.timesShown - b.timesShown || (a.lastShownAt ?? "").localeCompare(b.lastShownAt ?? ""),
 		);
 		const pick = fresh[0];
-		const regen = this.plugin.data.settings.regenerateEvery;
-		if (regen > 0 && pick.timesShown >= regen) return null; // add variety
+		const shownToday = !!pick.lastShownAt && sameCalendarDay(new Date(pick.lastShownAt), new Date());
+		if (!shownToday && !this.plugin.data.settings.reuseAcrossDays) return null; // a real spaced review: write fresh
 		return pick;
 	}
 
@@ -2764,6 +2786,19 @@ export class SessionView extends ItemView {
 		revealCard.createDiv({ cls: "grill-block-label", text: "Answer" });
 		this.md(q.modelAnswer, revealCard.createDiv({ cls: "grill-model-answer" }));
 
+		// Self-grade never scores until a rating button below is clicked, so this is
+		// still "before answering" as far as the schedule is concerned — same simple
+		// delete-and-move-on as the pre-answer version, no snapshot to restore.
+		if (!q.authored) {
+			const badRow = card.createDiv({ cls: "grill-btn-row" });
+			const badBtn = badRow.createEl("button", { text: "Bad question", cls: "grill-quiet-btn" });
+			badBtn.setAttribute("title", "Wrong, broken, or nonsensical — delete it and move on, no penalty");
+			badBtn.onclick = () => {
+				badRow.querySelectorAll("button").forEach((b) => (b.disabled = true));
+				void this.reportBadQuestion();
+			};
+		}
+
 		card.createDiv({ cls: "grill-meta grill-selfgrade-prompt", text: "How did you do?" });
 		const rateRow = card.createDiv({ cls: "grill-btn-row grill-selfgrade-row" });
 		const buttons: { label: string; rating: Rating; cls: string }[] = [
@@ -2900,6 +2935,52 @@ export class SessionView extends ItemView {
 		this.dirty = true;
 		await this.flush();
 		this.renderFeedback(r, null);
+	}
+
+	/** "Bad question", after the fact: the pre-answer version (`reportBadQuestion`)
+	 * only covers a question deleted before it's scored — but a wrong, broken, or
+	 * nonsensical question is just as often obvious only once you've read the
+	 * feedback. Restores the concept to its pre-answer snapshot (see pendingOverride,
+	 * the same mechanism "Mark correct" uses) instead of re-scoring it, undoes the
+	 * note-level counters/misconception tally, purges the cached variant so it's
+	 * never served again, and drops it from the session and its results/debrief
+	 * transcript — exactly as if it had never been asked. Same single-use
+	 * restriction as "Mark correct": only available right after the answer that
+	 * produced it. */
+	private async discardAnsweredQuestion(r: QuestionResult): Promise<void> {
+		const o = this.pendingOverride;
+		if (!o) return;
+		const cm = this.concepts[o.conceptId];
+		if (cm) Object.assign(cm, structuredClone(o.conceptSnapshot));
+		const m = this.plugin.mastery[o.note];
+		if (m) {
+			if (o.originalVerdict === "correct") m.correct = Math.max(0, m.correct - 1);
+			else if (o.originalVerdict === "partial") m.partial = Math.max(0, m.partial - 1);
+			else m.incorrect = Math.max(0, m.incorrect - 1);
+			if (o.originalMisconceptionTag) {
+				const remaining = (m.misconceptions[o.originalMisconceptionTag] ?? 0) - 1;
+				if (remaining <= 0) delete m.misconceptions[o.originalMisconceptionTag];
+				else m.misconceptions[o.originalMisconceptionTag] = remaining;
+			}
+		}
+		this.recomputeAggregate(o.note);
+		const bank = this.questionBank[o.conceptId];
+		if (bank) {
+			const kept = bank.filter((e) => e.question !== r.question);
+			if (kept.length !== bank.length) {
+				this.questionBank[o.conceptId] = kept;
+				this.bankDirty = true;
+			}
+		}
+		const ri = this.results.lastIndexOf(r);
+		if (ri !== -1) this.results.splice(ri, 1);
+		this.questions.splice(this.idx, 1);
+		this.targetCount = Math.max(this.questions.length, this.targetCount - 1);
+		this.pendingOverride = null;
+		this.dirty = true;
+		new Notice("Grill: question deleted. Won't come back, and it doesn't count against you.");
+		await this.flush();
+		await this.goToQuestion(this.idx);
 	}
 
 	/** Persist all session state at once (concepts, mastery, registry). Called at
