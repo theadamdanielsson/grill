@@ -755,6 +755,11 @@ export interface ConceptTarget {
 	 * commonly reconverges on the same obvious phrasing for a narrow concept (a single
 	 * formula, a single vocab term). Capped and freshness-filtered by the caller. */
 	priorQuestions?: string[];
+	/** Set only on the one bounded retry pass (see `generateQuestions`) for a target
+	 * whose first attempt was dropped by `questionDefect` or never came back at all —
+	 * the specific reason, fed back into the prompt so the retry actually fixes that
+	 * problem instead of blindly reattempting and likely landing on the same defect. */
+	lastDefectReason?: string;
 }
 
 /** `mixFormats` gates the 'type'/'choices' fields entirely — not just the prose
@@ -956,18 +961,23 @@ export function questionDefect(q: Question, source: string): string | null {
 	return null;
 }
 
-export async function generateQuestions(
+/** One generation call + validation pass over exactly the given `targets` (no retry
+ * logic here — that's `generateQuestions`'s job). Returns both the questions that
+ * passed and, for any target that didn't produce one, why — keyed by that target's
+ * index in THIS `targets` array (not any outer/original numbering), so the caller
+ * can build a retry batch from just the failures with a concrete reason attached. */
+async function runGenerationPass(
 	cfg: LLMConfig,
 	notesText: string,
 	targets: ConceptTarget[],
-	images: ImageInput[] = [],
-	instructions = "",
-	linksBlock = "",
-	persona: string = DEFAULT_PERSONA,
-	mixFormats = false,
-	formatCounts: Partial<Record<string, number>> = {},
-	varyFormats = true,
-): Promise<Question[]> {
+	images: ImageInput[],
+	instructions: string,
+	linksBlock: string,
+	persona: string,
+	mixFormats: boolean,
+	formatCounts: Partial<Record<string, number>>,
+	varyFormats: boolean,
+): Promise<{ questions: Question[]; defects: Map<number, string> }> {
 	const hasBridge = targets.some((t) => t.bridge);
 	const conceptList = targets
 		.map((t, i) => {
@@ -981,6 +991,12 @@ export async function generateQuestions(
 			const avoid = t.priorQuestions?.length
 				? ` [already asked for this concept, write a genuinely different angle or phrasing — do not restate: ${t.priorQuestions.map((q) => `"${q}"`).join(" / ")}]`
 				: "";
+			// Only ever set on a retry pass (see generateQuestions) — tells the model
+			// exactly what was wrong with its own last attempt at this specific concept,
+			// instead of a blind second try that's just as likely to repeat the defect.
+			const retry = t.lastDefectReason
+				? ` [your previous attempt at this concept was rejected: ${t.lastDefectReason} — fix that specific problem]`
+				: "";
 			// No re-truncation here (there used to be a flat 500-char cut): every path
 			// that sets a concept's `context` already bounds it sensibly at its own source
 			// — a boundary-detected concept (generate-local.ts) to one exercise from a
@@ -990,7 +1006,7 @@ export async function generateQuestions(
 			// with no real reason behind it, and it was cutting multi-part questions
 			// (a, b, c...) off mid-way. A real chat with an LLM doesn't re-truncate
 			// something you already sized on purpose; neither should this.
-			return `${i + 1}. [note "${t.note}"] concept: "${t.label}" (aim: ${t.targetDifficulty})${format}${reprobe}${connect}${avoid}\n   source: ${t.context}`;
+			return `${i + 1}. [note "${t.note}"] concept: "${t.label}" (aim: ${t.targetDifficulty})${format}${reprobe}${connect}${avoid}${retry}\n   source: ${t.context}`;
 		})
 		.join("\n");
 	// Split so the notes+links (often identical across several batch calls in a
@@ -1033,6 +1049,7 @@ export async function generateQuestions(
 	const out: Question[] = [];
 	const used = new Set<number>();
 	const seenAnswers = new Set<string>();
+	const defects = new Map<number, string>();
 	for (let i = 0; i < raw.length; i++) {
 		const q = raw[i];
 		if (!q?.question) continue;
@@ -1101,19 +1118,84 @@ export async function generateQuestions(
 		if (candidate.type === "match" && candidate.pairs?.length) {
 			candidate.modelAnswer = candidate.pairs.map((p) => `${p.left} → ${p.right}`).join("; ");
 		}
-		// Deterministic quality gate (drop-and-continue): skip slop rather than quiz
-		// it. A dropped concept just goes unasked this batch; we only fail if nothing
-		// survives. Also drop near-duplicate questions by normalized model answer.
+		// Deterministic quality gate: record WHY rather than just dropping, so a defect
+		// here can drive one retry attempt with that reason fed back to the model (see
+		// generateQuestions). Also catches near-duplicate questions by normalized answer.
 		const answerKey = candidate.modelAnswer.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-		if (questionDefect(candidate, t.context)) continue;
-		if (answerKey && seenAnswers.has(answerKey)) continue;
+		const defect = questionDefect(candidate, t.context);
+		if (defect) {
+			defects.set(idx, defect);
+			continue;
+		}
+		if (answerKey && seenAnswers.has(answerKey)) {
+			defects.set(idx, "duplicate answer to another question already generated in this batch");
+			continue;
+		}
 		if (answerKey) seenAnswers.add(answerKey);
 		out.push(candidate);
 	}
+	// Anything the model never returned a usable question for at all (not present in
+	// `raw`, or its index collided with another and got dropped above without ever
+	// setting a defect reason) still needs a reason so a retry pass has something
+	// concrete to react to instead of just trying again blind.
+	for (let idx = 0; idx < targets.length; idx++) {
+		if (!used.has(idx) && !defects.has(idx)) defects.set(idx, "no question was returned for this concept at all");
+	}
+	return { questions: out, defects };
+}
+
+/** Generate one question per target, in AI mode. On top of the single generation
+ * pass (`runGenerationPass`), retries ONCE for any target whose first attempt was
+ * dropped by validation or never came back — with the specific defect reason fed
+ * into the retry's prompt, so the model has a concrete problem to fix rather than
+ * a bare second attempt at the same instructions that's about as likely to
+ * reproduce the same defect. Bounded to one retry round total (not per-target,
+ * not recursive) so a persistently bad target costs at most 2x calls, never spirals. */
+export async function generateQuestions(
+	cfg: LLMConfig,
+	notesText: string,
+	targets: ConceptTarget[],
+	images: ImageInput[] = [],
+	instructions = "",
+	linksBlock = "",
+	persona: string = DEFAULT_PERSONA,
+	mixFormats = false,
+	formatCounts: Partial<Record<string, number>> = {},
+	varyFormats = true,
+): Promise<Question[]> {
+	const first = await runGenerationPass(
+		cfg,
+		notesText,
+		targets,
+		images,
+		instructions,
+		linksBlock,
+		persona,
+		mixFormats,
+		formatCounts,
+		varyFormats,
+	);
+	if (first.defects.size === 0) return first.questions;
+	const retryTargets = [...first.defects.entries()].map(([idx, reason]) => ({
+		...targets[idx],
+		lastDefectReason: reason,
+	}));
 	// May be empty when a whole batch is dropped by the validator; the caller treats
 	// an empty batch as "no progress" and moves on (or ends the session gracefully)
 	// rather than aborting, so a run of slop can't throw a live session away.
-	return out;
+	const retry = await runGenerationPass(
+		cfg,
+		notesText,
+		retryTargets,
+		images,
+		instructions,
+		linksBlock,
+		persona,
+		mixFormats,
+		formatCounts,
+		varyFormats,
+	);
+	return [...first.questions, ...retry.questions];
 }
 
 // ------------------------------------------------------------------ grading

@@ -1,5 +1,39 @@
 # Changelog
 
+## 4.7.0
+
+- **Migrated FSRS scheduling to `ts-fsrs`** (open-spaced-repetition's reference
+  implementation — what Anki's own FSRS support and obsidian-spaced-repetition are
+  built on), replacing Grill's hand-rolled FSRS-4.5 port. That port had already
+  drifted from the current spec: a stale `init_difficulty` formula, a missing
+  "linear damping" fix in `next_difficulty`, and default weights frozen at whatever
+  FSRS-4.5 shipped with. Existing stability/difficulty values need no conversion —
+  both mean the same thing across FSRS versions, only the update formulas changed,
+  so old values simply continue forward through the new ones on next review.
+  Grill's own interval/fuzz load-balancing (`optimalInterval`/`fuzzInterval`) is
+  untouched — that's Grill-specific behavior the library doesn't do.
+- **The same-day "Again" relearn buffer is now stability-scaled, not a flat 10
+  minutes.** Rides on the library's real short-term-stability formula (triggered
+  whenever a review happens on the same calendar day) instead of a constant that
+  was only an approximation of it. A concept still barely holding on after a miss
+  gets shown again almost immediately; one that retained more of its prior strength
+  gets a bit more room — always same-day, never the multi-day intervals
+  `optimalInterval` produces.
+- **Bad questions now get one shot at a fix before being dropped.** A generated
+  question that fails validation (or never comes back at all) triggers one bounded
+  retry with the specific rejection reason fed into the model's next attempt,
+  instead of silently dropping it and shrinking the session. Capped at one retry
+  round total, so a persistently bad target costs at most 2x calls, never spirals.
+- **The status bar's due-count no longer goes stale between sessions.** It used to
+  only refresh at session-lifecycle moments (answering, starting, ending), so
+  editing a note — a new `[!grill]` callout, a changed entry — left the ambient
+  count wrong until you next started a session touching that note. A debounced
+  hook now re-extracts just the edited file's concepts on save. (Evaluated and
+  deliberately scoped down from a full Dataview-style incremental vault index:
+  Grill's extraction is cheap local parsing triggered per-session, not Dataview's
+  arbitrary live queries over an entire vault, so indexing everything continuously
+  isn't warranted — only the one file just edited needs it.)
+
 ## 4.6.0
 
 - **Added a "Multiple choice only" question format option.** Question formats was

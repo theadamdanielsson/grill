@@ -1,7 +1,24 @@
-/** Per-note mastery state, FSRS-4.5 scheduling, misconception tracking.
+/** Per-note mastery state, FSRS-6 scheduling, misconception tracking.
  *
- * Default parameters from open-spaced-repetition/fsrs4.5.
+ * Stability/difficulty updates are delegated to `ts-fsrs` (open-spaced-repetition's
+ * reference implementation, also what Anki's own FSRS support and
+ * obsidian-spaced-repetition are built on) instead of Grill's old from-scratch
+ * FSRS-4.5 port — that port had already drifted from the current spec (a stale
+ * `init_difficulty` formula, `next_difficulty` missing the "linear damping" fix,
+ * frozen FSRS-4.5-era default weights) in ways nothing here would have caught, which
+ * is exactly the kind of silent bug a maintained reference implementation doesn't
+ * have. Interval computation (`optimalInterval`/`fuzzInterval` below) stays
+ * hand-rolled: it's Grill-specific load-balancing behavior ts-fsrs doesn't do, not
+ * core FSRS math, and isn't affected by any of the above.
+ *
+ * Existing persisted `stability`/`difficulty` values need no numeric conversion on
+ * upgrade: both fields mean the same thing in FSRS-4.5 and FSRS-6 (stability = days
+ * to 90% retrievability; difficulty = 1-10) — what changed is only the update
+ * formulas, so old values simply continue forward through the new ones on next
+ * review, not a value that needs remapping first.
  */
+
+import { dateDiffInDays, fsrs, type FSRSState, type Grade } from "ts-fsrs";
 
 export type Verdict = "correct" | "partial" | "incorrect";
 
@@ -16,7 +33,7 @@ export interface NoteMastery {
 	streak: number;
 	/** FSRS memory stability (days); null until first answer */
 	stability: number | null;
-	/** FSRS difficulty, native FSRS-4.5 scale 1 (easiest) - 10 (hardest); null until
+	/** FSRS difficulty, native scale 1 (easiest) - 10 (hardest); null until
 	 * first answer. A stored value <= 1 from a pre-fix record (the old code rescaled
 	 * this to 0.1-1 and saturated every concept at the clamp ceiling) self-heals on
 	 * its next `applyRating` touch — see the guard there. */
@@ -103,37 +120,64 @@ export function statusOf(m: (Schedulable & { aggStatus?: NoteStatus }) | undefin
 	if (m.aggStatus) return m.aggStatus;
 	if (m.correct === 0 && m.incorrect === 0 && m.partial === 0) return "untested";
 	// Durable-memory gate, not a streak: a lapse degrades stability (see
-	// nextStabilityAfterFailure) rather than zeroing it, so a concept that's been
+	// applyRating's Again branch) rather than zeroing it, so a concept that's been
 	// solidly re-demonstrated since an old miss correctly reads "known" again.
 	return m.stability !== null && m.stability >= S_SOLID ? "known" : "struggling";
 }
 
-// ---------------------------------------------------------------- FSRS-4.5
+// ---------------------------------------------------------------- FSRS-6 (ts-fsrs)
 
-const W = [0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94, 2.18, 0.05, 0.34, 1.26, 0.29, 2.61];
 /** Default when the user hasn't set "Review frequency" in settings. Lower = shorter
  * intervals = things come due more often = progress feels faster, at the cost of more
  * reviews; higher = longer intervals, fewer but higher-stakes reviews. */
 const DESIRED_RETENTION = 0.9;
 export const MIN_STABILITY = 0.1;
 const MAX_INTERVAL_DAYS = 365;
-/** Minimum relearning gap after an "Again" (rating 1), in minutes. Not 0: a concept
- * marked due at the exact fail instant is due again the moment ANY new session opens,
- * however soon that is — session picking always drains the due bucket before untested
- * material, so a handful of early fails in a content-dense note (a long drill sheet)
- * could dominate every session's opening slots indefinitely, with the note's other,
- * never-tested majority never getting a look-in. A short buffer (still same-day, still
- * well ahead of a real review interval) breaks that immediate-loop failure mode while
- * keeping "Again" material the first thing due once it actually resurfaces. */
-const AGAIN_RELEARN_MINUTES = 10;
+/** Relearning gap after an "Again" (rating 1), in minutes — scaled by the concept's
+ * OWN post-fail stability rather than a single flat constant (the previous fix):
+ * a concept that's still barely holding on after the miss (stability near 0) is
+ * shown again almost immediately, one that failed but retained more of its prior
+ * strength gets a bit more room, but always same-day, never the day-granularity
+ * `optimalInterval` below produces (that function floors at 1 full day, which is
+ * far too long for "let me try this again shortly"). Not 0 either way: a concept
+ * marked due at the exact fail instant is due again the moment ANY new session
+ * opens, however soon that is — session picking always drains the due bucket
+ * before untested material, so a handful of early fails in a content-dense note
+ * (a long drill sheet) could dominate every session's opening slots indefinitely,
+ * with the note's other, never-tested majority never getting a look-in. */
+const AGAIN_RELEARN_MIN_MINUTES = 5;
+const AGAIN_RELEARN_MAX_MINUTES = 30;
+/** Post-fail stability (days) at/above which the relearning gap is already at its
+ * max — chosen well under a day, since anything scaling toward day-scale gaps
+ * belongs to `optimalInterval`, not this same-day relearn buffer. */
+const AGAIN_RELEARN_REFERENCE_STABILITY = 2;
 
 function clamp(v: number, min: number, max: number): number {
 	return Math.min(max, Math.max(min, v));
 }
 
+function againRelearnMinutes(postFailStability: number): number {
+	const frac = clamp(postFailStability / AGAIN_RELEARN_REFERENCE_STABILITY, 0, 1);
+	return Math.round(AGAIN_RELEARN_MIN_MINUTES + frac * (AGAIN_RELEARN_MAX_MINUTES - AGAIN_RELEARN_MIN_MINUTES));
+}
+
+/** Single shared engine instance: stateless besides its fixed params, so one
+ * instance safely serves every concept/note. Deliberately left at library defaults
+ * — current FSRS-6 weights, `enable_short_term: true` (the real fix for same-day
+ * repeats: a same-day review, elapsed days t=0, gets a dedicated short-term
+ * stability formula instead of being run through the ordinary multi-day one).
+ * `request_retention`/`enable_fuzz`/`maximum_interval` are irrelevant here: Grill
+ * never calls the library's own interval/fuzz methods (`next`/`repeat`/
+ * `next_interval`), only the lower-level `next_state`, so those params go unused. */
+const engine = fsrs();
+
+/** Recall probability right now, per FSRS's own forgetting curve — delegates to the
+ * engine's decay/weights so this stays consistent with whatever `next_state` below
+ * actually used, rather than a separately hand-rolled formula that could drift from
+ * it (the previous version hardcoded the old FSRS-4.5 decay exponent of exactly -1). */
 export function retrievability(stability: number, elapsedDays: number): number {
 	if (stability <= 0 || elapsedDays <= 0) return 1;
-	return Math.pow(1 + elapsedDays / (9 * stability), -1);
+	return engine.forgetting_curve(elapsedDays, stability);
 }
 
 /** A concept's current mastery, 0-1: "how likely you'd recall this right now,
@@ -204,38 +248,6 @@ export function toRating(
 	if (verdict === "partial") return 2;
 	if ((confidence !== null && confidence <= LOW_CONFIDENCE) || hintsUsed > 0) return 2;
 	return difficulty === "hard" ? 4 : 3;
-}
-
-/** S0(G) = w[G-1], the real FSRS-4.5 4-point initial-stability lookup — four
- * independent values, one per first rating, not an interpolation between two. */
-function initialStability(rating: number): number {
-	return Math.max(MIN_STABILITY, W[rating - 1]);
-}
-
-function initialDifficulty(rating: number): number {
-	return clamp(W[4] - W[5] * (rating - 3), 1, 10);
-}
-
-function nextStabilityAfterSuccess(stability: number, difficulty: number, r: number, rating: number): number {
-	const sinFactor = Math.exp(W[8]) * (11 - difficulty) * Math.pow(stability, -W[9]) * (Math.exp(W[10] * (1 - r)) - 1);
-	// Hard (2) shrinks the gain; Easy (4) enlarges it. Good (3) is neutral.
-	const ratingBonus = rating === 2 ? W[15] : rating === 4 ? W[16] : 1;
-	return Math.max(MIN_STABILITY, stability * (1 + sinFactor * ratingBonus));
-}
-
-function nextStabilityAfterFailure(stability: number, difficulty: number, r: number): number {
-	return Math.max(
-		MIN_STABILITY,
-		W[11] * Math.pow(difficulty, -W[12]) * (Math.pow(stability + 1, W[13]) - 1) * Math.exp(W[14] * (1 - r)),
-	);
-}
-
-/** D' = w7*D0(4) + (1-w7)*clamp(D - w6*(G-3), 1, 10) — the real FSRS-4.5
- * mean-reversion term, gently pulling difficulty back toward the "brand-new Easy
- * card" anchor each review instead of letting it drift unbounded. */
-function nextDifficulty(difficulty: number, rating: number): number {
-	const reverted = clamp(difficulty - W[6] * (rating - 3), 1, 10);
-	return clamp(W[7] * initialDifficulty(4) + (1 - W[7]) * reverted, 1, 10);
 }
 
 export function optimalInterval(stability: number, desiredRetention = DESIRED_RETENTION): number {
@@ -318,26 +330,25 @@ export function applyRating(
 	desiredRetention = DESIRED_RETENTION,
 	dueDateHistogram?: DueDateHistogram,
 ): void {
-	const elapsedDays = m.lastSeen ? (now.getTime() - new Date(m.lastSeen).getTime()) / 86400_000 : 0;
-	if (m.stability === null || m.difficulty === null) {
-		m.stability = initialStability(rating);
-		m.difficulty = initialDifficulty(rating);
-	} else {
-		const r = retrievability(m.stability, elapsedDays);
-		// Self-heal: a stored difficulty <= 1 is a legacy value from the pre-fix
-		// [0.1,1]-scale formula, which saturated to exactly 1.0 for every rating and
-		// therefore carries no real signal to preserve. Reseed it via the corrected
-		// initial-difficulty formula on this touch rather than rescaling it (a
-		// proportional rescale would map that saturated ceiling to the HARDEST end of
-		// the real scale, which is backwards). The fixed formulas can never themselves
-		// emit a value <= 1 (their floor is ~1.03), so this can never misfire against
-		// genuine post-fix data on any later touch.
-		m.difficulty = m.difficulty <= 1 ? initialDifficulty(rating) : nextDifficulty(m.difficulty, rating);
-		m.stability =
-			rating === 1
-				? nextStabilityAfterFailure(m.stability, m.difficulty, r)
-				: nextStabilityAfterSuccess(m.stability, m.difficulty, r, rating);
-	}
+	// ts-fsrs's own calendar-day diff (midnight to midnight, not a continuous ms-based
+	// count), floored to >=0 defensively — next_state throws on a negative t, which a
+	// stale/replayed lastSeen could otherwise produce. This convention matters: it's
+	// what makes t===0 (same calendar day) trigger the engine's dedicated short-term
+	// stability formula instead of the ordinary multi-day one.
+	const t = m.lastSeen ? Math.max(0, dateDiffInDays(new Date(m.lastSeen), now)) : 0;
+	// Self-heal: a stored difficulty <= 1 is a legacy value from a pre-FSRS-4.5-era
+	// [0.1,1]-scale bug that saturated every concept at the clamp ceiling, so it
+	// carries no real signal to preserve — treat it as untested (null memory state)
+	// so the engine reseeds both fields via its own init formulas on this touch,
+	// exactly as if this were the concept's first-ever rating.
+	const legacyDifficulty = m.difficulty !== null && m.difficulty <= 1;
+	const memory: FSRSState | null =
+		m.stability === null || m.difficulty === null || legacyDifficulty
+			? null
+			: { stability: m.stability, difficulty: m.difficulty };
+	const next = engine.next_state(memory, t, rating as Grade);
+	m.stability = next.stability;
+	m.difficulty = next.difficulty;
 
 	// Again (1) counts wrong and breaks the streak; Hard (2) is a partial;
 	// Good (3) and Easy (4) both count as a correct recall.
@@ -352,7 +363,9 @@ export function applyRating(
 	}
 
 	if (rating === 1) {
-		m.dueAt = new Date(now.getTime() + AGAIN_RELEARN_MINUTES * 60_000).toISOString(); // relearn shortly, not this instant
+		// Relearn shortly, not this instant — scaled by the concept's own new (lower)
+		// stability, not a flat constant. See AGAIN_RELEARN_MIN/MAX_MINUTES.
+		m.dueAt = new Date(now.getTime() + againRelearnMinutes(m.stability) * 60_000).toISOString();
 	} else {
 		const days = fuzzInterval(optimalInterval(m.stability, desiredRetention), now, dueDateHistogram);
 		m.dueAt = new Date(now.getTime() + days * 86400_000).toISOString();

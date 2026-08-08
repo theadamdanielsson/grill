@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@types/d3-force": "^3.0.10",
-    "d3-force": "^3.0.0"
+    "d3-force": "^3.0.0",
+    "ts-fsrs": "^5.4.1"
   }
 }

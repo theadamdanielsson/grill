@@ -12,7 +12,8 @@ import {
 import { MasteryMap } from "./mastery";
 import { CalPoint, isCalPoint } from "./calibration";
 import { LLMConfig, PROVIDERS, ProviderId, Question, listModels, testModel } from "./llm";
-import { ConceptMap, dueConceptCount, migrateResetScheduling } from "./concepts";
+import { ConceptMap, dueConceptCount, migrateResetScheduling, reconcileConcepts } from "./concepts";
+import { extractConcepts } from "./generate-local";
 import { dueFiles, duplicateBasenames } from "./scope";
 import { GrillStore } from "./store";
 import { SessionView, VIEW_TYPE } from "./view";
@@ -156,6 +157,10 @@ export default class GrillPlugin extends Plugin {
 	 * SessionView points this at its own (freshly loaded) map when a session starts,
 	 * so in-session rating updates stay visible here without a separate re-sync. */
 	concepts: ConceptMap = {};
+	/** Per-file debounce timers for `onModify`'s concept refresh, so rapid-fire
+	 * autosave/keystroke "modify" events during active editing collapse into one
+	 * re-extraction after editing actually pauses, not one per event. */
+	private modifyTimers = new Map<string, number>();
 
 	async onload(): Promise<void> {
 		const stored = (await this.loadData()) as Partial<PluginData> | null;
@@ -303,6 +308,21 @@ export default class GrillPlugin extends Plugin {
 				);
 			}),
 		);
+		// Keeps the status bar's due-count honest between sessions, not just after one
+		// runs. Evaluated against a full Dataview-style incremental vault index and
+		// deliberately scoped down from it: concept extraction is cheap local regex
+		// parsing (not Dataview's arbitrary live queries over a whole vault), so there's
+		// no case for indexing every note continuously — only the ONE file just edited
+		// needs re-extracting, and only to keep the ambient due-count from going stale
+		// while you edit a note without starting a session. Debounced per file so
+		// active typing (repeated autosave "modify" events) settles before re-parsing.
+		this.registerEvent(
+			this.app.vault.on("modify", (file) => {
+				if (file instanceof TFile && file.extension === "md" && !this.isExcluded(file.path)) {
+					this.scheduleConceptRefresh(file);
+				}
+			}),
+		);
 		if (!Platform.isMobile) {
 			this.statusBar = this.addStatusBarItem();
 			this.statusBar.addClass("mod-clickable");
@@ -431,6 +451,42 @@ export default class GrillPlugin extends Plugin {
 		if (!this.statusBar) return;
 		const n = this.dueCount();
 		this.statusBar.setText(n > 0 ? `Grill: ${n} due` : "Grill");
+	}
+
+	/** Debounce a single file's concept re-extraction so a burst of "modify" events
+	 * from active editing/autosave collapses into one re-parse after editing settles,
+	 * not one per keystroke-triggered save. */
+	private scheduleConceptRefresh(file: TFile): void {
+		const prev = this.modifyTimers.get(file.path);
+		if (prev !== undefined) window.clearTimeout(prev);
+		// registerInterval (despite the name, works for any numeric timer id) so a
+		// pending debounce is also cleared if the plugin unloads before it fires.
+		const id = this.registerInterval(
+			window.setTimeout(() => {
+				this.modifyTimers.delete(file.path);
+				void this.refreshConceptsForFile(file);
+			}, 2000),
+		);
+		this.modifyTimers.set(file.path, id);
+	}
+
+	/** Re-extract just this one file's concepts and fold them into the live map, so
+	 * an edit (a new `[!grill]` callout, a changed vocab entry) is reflected in the
+	 * due-count/dashboard without waiting for a session to touch this note. Same
+	 * extraction call a session start makes (see view.ts) — just for one file,
+	 * on edit, instead of every scoped file, on session start. Best-effort: a
+	 * mid-save read error here just means the next real session re-syncs it, same
+	 * as it always would. */
+	private async refreshConceptsForFile(file: TFile): Promise<void> {
+		try {
+			const text = await this.app.vault.cachedRead(file);
+			const extracted = extractConcepts(file.basename, text, this.data.settings.questionFormats !== "write");
+			reconcileConcepts(this.concepts, extracted);
+			await this.store.saveConcepts(this.concepts);
+			this.refreshStatusBar();
+		} catch {
+			// Best-effort — see doc comment above.
+		}
 	}
 
 	/** Push a graph display-setting change (colour mode, number overlay, grade weighting)
