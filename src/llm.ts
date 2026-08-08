@@ -262,6 +262,7 @@ function buildCall(
 	schema: Record<string, unknown>,
 	maxTokens: number,
 	images: ImageInput[],
+	effort: "low" | "medium" = "medium",
 ): HttpCall {
 	// Every provider except Anthropic (handled specially below, for real cache
 	// breakpoints) just gets the flattened string — same request shape as before.
@@ -334,8 +335,11 @@ function buildCall(
 					json_schema: { name: "result", strict: true, schema },
 				},
 			};
-			// Reasoning models spend max_completion_tokens on thinking; keep it shallow.
-			if (/^(gpt-5|o\d)/.test(cfg.model)) body.reasoning_effort = "low";
+			// Reasoning models spend max_completion_tokens on thinking. Default to "medium" —
+			// grading and explanations are exactly the output quality users judge Grill by,
+			// and "low" was cutting corners there. A caller with a genuine latency reason
+			// (none currently) can still pass "low" explicitly.
+			if (/^(gpt-5|o\d)/.test(cfg.model)) body.reasoning_effort = effort;
 			return {
 				url: "https://api.openai.com/v1/chat/completions",
 				headers: { "content-type": "application/json", authorization: `Bearer ${cfg.apiKey}` },
@@ -450,8 +454,9 @@ async function callJSONOnce(
 	schema: Record<string, unknown>,
 	maxTokens: number,
 	images: ImageInput[],
+	effort: "low" | "medium" = "medium",
 ): Promise<unknown> {
-	const call = buildCall(cfg, system, user, schema, maxTokens, images);
+	const call = buildCall(cfg, system, user, schema, maxTokens, images, effort);
 	const resp = await requestUrl({
 		url: call.url,
 		method: "POST",
@@ -491,13 +496,14 @@ async function callJSON(
 	schema: Record<string, unknown>,
 	maxTokens: number,
 	images: ImageInput[] = [],
+	effort: "low" | "medium" = "medium",
 ): Promise<unknown> {
 	try {
-		return await callJSONOnce(cfg, system, user, schema, maxTokens, images);
+		return await callJSONOnce(cfg, system, user, schema, maxTokens, images, effort);
 	} catch (e) {
 		const msg = (e as Error).message;
 		if (msg !== "Empty model response" && msg !== "Model returned unparseable output") throw e;
-		return await callJSONOnce(cfg, system, user, schema, maxTokens, images);
+		return await callJSONOnce(cfg, system, user, schema, maxTokens, images, effort);
 	}
 }
 
@@ -1216,7 +1222,7 @@ Verdict bands:
 
 Citation before claim: before alleging a specific error, you must be able to point at the specific wrong step or value in the student's answer. If you cannot, do not claim it. Work that is actually correct end to end must be graded 'correct', never 'partial'.
 
-Feedback: at most 2 lines and 30 words total. Line 1: what the answer got right or wrong. Line 2: the specific concept to review. No labels, no praise filler. Use plain punctuation and never use em dashes.
+Feedback: at most 2 lines and 30 words total. Line 1: what the answer got right or wrong. Line 2: the specific concept to review. No labels, no praise filler. Use plain punctuation and never use em dashes. Write it in whatever language the student's preferences say, or otherwise the language their persona/preferences are written in (English if neither gives a signal) — never the NOTE's own language just because the note happens to be written in it, which is actively wrong when the note is itself material for learning that language.
 
 misconceptionTag: on 'partial' or 'incorrect', emit ONE snake_case tag naming the underlying confusion (reuse a provided commonErrors misconception when one matches, e.g. sign_error, reverses_directionality, unit_confusion, confuses_necessary_sufficient). On 'correct', emit an empty string.`;
 
@@ -1269,8 +1275,10 @@ export async function gradeAnswer(
 		authoredGuidance +
 		(instructions
 			? "\n\nThe student wrote these study preferences. Apply any that affect grading (for example " +
-				"strictness, or answer formats to accept such as bullet points); ignore any that are only about " +
-				"how questions are worded. Never let them override the rubric's substance.\n" +
+				"strictness, or answer formats to accept such as bullet points) or that state what language to " +
+				"write your feedback in — always honor a language preference, since it never affects the verdict " +
+				"either way; ignore only preferences that are about how the QUESTION itself is worded. Never let " +
+				"them override the rubric's substance.\n" +
 				`<preferences>\n${instructions}\n</preferences>`
 			: "");
 	const g = (await callJSON(cfg, graderSystem(persona), { cacheable, rest }, GRADE_SCHEMA, 2000, images)) as Grade;
@@ -1304,6 +1312,14 @@ function explainRules(imageCount: number): string {
 already shown gave them — whether they got it right, partially right, or wrong. Ground it in
 the NOTE given below (quote or paraphrase the relevant part rather than inventing an outside
 explanation). When no expected answer was supplied, treat the NOTE as the sole source of truth.
+
+Language: write your explanation in whatever language the student's preferences below say, or
+otherwise the same language their persona/preferences are written in (English if neither gives
+a signal). Do not switch to the NOTE's own language just because the note text happens to be
+written in it — that's the wrong default even when true elsewhere, and actively backwards when
+the note is itself material for learning that language, where an explanation the student can't
+yet read defeats the point of asking for one. Quoting a specific word or short phrase from the
+note in its original language is fine; your own sentences are not.
 
 Output these short, distinct fields — the structure is what makes this readable, so do not
 pad any field into a paragraph:
@@ -1389,6 +1405,7 @@ export async function explainQuestion(
 	hintsShown: string[] = [],
 	images: ImageInput[] = [],
 	persona: string = DEFAULT_PERSONA,
+	instructions = "",
 ): Promise<Explanation> {
 	const cacheable = `NOTE '${q.node}':\n${noteText}\n\n`;
 	const referenceGuidance = q.modelAnswer.trim()
@@ -1405,6 +1422,11 @@ export async function explainQuestion(
 		`VERDICT: ${verdict}\n\n` +
 		`FEEDBACK ALREADY SHOWN TO THE STUDENT: ${feedback || "(none)"}\n\n` +
 		hintsBlock +
+		(instructions
+			? "The student wrote these study preferences; honor them here too, especially anything about " +
+				"tone, depth, or what language to write in.\n" +
+				`<preferences>\n${instructions}\n</preferences>\n\n`
+			: "") +
 		"Explain it more fully.";
 	const data = (await callJSON(
 		cfg,
@@ -1520,6 +1542,9 @@ Debrief rules:
 - pattern: if one underlying confusion recurred across notes, name it in one sentence. Empty string if there is no clear single pattern.
 - nextFocus: the notes to study next session, chosen only from the session's notes.
 - Plain punctuation, never em dashes. Be specific; no praise filler.
+- Write it in whatever language the student's preferences say, or otherwise the language their
+  persona/preferences are written in (English if neither gives a signal) — never a session
+  note's own language just because that note happens to be written in it.
 
 Misconception canonicalization:
 - You are given the raw misconception tags recorded this session and the student's existing canonical misconceptions.
@@ -1581,6 +1606,7 @@ export async function debriefSession(
 	existingCanon: { tag: string; label: string }[],
 	rawTags: { note: string; tag: string }[],
 	persona: string = DEFAULT_PERSONA,
+	instructions = "",
 ): Promise<{ debrief: SessionDebrief; assignments: TagAssignment[] }> {
 	const canonList = existingCanon.length
 		? existingCanon.map((c) => `- ${c.tag}: "${c.label}"`).join("\n")
@@ -1590,7 +1616,11 @@ export async function debriefSession(
 		`SESSION TRANSCRIPT:\n${transcript}\n\n` +
 		`NOTES IN THIS SESSION: ${noteNames.join(", ")}\n\n` +
 		`RAW MISCONCEPTION TAGS RECORDED THIS SESSION (note -> tag):\n${tagList}\n\n` +
-		`EXISTING CANONICAL MISCONCEPTIONS (reuse these when a raw tag means the same thing):\n${canonList}`;
+		`EXISTING CANONICAL MISCONCEPTIONS (reuse these when a raw tag means the same thing):\n${canonList}` +
+		(instructions
+			? "\n\nThe student wrote these study preferences; honor anything relevant here too, especially " +
+				`what language to write in.\n<preferences>\n${instructions}\n</preferences>`
+			: "");
 	const data = (await callJSON(cfg, debriefSystem(persona), user, debriefSchema(noteNames), 2000)) as {
 		debrief: SessionDebrief;
 		assignments: TagAssignment[];

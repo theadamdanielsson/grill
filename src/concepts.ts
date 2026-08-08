@@ -176,7 +176,7 @@ export function reconcileConcepts(map: ConceptMap, concepts: Concept[]): void {
 /** AI path: verdict + question difficulty → difficulty-aware rating. `confidence` (0-1,
  * from the opt-in "how sure are you?" check; null when it's off or wasn't answered this
  * time) lets a genuinely-guessed correct answer land as Hard instead of Good/Easy, and
- * `hintsUsed` does the same unconditionally when any hint was used — see toRating's doc
+ * `hintsUsed` does the same once real assistance (tier2+) was used — see toRating's doc
  * comment for both. */
 export function recordConceptAnswer(
 	map: ConceptMap,

@@ -1658,6 +1658,7 @@ export class SessionView extends ItemView {
 					hintsShown,
 					this.noteImages[r.node] ?? [],
 					this.sessionPersona,
+					this.sessionInstructions,
 				);
 				const out = box.createDiv({ cls: "grill-explanation" });
 				this.explanationBlock(out, "What went wrong", explanation.whatWentWrong);
@@ -1804,7 +1805,16 @@ export class SessionView extends ItemView {
 				const out = await this.withDebouncedLoading(
 					"Writing your debrief",
 					"Summarising how the session went.",
-					() => debriefSession(cfg, transcript, sessionNodes, existingCanon, rawTags, this.sessionPersona),
+					() =>
+						debriefSession(
+							cfg,
+							transcript,
+							sessionNodes,
+							existingCanon,
+							rawTags,
+							this.sessionPersona,
+							this.sessionInstructions,
+						),
 				);
 				debrief = out.debrief;
 				if (out.assignments.length) {

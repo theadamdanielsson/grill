@@ -234,10 +234,13 @@ const LOW_CONFIDENCE = 0.3;
  * confident answer; `null` (the check is off, or wasn't answered this time) falls
  * straight back to the difficulty-tag heuristic, unchanged.
  *
- * `hintsUsed` closes the same gap unconditionally, with no setting to opt into: a
- * correct answer reached only after a hint was real assistance, not independent
- * recall, regardless of how confident the student then felt — so any hint at all
- * (no threshold; even one is real help) also caps the rating at Hard. */
+ * `hintsUsed` closes the same gap, with no setting to opt into: a correct answer
+ * reached only after real assistance isn't independent recall. But tier1 is
+ * deliberately just "a one-sentence conceptual nudge" (see TUTOR_RULES in llm.ts) —
+ * capping on that alone was too aggressive in practice, penalizing a nudge as hard
+ * as revealing the actual concept or a partial step, and stalling stability growth
+ * for students who lean on a light nudge often. Only tier2+ (the underlying concept
+ * or a real step toward the answer) counts as assistance strong enough to cap. */
 export function toRating(
 	verdict: Verdict,
 	difficulty: QDifficulty = "medium",
@@ -246,7 +249,7 @@ export function toRating(
 ): number {
 	if (verdict === "incorrect") return 1;
 	if (verdict === "partial") return 2;
-	if ((confidence !== null && confidence <= LOW_CONFIDENCE) || hintsUsed > 0) return 2;
+	if ((confidence !== null && confidence <= LOW_CONFIDENCE) || hintsUsed > 1) return 2;
 	return difficulty === "hard" ? 4 : 3;
 }
 

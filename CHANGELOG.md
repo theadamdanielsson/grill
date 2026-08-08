@@ -1,5 +1,33 @@
 # Changelog
 
+## 4.8.0
+
+- **Reasoning models no longer default to `reasoning_effort: "low"`.** Every
+  OpenAI reasoning-model call (gpt-5/o-series) — question generation, grading,
+  "Explain this", debriefs — was quietly capped at "low" effort to save on
+  latency and cost. That's exactly the corner not to cut on the output people
+  actually judge Grill's answers by, so "medium" is now the default across the
+  board; nothing currently opts back into "low".
+- **"Explain this" and the session debrief now honor your study preferences.**
+  Both `explainQuestion` and `debriefSession` never received the Preferences
+  text from Instructions.md at all — only persona did — so a preference like
+  "write explanations in English" silently had no effect on either. Fixed, and
+  grading's own prompt used to explicitly tell the model to ignore any
+  preference "about how questions are worded"; narrowed that so a language
+  preference always applies to feedback text, since it never affects the verdict.
+- **Explanations, feedback, and debriefs no longer default to the note's own
+  language.** Added an explicit language rule to each of those prompts: honor a
+  stated preference, otherwise match the language persona/preferences are
+  written in, and never switch to the note's source language just because the
+  note happens to be written in it — actively backwards when the note is itself
+  material for learning that language.
+- **A light hint no longer stalls stability growth.** A correct answer that
+  used any hint at all, even tier1's one-sentence conceptual nudge, was capped
+  at FSRS rating "Hard" — the same penalty as revealing the full underlying
+  concept. That made a note read "struggling" far longer than it should for
+  anyone who leans on a light nudge. Only tier2+ (the actual concept, or a real
+  step toward the answer) counts as assistance strong enough to cap now.
+
 ## 4.7.0
 
 - **Migrated FSRS scheduling to `ts-fsrs`** (open-spaced-repetition's reference
