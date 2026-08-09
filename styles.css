@@ -307,6 +307,14 @@
   gap: 0.5em;
   margin: 0.75em 0 0.5em;
 }
+/* Why this question, right now — new/review/missed/overdue. Text only, colored by the
+ * same severity vocabulary as the verdict labels (.grill-v-correct/partial/incorrect
+ * below): no pill, no tinted background, matching how those already read (see the
+ * "no pill/tinted background on any variant" note on .grill-verdict-badge). */
+.grill-due-reason {
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-semibold, 600);
+}
 .grill-end-session-row {
   display: flex;
   justify-content: flex-end;
@@ -549,6 +557,37 @@
 .grill-onboard-row label {
   cursor: pointer;
   font-size: var(--font-ui-small);
+}
+
+/* First-run onboarding: AI vs. fully-offline choice, before folder selection so a
+   no-key user's very first "Get grilled" click already works — see renderOnboarding. */
+.grill-mode-choice {
+  display: flex;
+  gap: 0.6em;
+  margin: 0.6em 0 1.2em;
+}
+.grill-mode-card {
+  flex: 1;
+  cursor: pointer;
+  padding: 0.7em 0.8em;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--grill-radius-s);
+  transition: border-color 0.1s ease, background 0.1s ease;
+}
+.grill-mode-card:hover {
+  border-color: var(--grill-flame);
+}
+.grill-mode-card.is-active {
+  border-color: var(--grill-gold-lit);
+  background: var(--grill-screen);
+  box-shadow: 0 0 10px rgba(255, 210, 63, 0.2);
+}
+.grill-mode-title {
+  font-weight: var(--font-semibold, 600);
+  margin-bottom: 0.2em;
+}
+.grill-mode-card .grill-meta {
+  line-height: 1.4;
 }
 
 /* Brand, light touch: settings stays a normal native Obsidian page (no CRT texture, no

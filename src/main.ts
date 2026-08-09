@@ -105,6 +105,12 @@ interface GrillSettings {
 	 * due/review material instead, so the due backlog can't balloon from unlimited
 	 * new material outrunning how fast it can actually be reviewed. 0 = no cap. */
 	newConceptsPerDay: number;
+	/** Settings-tab progressive disclosure: reveal the rarely-touched tuning/maintenance
+	 * settings (careful grading, coverage weighting, reuse-across-days, cache clearing,
+	 * missing-link bridges, etc.) below a single toggle instead of always showing all
+	 * ~30 settings flat. Sticky across reopens — a power user who turns it on shouldn't
+	 * have to re-expand every time. */
+	showAdvancedSettings: boolean;
 }
 
 interface PluginData {
@@ -150,6 +156,7 @@ function defaultSettings(): GrillSettings {
 		desiredRetention: 90,
 		newConceptsPerDay: 20,
 		legacyDefaultsMigrated: false,
+		showAdvancedSettings: false,
 	};
 }
 
@@ -225,6 +232,7 @@ export default class GrillPlugin extends Plugin {
 		if (typeof s.desiredRetention === "number") settings.desiredRetention = s.desiredRetention;
 		if (typeof s.newConceptsPerDay === "number") settings.newConceptsPerDay = s.newConceptsPerDay;
 		if (typeof s.legacyDefaultsMigrated === "boolean") settings.legacyDefaultsMigrated = s.legacyDefaultsMigrated;
+		if (typeof s.showAdvancedSettings === "boolean") settings.showAdvancedSettings = s.showAdvancedSettings;
 		// One-time upgrade for legacy installs. persist() writes the whole settings
 		// object, so an existing user has the old shipped defaults saved to disk —
 		// changing defaultSettings() alone never reaches them. Carry the two changed
@@ -466,6 +474,14 @@ export default class GrillPlugin extends Plugin {
 		this.statusBar.setText(n > 0 ? `Grill: ${n} due` : "Grill");
 	}
 
+	/** Whether a session touches the model at all — questions, grading, or both. Single
+	 * source of truth for "does this session need a key" / "is an AI debrief possible",
+	 * so the two call sites don't each re-derive the same `questionSource === "ai" ||
+	 * gradingMode === "ai"` check and risk drifting apart. */
+	usesAI(): boolean {
+		return this.data.settings.questionSource === "ai" || this.data.settings.gradingMode === "ai";
+	}
+
 	/** Debounce a single file's concept re-extraction so a burst of "modify" events
 	 * from active editing/autosave collapses into one re-parse after editing settles,
 	 * not one per keystroke-triggered save. */
@@ -493,7 +509,7 @@ export default class GrillPlugin extends Plugin {
 	private async refreshConceptsForFile(file: TFile): Promise<void> {
 		try {
 			const text = await this.app.vault.cachedRead(file);
-			const extracted = extractConcepts(file.basename, text, this.data.settings.questionFormats !== "write");
+			const extracted = extractConcepts(file.basename, text, this.data.settings.questionFormats);
 			reconcileConcepts(this.concepts, extracted);
 			await this.store.saveConcepts(this.concepts);
 			this.refreshStatusBar();
@@ -685,6 +701,21 @@ class GrillSettingTab extends PluginSettingTab {
 					"keys, provider, and folder choices are kept.",
 			)
 			.addButton((b) => b.setButtonText("Restore").onClick(() => void this.restoreDefaults()));
+
+		new Setting(containerEl)
+			.setName("Show advanced settings")
+			.setDesc(
+				"Reveal rarely-touched tuning and maintenance settings (careful grading, coverage weighting, " +
+					"reuse-across-days, cache clearing, and similar) below their usual toggle. Off by default so a " +
+					"first pass through Settings isn't ~30 options deep.",
+			)
+			.addToggle((t) =>
+				t.setValue(s.showAdvancedSettings).onChange(async (v) => {
+					s.showAdvancedSettings = v;
+					await this.plugin.persist();
+					this.display();
+				}),
+			);
 
 		// ------------------------------------------------------------ AI
 		new Setting(containerEl).setName("AI").setHeading();
@@ -902,19 +933,25 @@ class GrillSettingTab extends PluginSettingTab {
 			);
 		}
 
-		new Setting(containerEl)
-			.setName("Send images to the model")
-			.setDesc(
-				"When a note embeds images and your model can read them (Claude, GPT, Gemini, and vision Ollama " +
-					"models can), Grill sends the images too, so it can quiz on diagrams and screenshots. Costs " +
-					"extra tokens. Text-only models never receive images.",
-			)
-			.addToggle((t) =>
-				t.setValue(s.sendImages).onChange(async (v) => {
-					s.sendImages = v;
-					await this.plugin.persist();
-				}),
-			);
+		// Only reachable when questions are generated at all — no-key ("From my notes")
+		// sessions never call the model, so this toggle would otherwise sit there doing
+		// nothing with no indication why. Advanced: a one-time "does my note have
+		// diagrams" call, not something most sessions need to reconsider.
+		if (s.questionSource === "ai" && s.showAdvancedSettings) {
+			new Setting(containerEl)
+				.setName("Send images to the model")
+				.setDesc(
+					"When a note embeds images and your model can read them (Claude, GPT, Gemini, and vision Ollama " +
+						"models can), Grill sends the images too, so it can quiz on diagrams and screenshots. Costs " +
+						"extra tokens. Text-only models never receive images.",
+				)
+				.addToggle((t) =>
+					t.setValue(s.sendImages).onChange(async (v) => {
+						s.sendImages = v;
+						await this.plugin.persist();
+					}),
+				);
+		}
 
 		new Setting(containerEl)
 			.setName("Persona & instructions")
@@ -1020,96 +1057,102 @@ class GrillSettingTab extends PluginSettingTab {
 				}),
 			);
 
-		new Setting(containerEl)
-			.setName("Confidence check")
-			.setDesc(
-				"After each answer, ask how sure you were (Sure / Think so / Guessing). Grill tracks how well " +
-					"your confidence matches your accuracy and tells you in the debrief when you lean over- or " +
-					"underconfident. Off by default; no extra model cost.",
-			)
-			.addToggle((t) =>
-				t.setValue(s.confidenceCheck).onChange(async (v) => {
-					s.confidenceCheck = v;
-					await this.plugin.persist();
-				}),
-			);
+		if (s.showAdvancedSettings) {
+			new Setting(containerEl)
+				.setName("Confidence check")
+				.setDesc(
+					"After each answer, ask how sure you were (Sure / Think so / Guessing). Grill tracks how well " +
+						"your confidence matches your accuracy and tells you in the debrief when you lean over- or " +
+						"underconfident. Off by default; no extra model cost.",
+				)
+				.addToggle((t) =>
+					t.setValue(s.confidenceCheck).onChange(async (v) => {
+						s.confidenceCheck = v;
+						await this.plugin.persist();
+					}),
+				);
 
-		new Setting(containerEl)
-			.setName("Find missing links")
-			.setDesc(
-				"In AI sessions, look for two of your notes that clearly relate but aren't linked, quiz you on the " +
-					"connection, and offer to add the [[link]] for you. Needs a key; off for no-key sessions.",
-			)
-			.addToggle((t) =>
-				t.setValue(s.graphInsights).onChange(async (v) => {
-					s.graphInsights = v;
-					await this.plugin.persist();
-					this.display();
-				}),
-			);
+			new Setting(containerEl)
+				.setName("Find missing links")
+				.setDesc(
+					"In AI sessions, look for two of your notes that clearly relate but aren't linked, quiz you on the " +
+						"connection, and offer to add the [[link]] for you. Needs a key; off for no-key sessions.",
+				)
+				.addToggle((t) =>
+					t.setValue(s.graphInsights).onChange(async (v) => {
+						s.graphInsights = v;
+						await this.plugin.persist();
+						this.display();
+					}),
+				);
 
-		if (s.graphInsights) {
-			this.sliderSetting(
-				containerEl,
-				"Missing-link questions per session",
-				"How many connection questions to add at most, on top of your normal review.",
-				0,
-				3,
-				Math.min(Math.max(s.bridgesPerSession, 0), 3),
-				(v) => String(v),
-				async (v) => {
-					s.bridgesPerSession = v;
-					await this.plugin.persist();
-				},
-			);
+			if (s.graphInsights) {
+				this.sliderSetting(
+					containerEl,
+					"Missing-link questions per session",
+					"How many connection questions to add at most, on top of your normal review.",
+					0,
+					3,
+					Math.min(Math.max(s.bridgesPerSession, 0), 3),
+					(v) => String(v),
+					async (v) => {
+						s.bridgesPerSession = v;
+						await this.plugin.persist();
+					},
+				);
+			}
+
+			new Setting(containerEl)
+				.setName("Reuse questions across days")
+				.setDesc(
+					"Off (default): a concept due for review always gets a freshly written question once a new day has " +
+						"passed since you last saw it — recognizing the identical sentence you read days ago isn't a real " +
+						"memory test. Reviewing the same concept again within the same day (e.g. right after getting it " +
+						"wrong) still reuses the cached question either way, since that's a genuine 'you just saw this' " +
+						"repeat, not a spaced review. Turn this on to reuse cached questions across days too and minimize " +
+						"model calls, at the cost of eventually seeing the same phrasing again on a real review.",
+				)
+				.addToggle((t) =>
+					t.setValue(s.reuseAcrossDays).onChange(async (v) => {
+						s.reuseAcrossDays = v;
+						await this.plugin.persist();
+					}),
+				);
+
+			new Setting(containerEl)
+				.setName("Clear cached questions")
+				.setDesc(
+					"Forces every concept to write a fresh question next time it's due, instead of waiting for its next " +
+						"new-day review (or, with 'Reuse questions across days' on above, indefinitely). Useful right " +
+						"after a Grill update changes how questions are written (a new format, a prompt fix) so it " +
+						"reaches concepts you've already studied a lot, not just new ones. Doesn't affect a session " +
+						"already open.",
+				)
+				.addButton((b) =>
+					b.setButtonText("Clear").onClick(async () => {
+						await this.plugin.store.saveQuestionBank({});
+						new Notice("Grill: cleared cached questions.");
+					}),
+				);
+
+			// Only reachable under AI grading — self-grade's Again/Hard/Good/Easy is the
+			// student's own verdict, nothing here for a consensus of calls to double-check.
+			if (s.gradingMode === "ai") {
+				new Setting(containerEl)
+					.setName("Careful grading")
+					.setDesc(
+						"When AI grades your answer, run a small consensus of calls and fall back to the stricter verdict on " +
+							"disagreement. Cuts the chance of being marked correct when you weren't, at a higher per-answer cost. " +
+							"Off by default.",
+					)
+					.addToggle((t) =>
+						t.setValue(s.carefulGrade).onChange(async (v) => {
+							s.carefulGrade = v;
+							await this.plugin.persist();
+						}),
+					);
+			}
 		}
-
-		new Setting(containerEl)
-			.setName("Reuse questions across days")
-			.setDesc(
-				"Off (default): a concept due for review always gets a freshly written question once a new day has " +
-					"passed since you last saw it — recognizing the identical sentence you read days ago isn't a real " +
-					"memory test. Reviewing the same concept again within the same day (e.g. right after getting it " +
-					"wrong) still reuses the cached question either way, since that's a genuine 'you just saw this' " +
-					"repeat, not a spaced review. Turn this on to reuse cached questions across days too and minimize " +
-					"model calls, at the cost of eventually seeing the same phrasing again on a real review.",
-			)
-			.addToggle((t) =>
-				t.setValue(s.reuseAcrossDays).onChange(async (v) => {
-					s.reuseAcrossDays = v;
-					await this.plugin.persist();
-				}),
-			);
-
-		new Setting(containerEl)
-			.setName("Clear cached questions")
-			.setDesc(
-				"Forces every concept to write a fresh question next time it's due, instead of waiting for its next " +
-					"new-day review (or, with 'Reuse questions across days' on above, indefinitely). Useful right " +
-					"after a Grill update changes how questions are written (a new format, a prompt fix) so it " +
-					"reaches concepts you've already studied a lot, not just new ones. Doesn't affect a session " +
-					"already open.",
-			)
-			.addButton((b) =>
-				b.setButtonText("Clear").onClick(async () => {
-					await this.plugin.store.saveQuestionBank({});
-					new Notice("Grill: cleared cached questions.");
-				}),
-			);
-
-		new Setting(containerEl)
-			.setName("Careful grading")
-			.setDesc(
-				"When AI grades your answer, run a small consensus of calls and fall back to the stricter verdict on " +
-					"disagreement. Cuts the chance of being marked correct when you weren't, at a higher per-answer cost. " +
-					"Off by default.",
-			)
-			.addToggle((t) =>
-				t.setValue(s.carefulGrade).onChange(async (v) => {
-					s.carefulGrade = v;
-					await this.plugin.persist();
-				}),
-			);
 
 		new Setting(containerEl)
 			.setName("Sound & celebration")
@@ -1208,7 +1251,7 @@ class GrillSettingTab extends PluginSettingTab {
 					}),
 			);
 
-		if (s.graphNumberMode !== "off") {
+		if (s.graphNumberMode !== "off" && s.showAdvancedSettings) {
 			this.sliderSetting(
 				containerEl,
 				"Grade weighting",
@@ -1232,35 +1275,37 @@ class GrillSettingTab extends PluginSettingTab {
 		// ------------------------------------------------------------ Storage
 		new Setting(containerEl).setName("Storage").setHeading();
 
-		new Setting(containerEl)
-			.setName("Show quiz history in a note's backlinks")
-			.setDesc(
-				"Each saved session links back to the notes it tested, so opening a note's backlinks shows every " +
-					'time Grill quizzed you on it. Off: sessions are still saved, just not linked. (They appear in ' +
-					'the graph; hide them with -path:"Grill/" in the graph filter.)',
-			)
-			.addToggle((t) =>
-				t.setValue(s.linkSessions).onChange(async (v) => {
-					s.linkSessions = v;
-					await this.plugin.persist();
-				}),
-			);
-
-		new Setting(containerEl)
-			.setName("Grill folder")
-			.setDesc(
-				"Vault folder for mastery.json and session transcripts. These are plain files: " +
-					"read them, edit them, sync them like any note.",
-			)
-			.addText((t) =>
-				t
-					.setPlaceholder("Grill")
-					.setValue(s.folder)
-					.onChange(async (v) => {
-						s.folder = v.trim() || "Grill";
+		if (s.showAdvancedSettings) {
+			new Setting(containerEl)
+				.setName("Show quiz history in a note's backlinks")
+				.setDesc(
+					"Each saved session links back to the notes it tested, so opening a note's backlinks shows every " +
+						'time Grill quizzed you on it. Off: sessions are still saved, just not linked. (They appear in ' +
+						'the graph; hide them with -path:"Grill/" in the graph filter.)',
+				)
+				.addToggle((t) =>
+					t.setValue(s.linkSessions).onChange(async (v) => {
+						s.linkSessions = v;
 						await this.plugin.persist();
 					}),
-			);
+				);
+
+			new Setting(containerEl)
+				.setName("Grill folder")
+				.setDesc(
+					"Vault folder for mastery.json and session transcripts. These are plain files: " +
+						"read them, edit them, sync them like any note.",
+				)
+				.addText((t) =>
+					t
+						.setPlaceholder("Grill")
+						.setValue(s.folder)
+						.onChange(async (v) => {
+							s.folder = v.trim() || "Grill";
+							await this.plugin.persist();
+						}),
+				);
+		}
 
 		new Setting(containerEl)
 			.setName("Grill's folders")
@@ -1281,24 +1326,26 @@ class GrillSettingTab extends PluginSettingTab {
 					}),
 			);
 
-		new Setting(containerEl)
-			.setName("Excluded folders")
-			.setDesc(
-				"Comma-separated folders to leave out of sessions, so notes like templates and attachments " +
-					"aren't quizzed. Relative paths, e.g. Templates, Inbox, Archive.",
-			)
-			.addText((t) =>
-				t
-					.setPlaceholder("Templates, Inbox")
-					.setValue(s.excludedFolders.join(", "))
-					.onChange(async (v) => {
-						s.excludedFolders = v
-							.split(",")
-							.map((x) => x.trim())
-							.filter(Boolean);
-						await this.plugin.persist();
-					}),
-			);
+		if (s.showAdvancedSettings) {
+			new Setting(containerEl)
+				.setName("Excluded folders")
+				.setDesc(
+					"Comma-separated folders to leave out of sessions, so notes like templates and attachments " +
+						"aren't quizzed. Relative paths, e.g. Templates, Inbox, Archive.",
+				)
+				.addText((t) =>
+					t
+						.setPlaceholder("Templates, Inbox")
+						.setValue(s.excludedFolders.join(", "))
+						.onChange(async (v) => {
+							s.excludedFolders = v
+								.split(",")
+								.map((x) => x.trim())
+								.filter(Boolean);
+							await this.plugin.persist();
+						}),
+				);
+		}
 
 		// Kick off a background model-list fetch the first time the tab opens.
 		if (!this.modelLists[p] && (s.apiKeys[p] || p === "ollama" || (p === "custom" && s.customBaseUrl)))

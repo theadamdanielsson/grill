@@ -1,5 +1,53 @@
 # Changelog
 
+## 5.0.0
+
+- **Sessions no longer collapse onto one note.** The concept picker's daily
+  new-concept cap sliced the untested pool before round-robining it across
+  notes, not after — and since that pool arrives already grouped by note
+  (with the note you just missed sorting first, having just been
+  prioritized), the slice could be entirely one note's concepts before
+  interleaving ever got a chance to mix anything in. A scoped "Untested"
+  session, or the very next session after a miss, could end up drilling a
+  single note end to end while every other untested note in scope sat
+  untouched. Interleaving now runs before the daily cap is applied, so the
+  cap is spent round-robin across every note with fresh material, not
+  front-loaded onto whichever one happened to sort first.
+- **Every question now says why it's showing up.** A small tag next to the
+  note chip — New, Review, Missed 13m ago, Overdue 2d — computed from the
+  same scheduling data driving selection, so a concept resurfacing minutes
+  after a miss reads as the schedule working, not a bug. Suppressed for
+  bridge/routed/contagion questions, which already explain themselves in
+  plain language, and during a redo, where nothing is really "due."
+- **"Multiple choice only" now actually holds, everywhere a question can
+  come from.** It only ever reached fresh AI generation as a soft prompt
+  hint the model could quietly ignore, was never wired into no-key ("From
+  my notes") generation at all — which kept producing mostly
+  fill-in-the-blank regardless — and wasn't checked on cache reuse, so a
+  variant banked before switching to MC (or from an abandoned earlier
+  session) could keep getting served indefinitely. Fixed at the source: AI
+  generation now hard-rejects a plain free-response answer under "MC only"
+  and retries once with that reason fed back; no-key generation converts
+  every eligible definition instead of a throttled one-in-three; and cache
+  reuse now checks a banked question's format against the current setting
+  before serving it.
+- **Onboarding now asks how you want to study, before it becomes a dead
+  end.** A fresh install defaults to AI questions + AI grading, but
+  onboarding never asked about a key — click "Get grilled" with none set
+  and you hit a Notice telling you to go find the no-key option yourself.
+  Onboarding now asks AI-powered vs. fully offline as a real first step
+  (still defaults to AI if you don't touch it), and the dead-end Notice
+  itself, for anyone who still hits it, now has a one-click "switch to
+  no-key mode" link instead of just instructions.
+- **Settings: fewer no-ops, less scroll.** "Careful grading" and "Send
+  images to the model" used to show unconditionally and silently do
+  nothing under self-grading or no-key questions respectively — now gated
+  to the mode they actually affect. A new "Show advanced settings" toggle
+  (off by default) also moves ten rarely-touched tuning/maintenance
+  settings — careful grading, coverage weighting, reuse-across-days, cache
+  clearing, missing-link bridges, and a few others — out of the default
+  flat scroll, so a first pass through Settings isn't ~30 options deep.
+
 ## 4.9.0
 
 - **"Bad question" now works after answering too, not just before.** The pre-answer

@@ -2,7 +2,7 @@
 
 import { ItemView, MarkdownRenderer, Notice, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
-import { adjudicateBridges, ConceptTarget, debriefSession, explainQuestion, generateQuestions, Grade, gradeAnswer, LLMConfig, Question, supportsVision, Verdict } from "./llm";
+import { adjudicateBridges, ConceptTarget, debriefSession, explainQuestion, formatSatisfies, generateQuestions, Grade, gradeAnswer, LLMConfig, Question, supportsVision, Verdict } from "./llm";
 import { Concept, ConceptKind, extractConcepts, localQuestionForConcept, localQuestions } from "./generate-local";
 import { BridgeMap, detectBridgeCandidates, pairKey } from "./bridges";
 import { buildGraph, formatGrade, gradeScore, type GraphNode } from "./graph";
@@ -228,6 +228,16 @@ const MAP_NODE_CAP = 600;
  * math already keying off that boundary. */
 function sameCalendarDay(a: Date, b: Date): boolean {
 	return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+/** A millisecond gap as the coarsest unit that reads naturally ("13m", "4h", "2d") —
+ * for `dueReasonTag`, where the exact minute never matters, only the rough scale. */
+function formatAgo(ms: number): string {
+	const minutes = Math.max(1, Math.round(ms / 60_000));
+	if (minutes < 60) return `${minutes}m`;
+	const hours = Math.round(minutes / 60);
+	if (hours < 24) return `${hours}h`;
+	return `${Math.round(hours / 24)}d`;
 }
 
 /** Lightweight, dependency-free duplicate detector: Jaccard similarity over
@@ -467,6 +477,33 @@ export class SessionView extends ItemView {
 		point("Watch your map fill in", "as you prove what you know.");
 		point("Study anything", "in one folder, a tag, or the whole vault.");
 
+		// The default (AI questions + AI grading) needs a key, and onboarding used to
+		// never ask — a fresh install with no key clicked "Get grilled" and hit a dead
+		// Notice on its very first try. Asking here means the no-key path is a conscious
+		// pick, not a discovery made by failing.
+		screen.createDiv({ cls: "grill-section-label", text: "How do you want to study?" });
+		let mode: "ai" | "local" = "ai";
+		const modeBox = screen.createDiv({ cls: "grill-mode-choice" });
+		const aiCard = modeBox.createDiv({ cls: "grill-mode-card is-active" });
+		aiCard.createDiv({ cls: "grill-mode-title", text: "AI-powered" });
+		aiCard.createDiv({
+			cls: "grill-meta",
+			text: "AI writes and grades questions from your notes. Needs an API key — add one in Settings after this.",
+		});
+		const localCard = modeBox.createDiv({ cls: "grill-mode-card" });
+		localCard.createDiv({ cls: "grill-mode-title", text: "Fully offline" });
+		localCard.createDiv({
+			cls: "grill-meta",
+			text: "Questions built from your notes' own structure, graded by you. No key, no cost, nothing leaves your vault.",
+		});
+		const pickMode = (m: "ai" | "local"): void => {
+			mode = m;
+			aiCard.toggleClass("is-active", m === "ai");
+			localCard.toggleClass("is-active", m === "local");
+		};
+		aiCard.onclick = () => pickMode("ai");
+		localCard.onclick = () => pickMode("local");
+
 		screen.createDiv({ cls: "grill-section-label", text: "Which folders should Grill study?" });
 		screen.createEl("p", {
 			cls: "grill-meta",
@@ -510,6 +547,10 @@ export class SessionView extends ItemView {
 		const btn = screen.createEl("button", { text: "Get started", cls: "mod-cta grill-start-btn grill-primary-cta" });
 		btn.onclick = async () => {
 			this.plugin.data.settings.includedFolders = [...chosen];
+			if (mode === "local") {
+				this.plugin.data.settings.questionSource = "local";
+				this.plugin.data.settings.gradingMode = "self";
+			}
 			this.plugin.data.settings.onboarded = true;
 			await this.plugin.persist();
 			this.plugin.refreshStatusBar();
@@ -1254,6 +1295,13 @@ export class SessionView extends ItemView {
 		const meta = card.createDiv({ cls: "grill-meta-row" });
 		meta.createSpan({ cls: "grill-meta", text: `Question ${this.idx + 1} of ${this.targetCount}` });
 		if (!this.plugin.data.settings.hideNoteName) meta.createSpan({ cls: "grill-chip", text: q.node });
+		// Only the generic case needs this — a bridge/routed/contagion question already
+		// explains itself below in plain language, and stacking a due-reason on top of
+		// that would just repeat the same point in a second voice.
+		if (!q.connectTo && !q.routedFrom && !q.contagionFrom) {
+			const reason = this.dueReasonTag(q.conceptId);
+			if (reason) meta.createSpan({ cls: `grill-due-reason ${reason.cls}`, text: reason.text });
+		}
 		this.renderEndSessionLink(card);
 
 		// Connections mode: make the bridge legible. Names are the point of the mode,
@@ -1514,6 +1562,34 @@ export class SessionView extends ItemView {
 			});
 			blankInputs[0].focus();
 		}
+	}
+
+	/** Why THIS question is showing up right now — new material, a recent miss due back
+	 * immediately, a plain overdue review, or just "review" for a comfortably-scheduled
+	 * reshow (a same-day repeat, an authored question, a redo). Reuses the verdict
+	 * labels' own color vocabulary (grill-v-correct/partial/incorrect) for severity
+	 * rather than correctness: a concept due back minutes after a miss reads with the
+	 * same urgency as an incorrect answer, a plain overdue review the same as partial —
+	 * so a note resurfacing right after you missed it reads as the schedule working, not
+	 * a bug (see the interleaving fix earlier this session, which this is the visible
+	 * half of). Null when there's nothing to say: no concept (a bridge/connections
+	 * question already explains itself above), or mid-replay, where nothing is really
+	 * "due" at all. */
+	private dueReasonTag(conceptId: string | undefined, now = new Date()): { text: string; cls: string } | null {
+		if (this.replayMode || !conceptId) return null;
+		const cm = this.concepts[conceptId];
+		if (!cm) return null;
+		if (!conceptTested(cm)) return { text: "New", cls: "grill-v-skipped" };
+		const overdue = !!cm.dueAt && new Date(cm.dueAt).getTime() <= now.getTime();
+		if (statusOf(cm) === "struggling" && overdue) {
+			const elapsed = cm.lastSeen ? now.getTime() - new Date(cm.lastSeen).getTime() : 0;
+			return { text: `Missed ${formatAgo(elapsed)} ago`, cls: "grill-v-incorrect" };
+		}
+		if (overdue) {
+			const elapsed = cm.dueAt ? now.getTime() - new Date(cm.dueAt).getTime() : 0;
+			return { text: `Overdue ${formatAgo(elapsed)}`, cls: "grill-v-partial" };
+		}
+		return { text: "Review", cls: "grill-v-skipped" };
 	}
 
 	private verdictLabel(r: QuestionResult): { text: string; cls: string } {
@@ -1804,7 +1880,7 @@ export class SessionView extends ItemView {
 		}
 		const s = this.plugin.data.settings;
 		const cfg = this.plugin.llmConfig();
-		const usedAI = s.questionSource === "ai" || s.gradingMode === "ai";
+		const usedAI = this.plugin.usesAI();
 		const sessionNodes = [...new Set(this.results.map((r) => r.node))];
 
 		let debrief = deterministicDebrief(this.results);
@@ -2124,9 +2200,8 @@ export class SessionView extends ItemView {
 						this.sessionInstructions,
 						this.linksBlock,
 						this.sessionPersona,
-						this.plugin.data.settings.questionFormats !== "write",
+						this.plugin.data.settings.questionFormats,
 						formatCounts,
-						this.plugin.data.settings.questionFormats === "mixed",
 					);
 					// The cursor already advanced past this whole batch (targets consumed,
 					// not questions produced — see above), so any target the validator
@@ -2155,8 +2230,13 @@ export class SessionView extends ItemView {
 		}
 
 	/** A cached question for this concept that is safe to reuse now, or null. Requires a
-	 * bank entry whose source hash still matches the concept (note unchanged); rotates to
-	 * the least-shown variant.
+	 * bank entry whose source hash still matches the concept (note unchanged) AND whose
+	 * format satisfies the current "Question formats" setting (see `formatSatisfies`,
+	 * the same check fresh generation validates against) — a variant banked back when the
+	 * student was on Mixed (or before they switched to MC/Write only) must not get rotated
+	 * back in just because it's the least-shown one; that's how "MC only" quietly kept
+	 * serving old write-in questions forever. Rotates to the least-shown variant among
+	 * whatever's left.
 	 *
 	 * Reuse is gated on elapsed time, not a shown-count: a same-day re-show (the FSRS
 	 * relearn loop after "Again", or reviewing the same concept twice in one sitting) is
@@ -2171,7 +2251,8 @@ export class SessionView extends ItemView {
 		if (!c || c.authored) return null; // authored questions are verbatim, not banked
 		const bank = this.questionBank[conceptId];
 		if (!bank || !bank.length) return null;
-		const fresh = bank.filter((e) => e.sourceHash === c.sourceHash);
+		const wantFormat = this.plugin.data.settings.questionFormats;
+		const fresh = bank.filter((e) => e.sourceHash === c.sourceHash && formatSatisfies(e.type, wantFormat));
 		if (!fresh.length) return null;
 		fresh.sort(
 			(a, b) => a.timesShown - b.timesShown || (a.lastShownAt ?? "").localeCompare(b.lastShownAt ?? ""),
@@ -2405,12 +2486,29 @@ export class SessionView extends ItemView {
 	private async startSession(): Promise<void> {
 		this.replayMode = false;
 		const s = this.plugin.data.settings;
-		const needsKey = s.questionSource === "ai" || s.gradingMode === "ai";
+		const needsKey = this.plugin.usesAI();
 		const cfg = this.plugin.llmConfig();
 		if (needsKey && !cfg) {
+			// A one-click way out, not just instructions to go find it in Settings: this is
+			// the exact dead end a fresh no-key install used to hit on its very first "Get
+			// grilled" click, before onboarding asked about AI vs. offline — this covers
+			// anyone who picked AI then, or never saw that screen (upgraded from an older
+			// version), and just wants to keep going right now.
 			new Notice(
-				"Grill: set an API key in settings, or switch questions and grading to the no-key options.",
-				8000,
+				createFragment((frag) => {
+					frag.appendText("Grill: set an API key in settings, or ");
+					const link = frag.createEl("a", { text: "switch to no-key mode" });
+					link.onclick = async (e) => {
+						e.preventDefault();
+						s.questionSource = "local";
+						s.gradingMode = "self";
+						await this.plugin.persist();
+						new Notice('Grill: switched to no-key mode. Click "Get grilled" again.', 6000);
+						this.renderStart();
+					};
+					frag.appendText(" now.");
+				}),
+				10000,
 			);
 			return;
 		}
@@ -2488,7 +2586,7 @@ export class SessionView extends ItemView {
 				const pdfText = await collectNotePdfText(this.app, file);
 				const text = pdfText ? `${raw}\n\n${pdfText}` : raw;
 				// Extract concepts from the FULL note; only the prompt context is truncated.
-				this.conceptsByNote.set(n, extractConcepts(n, text, this.plugin.data.settings.questionFormats !== "write"));
+				this.conceptsByNote.set(n, extractConcepts(n, text, this.plugin.data.settings.questionFormats));
 				this.noteText[n] = text.length > NOTE_CHAR_CAP ? safeSlice(text, NOTE_CHAR_CAP) + "\n[truncated]" : text;
 				if (vision) {
 					const imgs = await collectNoteImages(this.app, file, IMAGES_PER_NOTE_CAP);

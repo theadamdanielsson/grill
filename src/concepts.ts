@@ -302,13 +302,22 @@ export function pickConcepts(
 	// Untested concepts beyond today's remaining quota simply don't enter this
 	// session's pool; due/rest (review of concepts already in the schedule) are
 	// unaffected, so a session still fills normally from what's actually due.
-	let untestedPool = untested;
+	//
+	// Interleave BEFORE slicing to `remaining`, not after: `untested` arrives grouped by
+	// note (concepts are appended note-by-note, and a note pickCandidates just prioritized
+	// sorts first), so slicing first and interleaving after was a no-op — the slice could
+	// already be entirely one note's concepts, most often the note just missed, since a
+	// miss is exactly what put it first in the priority order feeding this. That silently
+	// defeated interleaveByNote's whole purpose: a "mixed" session could actually be one
+	// note end to end, and the note you just got wrong would keep winning the slice again
+	// next session too.
+	let untestedPool = interleaveByNote(untested);
 	if (newConceptsPerDay > 0) {
 		const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 		const remaining = Math.max(0, newConceptsPerDay - newConceptsIntroducedSince(map, todayStart));
-		untestedPool = untested.slice(0, remaining);
+		untestedPool = untestedPool.slice(0, remaining);
 	}
-	return reserveFreshSlots(interleaveByNote(due), interleaveByNote(untestedPool), interleaveByNote(rest), cap);
+	return reserveFreshSlots(interleaveByNote(due), untestedPool, interleaveByNote(rest), cap);
 }
 
 /** True when a (non-due) session came back empty ONLY because the daily new-concept

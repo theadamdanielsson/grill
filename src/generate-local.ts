@@ -17,7 +17,7 @@
  * blanks: it skips stopwords, bare numbers, code, tables and generic headings.
  */
 
-import { Question } from "./llm";
+import { FormatMode, Question } from "./llm";
 import { QDifficulty } from "./mastery";
 import { safeSlice } from "./text";
 
@@ -427,7 +427,8 @@ function parseGrillCallout(lines: string[], start: number): { item: LocalItem; n
 // this cap, is what limits a session.
 const ITEM_CAP_PER_NOTE = 200;
 
-function itemsForNote(text: string, cap: number, mixFormats: boolean): LocalItem[] {
+function itemsForNote(text: string, cap: number, mode: FormatMode): LocalItem[] {
+	const mixFormats = mode !== "write";
 	const body = stripFrontmatter(text).replace(/<!--[\s\S]*?-->/g, "");
 	const lines = body.split("\n");
 	const items: LocalItem[] = [];
@@ -519,23 +520,29 @@ function itemsForNote(text: string, cap: number, mixFormats: boolean): LocalItem
 		push(formulaCard(line, heading, mixFormats));
 	}
 	flushHeading();
-	return applyMcMix(items.slice(0, cap), mixFormats);
+	return applyMcMix(items.slice(0, cap), mode);
 }
 
 /** Convert some colon-form definitions into multiple-choice: the correct definition
  * plus 3 distractor definitions sampled from OTHER terms in the same note. Only
  * definitions carry `defText` (the term-free definition text), so only those are
- * eligible; needs at least 3 other candidates to build a real choice set. Converts
- * roughly one in three eligible definitions so free-text variety remains too. */
-function applyMcMix(items: LocalItem[], mixFormats: boolean): LocalItem[] {
-	if (!mixFormats) return items;
+ * eligible; needs at least 3 other candidates to build a real choice set.
+ *
+ * "mixed" converts roughly one in three eligible definitions, so free-text variety
+ * remains too — MC there is one format among several, not the point of the mode.
+ * "mc" ("Multiple choice only") converts every eligible definition: the setting's own
+ * description promises MC as the default with a structured fallback (still true here —
+ * everything else already comes out "blank"-typed, not "write", via `mixFormats` above)
+ * only for concepts that genuinely can't be posed as MC, not a one-in-three sampling. */
+function applyMcMix(items: LocalItem[], mode: FormatMode): LocalItem[] {
+	if (mode === "write") return items;
 	const pool = items.filter((it) => it.kind === "definition" && it.defText);
 	if (pool.length < 4) return items;
 	let n = 0;
 	return items.map((it) => {
 		if (it.kind !== "definition" || !it.defText) return it;
 		n += 1;
-		if (n % 3 !== 1) return it;
+		if (mode === "mixed" && n % 3 !== 1) return it;
 		const distractors = pool
 			.filter((p) => p !== it)
 			.map((p) => p.defText as string)
@@ -571,8 +578,8 @@ const MIN_CONCEPTS_BEFORE_FALLBACK = 2;
 
 /** Deterministically decompose a note into concepts. Same set feeds both the
  * scheduler and either question path, so concept ids never depend on the model. */
-export function extractConcepts(note: string, text: string, mixFormats = false): Concept[] {
-	const items = itemsForNote(text, ITEM_CAP_PER_NOTE, mixFormats);
+export function extractConcepts(note: string, text: string, mode: FormatMode = "write"): Concept[] {
+	const items = itemsForNote(text, ITEM_CAP_PER_NOTE, mode);
 	const concepts: Concept[] = [];
 	const usedIds = new Set<string>();
 	const labelById = new Map<string, string>();

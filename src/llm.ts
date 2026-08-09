@@ -143,6 +143,25 @@ export interface Question {
 	pairs?: { left: string; right: string }[];
 }
 
+/** Mirrors the `questionFormats` setting. The single choke point every question-serving
+ * path (fresh AI generation, fresh local generation, and cache reuse) runs a candidate
+ * through before it's allowed to reach the student — see `formatSatisfies`. */
+export type FormatMode = "write" | "mixed" | "mc";
+
+/** Whether a question's format satisfies the `questionFormats` setting. "mixed" accepts
+ * anything. "write" requires a plain free-response question (no `type`, or `type:
+ * "write"`). "mc" ("Multiple choice only") requires SOME structured format — 'mc'
+ * ideally, but falling back to another structured type (blank/tf/multi/match) is the
+ * documented behavior for a concept that genuinely can't be posed as a single-answer
+ * choice (see the setting's own description); only a bare free-response "write"
+ * question actually fails it. */
+export function formatSatisfies(type: Question["type"] | undefined, mode: FormatMode): boolean {
+	const t = type ?? "write";
+	if (mode === "mixed") return true;
+	if (mode === "write") return t === "write";
+	return t !== "write";
+}
+
 export type Verdict = "correct" | "partial" | "incorrect";
 
 export interface Grade {
@@ -980,10 +999,11 @@ async function runGenerationPass(
 	instructions: string,
 	linksBlock: string,
 	persona: string,
-	mixFormats: boolean,
+	formatMode: FormatMode,
 	formatCounts: Partial<Record<string, number>>,
-	varyFormats: boolean,
 ): Promise<{ questions: Question[]; defects: Map<number, string> }> {
+	const mixFormats = formatMode !== "write";
+	const varyFormats = formatMode === "mixed";
 	const hasBridge = targets.some((t) => t.bridge);
 	const conceptList = targets
 		.map((t, i) => {
@@ -1133,6 +1153,22 @@ async function runGenerationPass(
 			defects.set(idx, defect);
 			continue;
 		}
+		// The per-target "[format: X]" tag (above) is only a prompt hint — the model can
+		// still hand back plain "write" despite it. Under "mc" ("Multiple choice only")
+		// that specific substitution is the one thing the setting promises never happens
+		// (see formatSatisfies), so it's rejected here and fed back as a defect reason for
+		// the one retry pass, same as any other quality gate. A no-op for "write"/"mixed":
+		// "write" mode already forces type "write" server-side above, and "mixed" accepts
+		// anything.
+		if (!formatSatisfies(candidate.type, formatMode)) {
+			defects.set(
+				idx,
+				"came back as a plain free-response question, but the student has 'Multiple choice only' set — " +
+					"use 'mc', or another structured format (blank/tf/multi/match) only if this concept genuinely " +
+					"can't be posed as a single-answer choice",
+			);
+			continue;
+		}
 		if (answerKey && seenAnswers.has(answerKey)) {
 			defects.set(idx, "duplicate answer to another question already generated in this batch");
 			continue;
@@ -1165,9 +1201,8 @@ export async function generateQuestions(
 	instructions = "",
 	linksBlock = "",
 	persona: string = DEFAULT_PERSONA,
-	mixFormats = false,
+	formatMode: FormatMode = "write",
 	formatCounts: Partial<Record<string, number>> = {},
-	varyFormats = true,
 ): Promise<Question[]> {
 	const first = await runGenerationPass(
 		cfg,
@@ -1177,9 +1212,8 @@ export async function generateQuestions(
 		instructions,
 		linksBlock,
 		persona,
-		mixFormats,
+		formatMode,
 		formatCounts,
-		varyFormats,
 	);
 	if (first.defects.size === 0) return first.questions;
 	const retryTargets = [...first.defects.entries()].map(([idx, reason]) => ({
@@ -1197,9 +1231,8 @@ export async function generateQuestions(
 		instructions,
 		linksBlock,
 		persona,
-		mixFormats,
+		formatMode,
 		formatCounts,
-		varyFormats,
 	);
 	return [...first.questions, ...retry.questions];
 }
