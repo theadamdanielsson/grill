@@ -705,9 +705,8 @@ class GrillSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Show advanced settings")
 			.setDesc(
-				"Reveal rarely-touched tuning and maintenance settings (careful grading, coverage weighting, " +
-					"reuse-across-days, cache clearing, and similar) below their usual toggle. Off by default so a " +
-					"first pass through Settings isn't ~30 options deep.",
+				"Reveal rarely-touched tuning and maintenance settings: careful grading, coverage weighting, " +
+					"reuse-across-days, cache clearing, and similar.",
 			)
 			.addToggle((t) =>
 				t.setValue(s.showAdvancedSettings).onChange(async (v) => {
@@ -763,9 +762,8 @@ class GrillSettingTab extends PluginSettingTab {
 					"alongside the usual write-in-the-box questions, picked per concept based on what actually fits it. " +
 					"Multiple choice only always uses 'mc' (falling back to another structured format only when a " +
 					"concept genuinely can't be posed as a single-answer choice). In AI mode either non-Write option " +
-					"costs a little extra prompt on every question batch, so it's a real toggle, not just always on. " +
-					"This is a hard setting, not something the Instructions note can override — a free-text preference " +
-					"like \"only multiple choice\" there won't reliably stick; use this dropdown instead.",
+					"costs a little extra prompt on every question batch. Set here, not in Instructions.md — a " +
+					"free-text preference like \"only multiple choice\" there won't reliably stick.",
 			)
 			.addDropdown((d) =>
 				d
