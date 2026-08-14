@@ -1,7 +1,7 @@
 {
 	"id": "grill",
 	"name": "Grill",
-	"version": "5.0.0",
+	"version": "5.0.1",
 	"minAppVersion": "1.8.0",
 	"description": "Learn what's in your notes: Grill quizzes you on your own notes, marks your answers, and colours in a live map of them as you prove what you know. Bring your own key, or run offline with Ollama.",
 	"author": "Adam Danielsson",

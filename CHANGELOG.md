@@ -1,5 +1,16 @@
 # Changelog
 
+## 5.0.1
+
+- **Fix: authored Vero/Falso (true/false) questions rendered as a free-text
+  box instead of True/False buttons.** A hand-authored `> [!grill]` callout
+  never carried a question-type at all — only LLM-generated questions were
+  ever tagged `"tf"`, so every authored callout fell through to the generic
+  write-in-the-box render regardless of how it was phrased. An authored
+  callout whose answer is exactly Vero/Falso/True/False (case-insensitive)
+  is now detected and rendered as the fixed True/False button pair, same as
+  a generated true/false question gets.
+
 ## 5.0.0
 
 - **Sessions no longer collapse onto one note.** The concept picker's daily

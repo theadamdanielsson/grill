@@ -37,7 +37,7 @@ export interface Concept {
 	/** Material the AI needs to write a fresh question about this concept. */
 	context: string;
 	/** The deterministic question for no-key mode. Absent for the note fallback. */
-	local?: { question: string; answer: string; hint?: string; type?: "write" | "mc" | "blank"; choices?: string[] };
+	local?: { question: string; answer: string; hint?: string; type?: "write" | "mc" | "blank" | "tf"; choices?: string[] };
 	/** True for a user-authored `> [!grill]` question: asked verbatim, never rewritten
 	 * by the model, and graded against `rubric`/its answer (or the note) rather than a
 	 * model-written rubric. */
@@ -58,8 +58,10 @@ interface LocalItem {
 	kind: ConceptKind;
 	/** The structural anchor (heading text, term, front...) — the concept label. */
 	label: string;
-	/** Answer format, mirroring Question's — set only when mixed formats are on. */
-	type?: "write" | "mc" | "blank";
+	/** Answer format, mirroring Question's — set only when mixed formats are on, or for
+	 * an authored callout whose answer is exactly Vero/Falso/True/False (see
+	 * parseGrillCallout). */
+	type?: "write" | "mc" | "blank" | "tf";
 	choices?: string[];
 	/** Colon-form definitions only: the raw definition text with no "**term:**"
 	 * prefix, kept so the mix-formats pass can use it as an MC distractor/choice
@@ -406,8 +408,22 @@ function parseGrillCallout(lines: string[], start: number): { item: LocalItem; n
 	}
 	const question = qLines.join(" ").trim();
 	if (!question) return null;
+	// A hand-authored true/false statement ("Vero o falso?", "True or false?") whose
+	// answer is exactly Vero/Falso/True/False gets the fixed True/False button pair
+	// (see isTf in view.ts) instead of the generic free-text box — the same treatment
+	// LLM-generated "tf" questions get. Canonicalize to "True"/"False": the button
+	// labels, and the instant local grade compare in submitAnswer, are hardcoded to
+	// those exact strings regardless of the note's language.
+	const tfAnswer = /^(true|vero)$/i.test(answer) ? "True" : /^(false|falso)$/i.test(answer) ? "False" : null;
 	return {
-		item: { question, answer, rubric: rubric || undefined, kind: "authored", label: question },
+		item: {
+			question,
+			answer: tfAnswer ?? answer,
+			rubric: rubric || undefined,
+			kind: "authored",
+			label: question,
+			...(tfAnswer ? { type: "tf" as const } : {}),
+		},
 		next: i - 1,
 	};
 }
