@@ -37,7 +37,14 @@ export interface Concept {
 	/** Material the AI needs to write a fresh question about this concept. */
 	context: string;
 	/** The deterministic question for no-key mode. Absent for the note fallback. */
-	local?: { question: string; answer: string; hint?: string; type?: "write" | "mc" | "blank" | "tf"; choices?: string[] };
+	local?: {
+		question: string;
+		answer: string;
+		hint?: string;
+		type?: "write" | "mc" | "blank" | "tf" | "multi";
+		choices?: string[];
+		correctChoices?: string[];
+	};
 	/** True for a user-authored `> [!grill]` question: asked verbatim, never rewritten
 	 * by the model, and graded against `rubric`/its answer (or the note) rather than a
 	 * model-written rubric. */
@@ -59,10 +66,11 @@ interface LocalItem {
 	/** The structural anchor (heading text, term, front...) — the concept label. */
 	label: string;
 	/** Answer format, mirroring Question's — set only when mixed formats are on, or for
-	 * an authored callout whose answer is exactly Vero/Falso/True/False (see
-	 * parseGrillCallout). */
-	type?: "write" | "mc" | "blank" | "tf";
+	 * an authored callout with a tf/mc/multi-shaped answer (see parseGrillCallout). */
+	type?: "write" | "mc" | "blank" | "tf" | "multi";
 	choices?: string[];
+	/** "multi" only: the subset of `choices` that's correct (see parseGrillCallout). */
+	correctChoices?: string[];
 	/** Colon-form definitions only: the raw definition text with no "**term:**"
 	 * prefix, kept so the mix-formats pass can use it as an MC distractor/choice
 	 * without leaking the term name. Never copied onto the final Question. */
@@ -359,16 +367,26 @@ function headingCard(heading: string, body: string): LocalItem | null {
 
 // ------------------------------------------------------ user-authored callout
 
-const CALLOUT_START = /^>\s*\[!grill\][+-]?\s?(.*)$/i;
+// `(?:>\s*)+` (not a single `>\s*`) so a grill callout nested inside another callout —
+// Obsidian's own nesting convention adds one more leading `>` per level, e.g.
+// `> > [!grill] ...` or `>> [!grill] ...` — still matches instead of silently being
+// read as prose one level up.
+const CALLOUT_START = /^(?:>\s*)+\[!grill\][+-]?\s?(.*)$/i;
 
 /** Parse a `> [!grill]` callout the user wrote as their own question. The title (and
  * any following plain `>` lines before a field) is the question; `> A:`/`> answer:` is
- * the model answer; `> rubric:` is the grading rubric. Returns the item and the index
- * of the last consumed line, or null if there's no question text. Example:
+ * the model answer; `> rubric:` is the grading rubric; `> choices:` is an optional
+ * comma-separated option list that turns the question into multiple-choice (one answer)
+ * or select-all-that-apply (2+ answers). Returns the item and the index of the last
+ * consumed line, or null if there's no question text. Examples:
  *
  *   > [!grill] Why does IFRS 16 move operating leases on-balance-sheet?
  *   > A: They become a right-of-use asset and a lease liability.
  *   > rubric: mentions right-of-use asset, lease liability, on-balance-sheet
+ *
+ *   > [!grill] Which standard covers leases?
+ *   > choices: IFRS 9, IFRS 15, IFRS 16
+ *   > A: IFRS 16
  */
 function parseGrillCallout(lines: string[], start: number): { item: LocalItem; next: number } | null {
 	const m = CALLOUT_START.exec(lines[start].trim());
@@ -378,19 +396,25 @@ function parseGrillCallout(lines: string[], start: number): { item: LocalItem; n
 	if (title) qLines.push(title);
 	let answer = "";
 	let rubric = "";
+	let choicesField = "";
 	// Which field a plain continuation line belongs to — the field most recently
-	// introduced by an "A:"/"answer:"/"rubric:" line, not just "was any field seen
-	// yet": a rubric that wraps onto a second line needs its continuation routed to
+	// introduced by an "A:"/"answer:"/"rubric:"/"choices:" line, not just "was any field
+	// seen yet": a rubric that wraps onto a second line needs its continuation routed to
 	// `rubric`, not merged into (or, if `answer` is still empty, silently dropped
 	// from) `answer`.
-	let lastField: "answer" | "rubric" | null = null;
+	let lastField: "answer" | "rubric" | "choices" | null = null;
 	let i = start + 1;
 	for (; i < lines.length; i++) {
 		const t = lines[i].trim();
 		if (!t.startsWith(">")) break;
-		const content = t.replace(/^>\s?/, "").trim();
+		// Strip every leading blockquote level, not just one — a continuation line
+		// inside a nested callout carries the same extra `>` depth CALLOUT_START now
+		// accounts for (see its comment), and stripping only the outermost `>` would
+		// leave a stray "> " glued onto `content`, breaking the field-line regexes below.
+		const content = t.replace(/^(?:>\s?)+/, "").trim();
 		const am = /^(?:a|answer)\s*:\s*(.*)$/i.exec(content);
 		const rm = /^rubric\s*:\s*(.*)$/i.exec(content);
+		const cm = /^choices\s*:\s*(.*)$/i.exec(content);
 		if (am) {
 			answer = am[1].trim();
 			lastField = "answer";
@@ -401,10 +425,16 @@ function parseGrillCallout(lines: string[], start: number): { item: LocalItem; n
 			lastField = "rubric";
 			continue;
 		}
+		if (cm) {
+			choicesField = cm[1].trim();
+			lastField = "choices";
+			continue;
+		}
 		if (!content) continue;
 		if (!lastField) qLines.push(content);
 		else if (lastField === "answer") answer = `${answer} ${content}`.trim();
-		else rubric = `${rubric} ${content}`.trim();
+		else if (lastField === "rubric") rubric = `${rubric} ${content}`.trim();
+		else choicesField = `${choicesField} ${content}`.trim();
 	}
 	const question = qLines.join(" ").trim();
 	if (!question) return null;
@@ -415,14 +445,47 @@ function parseGrillCallout(lines: string[], start: number): { item: LocalItem; n
 	// labels, and the instant local grade compare in submitAnswer, are hardcoded to
 	// those exact strings regardless of the note's language.
 	const tfAnswer = /^(true|vero)$/i.test(answer) ? "True" : /^(false|falso)$/i.test(answer) ? "False" : null;
+	// An authored "choices:" list turns this into mc (one correct answer) or multi
+	// (2+): split both fields on commas, match each answer part against a choice
+	// case-insensitively (snapping to the choice's own casing, same self-heal the AI
+	// path does), and only commit if every answer part actually resolved and multi
+	// still has at least one wrong option left — malformed input (an answer that isn't
+	// among the choices, or every choice marked correct) just falls back to free-text
+	// rather than rendering a broken button set.
+	const choiceList = choicesField
+		.split(",")
+		.map((c) => c.trim())
+		.filter(Boolean);
+	let mcType: "mc" | "multi" | null = null;
+	let mcChoices: string[] | undefined;
+	let mcCorrect: string[] | undefined;
+	let mcAnswer = answer;
+	if (!tfAnswer && choiceList.length >= 2 && answer) {
+		const answerParts = answer.split(",").map((a) => a.trim()).filter(Boolean);
+		const resolved = answerParts.map((a) => choiceList.find((c) => c.toLowerCase() === a.toLowerCase()) ?? null);
+		if (resolved.every((c): c is string => c !== null)) {
+			if (resolved.length === 1) {
+				mcType = "mc";
+				mcChoices = choiceList;
+				mcCorrect = undefined;
+				mcAnswer = resolved[0];
+			} else if (resolved.length >= 2 && resolved.length < choiceList.length) {
+				mcType = "multi";
+				mcChoices = choiceList;
+				mcCorrect = resolved;
+				mcAnswer = resolved.join(", ");
+			}
+		}
+	}
 	return {
 		item: {
 			question,
-			answer: tfAnswer ?? answer,
+			answer: tfAnswer ?? mcAnswer,
 			rubric: rubric || undefined,
 			kind: "authored",
 			label: question,
 			...(tfAnswer ? { type: "tf" as const } : {}),
+			...(mcType ? { type: mcType, choices: mcChoices, correctChoices: mcCorrect } : {}),
 		},
 		next: i - 1,
 	};
@@ -624,7 +687,14 @@ export function extractConcepts(note: string, text: string, mode: FormatMode = "
 				it.kind === "authored" ? `${it.question} ${it.answer} ${it.rubric ?? ""}` : it.answer,
 			),
 			context: it.answer,
-			local: { question: it.question, answer: it.answer, hint: it.hint, type: it.type, choices: it.choices },
+			local: {
+				question: it.question,
+				answer: it.answer,
+				hint: it.hint,
+				type: it.type,
+				choices: it.choices,
+				correctChoices: it.correctChoices,
+			},
 			...(it.kind === "authored" ? { authored: true, rubric: it.rubric } : {}),
 		});
 	}
@@ -731,7 +801,9 @@ export function localQuestionForConcept(c: Concept, difficulty: QDifficulty = "m
 		commonErrors: [],
 		hints: { tier1: c.local.hint ?? "", tier2: "", tier3: "" },
 		...(c.authored ? { authored: true, rubric: c.rubric } : {}),
-		...(c.local.type ? { type: c.local.type, choices: c.local.choices } : {}),
+		...(c.local.type
+			? { type: c.local.type, choices: c.local.choices, correctChoices: c.local.correctChoices }
+			: {}),
 	};
 }
 

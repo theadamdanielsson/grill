@@ -577,8 +577,14 @@ export class SessionView extends ItemView {
 		return wrap;
 	}
 
-	private md(markdown: string, el: HTMLElement): void {
-		void MarkdownRenderer.render(this.app, markdown, el, "", this);
+	/** `sourcePath` is what Obsidian resolves relative `[[wikilinks]]` against — without
+	 * it (the old hardcoded `""`), a link in a question/hint/answer/debrief resolves as
+	 * if written at the vault root, so it breaks the moment the target note isn't
+	 * uniquely named there (any subfoldered or duplicate-basename vault). Callers with a
+	 * concrete note in scope should pass its path; only truly note-less content (a
+	 * synthetic message with no user-authored links in it) should fall back to "". */
+	private md(markdown: string, el: HTMLElement, sourcePath = ""): void {
+		void MarkdownRenderer.render(this.app, markdown, el, sourcePath, this);
 	}
 
 	private openNote(name: string): void {
@@ -1331,7 +1337,7 @@ export class SessionView extends ItemView {
 			if (this.plugin.data.settings.hideNoteName) {
 				routed.createSpan({ cls: "grill-meta", text: "Shoring up a foundation of the note you just missed" });
 			} else {
-				this.md(`You missed **${q.routedFrom}** — checking a foundation it builds on`, routed.createDiv({ cls: "grill-meta" }));
+				this.md(`You missed **${q.routedFrom}** — checking a foundation it builds on`, routed.createDiv({ cls: "grill-meta" }), q.node);
 			}
 		}
 
@@ -1345,6 +1351,7 @@ export class SessionView extends ItemView {
 				this.md(
 					`You showed the same kind of mistake on **${q.contagionFrom}** — checking if it applies here too`,
 					contagion.createDiv({ cls: "grill-meta" }),
+					q.node,
 				);
 			}
 		}
@@ -1371,7 +1378,7 @@ export class SessionView extends ItemView {
 			}
 			qEl.createSpan({ text: q.question.slice(cursor) });
 		} else {
-			this.md(q.question, qEl);
+			this.md(q.question, qEl, q.node);
 		}
 
 		const selfGrade = this.plugin.data.settings.gradingMode === "self";
@@ -1499,7 +1506,7 @@ export class SessionView extends ItemView {
 			hintBtn.onclick = () => {
 				if (hintsUsed < hints.length) {
 					const h = hintBox.createDiv({ cls: "grill-hint" });
-					this.md(`*Hint ${hintsUsed + 1}:* ${hints[hintsUsed]}`, h);
+					this.md(`*Hint ${hintsUsed + 1}:* ${hints[hintsUsed]}`, h, q.node);
 					hintsUsed += 1;
 					if (hintsUsed >= hints.length) hintBtn.disabled = true;
 				}
@@ -1614,7 +1621,7 @@ export class SessionView extends ItemView {
 		if (!pendingExtension) this.renderEndSessionLink(card);
 
 		const qEl = card.createDiv({ cls: "grill-question grill-question-small" });
-		this.md(r.question, qEl);
+		this.md(r.question, qEl, r.node);
 
 		// The verdict card: badge + your answer + grader feedback — "what happened".
 		const verdictCard = card.createDiv({ cls: "grill-flow-card grill-verdict-card" });
@@ -1649,7 +1656,7 @@ export class SessionView extends ItemView {
 		if (!r.gaveUp && r.answer) {
 			verdictCard.createDiv({ cls: "grill-block-label", text: "Your answer" });
 			const ans = verdictCard.createDiv({ cls: "grill-your-answer" });
-			this.md(`> ${r.answer.split("\n").join("\n> ")}`, ans);
+			this.md(`> ${r.answer.split("\n").join("\n> ")}`, ans, r.node);
 		}
 		if (r.feedback) {
 			const fb = verdictCard.createDiv({ cls: "grill-feedback" });
@@ -1657,7 +1664,7 @@ export class SessionView extends ItemView {
 			// GRADER_RULES) — no schema change, just rendering each line as its own block
 			// when the model included the break, one block otherwise.
 			for (const line of r.feedback.split("\n").map((l) => l.trim()).filter(Boolean)) {
-				this.md(line, fb.createDiv({ cls: "grill-feedback-line" }));
+				this.md(line, fb.createDiv({ cls: "grill-feedback-line" }), r.node);
 			}
 		}
 
@@ -1669,7 +1676,7 @@ export class SessionView extends ItemView {
 			const reviewCard = card.createDiv({ cls: "grill-flow-card grill-review-card" });
 			if (showExpectedAnswer) {
 				reviewCard.createDiv({ cls: "grill-block-label", text: "Expected answer" });
-				this.md(r.modelAnswer, reviewCard.createDiv({ cls: "grill-model-answer" }));
+				this.md(r.modelAnswer, reviewCard.createDiv({ cls: "grill-model-answer" }), r.node);
 			}
 			if (showExplain) this.offerExplanation(reviewCard, r);
 		}
@@ -1757,9 +1764,9 @@ export class SessionView extends ItemView {
 					this.sessionInstructions,
 				);
 				const out = box.createDiv({ cls: "grill-explanation" });
-				this.explanationBlock(out, "What went wrong", explanation.whatWentWrong);
-				this.explanationBlock(out, "Key concept", explanation.keyConcept);
-				this.explanationBlock(out, "Example", explanation.example);
+				this.explanationBlock(out, "What went wrong", explanation.whatWentWrong, r.node);
+				this.explanationBlock(out, "Key concept", explanation.keyConcept, r.node);
+				this.explanationBlock(out, "Example", explanation.example, r.node);
 				await this.renderDiagramBlock(out, explanation.diagram);
 				await this.renderRelevantImage(out, explanation.relevantImagePath);
 				btn.remove();
@@ -1775,11 +1782,11 @@ export class SessionView extends ItemView {
 
 	/** One labeled sub-block of a structured Explanation; skipped when the model left the
 	 * field empty (the `example` field's documented empty-string case). */
-	private explanationBlock(parent: HTMLElement, label: string, text: string): void {
+	private explanationBlock(parent: HTMLElement, label: string, text: string, sourcePath: string): void {
 		if (!text) return;
 		const block = parent.createDiv({ cls: "grill-explanation-block" });
 		block.createDiv({ cls: "grill-block-label", text: label });
-		this.md(text, block);
+		this.md(text, block, sourcePath);
 	}
 
 	/** Renders the model's optional Mermaid diagram. Mermaid parses asynchronously after
@@ -1944,12 +1951,12 @@ export class SessionView extends ItemView {
 		this.renderSummary(note, debrief);
 	}
 
-	private renderDebrief(card: HTMLElement, debrief: SessionDebrief): void {
+	private renderDebrief(card: HTMLElement, debrief: SessionDebrief, sourcePath: string): void {
 		const box = card.createDiv({ cls: "grill-debrief" });
-		if (debrief.headline) this.md(debrief.headline, box.createDiv({ cls: "grill-debrief-headline" }));
+		if (debrief.headline) this.md(debrief.headline, box.createDiv({ cls: "grill-debrief-headline" }), sourcePath);
 		if (debrief.pattern) {
 			const p = box.createDiv({ cls: "grill-debrief-pattern" });
-			this.md(`**Recurring pattern:** ${debrief.pattern}`, p);
+			this.md(`**Recurring pattern:** ${debrief.pattern}`, p, sourcePath);
 		}
 		if (debrief.gaps.length) {
 			const gaps = box.createDiv({ cls: "grill-debrief-gaps" });
@@ -1959,7 +1966,10 @@ export class SessionView extends ItemView {
 				// A real wikilink inline, not a separate chip: Obsidian's own markdown
 				// renderer resolves and makes [[note]] clickable, so the note reference
 				// reads as part of the sentence instead of a disconnected element after it.
-				this.md(`**${g.concept}** — ${g.why} ([[${g.note}]])`, row.createDiv({ cls: "grill-debrief-gap-text" }));
+				// Sourced from the gap's own note (not the session note): each gap can name
+				// a different note than the one the session summary is for, and a self-link
+				// always resolves cleanly regardless of vault structure.
+				this.md(`**${g.concept}** — ${g.why} ([[${g.note}]])`, row.createDiv({ cls: "grill-debrief-gap-text" }), g.note);
 			}
 		}
 		if (debrief.strengths.length) {
@@ -1978,7 +1988,7 @@ export class SessionView extends ItemView {
 		// Metacognitive calibration (opt-in): over/underconfidence across recent answers.
 		if (this.plugin.data.settings.confidenceCheck) {
 			const line = calibrationLine(this.plugin.data.calibration);
-			if (line) this.md(line, box.createDiv({ cls: "grill-debrief-calibration grill-meta" }));
+			if (line) this.md(line, box.createDiv({ cls: "grill-debrief-calibration grill-meta" }), sourcePath);
 		}
 	}
 
@@ -1996,7 +2006,7 @@ export class SessionView extends ItemView {
 
 		if (debrief) {
 			card.createDiv({ cls: "grill-divider" });
-			this.renderDebrief(card, debrief);
+			this.renderDebrief(card, debrief, note?.path ?? "");
 			card.createDiv({ cls: "grill-divider" });
 		}
 
@@ -2873,16 +2883,16 @@ export class SessionView extends ItemView {
 		chip.setAttr("aria-label", "Open note");
 
 		const qEl = card.createDiv({ cls: "grill-question grill-question-small" });
-		this.md(q.question, qEl);
+		this.md(q.question, qEl, q.node);
 
 		const revealCard = card.createDiv({ cls: "grill-flow-card grill-review-card" });
 		if (!gaveUp && answer) {
 			revealCard.createDiv({ cls: "grill-block-label", text: "Your answer" });
 			const ans = revealCard.createDiv({ cls: "grill-your-answer" });
-			this.md(`> ${answer.split("\n").join("\n> ")}`, ans);
+			this.md(`> ${answer.split("\n").join("\n> ")}`, ans, q.node);
 		}
 		revealCard.createDiv({ cls: "grill-block-label", text: "Answer" });
-		this.md(q.modelAnswer, revealCard.createDiv({ cls: "grill-model-answer" }));
+		this.md(q.modelAnswer, revealCard.createDiv({ cls: "grill-model-answer" }), q.node);
 
 		// Self-grade never scores until a rating button below is clicked, so this is
 		// still "before answering" as far as the schedule is concerned — same simple

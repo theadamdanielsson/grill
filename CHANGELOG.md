@@ -1,5 +1,25 @@
 # Changelog
 
+## 5.0.2
+
+- **Fix: wikilinks inside a question, hint, answer, explanation, or debrief
+  rendered broken.** The shared markdown-render helper hardcoded Obsidian's
+  `sourcePath` (what `[[links]]` resolve relative to) to `""`, so a
+  `[[note]]` link in authored or AI-generated content resolved as if it were
+  written at the vault root — breaking the moment the target note wasn't
+  uniquely named there, which is most vaults with subfolders or duplicate
+  basenames. Every call site now passes the actual source note's path.
+- **Authored `> [!grill]` callouts can now be multiple-choice or
+  select-all-that-apply**, not just write-in or (as of 5.0.1) true/false.
+  Add a `> choices: A, B, C` line; if `> A:`/`> answer:` names exactly one
+  of them it renders as multiple-choice, two or more as select-all. An
+  answer that doesn't cleanly resolve to the listed choices falls back to
+  the regular free-text box rather than rendering a broken button set.
+- **Fix: a `> [!grill]` callout nested inside another callout (extra leading
+  `>` from Obsidian's own nesting) was silently read as plain prose and
+  never became a question at all.** Parsing now accounts for any nesting
+  depth.
+
 ## 5.0.1
 
 - **Fix: authored Vero/Falso (true/false) questions rendered as a free-text
