@@ -272,6 +272,74 @@
   transform: translateY(3px);
   box-shadow: none;
 }
+/* "No reviews for now": a status readout, not a dead-end action — dimmed and inert
+   rather than hover/press-reactive like the real due-CTA it stands in for. */
+.grill-view .grill-due-cta:disabled {
+  opacity: 0.55;
+  cursor: default;
+  pointer-events: none;
+}
+/* Holds the due-CTA (when present) and the pencil as full, separate boxes side by side —
+   not one clipped into the other's edge, which made the pencil read as a bare icon
+   instead of its own button and cut its hover highlight off against the due-CTA's
+   rounded corner. The two CSS-only attempts at matching their heights (shared
+   font-size/padding math, then an absolute-positioned overlay) both produced a worse
+   result than the actual fix: after both buttons exist in the DOM, JS below reads the
+   due-CTA's real rendered height and applies it directly to the pencil — an exact match
+   with nothing left to approximate. */
+.grill-view .grill-cta-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--grill-space-sm, 0.5em);
+  margin: 0.4em 0 0.8em;
+}
+.grill-view .grill-cta-row .grill-due-cta {
+  flex: 1;
+  width: auto;
+  margin: 0;
+}
+.grill-view .grill-manage-btn {
+  /* The JS height set on this button (renderStart, once the due-CTA exists to measure)
+     is meant as a total box height, padding and border included — without this, an
+     inherited content-box model would add the fallback rule's padding on top of that
+     height instead of within it, making the button taller than the due-CTA again. */
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.8em;
+  margin: 0;
+  border-radius: var(--grill-radius-s);
+  border: 2px solid var(--grill-flame);
+  background: linear-gradient(rgba(255, 122, 34, 0.06), rgba(255, 90, 31, 0.02));
+  color: var(--grill-gold);
+  transition: transform 0.08s ease, box-shadow 0.08s ease, filter 0.08s ease;
+  /* The due-CTA draws a solid "skirt" below its own border for the mechanical-button
+     look (.grill-due-cta below) — without the same shadow here, the pencil's border-box
+     could match its height exactly (per the JS measurement above) and still visibly read
+     as sitting higher, since the due-CTA's actual bottom edge, to the eye, is the bottom
+     of ITS shadow, not its border. */
+  box-shadow: 0 3px 0 var(--grill-ember-dark);
+}
+/* Fallback sizing for before the JS measurement runs, and for the no-due-CTA case where
+   there's nothing to measure against. */
+.grill-view .grill-cta-row > .grill-manage-btn {
+  padding-top: 0.9em;
+  padding-bottom: 0.9em;
+}
+.grill-view .grill-manage-btn:hover {
+  color: var(--grill-gold-lit);
+  border-color: var(--grill-gold);
+}
+.grill-view .grill-manage-btn:active {
+  transform: translateY(3px);
+  box-shadow: none;
+}
+.grill-view .grill-manage-btn svg {
+  width: 1em;
+  height: 1em;
+}
 /* Section labels: dim flame-orange HUD tags with a trailing hairline rule, matching the
    1UP / HI-SCORE pairing on the banner — a label that reads as part of the score readout,
    not a plain heading. */
@@ -1519,4 +1587,151 @@ settings:
   width: 11px;
   height: 11px;
   flex-shrink: 0;
+}
+
+/* ---------------------------------------------------------------- manage questions */
+.grill-mgmt-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75em;
+  margin-bottom: 0.75em;
+}
+.grill-mgmt-title {
+  font-size: var(--font-ui-larger, 1.15em);
+  font-weight: var(--font-semibold, 600);
+}
+.grill-mgmt-search {
+  width: 100%;
+  margin-bottom: 0.85em;
+}
+.grill-mgmt-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6em;
+}
+.grill-mgmt-group {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--grill-radius-s, 3px);
+}
+.grill-mgmt-group-header {
+  padding: 0.5em 0.75em;
+  font-weight: var(--font-semibold, 600);
+  cursor: pointer;
+  user-select: none;
+}
+.grill-mgmt-group-header:hover {
+  background: var(--background-modifier-hover);
+}
+.grill-mgmt-group-body {
+  padding: 0 0.75em 0.75em;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75em;
+}
+.grill-mgmt-group-body.grill-mgmt-collapsed {
+  display: none;
+}
+.grill-mgmt-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--grill-radius-s, 3px);
+}
+/* Collapsed by default (see renderQuestionCard) — with hundreds of cached questions in
+   a real bank, every card carrying its full form open at once made the list unusable
+   to scroll. Only the one-line summary below renders until a card is clicked open. */
+.grill-mgmt-card-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  padding: 0.5em 0.75em;
+  cursor: pointer;
+}
+.grill-mgmt-card-summary:hover {
+  background: var(--background-modifier-hover);
+}
+.grill-mgmt-card-summary::after {
+  content: "▾";
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller, 0.85em);
+}
+.grill-mgmt-card-collapsed .grill-mgmt-card-summary::after {
+  content: "▸";
+}
+.grill-mgmt-type-chip {
+  flex-shrink: 0;
+  padding: 0.1em 0.5em;
+  border-radius: var(--grill-radius-s, 3px);
+  background: var(--background-modifier-border);
+  font-size: var(--font-ui-smaller, 0.8em);
+  max-width: none;
+}
+.grill-mgmt-card-preview {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-normal);
+}
+.grill-mgmt-card-body {
+  padding: 0 0.75em 0.75em;
+  border-top: 1px solid var(--background-modifier-border);
+  padding-top: 0.75em;
+}
+.grill-mgmt-card-collapsed .grill-mgmt-card-body {
+  display: none;
+}
+.grill-mgmt-card-meta {
+  margin-bottom: 0.5em;
+}
+.grill-mgmt-field {
+  width: 100%;
+  margin-bottom: 0.6em;
+}
+textarea.grill-mgmt-field {
+  min-height: 3.5em;
+}
+.grill-mgmt-choice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+  margin-bottom: 0.4em;
+}
+.grill-mgmt-choice-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+}
+.grill-mgmt-choice-text {
+  flex: 1;
+}
+.grill-mgmt-choice-remove {
+  flex-shrink: 0;
+  padding: 0.1em 0.5em;
+}
+.grill-mgmt-card .grill-mc-btn.is-selected {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+.grill-mgmt-error {
+  color: var(--text-error, #e0483e);
+  font-size: var(--font-ui-small);
+  min-height: 1.2em;
+  margin-bottom: 0.3em;
+}
+.grill-mgmt-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5em;
+  text-align: center;
+  padding: 2.5em 1.5em;
+  border: 1px dashed var(--background-modifier-border);
+  border-radius: var(--grill-radius-s, 3px);
+}
+.grill-mgmt-empty-title {
+  font-weight: var(--font-semibold, 600);
+}
+.grill-mgmt-empty .grill-meta {
+  max-width: 32em;
 }

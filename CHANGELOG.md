@@ -1,5 +1,19 @@
 # Changelog
 
+## 5.1.0
+
+- **New: edit a cached question instead of only ever deleting it.** A pencil on the home
+  screen (next to "Review N due now" — present once you've reviewed anything at all, even
+  at zero currently due) opens **Manage questions**: every AI-generated or no-key cached
+  question, grouped by note, searchable, and collapsed to a one-line preview until opened.
+  Editable in place: question text, expected answer, hints, rubric, and — for
+  multiple-choice, select-all, and match questions — the full choice/pair list (add,
+  remove, re-mark correct), not just their text. Saving never resets that concept's
+  schedule or mastery, the same as editing the source note doesn't. Delete is here too,
+  alongside the existing in-session "Bad question" flow. Doesn't cover questions you
+  wrote yourself in a `> [!grill]` callout — those are plain text in the note, so edit
+  them there directly.
+
 ## 5.0.2
 
 - **Fix: wikilinks inside a question, hint, answer, explanation, or debrief

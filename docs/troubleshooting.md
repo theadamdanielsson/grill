@@ -61,6 +61,18 @@ Two separate mechanisms can cause this, and they stack:
    after updating and raising the reuse setting, your studied notes may genuinely be a small
    fraction of your vault; the fix helps it spread out over more sessions, not instantly.
 
+## A cached question is wrong, and I don't want to just delete it
+
+Open the pencil icon on the home screen (next to "Review N due now" — it's there even at
+zero due, as long as you've reviewed something before) for **Manage questions**: every
+AI-generated or no-key cached question, grouped by note and searchable, each one editable
+in place — question text, the expected answer, hints, rubric, and for multiple-choice/
+select-all/match questions the full choice or pair list. Editing doesn't reset that
+concept's progress or scheduling, the same as editing a note doesn't. This only covers
+generated/cached questions, not questions you've written yourself in a `> [!grill]`
+callout — those are just text in your note, so edit them there directly. "Bad question"
+mid-review is still the fastest path if you just want it gone rather than fixed.
+
 ## A model quizzed me on a chapter title or section name, not real material
 
 Fixed: a sparse note (almost no extractable structure) used to fall back to one concept labelled

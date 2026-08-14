@@ -32,6 +32,20 @@ Sometimes you know exactly what you want to be asked. Drop a callout into any no
 
 Grill asks it verbatim, schedules it alongside everything else, and marks your typed answer against your rubric (or, when you don't write one, against the note). The `A:` and `rubric:` lines are both optional. Because it's a callout it folds away and never clutters your prose, and if you already keep `Question:: answer` flashcards, those still work as they always did.
 
+If the answer is exactly `Vero`, `Falso`, `True`, or `False`, Grill notices and renders it as a proper True/False button pair instead of a free-text box. Add a `choices:` line to get multiple-choice or select-all-that-apply the same way:
+
+```
+> [!grill] Which standard covers leases?
+> choices: IFRS 9, IFRS 15, IFRS 16
+> A: IFRS 16
+```
+
+One answer among the choices renders as multiple-choice; list two or more (comma-separated, all of them among `choices:`) and it becomes select-all. An answer that doesn't cleanly match the listed choices just falls back to the ordinary free-text box rather than showing a broken button set.
+
+## Fixing a cached question
+
+A question the AI wrote you can edit rather than just delete. The pencil icon on the home screen (present once you've reviewed anything at all, even at zero currently due) opens **Manage questions**: every cached question, grouped by note, searchable, collapsed to a one-line preview until you open one. Editing covers the question text, the expected answer, hints, and rubric, plus — for multiple-choice, select-all, and match questions — the full choice or pair list, not just their text. Saving doesn't reset that concept's schedule or mastery, the same as editing the source note doesn't. It only covers what the AI (or no-key mode) generated; a question you wrote yourself in a `> [!grill]` callout is just text in your note, so edit it there.
+
 ## PDFs
 
 A lot of real study material lives in a PDF, not a note: an exercise sheet, a lecture slide deck, a scanned reading. Embed one in a note (`![[worksheet.pdf]]`, not just a plain `[[link]]` — the `!` is what makes it an embed) and Grill pulls its text out and quizzes on it exactly like anything you'd typed yourself, no separate setup. If the PDF is itself a worksheet with its own numbered questions, Grill notices and prefers asking those over inventing new ones, using any worked solution in the PDF as the answer key.
