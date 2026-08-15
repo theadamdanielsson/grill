@@ -1351,6 +1351,12 @@ settings:
 .grill-scope-commit {
   width: 100%;
 }
+/* Generic show/hide toggle, e.g. the scope-commit button before anything's ticked —
+ * a class instead of a direct .style.display assignment (obsidianmd/no-static-styles-
+ * assignment: Obsidian's plugin review flags inline style literals as an error). */
+.grill-hidden {
+  display: none;
+}
 .grill-scope-header {
   display: flex;
   align-items: baseline;

@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.2.3
+
+- **Fix: a direct `.style.display` assignment flagged as an error by Obsidian's plugin
+  review** (`obsidianmd/no-static-styles-assignment`). The Custom Study commit button's
+  show/hide now toggles a CSS class instead.
+
 ## 5.2.2
 
 - **Fix: "Your progress" always showed 0% accuracy**, even with a real answer history.

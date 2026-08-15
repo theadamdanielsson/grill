@@ -769,7 +769,7 @@ export class SessionView extends ItemView {
 			// collapsed peek. Living just below it, they're always reachable.
 			const scopePreview = customStudyCard.createDiv({ cls: "grill-meta grill-scope-preview" });
 			const commitBtn = customStudyCard.createEl("button", { text: "Study selected", cls: "grill-secondary-btn grill-scope-commit" });
-			commitBtn.style.display = "none";
+			commitBtn.addClass("grill-hidden");
 
 			let scopedFiles: TFile[] | null = null;
 			const previewScope = (files: TFile[] | null, summary: string): void => {
@@ -784,11 +784,11 @@ export class SessionView extends ItemView {
 						`${files.length} note${files.length === 1 ? "" : "s"} — ${counts.known} known, ${counts.struggling} learning, ${counts.untested} untested`,
 					);
 					commitBtn.setText(`Study ${files.length} selected`);
-					commitBtn.style.display = "";
+					commitBtn.removeClass("grill-hidden");
 				} else {
 					showCounts(eligible);
 					scopePreview.setText("");
-					commitBtn.style.display = "none";
+					commitBtn.addClass("grill-hidden");
 				}
 			};
 			commitBtn.onclick = () => {
