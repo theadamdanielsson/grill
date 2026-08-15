@@ -804,7 +804,11 @@ export class SessionView extends ItemView {
 				for (const scope of checked) {
 					for (const f of filesForScope(this.app, scope, eligible, this.plugin.concepts)) byPath.set(f.path, f);
 				}
-				previewScope([...byPath.values()], `${checked.length} selected`);
+				// "filter(s)", not "selected": the button below already says "Study N
+				// selected" for the resolved file count — reusing the same word here for a
+				// different number (how many boxes are ticked) read as two contradictory
+				// answers to "how many are selected?" sitting a few lines apart.
+				previewScope([...byPath.values()], `${checked.length} filter${checked.length === 1 ? "" : "s"}`);
 			};
 			const addScopeRow = (parent: HTMLElement, label: string, scope: Scope): void => {
 				const row = parent.createDiv({ cls: "grill-onboard-row" });
