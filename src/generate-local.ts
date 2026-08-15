@@ -175,12 +175,20 @@ interface Mark {
 }
 
 // Order matters: Anki `{{c1::..}}` before the generic curly `{{..}}`.
+// The wikilink branch has a negative lookbehind on `!`: without it, an embed like
+// `![[Screenshot 2026-07-14 at 12.07.15.png]]` sitting mid-line (itemsForNote's own
+// `^!\[` skip only catches an embed that IS the whole line) parses as an ordinary
+// `[[wikilink]]`, and the filename — often just the right shape to pass `goodTerm`
+// (a handful of words, no stopwords) — becomes a real scheduled concept with no
+// actual content. The image's real content never becomes a concept either way
+// (it's invisible to this text-only extractor); this just stops the filename from
+// impersonating one.
 const INLINE_RE = new RegExp(
 	"\\{\\{c(\\d+)::([^}]+?)(?:::([^}]+?))?\\}\\}" + // 1=cN 2=text 3=hint
 		"|==(?:(\\d+);;)?([^=]+?)(?:;;([^=]+?))?==" + // 4=seq 5=text 6=hint
 		"|\\{\\{([^}]+?)\\}\\}" + // 7=text
 		"|\\*\\*([^*]+?)\\*\\*" + // 8=text
-		"|\\[\\[([^\\]|]+)(?:\\|([^\\]]+))?\\]\\]", // 9=target 10=alias
+		"|(?<!!)\\[\\[([^\\]|]+)(?:\\|([^\\]]+))?\\]\\]", // 9=target 10=alias
 	"g",
 );
 

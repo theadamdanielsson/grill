@@ -253,6 +253,28 @@ function interleaveByNote(concepts: Concept[]): Concept[] {
  * on a miss, pushed out on a hit), so a concept just answered correctly once
  * would otherwise stay glued to the due queue until its SECOND consecutive
  * correct answer (the "known" streak): a correct answer that looks ignored. */
+/** A note whose concepts were all bulk-studied together (e.g. one scoped session
+ * extracting a dozen concepts from a single dense note) matures to "due" as a
+ * block too, and without a ceiling here it would swamp a single due-pull —
+ * `interleaveByNote` is only fair per round, so once thinner notes run out it
+ * just keeps serving the one note with the deep backlog. Cap it instead of
+ * dropping it: `due` is sorted by dueAt ascending going in, so this keeps each
+ * note's longest-overdue concepts and defers the rest — nothing is lost, it
+ * just spreads across this pull and the next one(s) instead of landing in one
+ * sitting. */
+const MAX_DUE_PER_NOTE = 4;
+
+function capPerNote(concepts: Concept[], maxPerNote: number): Concept[] {
+	const counts = new Map<string, number>();
+	const out: Concept[] = [];
+	for (const c of concepts) {
+		const n = counts.get(c.note) ?? 0;
+		if (n >= maxPerNote) continue;
+		counts.set(c.note, n + 1);
+		out.push(c);
+	}
+	return out;
+}
 /** How many concepts in `map` had their first-ever exposure since `todayStart`: total
  * interactions === 1 (this was their only, and therefore first, answer) and that
  * answer was today. Used to cap new-concept introduction per day — see `pickConcepts`. */
@@ -279,7 +301,7 @@ export function pickConcepts(
 			return !!cm && conceptTested(cm) && !!cm.dueAt && new Date(cm.dueAt) <= now;
 		});
 		due.sort((a, b) => (map[a.id]?.dueAt ?? "").localeCompare(map[b.id]?.dueAt ?? ""));
-		return interleaveByNote(due).slice(0, cap);
+		return interleaveByNote(capPerNote(due, MAX_DUE_PER_NOTE)).slice(0, cap);
 	}
 	const due: Concept[] = [];
 	const untested: Concept[] = [];
@@ -296,6 +318,11 @@ export function pickConcepts(
 	}
 	due.sort((a, b) => (map[a.id]?.dueAt ?? "").localeCompare(map[b.id]?.dueAt ?? ""));
 	rest.sort((a, b) => (map[a.id]?.lastSeen ?? "").localeCompare(map[b.id]?.lastSeen ?? ""));
+	// Same pile-up risk as the dueOnly branch above (see MAX_DUE_PER_NOTE): a note whose
+	// concepts were all bulk-studied together matures to "due/struggling" as a block, and
+	// this bucket is priority-ordered ahead of untested/rest, so an uncapped note here
+	// would monopolize the session same as it would the due queue.
+	const cappedDue = capPerNote(due, MAX_DUE_PER_NOTE);
 	// Daily new-concept cap: independent of the per-session cap above, this limits how
 	// much brand-new material can enter the schedule in one calendar day, so a few
 	// missed days can't leave the due queue permanently outrunning what's reviewable.
@@ -317,7 +344,7 @@ export function pickConcepts(
 		const remaining = Math.max(0, newConceptsPerDay - newConceptsIntroducedSince(map, todayStart));
 		untestedPool = untestedPool.slice(0, remaining);
 	}
-	return reserveFreshSlots(interleaveByNote(due), untestedPool, interleaveByNote(rest), cap);
+	return reserveFreshSlots(interleaveByNote(cappedDue), untestedPool, interleaveByNote(rest), cap);
 }
 
 /** True when a (non-due) session came back empty ONLY because the daily new-concept

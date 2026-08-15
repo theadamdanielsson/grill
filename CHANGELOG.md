@@ -1,5 +1,20 @@
 # Changelog
 
+## 5.2.1
+
+- **Fix: one heavily-studied note could dominate a whole session.** Due/struggling
+  concepts were interleaved fairly across notes per round, but with no ceiling on
+  any single note's total — so a note whose concepts all matured to due together
+  (e.g. a dozen concepts bulk-studied from one dense note in a single sitting)
+  could still end up supplying most of a session once thinner notes ran out.
+  Capped to 4 concepts per note per session; the rest simply wait for the next one
+  — nothing is dropped, it just spreads out instead of piling up.
+- **Fix: an image embed could be picked up as a wikilink term.** `![[screenshot.png]]`
+  was only skipped when it was the entire line; sitting anywhere else in a line
+  (e.g. "...and we know ![[Screenshot ....png]]"), it parsed as an ordinary
+  `[[wikilink]]`, and a plausible-looking filename could pass the auto-term filter
+  and become a real scheduled concept with no actual content behind it.
+
 ## 5.2.0
 
 - **New: read a question aloud.** A speaker button next to each question uses the
