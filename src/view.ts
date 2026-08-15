@@ -28,6 +28,7 @@ import { safeSlice } from "./text";
 import {
 	buildDueDateHistogram,
 	DueDateHistogram,
+	emptyMastery,
 	interleaveByFolder,
 	NoteMastery,
 	pickCandidates,
@@ -53,9 +54,10 @@ import {
 	SessionDebrief,
 	topMisconceptions,
 } from "./debrief";
-import { dueFiles, filesForScope, listFolders, listTags, Scope } from "./scope";
+import { dueFiles, filesForScope, listFolders, listTags, Scope, untestedFiles } from "./scope";
 import { CONFIDENCE_LEVELS, calibrationLine, pushCalibration } from "./calibration";
 import { celebrate, playSfx } from "./sfx";
+import { speak, stopSpeaking, toSpeechText, ttsAvailable } from "./tts";
 import { SessionEntry } from "./store";
 
 export const VIEW_TYPE = "grill-session";
@@ -132,9 +134,31 @@ const NOTE_CHAR_CAP = 4000;
  * "Review N due now" silently only reviews the first `questionsPerSession` of them, a
  * note with several due concepts never fully clears in one pass, and the due count can
  * look like it barely moves no matter how many sessions you run) and any explicitly
- * scoped session's note count (`maxNotesPerSession` is for auto-selecting a slice of
- * the WHOLE vault, not for truncating notes the user deliberately chose). */
-const NO_MEANINGFUL_CAP = 200;
+ * scoped session's note count (`autoNotesPoolCap` below is for auto-selecting a slice
+ * of the WHOLE vault, not for truncating notes the user deliberately chose). 200 used to
+ * sit here, which was itself a real cap for anyone with a backlog above it (missed a
+ * couple weeks across a normal-sized vault) — silently reintroducing the exact bug this
+ * constant exists to avoid. 5000 is comfortably past any real due backlog while still
+ * bounding the worst case. */
+const NO_MEANINGFUL_CAP = 5000;
+
+/** How many notes to scan for an unscoped, auto-selected session — not a setting to
+ * hand-tune, since it isn't an independent preference: it's scaled to what the session
+ * actually needs to fill (`questionsPerSession`), not the vault size or anything else.
+ * A note doesn't guarantee a usable concept, and the due/fresh/rest picker (see
+ * reserveFreshSlots) needs real breadth to choose from rather than the bare minimum, so
+ * the pool is a multiple of the target, not equal to it — floored so a small session
+ * still gets a reasonable pool to pick from, capped by the vault itself. */
+function autoNotesPoolCap(questionsPerSession: number, totalNotes: number): number {
+	return Math.min(totalNotes, Math.max(questionsPerSession * 2, 15));
+}
+
+/** Progress bar segment cap — see progressBar's bucketing comment. */
+const MAX_PROGRESS_SEGMENTS = 30;
+/** Ascending severity for bucketing multiple questions into one progress segment: a
+ * recorded wrong answer outranks "you're currently here", which outranks a recorded
+ * correct answer. */
+const SEG_SEVERITY = ["grill-seg-correct", "grill-seg-current", "grill-seg-skipped", "grill-seg-partial", "grill-seg-incorrect"];
 /** Questions generated per model call. Small batches cut the wait before the
  * first question and let the next batch prefetch while the user answers. */
 const BATCH = 2;
@@ -222,14 +246,6 @@ const NEAR_DUPLICATE_THRESHOLD = 0.75;
 /** Cap on learning-graph nodes laid out + drawn, so a huge vault stays responsive. */
 const MAP_NODE_CAP = 600;
 
-/** Local calendar day equality (not a 24h window) — matches applyRating's own
- * midnight-to-midnight FSRS convention (see mastery.ts), so "reviewed again today"
- * means the same thing for question-cache reuse as it does for the relearn-buffer
- * math already keying off that boundary. */
-function sameCalendarDay(a: Date, b: Date): boolean {
-	return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-}
-
 /** A millisecond gap as the coarsest unit that reads naturally ("13m", "4h", "2d") —
  * for `dueReasonTag`, where the exact minute never matters, only the rough scale. */
 function formatAgo(ms: number): string {
@@ -268,8 +284,6 @@ export class SessionView extends ItemView {
 	private byName = new Map<string, TFile>();
 	/** When set, sessions draw only from these files (Grill this note/folder). */
 	sessionScope: TFile[] | null = null;
-	/** Scope chosen on the start screen; null means the whole vault. */
-	private pendingScope: TFile[] | null = null;
 	/** Due-queue sessions (status bar, "Review N due"): only due/struggling
 	 * concepts, never padded with untested/known ones to fill a full session. */
 	private dueOnly = false;
@@ -313,6 +327,14 @@ export class SessionView extends ItemView {
 	private replayMode = false;
 	/** The live learning-graph canvas controller on the start screen, if any. */
 	private map: LearningMap | null = null;
+	/** Set by renderMap once mounted: rebuilds the map from exactly a given note set (or
+	 * the whole vault, for null) — see renderMap's own rebuildMap for why this replaced
+	 * dimming via setHighlight. Lets renderStart's Custom Study section preview a scope
+	 * on the map (defined outside renderMap's closure) without renderMap needing to know
+	 * anything about session scope itself. Cleared alongside `map` itself so a stale
+	 * closure over a disposed render pass's `canvas`/`graph` can't fire after the screen
+	 * moves on. */
+	private mapRebuild: ((restrict: Set<string> | null) => void) | null = null;
 	/** Stops the in-flight confetti burst, if `celebrate` was called and hasn't
 	 * finished on its own yet — invoked from onClose so closing the pane mid-burst
 	 * doesn't leave it animating over the app after the view is gone. */
@@ -571,6 +593,9 @@ export class SessionView extends ItemView {
 		// Tear down the map's canvas loop / observers whenever a screen re-renders.
 		this.map?.dispose();
 		this.map = null;
+		this.mapRebuild = null;
+		// A read-aloud from the previous screen shouldn't keep talking over this one.
+		stopSpeaking();
 		const el = this.contentEl;
 		el.empty();
 		el.addClass("grill-view");
@@ -615,7 +640,6 @@ export class SessionView extends ItemView {
 		const wrap = this.root(true);
 		const map = this.plugin.mastery;
 		const eligible = this.allEligible();
-		this.pendingScope = null;
 
 		// The arcade cabinet: everything on this screen lives on the lit CRT ground,
 		// framed in the banner's gold/ember double border. See .grill-arcade-screen.
@@ -690,69 +714,117 @@ export class SessionView extends ItemView {
 			manageBtn.style.height = `${cta.offsetHeight}px`;
 		}
 
-		// Scope selector: tick any combination of folders, tags, or the current
-		// note; nothing ticked studies the whole vault. Ticked scopes combine by union.
-		// Collapsed by default — the map below is the main focus, not this picker.
+		// The primary action, right after the due-CTA and nothing else — no scope picker
+		// between them, and its own onclick never reads any scope state: "Get grilled"
+		// always means the full engine-picked mix, unconditionally, whatever's ticked or
+		// clicked anywhere else on this screen. Scoping used to sit here, between the two
+		// main buttons, and used to relabel this exact button ("Grill N selected") based
+		// on ambient state a stray click elsewhere could set — which visually reads as
+		// "part of the flow" regardless of being collapsed by default: the very fact
+		// something sits next to the primary CTA implies it belongs there (progressive
+		// disclosure's own framing — see NN/G). Established SRS prior art agrees: Anki's
+		// deck screen is Study Now alone, with Custom Study a distinct, clearly secondary
+		// button below it that builds a whole separate temporary deck rather than
+		// modifying the main flow; obsidian-spaced-repetition doesn't even surface
+		// scoping in its main review command, only as an entirely separate one. Custom
+		// study now lives below this button as its own bounded section with its own
+		// commit action, same reasoning: the default, no-scope path (the engine picking
+		// due + fresh material itself) is what most sessions should be, and it shouldn't
+		// be readable-past or accidentally tickable into misfiring.
+		const grillBtn = screen.createEl("button", { text: "Get grilled", cls: "mod-cta grill-start-btn grill-primary-cta" });
+		grillBtn.onclick = () => {
+			this.sessionScope = null;
+			this.dueOnly = false;
+			void this.startSession();
+		};
+
+		// Custom study: tick any combination of folders, tags, the current note, or
+		// "Untested", to draw a session from exactly that instead of the engine's own
+		// mix. Ticked scopes combine by union. A bounded card with its own header, its
+		// own preview line, and its own commit button — deliberately NOT a relabeling of
+		// "Get grilled" above: the selection lives in a closure-local variable, not
+		// instance state, so nothing outside this card can read or set it, and nothing
+		// happens until "Study N selected" is actually clicked. Collapsed by default —
+		// the map below is the main focus, not this picker.
 		const active = this.app.workspace.getActiveFile();
 		const activeEligible = !!active && active.extension === "md" && !this.plugin.isExcluded(active.path);
 		const folders = listFolders(eligible);
 		const tags = listTags(this.app);
-		const hasScopeOptions = activeEligible || folders.length > 0 || tags.length > 0;
-
-		const scopeHeader = screen.createDiv({ cls: "grill-scope-header" });
-		scopeHeader.createSpan({ cls: "grill-section-label", text: "Scope" });
-		// A dropdown-style caret, not a collapse arrow: signals "this opens a list of
-		// options" the way a native <select> would, right next to the label it opens.
-		scopeHeader.createSpan({ cls: "grill-scope-caret", text: "⌄" });
-		const scopeSummary = scopeHeader.createSpan({ cls: "grill-meta grill-scope-summary", text: "Whole vault" });
-
-		// Created below, but referenced from recompute() — that only ever runs from a
-		// checkbox's onchange, after this whole render has finished and btn exists.
-		let btn: HTMLButtonElement;
-		// Shared by the Scope checkboxes below AND the map's own "Untested" chip (see
-		// renderMap's onSelectScope param) — selecting a scope from either place means
-		// the same thing: highlight it, show its counts, and name it on the button, so
-		// "Get grilled" always says exactly what it's about to do rather than a generic
-		// label that looked the same whether or not a scope was active.
-		const applyScope = (files: TFile[] | null, summary: string): void => {
-			this.pendingScope = files;
-			showCounts(files ?? eligible);
-			this.map?.setHighlight(files ? new Set(files.map((f) => f.basename)) : null);
-			scopeSummary.setText(summary);
-			btn.setText(files ? `Grill ${files.length} selected` : "Get grilled");
-		};
-		const checked: Scope[] = [];
-		const recompute = (): void => {
-			if (!checked.length) {
-				applyScope(null, "Whole vault");
-				return;
-			}
-			const byPath = new Map<string, TFile>();
-			for (const scope of checked) {
-				for (const f of filesForScope(this.app, scope, eligible, this.plugin.concepts)) byPath.set(f.path, f);
-			}
-			applyScope([...byPath.values()], `${checked.length} selected`);
-		};
-		const addScopeRow = (parent: HTMLElement, label: string, scope: Scope): void => {
-			const row = parent.createDiv({ cls: "grill-onboard-row" });
-			const cb = row.createEl("input", { attr: { type: "checkbox" } });
-			cb.onchange = () => {
-				if (cb.checked) checked.push(scope);
-				else {
-					const i = checked.findIndex((s) => s.kind === scope.kind && s.id === scope.id);
-					if (i >= 0) checked.splice(i, 1);
-				}
-				recompute();
-			};
-			const lbl = row.createEl("label", { text: label });
-			lbl.onclick = () => cb.click();
-		};
+		const untested = untestedFiles(eligible, this.plugin.concepts);
+		const hasScopeOptions = activeEligible || untested.length > 0 || folders.length > 0 || tags.length > 0;
 
 		if (hasScopeOptions) {
-			const scopeBox = screen.createDiv({ cls: "grill-onboard-folders grill-scope-collapsed" });
+			const customStudyCard = screen.createDiv({ cls: "grill-card grill-custom-study" });
+			const scopeHeader = customStudyCard.createDiv({ cls: "grill-scope-header grill-scope-toggle" });
+			scopeHeader.createSpan({ cls: "grill-section-label", text: "Custom study" });
+			// A dropdown-style caret, not a collapse arrow: signals "this opens a list of
+			// options" the way a native <select> would, right next to the label it opens.
+			scopeHeader.createSpan({ cls: "grill-scope-caret", text: "⌄" });
+			const scopeSummary = scopeHeader.createSpan({ cls: "grill-meta grill-scope-summary", text: "Whole vault" });
+
+			const scopeBox = customStudyCard.createDiv({ cls: "grill-onboard-folders grill-scope-collapsed" });
+			// Siblings of scopeBox, not children of it: scopeBox clips to a fixed peek
+			// height while collapsed (see .grill-scope-collapsed), so a commit button
+			// living inside it could end up invisible right after ticking a box in the
+			// collapsed peek. Living just below it, they're always reachable.
+			const scopePreview = customStudyCard.createDiv({ cls: "grill-meta grill-scope-preview" });
+			const commitBtn = customStudyCard.createEl("button", { text: "Study selected", cls: "grill-secondary-btn grill-scope-commit" });
+			commitBtn.style.display = "none";
+
+			let scopedFiles: TFile[] | null = null;
+			const previewScope = (files: TFile[] | null, summary: string): void => {
+				scopedFiles = files;
+				scopeSummary.setText(summary);
+				this.mapRebuild?.(files ? new Set(files.map((f) => f.basename)) : null);
+				if (files) {
+					showCounts(files);
+					const counts = { untested: 0, struggling: 0, known: 0 };
+					for (const f of files) counts[statusOf(map[f.basename])]++;
+					scopePreview.setText(
+						`${files.length} note${files.length === 1 ? "" : "s"} — ${counts.known} known, ${counts.struggling} learning, ${counts.untested} untested`,
+					);
+					commitBtn.setText(`Study ${files.length} selected`);
+					commitBtn.style.display = "";
+				} else {
+					showCounts(eligible);
+					scopePreview.setText("");
+					commitBtn.style.display = "none";
+				}
+			};
+			commitBtn.onclick = () => {
+				if (scopedFiles?.length) void this.startScopedSession(scopedFiles, false);
+			};
+			const checked: Scope[] = [];
+			const recompute = (): void => {
+				if (!checked.length) {
+					previewScope(null, "Whole vault");
+					return;
+				}
+				const byPath = new Map<string, TFile>();
+				for (const scope of checked) {
+					for (const f of filesForScope(this.app, scope, eligible, this.plugin.concepts)) byPath.set(f.path, f);
+				}
+				previewScope([...byPath.values()], `${checked.length} selected`);
+			};
+			const addScopeRow = (parent: HTMLElement, label: string, scope: Scope): void => {
+				const row = parent.createDiv({ cls: "grill-onboard-row" });
+				const cb = row.createEl("input", { attr: { type: "checkbox" } });
+				cb.onchange = () => {
+					if (cb.checked) checked.push(scope);
+					else {
+						const i = checked.findIndex((s) => s.kind === scope.kind && s.id === scope.id);
+						if (i >= 0) checked.splice(i, 1);
+					}
+					recompute();
+				};
+				const lbl = row.createEl("label", { text: label });
+				lbl.onclick = () => cb.click();
+			};
+
 			if (activeEligible && active) {
 				addScopeRow(scopeBox, `Current note: ${active.basename}`, { kind: "note", id: active.path });
 			}
+			if (untested.length) addScopeRow(scopeBox, `Untested (${untested.length})`, { kind: "untested", id: "untested" });
 			if (folders.length) {
 				scopeBox.createDiv({ cls: "grill-scope-group", text: "Folders" });
 				for (const path of folders) addScopeRow(scopeBox, path, { kind: "folder", id: path });
@@ -761,22 +833,14 @@ export class SessionView extends ItemView {
 				scopeBox.createDiv({ cls: "grill-scope-group", text: "Tags" });
 				for (const t of tags) addScopeRow(scopeBox, `${t.tag} (${t.count})`, { kind: "tag", id: t.tag });
 			}
-			scopeHeader.addClass("grill-scope-toggle");
 			scopeHeader.onclick = () => {
 				scopeBox.toggleClass("grill-scope-collapsed", !scopeBox.hasClass("grill-scope-collapsed"));
 			};
 		}
 
-		btn = screen.createEl("button", { text: "Get grilled", cls: "mod-cta grill-start-btn grill-primary-cta" });
-		btn.onclick = () => {
-			this.sessionScope = this.pendingScope;
-			this.dueOnly = false;
-			void this.startSession();
-		};
-
 		// The learning graph: your notes, coloured in by what you've proven you know.
 		const mapWrap = screen.createDiv({ cls: "grill-map-wrap" });
-		void this.renderMap(mapWrap, applyScope);
+		void this.renderMap(mapWrap);
 
 		const dash = screen.createDiv({ cls: "grill-meta grill-dash-link" });
 		const dashLink = dash.createSpan({ cls: "grill-chip-link", text: "View your progress" });
@@ -852,11 +916,10 @@ export class SessionView extends ItemView {
 	/** Draw the learning graph over the eligible notes into `host`. Loads concepts + saved
 	 * positions, builds and (re)lays out the graph, persists positions, and mounts the
 	 * canvas controller. Bounded to MAP_NODE_CAP nodes (practised notes + neighbours).
-	 * `onSelectScope(files, label)` is how the map's own "Untested" chip hands a scope
-	 * back up to the start screen's "Get grilled" button — `null` files means "whole
-	 * vault" (matches the Scope checkboxes' own convention; see renderStart's
-	 * `applyScope`, the single shared implementation). */
-	private async renderMap(host: HTMLElement, onSelectScope: (files: TFile[] | null, label: string) => void): Promise<void> {
+	 * Purely a display: its filter chips (including "Untested") only ever restrict what's
+	 * drawn here (see `rebuildMap` below), never the session scope — that's Custom
+	 * Study's job now (renderStart), a deliberately separate action from "Get grilled". */
+	private async renderMap(host: HTMLElement): Promise<void> {
 		const toolbar = host.createDiv({ cls: "grill-graph-toolbar" });
 		const canvas = host.createEl("canvas", { cls: "grill-graph" });
 		const status = host.createDiv({ cls: "grill-meta grill-map-status", text: "Loading your graph…" });
@@ -864,6 +927,33 @@ export class SessionView extends ItemView {
 			const eligible = this.allEligible();
 			const nameSet = new Set(eligible.map((f) => f.basename));
 			const concepts = await this.plugin.store.loadConcepts();
+			// Repair a stale note-level aggStatus/dueAt cache: submitAnswer's recomputeAggregate
+			// keeps plugin.mastery in sync with concepts.json going forward, but any note whose
+			// cache drifted before that — an interrupted session, an older version, concepts
+			// touched by some other path — stays wrong indefinitely otherwise, since nothing
+			// else ever re-derives it. Confirmed in the wild: 14 notes in one real vault sat on
+			// a cached aggStatus of "untested" despite having tested (and in some cases
+			// individually graded) concepts, so the "Untested" filter kept including notes the
+			// map itself drew with a real grade badge — the two disagreeing because one trusted
+			// a stale cache and the other read the ground truth. The map is already loading
+			// that ground truth (`concepts`) to draw from, so re-deriving and healing the cache
+			// here is free; only notes that actually disagree get written back.
+			const idsByNote = new Map<string, string[]>();
+			for (const [id, cm] of Object.entries(concepts)) {
+				if (!nameSet.has(cm.note)) continue;
+				(idsByNote.get(cm.note) ?? idsByNote.set(cm.note, []).get(cm.note)!).push(id);
+			}
+			let masteryRepaired = false;
+			for (const [note, ids] of idsByNote) {
+				const agg = noteAggregate(ids, concepts);
+				const m = (this.plugin.mastery[note] ??= emptyMastery());
+				if (m.aggStatus !== agg.aggStatus || m.dueAt !== agg.dueAt) {
+					m.aggStatus = agg.aggStatus;
+					m.dueAt = agg.dueAt;
+					masteryRepaired = true;
+				}
+			}
+			if (masteryRepaired) void this.plugin.store.saveMastery(this.plugin.mastery);
 			const practiced = new Set<string>();
 			for (const cm of Object.values(concepts)) {
 				if (nameSet.has(cm.note) && cm.correct + cm.partial + cm.incorrect > 0) practiced.add(cm.note);
@@ -932,25 +1022,66 @@ export class SessionView extends ItemView {
 			}
 			const appearance = await this.readGraphAppearance();
 			const s = this.plugin.data.settings;
-			this.map?.dispose();
-			this.map = new LearningMap(
-				canvas,
-				graph,
-				this.mapPalette(),
-				(id) => this.openNote(id),
-				(pos) => void this.plugin.store.saveGraphLayout(pos),
-				settled,
-				appearance,
-				{
-					colorMode: s.graphColorMode,
-					numberMode: s.graphNumberMode,
-					coverageWeight: s.graphCoverageWeight / 100,
-				},
-			);
+
+			/** (Re)builds and mounts the map from either the full node universe (`restrict`
+			 * null) or a filtered one: EXACTLY the matched notes, nothing else — still
+			 * passed through the same MAP_NODE_CAP safety net as the full view. Neighbours
+			 * of the match were included here at first, for context, but on a heavily
+			 * cross-linked vault (this note alone has 49 backlinks) that reliably pulled
+			 * most of the vault back in behind the matches, reproducing the exact hairball
+			 * the filter exists to get rid of. A link between two matches still draws (see
+			 * `mapLinks` below); a match with no matched neighbour just draws unconnected,
+			 * which is correct for "here's what's actually due", not a bug. A large vault's
+			 * filter chips used to only dim non-matches (`setHighlight`) while still drawing
+			 * and laying out every node regardless — harmless at a few dozen notes, but at
+			 * hundreds the whole graph stays an unreadable mass no matter what's toggled,
+			 * since dimming doesn't reduce what the force layout has to fit on screen.
+			 * Rebuilding with a genuinely smaller node set is the actual fix. */
+			const rebuildMap = (restrict: Set<string> | null): void => {
+				let mapNames = names;
+				let mapLinks = links;
+				if (restrict && restrict.size) {
+					mapNames = restrict.size > MAP_NODE_CAP ? [...restrict].slice(0, MAP_NODE_CAP) : [...restrict];
+					const keptSet = new Set(mapNames);
+					mapLinks = allLinks.filter(([a, b]) => keptSet.has(a) && keptSet.has(b));
+				}
+				const g = restrict && restrict.size ? buildGraph(mapNames, mapLinks, concepts, undefined, misconceptionCounts) : graph;
+				let mapSettled = g.nodes.length > 0;
+				for (const n of g.nodes) {
+					const p = saved[n.id];
+					if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) {
+						n.x = p.x;
+						n.y = p.y;
+					} else {
+						mapSettled = false;
+					}
+				}
+				this.map?.dispose();
+				this.map = new LearningMap(
+					canvas,
+					g,
+					this.mapPalette(),
+					(id) => this.openNote(id),
+					(pos) => void this.plugin.store.saveGraphLayout(pos),
+					mapSettled,
+					appearance,
+					{
+						colorMode: s.graphColorMode,
+						numberMode: s.graphNumberMode,
+						coverageWeight: s.graphCoverageWeight / 100,
+					},
+				);
+				// No dimming needed anymore: every drawn node already IS the match (or the
+				// whole vault, when restrict is null) — nothing left to distinguish.
+			};
+			this.mapRebuild = rebuildMap;
+			rebuildMap(null);
 			// Smarter filtering: toggleable chips that isolate a subset of the graph by a
-			// signal colour alone can't cleanly show at once (e.g. "just what's overdue"),
-			// reusing the same dim/highlight the session-scope picker uses. Multiple active
-			// filters union (matches any), matching the scope picker's own combine rule.
+			// signal colour alone can't cleanly show at once (e.g. "just what's overdue").
+			// Multiple active filters union (matches any), matching the scope picker's own
+			// combine rule. Always matched against the FULL graph (never the currently
+			// -displayed, possibly already-filtered one), so toggling a second filter on
+			// unions against the whole vault, not just whatever the first filter left visible.
 			const degree = new Map<string, number>();
 			for (const [a, b] of links) {
 				degree.set(a, (degree.get(a) ?? 0) + 1);
@@ -960,6 +1091,11 @@ export class SessionView extends ItemView {
 			const STALE_DAYS = 14;
 			const filterDefs: { kind: string; label: string; match: (n: GraphNode) => boolean }[] = [
 				{ kind: "due", label: "Due", match: (n) => !!n.dueAt && new Date(n.dueAt).getTime() <= nowMs },
+				// Ground-truth from the graph's own node state (same source renderMap's
+				// aggStatus repair pass heals plugin.mastery against), not a second,
+				// independently-computed "untested" set — see untestedFiles in scope.ts for
+				// the one true definition, which this agrees with by construction.
+				{ kind: "untested", label: "Untested", match: (n) => n.state === "unpracticed" },
 				{ kind: "struggling", label: "Learning", match: (n) => n.state === "struggling" },
 				{
 					kind: "stale",
@@ -983,12 +1119,12 @@ export class SessionView extends ItemView {
 					readout.setText("");
 					return;
 				}
-				// Phrased as what the filter DID (highlighted these on the map), not as a due
+				// Phrased as what the filter DID (narrowed the map to these), not as a due
 				// count restated in the same words as the "Review N due now" button above —
 				// the two answer different questions (go review vs. see where on the map),
 				// so the text shouldn't read like the same fact said twice.
 				const matched = matchedSet();
-				let text = `${matched.length} note${matched.length === 1 ? "" : "s"} highlighted`;
+				let text = `Showing ${matched.length} note${matched.length === 1 ? "" : "s"}`;
 				if (s.graphNumberMode !== "off") {
 					const scored = matched
 						.map((n) => gradeScore(n, s.graphCoverageWeight / 100))
@@ -1006,27 +1142,17 @@ export class SessionView extends ItemView {
 					if (activeFilters.has(f.kind)) activeFilters.delete(f.kind);
 					else activeFilters.add(f.kind);
 					chip.toggleClass("is-active", activeFilters.has(f.kind));
-					this.map?.setHighlight(activeFilters.size ? new Set(matchedSet().map((n) => n.id)) : null);
+					rebuildMap(activeFilters.size ? new Set(matchedSet().map((n) => n.id)) : null);
 					updateReadout();
 				};
 			};
-			createFilterChip(filterDefs[0]); // Due
-			// Right after Due, same plain chip style and same toggle behavior as the rest:
-			// clicking it selects the scope (highlights on the map, updates "Get grilled" to
-			// "Grill N selected") rather than jumping straight into a session — the same
-			// choose-then-commit flow the Scope checkboxes above already use, not a
-			// one-tap shortcut that skips it. Clicking again reverts to the whole vault.
-			const untestedFiles = eligible.filter((f) => statusOf(this.plugin.mastery[f.basename]) === "untested");
-			if (untestedFiles.length) {
-				const untestedChip = chipRow.createEl("button", { cls: "grill-filter-chip", text: "Untested" });
-				let untestedActive = false;
-				untestedChip.onclick = () => {
-					untestedActive = !untestedActive;
-					untestedChip.toggleClass("is-active", untestedActive);
-					onSelectScope(untestedActive ? untestedFiles : null, untestedActive ? "Untested" : "Whole vault");
-				};
-			}
-			for (const f of filterDefs.slice(1)) createFilterChip(f);
+			// Untested used to be a special case here — its own chip that changed the
+			// session scope (via onSelectScope) rather than just the map, sitting one click
+			// from "Get grilled" with no visual difference from its purely-cosmetic
+			// siblings. Folded into filterDefs above like the rest: purely a map display
+			// now. Studying just what's untested is still possible, deliberately, via
+			// Custom Study's own "Untested" checkbox (renderStart) instead.
+			for (const f of filterDefs) createFilterChip(f);
 
 			if (capped) {
 				host.createDiv({
@@ -1691,16 +1817,35 @@ export class SessionView extends ItemView {
 	private progressBar(wrap: HTMLElement): void {
 		if (!this.plugin.data.settings.showProgress) return;
 		const bar = wrap.createDiv({ cls: "grill-progress" });
-		for (let i = 0; i < this.targetCount; i++) {
-			const seg = bar.createDiv({ cls: "grill-seg" });
-			const r = this.results[i];
-			if (r) {
-				seg.addClass(
-					r.gaveUp ? "grill-seg-skipped" : r.verdict === "correct" ? "grill-seg-correct" : r.verdict === "partial" ? "grill-seg-partial" : "grill-seg-incorrect",
-				);
-			} else if (i === this.idx) {
-				seg.addClass("grill-seg-current");
+		// One flex segment per question, each separated by a fixed CSS gap, doesn't scale:
+		// a due session can run to 200+ questions (see the end-session escape hatch above),
+		// and past a few dozen the fixed gaps alone overflow the bar's width, breaking the
+		// layout instead of showing progress. Beyond MAX_PROGRESS_SEGMENTS, consecutive
+		// questions are bucketed into one segment, colored by the worst thing in it —
+		// SEG_SEVERITY ranks a recorded wrong answer above "you're currently here" above a
+		// recorded correct answer, so one miss in a bucket doesn't get averaged away by the
+		// rest of it going well.
+		const bucketSize = Math.max(1, Math.ceil(this.targetCount / MAX_PROGRESS_SEGMENTS));
+		for (let start = 0; start < this.targetCount; start += bucketSize) {
+			const end = Math.min(start + bucketSize, this.targetCount);
+			let cls: string | null = null;
+			for (let i = start; i < end; i++) {
+				const r = this.results[i];
+				const rCls = r
+					? r.gaveUp
+						? "grill-seg-skipped"
+						: r.verdict === "correct"
+							? "grill-seg-correct"
+							: r.verdict === "partial"
+								? "grill-seg-partial"
+								: "grill-seg-incorrect"
+					: i === this.idx
+						? "grill-seg-current"
+						: null;
+				if (rCls && (!cls || SEG_SEVERITY.indexOf(rCls) > SEG_SEVERITY.indexOf(cls))) cls = rCls;
 			}
+			const seg = bar.createDiv({ cls: "grill-seg" });
+			if (cls) seg.addClass(cls);
 		}
 	}
 
@@ -1816,6 +1961,23 @@ export class SessionView extends ItemView {
 			qEl.createSpan({ text: q.question.slice(cursor) });
 		} else {
 			this.md(q.question, qEl, q.node);
+		}
+
+		if (ttsAvailable()) {
+			// Derived from the raw markdown, not qEl's rendered text: MarkdownRenderer.render
+			// (see `md` above) resolves asynchronously, so qEl's textContent isn't reliably
+			// populated yet at this point in the render. Placed after qEl, not inside it, so
+			// it trails the question instead of sitting in its own column pushing text over.
+			const speakText = toSpeechText(q.question);
+			const speakBtn = card.createEl("button", {
+				cls: "clickable-icon grill-tts-btn",
+				attr: { "aria-label": "Read question aloud", type: "button" },
+			});
+			setIcon(speakBtn, "volume-2");
+			speakBtn.onclick = () => {
+				const s = this.plugin.data.settings;
+				speak(speakText, { lang: s.ttsLanguage, voiceURI: s.ttsVoiceURI });
+			};
 		}
 
 		const selfGrade = this.plugin.data.settings.gradingMode === "self";
@@ -2685,14 +2847,16 @@ export class SessionView extends ItemView {
 	 * serving old write-in questions forever. Rotates to the least-shown variant among
 	 * whatever's left.
 	 *
-	 * Reuse is gated on elapsed time, not a shown-count: a same-day re-show (the FSRS
-	 * relearn loop after "Again", or reviewing the same concept twice in one sitting) is
-	 * a genuine "you just saw this minutes ago" repeat, so it always reuses the cached
-	 * text — there's nothing to test by rewording it. Once a calendar day has passed,
-	 * this IS a spaced review, and recognizing the identical sentence from days ago isn't
-	 * a real test of recall, so a fresh variant is written instead unless the student has
-	 * opted into `reuseAcrossDays` to minimize model calls. Either way this never grows
-	 * unboundedly: rememberGenerated evicts the oldest past MAX_VARIANTS. */
+	 * The model only ever writes a question once per concept (per source text — an edit
+	 * that changes `sourceHash` reopens it): every later review of the same concept
+	 * reuses that same cached text, forever. Rewording on a schedule used to be the
+	 * default (a fresh variant once a calendar day had passed since it was last shown,
+	 * to avoid testing sentence-recognition instead of recall) but in practice this
+	 * reliably drifted the *content* of the question, not just its phrasing — a real
+	 * failure mode on precision material like a language drill, where a "fresher"
+	 * variant can quietly test a different grammar point or invent a wrong answer.
+	 * This never grows unboundedly regardless: rememberGenerated evicts the oldest
+	 * past MAX_VARIANTS. */
 	private cacheHit(conceptId: string): CachedQuestion | null {
 		const c = this.conceptById.get(conceptId);
 		if (!c || c.authored) return null; // authored questions are verbatim, not banked
@@ -2704,10 +2868,7 @@ export class SessionView extends ItemView {
 		fresh.sort(
 			(a, b) => a.timesShown - b.timesShown || (a.lastShownAt ?? "").localeCompare(b.lastShownAt ?? ""),
 		);
-		const pick = fresh[0];
-		const shownToday = !!pick.lastShownAt && sameCalendarDay(new Date(pick.lastShownAt), new Date());
-		if (!shownToday && !this.plugin.data.settings.reuseAcrossDays) return null; // a real spaced review: write fresh
-		return pick;
+		return fresh[0];
 	}
 
 	/** Question texts already on record for this exact concept (same source text),
@@ -3004,7 +3165,7 @@ export class SessionView extends ItemView {
 			// bucket preserves input order, so a scope spanning multiple folders would
 			// otherwise collapse onto whichever folder sorts first (see interleaveByFolder).
 			const orderedNames = interleaveByFolder([...byName.keys()], (n) => byName.get(n)?.parent?.path ?? "");
-			// maxNotesPerSession exists to bound an AUTO-selected slice of the whole
+			// autoNotesPoolCap exists to bound an AUTO-selected slice of the whole
 			// vault (the unscoped "let Grill choose" session) — it has no business
 			// truncating a session the user explicitly scoped themselves ("Grill this
 			// note/folder", or the due queue): `sessionScope` already narrowed `byName`
@@ -3013,7 +3174,7 @@ export class SessionView extends ItemView {
 			// of bug as the questionsPerSession cap below). Scoped sessions still get a
 			// large ceiling, not truly unbounded, as a sanity cap on reading/extracting
 			// an unreasonable number of full notes in one go.
-			const notesCap = this.sessionScope ? NO_MEANINGFUL_CAP : s.maxNotesPerSession;
+			const notesCap = this.sessionScope ? NO_MEANINGFUL_CAP : autoNotesPoolCap(s.questionsPerSession, byName.size);
 			const priority = priorityNotes(this.concepts, (note) => byName.has(note));
 			const seed = pickCandidates(orderedNames, this.plugin.mastery, notesCap, priority);
 			const names = expandSelectionWithLinks(this.app, seed, byName, this.plugin.mastery, notesCap);
@@ -3145,10 +3306,20 @@ export class SessionView extends ItemView {
 				await this.appendBridgeTargets(cfg, names, s.bridgesPerSession);
 			}
 
-			this.renderLoading(
-				"Writing your questions",
-				`${cfg!.model} is reading ${names.length} notes. This usually takes a few seconds.`,
-			);
+			// A due review's targets are, by construction, concepts that have already been
+			// tested before — so in the common case every one of them already has a cached
+			// (or authored) question and this needs no model call at all. Only show the
+			// "writing questions" loading screen, with its "reading N notes" LLM messaging,
+			// when there's actually at least one target that isn't prebuilt: otherwise
+			// nothing is being read or written, and the screen is just a misleading flash
+			// before a session that's about to resolve instantly from cache (see
+			// loadNextBatch: a fully-prebuilt run resolves synchronously).
+			if (this.targets.some((t) => !this.isPrebuilt(t))) {
+				this.renderLoading(
+					"Writing your questions",
+					`${cfg!.model} is reading ${names.length} notes. This usually takes a few seconds.`,
+				);
+			}
 			await this.loadNextBatch();
 			if (this.questions.length === 0) {
 				new Notice("Grill: the model returned no usable questions.", 8000);
@@ -3551,8 +3722,10 @@ export class SessionView extends ItemView {
 	async onClose(): Promise<void> {
 		this.map?.dispose();
 		this.map = null;
+		this.mapRebuild = null;
 		this.confettiStop?.();
 		this.confettiStop = null;
+		stopSpeaking();
 		await this.flush();
 	}
 
@@ -3562,7 +3735,8 @@ export class SessionView extends ItemView {
 	private recomputeAggregate(note: string): void {
 		const m = this.plugin.mastery[note];
 		if (!m) return;
-		const agg = noteAggregate(this.conceptsByNote.get(note) ?? [], this.concepts);
+		const ids = (this.conceptsByNote.get(note) ?? []).map((c) => c.id);
+		const agg = noteAggregate(ids, this.concepts);
 		m.aggStatus = agg.aggStatus;
 		m.dueAt = agg.dueAt;
 		m.weakPrereq = this.findWeakPrereq(note, m);

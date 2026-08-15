@@ -1,5 +1,59 @@
 # Changelog
 
+## 5.2.0
+
+- **New: read a question aloud.** A speaker button next to each question uses the
+  browser's built-in text-to-speech — no API key, no network call. Detects the
+  question's language per sentence/quoted span (via `franc`, a real trigram-based
+  language detector, not a hand-rolled word list) so a translation-style question
+  embedding a foreign phrase switches voices mid-question instead of guessing one
+  language for the whole thing. Auto-picks the best-quality installed voice for
+  whatever's detected; Settings → **Read-aloud language/voice** let you pin either
+  instead of auto-detecting.
+- **Change: a concept's question is now written once and reused verbatim on every
+  later review, permanently — removed the setting that used to write a fresh
+  variant once a calendar day had passed.** That behavior reliably drifted the
+  actual content of the question over time, not just its phrasing — a real problem
+  on precision material (an exact grammar rule, a specific number) where a
+  "fresher" variant could land as a different, sometimes wrong, question. The
+  model now only ever writes a question for a concept that doesn't have one yet.
+  Due reviews are also faster and cheaper as a result: a review session no longer
+  shows a "writing your questions" / model-reading step at all when every target
+  already has a cached or authored question, which is the common case now.
+- **Fix: a due session over 200 questions silently dropped the rest of the
+  backlog.** The "not a real cap" safety ceiling behind "Review N due now" was
+  itself a real cap for anyone with a bigger backlog than that (missed a couple
+  weeks, or a large vault) — raised well past any real due count.
+- **Fix: the progress bar broke on a long due session**, drawing one sliver per
+  question with a fixed gap between them — at 100+ questions the gaps alone
+  overflowed the bar's width. Now buckets into a fixed number of segments,
+  colored by the worst result in each.
+- **Fix: the learning map became an unreadable mass on a large vault.** Its
+  filter chips (Due, Learning, Stale, Misconceptions, Stuck, Unlinked) and the
+  Scope picker used to only dim non-matching notes while still drawing and
+  laying out every one of them — harmless at a few dozen notes, useless at
+  hundreds. Both now redraw the map from just the matching notes.
+- **Fix: a note's cached known/learning/untested status could silently go stale**
+  relative to its actual concept data — e.g. reading "Untested" on the map's own
+  filter despite the note having real, even already-graded, concepts, because an
+  older interrupted session (or an older plugin version) never got the chance to
+  refresh it. Now self-heals from the ground-truth concept data every time the
+  map renders.
+- **Removed "Notes considered per session"** as a manual setting — the
+  auto-selected note pool for an unscoped session now scales automatically off
+  "Questions per session" instead of a separate number to reason about.
+- **"Get grilled" is now unconditional** — it always starts the engine's own
+  best mix of due and fresh material, regardless of anything ticked elsewhere
+  on the screen, and never relabels itself based on ambient state. Scoping a
+  session (by folder, tag, current note, or untested) moved into its own
+  **Custom study** card below it — collapsed by default, with its own preview
+  and its own "Study N selected" button, so choosing a scope is a deliberate,
+  separate action with a visibly different outcome, not a config screen the
+  main button quietly inherits. Matches how Anki (Study Now vs. a separate
+  Custom Study/Filtered Deck flow) and obsidian-spaced-repetition (a wholly
+  separate review-everything command) both keep the default, algorithm-picked
+  path protected from accidental scope-narrowing.
+
 ## 5.1.0
 
 - **New: edit a cached question instead of only ever deleting it.** A pencil on the home

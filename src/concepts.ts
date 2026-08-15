@@ -338,10 +338,14 @@ export function blockedByDailyCap(
 	return newConceptsIntroducedSince(map, todayStart) >= newConceptsPerDay;
 }
 
-/** Concept-derived note status + soonest due date, over the note's CURRENT
- * concepts only (orphans excluded). This is what note-level surfaces read. */
-export function noteAggregate(concepts: Concept[], map: ConceptMap): { aggStatus: NoteStatus; dueAt: string | null } {
-	const tested = concepts.filter((c) => conceptTested(map[c.id]));
+/** Concept-derived note status + soonest due date, over the note's CURRENT concept ids
+ * only (orphans excluded). This is what note-level surfaces read. Takes bare ids, not
+ * structural `Concept` objects — every one of these is a lookup into `map` anyway, and
+ * `map`'s own entries already carry everything else (including `.note`), so a caller
+ * that only has the mastery/schedule side loaded (no note text re-parsed) can still
+ * call this — see renderMap's aggStatus repair, which does exactly that. */
+export function noteAggregate(ids: string[], map: ConceptMap): { aggStatus: NoteStatus; dueAt: string | null } {
+	const tested = ids.filter((id) => conceptTested(map[id]));
 	// "Untested" (grey) means literally untouched: not one concept answered yet. The
 	// moment a note has any tested concept it leaves grey for "Learning" (red) and
 	// stays there until confirmed-known coverage is high enough to read "known" (green).
@@ -352,12 +356,12 @@ export function noteAggregate(concepts: Concept[], map: ConceptMap): { aggStatus
 	// not merely answered ones, so a note can't read "known" off one lucky answer per
 	// concept. The denominator caps at COVERAGE_TARGET (see its doc comment) rather
 	// than the note's raw concept count.
-	const known = concepts.filter((c) => statusOf(map[c.id]) === "known").length;
-	const coverage = known / Math.max(1, Math.min(concepts.length, COVERAGE_TARGET));
+	const known = ids.filter((id) => statusOf(map[id]) === "known").length;
+	const coverage = known / Math.max(1, Math.min(ids.length, COVERAGE_TARGET));
 	const aggStatus: NoteStatus = coverage >= COVERAGE_KNOWN ? "known" : "struggling";
 	let dueAt: string | null = null;
-	for (const c of tested) {
-		const d = map[c.id]?.dueAt ?? null;
+	for (const id of tested) {
+		const d = map[id]?.dueAt ?? null;
 		if (d && (!dueAt || d < dueAt)) dueAt = d;
 	}
 	return { aggStatus, dueAt };

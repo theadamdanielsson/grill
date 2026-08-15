@@ -731,7 +731,7 @@
 /* ---------------------------------------------------------------- progress */
 .grill-progress {
   display: flex;
-  gap: 4px;
+  gap: 2px;
   margin-top: 0.5em;
 }
 .grill-seg {
@@ -753,7 +753,11 @@
 /* ---------------------------------------------------------------- question */
 .grill-question {
   line-height: var(--line-height-normal, 1.5);
-  margin-bottom: 0.75em;
+  margin-bottom: 0.25em;
+}
+.grill-tts-btn {
+  display: flex;
+  margin: 0 0 0.5em;
 }
 .grill-question-small {
   color: var(--text-muted);
@@ -1331,6 +1335,22 @@ settings:
 }
 
 /* ---------------------------------------------------------------- scope picker */
+/* The Custom Study card: same bordered-box language as the map/graph wrap, so it reads
+ * as its own deliberately-entered section, not a floating accordion in the main flow —
+ * see the "Get grilled" onclick comment in view.ts for why this lives here now. */
+.grill-custom-study {
+  margin: 0.75em 0;
+}
+.grill-custom-study .grill-scope-header {
+  margin-top: 0;
+}
+.grill-scope-preview {
+  margin: 0.5em 0;
+  min-height: 1.2em;
+}
+.grill-scope-commit {
+  width: 100%;
+}
 .grill-scope-header {
   display: flex;
   align-items: baseline;

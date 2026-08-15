@@ -495,7 +495,7 @@ function parseGrillCallout(lines: string[], start: number): { item: LocalItem; n
 
 // This is the ceiling on how many concepts a note can EVER have, in either local or AI
 // mode (extractConcepts feeds both) — not a per-session pacing limit, which is handled
-// separately by questionsPerSession/maxNotesPerSession/due rotation. Content past this
+// separately by questionsPerSession/the auto-selected notes pool/due rotation. Content past this
 // cap is permanently invisible to the scheduler, no matter how many sessions run, since
 // the walk below stops scanning once it's collected this many items (first N in
 // document order). Was 12, which silently truncated any content-dense note (a

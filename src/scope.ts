@@ -4,13 +4,13 @@
  */
 
 import { App, TFile, getAllTags } from "obsidian";
-import { ConceptMap, dueNotes } from "./concepts";
+import { ConceptMap, conceptTested, dueNotes } from "./concepts";
 
-export type ScopeKind = "all" | "due" | "folder" | "tag" | "note";
+export type ScopeKind = "all" | "due" | "untested" | "folder" | "tag" | "note";
 
 export interface Scope {
 	kind: ScopeKind;
-	/** folder path, tag (with #), or note path; unused for "all". */
+	/** folder path, tag (with #), or note path; unused for "all"/"untested". */
 	id: string;
 }
 
@@ -74,6 +74,17 @@ export function dueFiles(eligible: TFile[], concepts: ConceptMap, now = new Date
 	return eligible.filter((f) => due.has(f.basename));
 }
 
+/** Notes with not one tested concept — live from concept data, same "derive from the
+ * ground truth" pattern as `dueFiles` above, not the note-level `mastery.aggStatus`
+ * cache: that cache can drift stale (see renderMap's repair pass in view.ts, which
+ * found 14 real notes wrongly still reading "untested"), so a second, permanent scope
+ * category built on it would just reproduce the same class of bug it exists to avoid. */
+export function untestedFiles(eligible: TFile[], concepts: ConceptMap): TFile[] {
+	const tested = new Set<string>();
+	for (const cm of Object.values(concepts)) if (conceptTested(cm)) tested.add(cm.note);
+	return eligible.filter((f) => !tested.has(f.basename));
+}
+
 /** Resolve a scope to the eligible notes it covers. */
 export function filesForScope(app: App, scope: Scope, eligible: TFile[], concepts: ConceptMap = {}): TFile[] {
 	switch (scope.kind) {
@@ -81,6 +92,8 @@ export function filesForScope(app: App, scope: Scope, eligible: TFile[], concept
 			return eligible;
 		case "due":
 			return dueFiles(eligible, concepts);
+		case "untested":
+			return untestedFiles(eligible, concepts);
 		case "note":
 			return eligible.filter((f) => f.path === scope.id);
 		case "folder":

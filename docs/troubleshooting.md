@@ -38,28 +38,27 @@ themselves to the actual backlog instead of the generic session-length setting.
 
 ## The same question keeps coming back
 
-Two separate mechanisms can cause this, and they stack:
+This is by design: once the AI (or no-key mode) writes a question for a concept, Grill reuses that
+exact text on every later review of it, indefinitely — never silently reworded. If you want to
+change how a specific question reads, edit it directly (see below); if you want everything to get
+a fresh pass, Settings → **"Clear cached questions"** forces the next review of every concept to
+write a new one.
 
-1. **Caching.** Once the AI writes a question for a concept, Grill can reuse that exact text on the
-   concept's next review instead of paying for a fresh model call every time — but only when that
-   next review happens on the same calendar day (the FSRS "Again" relearn loop, or reviewing the
-   same concept twice in one sitting). Once a day has passed, a due concept always gets a freshly
-   written variant instead, since recognizing the identical sentence you saw days ago isn't a real
-   memory test. Settings → **"Reuse questions across days"** opts back into reusing cached text
-   across days too, to minimize model calls at the cost of eventually seeing the same phrasing
-   again on a real review — off by default. A "fresh" variant used to only mean a new model call,
-   not necessarily different wording — the model had no memory of what it had already written for
-   that concept, so a regenerated question could land as a near-restatement of the one it was
-   replacing. Fixed in a recent update: the model is now shown what it's already asked and told to
-   write a genuinely different angle, with a second check that catches near-duplicates even if it
-   doesn't comply.
-2. **A small studied slice.** If your session scope (or the vault) is large but only a handful of
-   notes ever actually get selected into a session, the same few concepts recur simply because
-   they're the only ones in rotation. This was also a real bug — the note-selection order wasn't
-   spread across folders/topics, so a scope spanning several chapters could quietly collapse onto
-   whichever one sorted first — fixed in a recent update. If you're still seeing heavy repetition
-   after updating and raising the reuse setting, your studied notes may genuinely be a small
-   fraction of your vault; the fix helps it spread out over more sessions, not instantly.
+This used to work differently, and the difference is worth knowing if you're returning to Grill
+after a while: a due concept older than a day used to always get a freshly *written* variant
+instead of reusing the cached text, on the theory that recognizing an identical sentence from days
+ago isn't a real memory test. In practice this reliably drifted the actual *content* being tested,
+not just its phrasing — on precision material (an exact grammar rule, a specific number, a formula)
+a "fresher" variant could land as a genuinely different, sometimes wrong, question. Removed outright
+in a recent update, not made optional: the model now only ever writes a question once per concept.
+
+If you're still seeing heavy repetition after updating, check whether your session scope (or the
+vault) is large but only a handful of notes ever actually get selected into a session — the same
+few concepts recur simply because they're the only ones in rotation. That was also a real bug (the
+note-selection order wasn't spread across folders/topics, so a scope spanning several chapters
+could quietly collapse onto whichever one sorted first) fixed in a recent update; if it's still
+happening, your studied notes may genuinely be a small fraction of your vault, and the fix helps
+that spread out over more sessions, not instantly.
 
 ## A cached question is wrong, and I don't want to just delete it
 

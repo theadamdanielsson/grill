@@ -18,6 +18,7 @@ import { dueFiles, duplicateBasenames } from "./scope";
 import { GrillStore } from "./store";
 import { SessionView, VIEW_TYPE } from "./view";
 import type { ColorMode, NumberMode } from "./mapview";
+import { listLanguages, listVoicesForLang, onVoicesChanged } from "./tts";
 
 interface GrillSettings {
 	provider: ProviderId;
@@ -27,7 +28,6 @@ interface GrillSettings {
 	/** Base URL for the custom OpenAI-compatible provider, e.g. https://openrouter.ai/api/v1 */
 	customBaseUrl: string;
 	questionsPerSession: number;
-	maxNotesPerSession: number;
 	/** Vault folder holding mastery.json and session notes. */
 	folder: string;
 	compact: boolean;
@@ -61,20 +61,17 @@ interface GrillSettings {
 	/** Play short synthesized sound cues on each answer + at session end, with a
 	 * confetti burst on a perfect session. On by default. */
 	sounds: boolean;
+	/** Read-aloud voice language: "" auto-detects per question from its text, an
+	 * explicit code (e.g. "it") always uses that language regardless of the question. */
+	ttsLanguage: string;
+	/** Read-aloud voice: "" auto-picks the best-quality installed voice for the
+	 * resolved language, a specific voiceURI always uses that exact voice. */
+	ttsVoiceURI: string;
 	/** Missing-link finder: surface a "these two notes should be linked" question in
 	 * AI sessions and offer to write the link. On by default. */
 	graphInsights: boolean;
 	/** How many missing-link bridge questions to add per session (0 disables). */
 	bridgesPerSession: number;
-	/** Question cache: a same-day re-show (the FSRS relearn loop, or reviewing the
-	 * same concept twice in one sitting) always reuses the cached text — that's a
-	 * real "you just saw this minutes ago" repeat, not a memory test. A later day's
-	 * review always gets a freshly written variant instead, since asking someone to
-	 * recall a concept days later by recognizing the identical sentence they saw
-	 * before isn't testing recall. This flag opts back into the old always-reuse
-	 * behavior (across days too) for anyone who wants to minimize model calls over
-	 * freshness. */
-	reuseAcrossDays: boolean;
 	/** Careful grading: grade an answer with a small consensus of calls (opt-in,
 	 * higher cost) to reduce leniency error. Off by default. */
 	carefulGrade: boolean;
@@ -100,16 +97,16 @@ interface GrillSettings {
 	 * reviews. Higher = longer intervals, fewer but higher-stakes reviews. */
 	desiredRetention: number;
 	/** Cap on how many never-before-tested concepts a session will introduce per
-	 * calendar day, independent of questionsPerSession/maxNotesPerSession (which
-	 * govern one sitting, not the day). Once hit, sessions fill remaining slots from
+	 * calendar day, independent of questionsPerSession (which governs one sitting, not
+	 * the day). Once hit, sessions fill remaining slots from
 	 * due/review material instead, so the due backlog can't balloon from unlimited
 	 * new material outrunning how fast it can actually be reviewed. 0 = no cap. */
 	newConceptsPerDay: number;
 	/** Settings-tab progressive disclosure: reveal the rarely-touched tuning/maintenance
-	 * settings (careful grading, coverage weighting, reuse-across-days, cache clearing,
-	 * missing-link bridges, etc.) below a single toggle instead of always showing all
-	 * ~30 settings flat. Sticky across reopens — a power user who turns it on shouldn't
-	 * have to re-expand every time. */
+	 * settings (careful grading, coverage weighting, cache clearing, missing-link
+	 * bridges, etc.) below a single toggle instead of always showing all ~30 settings
+	 * flat. Sticky across reopens — a power user who turns it on shouldn't have to
+	 * re-expand every time. */
 	showAdvancedSettings: boolean;
 }
 
@@ -129,7 +126,6 @@ function defaultSettings(): GrillSettings {
 		ollamaUrl: "http://localhost:11434",
 		customBaseUrl: "",
 		questionsPerSession: 5,
-		maxNotesPerSession: 15,
 		folder: "Grill",
 		compact: false,
 		showProgress: true,
@@ -145,9 +141,10 @@ function defaultSettings(): GrillSettings {
 		sessionDebrief: true,
 		confidenceCheck: false,
 		sounds: true,
+		ttsLanguage: "",
+		ttsVoiceURI: "",
 		graphInsights: true,
 		bridgesPerSession: 1,
-		reuseAcrossDays: false,
 		carefulGrade: false,
 		conceptsMigrated: false,
 		graphColorMode: "mastery",
@@ -184,7 +181,6 @@ export default class GrillPlugin extends Plugin {
 		if (typeof s.ollamaUrl === "string" && s.ollamaUrl.trim()) settings.ollamaUrl = s.ollamaUrl.trim();
 		if (typeof s.customBaseUrl === "string") settings.customBaseUrl = s.customBaseUrl.trim();
 		if (typeof s.questionsPerSession === "number") settings.questionsPerSession = s.questionsPerSession;
-		if (typeof s.maxNotesPerSession === "number") settings.maxNotesPerSession = s.maxNotesPerSession;
 		if (typeof s.folder === "string" && s.folder.trim()) settings.folder = s.folder.trim();
 		if (typeof s.compact === "boolean") settings.compact = s.compact;
 		if (typeof s.showProgress === "boolean") settings.showProgress = s.showProgress;
@@ -202,17 +198,10 @@ export default class GrillPlugin extends Plugin {
 		if (typeof s.sessionDebrief === "boolean") settings.sessionDebrief = s.sessionDebrief;
 		if (typeof s.confidenceCheck === "boolean") settings.confidenceCheck = s.confidenceCheck;
 		if (typeof s.sounds === "boolean") settings.sounds = s.sounds;
+		if (typeof s.ttsLanguage === "string") settings.ttsLanguage = s.ttsLanguage;
+		if (typeof s.ttsVoiceURI === "string") settings.ttsVoiceURI = s.ttsVoiceURI;
 		if (typeof s.graphInsights === "boolean") settings.graphInsights = s.graphInsights;
 		if (typeof s.bridgesPerSession === "number") settings.bridgesPerSession = s.bridgesPerSession;
-		// One-time migration: "Reuse generated questions" used to be a 0-10 count of
-		// same-text repeats before a fresh variant was written. Under the new model
-		// (below), only the old maximum-reuse extreme (0, "Always reuse") still means
-		// anything — carry that one forward as reuseAcrossDays; every other stored
-		// count adopts the new same-day-only default. An explicit reuseAcrossDays
-		// already on disk (a newer install) wins over this migration.
-		const legacyRegenerateEvery = (s as Record<string, unknown>).regenerateEvery;
-		if (typeof legacyRegenerateEvery === "number") settings.reuseAcrossDays = legacyRegenerateEvery === 0;
-		if (typeof s.reuseAcrossDays === "boolean") settings.reuseAcrossDays = s.reuseAcrossDays;
 		if (typeof s.carefulGrade === "boolean") settings.carefulGrade = s.carefulGrade;
 		if (typeof s.conceptsMigrated === "boolean") settings.conceptsMigrated = s.conceptsMigrated;
 		if (["mastery", "recency", "dueness", "misconceptions"].includes(s.graphColorMode as string)) {
@@ -600,9 +589,6 @@ export default class GrillPlugin extends Plugin {
 }
 
 const CUSTOM = "__custom__";
-/** Sentinel stored for maxNotesPerSession meaning "every note", so it stays
- * "All" as the vault grows rather than freezing at the count when it was set. */
-const ALL_NOTES = 1_000_000;
 
 class GrillSettingTab extends PluginSettingTab {
 	plugin: GrillPlugin;
@@ -610,6 +596,8 @@ class GrillSettingTab extends PluginSettingTab {
 	private modelLists: Partial<Record<ProviderId, string[]>> = {};
 	private fetching: Partial<Record<ProviderId, boolean>> = {};
 	private showCustomModel = false;
+	/** Guards against attaching a duplicate voiceschanged listener on every display(). */
+	private voicesListenerAttached = false;
 
 	constructor(app: App, plugin: GrillPlugin) {
 		super(app, plugin);
@@ -686,6 +674,61 @@ class GrillSettingTab extends PluginSettingTab {
 		this.display();
 	}
 
+	/** Language + voice pickers for the read-aloud button. Both default to "auto" —
+	 * best-quality installed voice for whatever language the question text turns out to
+	 * be — so out of the box this always uses the best available voice with no setup;
+	 * pinning either is only for overriding that. */
+	private buildVoiceSettings(containerEl: HTMLElement, s: GrillSettings): void {
+		const langs = listLanguages();
+		// getVoices() can be empty on the very first call — the browser loads its voice
+		// list asynchronously. Re-render once it actually arrives, same pattern as
+		// refreshModels' `this.display()` on late data.
+		if (langs.length === 0 && !this.voicesListenerAttached) {
+			this.voicesListenerAttached = true;
+			onVoicesChanged(() => this.display());
+		}
+
+		new Setting(containerEl)
+			.setName("Read-aloud language")
+			.setDesc(
+				langs.length === 0
+					? "No voices found yet — reopen Settings in a moment."
+					: "Auto-detect (default) matches each question's voice to its language. Pin one to always use it instead.",
+			)
+			.addDropdown((d) => {
+				d.addOption("", "Auto-detect");
+				for (const l of langs) d.addOption(l.code, l.label);
+				d.setValue(s.ttsLanguage);
+				d.onChange(async (v) => {
+					s.ttsLanguage = v;
+					s.ttsVoiceURI = ""; // a pinned voice belongs to the old language; changing it invalidates that pin
+					await this.plugin.persist();
+					this.display();
+				});
+			});
+
+		new Setting(containerEl)
+			.setName("Read-aloud voice")
+			.setDesc(
+				s.ttsLanguage
+					? "Best available (default) uses the top-quality installed voice for that language."
+					: "Pick a language above first.",
+			)
+			.addDropdown((d) => {
+				d.addOption("", "Best available");
+				if (!s.ttsLanguage) {
+					d.setDisabled(true);
+					return;
+				}
+				for (const v of listVoicesForLang(s.ttsLanguage)) d.addOption(v.voiceURI, v.name);
+				d.setValue(s.ttsVoiceURI);
+				d.onChange(async (v) => {
+					s.ttsVoiceURI = v;
+					await this.plugin.persist();
+				});
+			});
+	}
+
 	display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
@@ -706,7 +749,7 @@ class GrillSettingTab extends PluginSettingTab {
 			.setName("Show advanced settings")
 			.setDesc(
 				"Reveal rarely-touched tuning and maintenance settings: careful grading, coverage weighting, " +
-					"reuse-across-days, cache clearing, and similar.",
+					"cache clearing, and similar.",
 			)
 			.addToggle((t) =>
 				t.setValue(s.showAdvancedSettings).onChange(async (v) => {
@@ -758,12 +801,9 @@ class GrillSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Question formats")
 			.setDesc(
-				"Mixed adds multiple-choice, fill-in-the-blank, true/false, select-all-that-apply, and matching " +
-					"alongside the usual write-in-the-box questions, picked per concept based on what actually fits it. " +
-					"Multiple choice only always uses 'mc' (falling back to another structured format only when a " +
-					"concept genuinely can't be posed as a single-answer choice). In AI mode either non-Write option " +
-					"costs a little extra prompt on every question batch. Set here, not in Instructions.md — a " +
-					"free-text preference like \"only multiple choice\" there won't reliably stick.",
+				"Mixed picks whichever format (multiple-choice, fill-in-the-blank, true/false, select-all, matching, " +
+					"or write-in) actually fits each concept. Set here, not in Instructions.md — a free-text preference " +
+					"there won't reliably stick.",
 			)
 			.addDropdown((d) =>
 				d
@@ -983,31 +1023,6 @@ class GrillSettingTab extends PluginSettingTab {
 			},
 		);
 
-		const totalNotes = Math.max(
-			1,
-			this.app.vault.getMarkdownFiles().filter((f) => !f.path.startsWith(`${s.folder}/`)).length,
-		);
-		const notesValue = s.maxNotesPerSession >= totalNotes ? totalNotes : Math.max(1, s.maxNotesPerSession);
-		this.sliderSetting(
-			containerEl,
-			"Notes considered per session",
-			"How many notes (chosen by due date and weakness) Grill reads and scans for concepts before picking " +
-				"this session's questions — only the 1-2 notes behind each question are ever actually sent to the " +
-				"model, so this doesn't affect cost. Fewer is faster to start a session; more gives the scheduler a " +
-				"wider pool to pick fresh material from on a large vault. Default suits most vaults. Doesn't apply " +
-				"when you scope a session yourself (a chosen note/folder, or due review) — those always consider " +
-				"everything you picked.",
-			1,
-			totalNotes,
-			notesValue,
-			(v) => (v >= totalNotes ? "All" : String(v)),
-			async (v) => {
-				// Store a large sentinel for "All" so it stays All as the vault grows.
-				s.maxNotesPerSession = v >= totalNotes ? ALL_NOTES : v;
-				await this.plugin.persist();
-			},
-		);
-
 		this.sliderSetting(
 			containerEl,
 			"Review frequency",
@@ -1101,30 +1116,12 @@ class GrillSettingTab extends PluginSettingTab {
 			}
 
 			new Setting(containerEl)
-				.setName("Reuse questions across days")
-				.setDesc(
-					"Off (default): a concept due for review always gets a freshly written question once a new day has " +
-						"passed since you last saw it — recognizing the identical sentence you read days ago isn't a real " +
-						"memory test. Reviewing the same concept again within the same day (e.g. right after getting it " +
-						"wrong) still reuses the cached question either way, since that's a genuine 'you just saw this' " +
-						"repeat, not a spaced review. Turn this on to reuse cached questions across days too and minimize " +
-						"model calls, at the cost of eventually seeing the same phrasing again on a real review.",
-				)
-				.addToggle((t) =>
-					t.setValue(s.reuseAcrossDays).onChange(async (v) => {
-						s.reuseAcrossDays = v;
-						await this.plugin.persist();
-					}),
-				);
-
-			new Setting(containerEl)
 				.setName("Clear cached questions")
 				.setDesc(
-					"Forces every concept to write a fresh question next time it's due, instead of waiting for its next " +
-						"new-day review (or, with 'Reuse questions across days' on above, indefinitely). Useful right " +
-						"after a Grill update changes how questions are written (a new format, a prompt fix) so it " +
-						"reaches concepts you've already studied a lot, not just new ones. Doesn't affect a session " +
-						"already open.",
+					"A concept's question is written once and reused verbatim on every later review — never silently " +
+						"reworded. Use this to force every concept to write a fresh question next time it's due, e.g. right " +
+						"after a Grill update changes how questions are written (a new format, a prompt fix) so it reaches " +
+						"concepts you've already studied a lot, not just new ones. Doesn't affect a session already open.",
 				)
 				.addButton((b) =>
 					b.setButtonText("Clear").onClick(async () => {
@@ -1164,6 +1161,8 @@ class GrillSettingTab extends PluginSettingTab {
 					await this.plugin.persist();
 				}),
 			);
+
+		this.buildVoiceSettings(containerEl, s);
 
 		// ------------------------------------------------------------ Appearance
 		new Setting(containerEl).setName("Appearance").setHeading();
