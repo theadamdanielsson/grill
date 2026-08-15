@@ -759,7 +759,7 @@ export class SessionView extends ItemView {
 			scopeHeader.createSpan({ cls: "grill-section-label", text: "Custom study" });
 			// A dropdown-style caret, not a collapse arrow: signals "this opens a list of
 			// options" the way a native <select> would, right next to the label it opens.
-			scopeHeader.createSpan({ cls: "grill-scope-caret", text: "⌄" });
+			scopeHeader.createSpan({ cls: "grill-scope-caret", text: "▾" });
 			const scopeSummary = scopeHeader.createSpan({ cls: "grill-meta grill-scope-summary", text: "Whole vault" });
 
 			const scopeBox = customStudyCard.createDiv({ cls: "grill-onboard-folders grill-scope-collapsed" });
@@ -828,7 +828,12 @@ export class SessionView extends ItemView {
 			if (activeEligible && active) {
 				addScopeRow(scopeBox, `Current note: ${active.basename}`, { kind: "note", id: active.path });
 			}
-			if (untested.length) addScopeRow(scopeBox, `Untested (${untested.length})`, { kind: "untested", id: "untested" });
+			// Labeled "Study only untested", not bare "Untested", so it doesn't read as the
+			// same control as the map's "Untested" filter chip below (renderMap) — that one
+			// only ever narrows what the map draws; this one picks the session's scope.
+			if (untested.length) {
+				addScopeRow(scopeBox, `Study only untested (${untested.length})`, { kind: "untested", id: "untested" });
+			}
 			if (folders.length) {
 				scopeBox.createDiv({ cls: "grill-scope-group", text: "Folders" });
 				for (const path of folders) addScopeRow(scopeBox, path, { kind: "folder", id: path });
@@ -1189,15 +1194,13 @@ export class SessionView extends ItemView {
 
 		// Stats derived from mastery.json.
 		const counts = { untested: 0, struggling: 0, known: 0 };
-		let correct = 0, answered = 0, dueWeek = 0, knownShaky = 0;
+		let dueWeek = 0, knownShaky = 0;
 		const now = Date.now();
 		const weekMs = 7 * 86400_000;
 		for (const f of eligible) {
 			const m = map[f.basename];
 			counts[statusOf(m)]++;
 			if (m) {
-				correct += m.correct;
-				answered += m.correct + m.partial + m.incorrect;
 				if (m.weakPrereq) knownShaky++;
 				if (m.dueAt) {
 					const d = new Date(m.dueAt).getTime();
@@ -1209,6 +1212,17 @@ export class SessionView extends ItemView {
 		// actually delivers (see GrillPlugin.dueCount's doc comment).
 		const eligibleNames = new Set(eligible.map((f) => f.basename));
 		const dueNow = dueConceptCount(this.plugin.concepts, (note) => eligibleNames.has(note));
+		// Accuracy also reads concept-level, not the note-level correct/partial/incorrect
+		// counters used above: those exist only for the "known"/"weakPrereq" rollup and
+		// aren't reliably kept in sync answer-by-answer the way concepts.json's own
+		// scheduling counters are (concept mastery is the thing actually written and
+		// verified on every graded answer — see recordConceptAnswer/recordConceptRating).
+		let correct = 0, answered = 0;
+		for (const cm of Object.values(this.plugin.concepts)) {
+			if (!eligibleNames.has(cm.note)) continue;
+			correct += cm.correct;
+			answered += cm.correct + cm.partial + cm.incorrect;
+		}
 		const accuracy = answered ? Math.round((100 * correct) / answered) : 0;
 
 		const stats = screen.createDiv({ cls: "grill-stats" });

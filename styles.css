@@ -1368,10 +1368,17 @@ settings:
   margin-left: 0.15em;
 }
 /* Collapsed = a peek (a couple of rows, scroll cut off), not hidden entirely;
- * expanded lifts the cap so the full checkbox list scrolls as before. */
+ * expanded lifts the cap so the full checkbox list scrolls as before. A hard
+ * clip at a fixed height chopped mid-row into whatever content happened to
+ * land there (a scope-group label sliced in half) — reads as broken, not as
+ * "there's more below". Faded out over the last ~1.5em instead, so a partial
+ * row/label reads as an intentional peek regardless of how many rows or
+ * sections a given vault's Custom Study list happens to have. */
 .grill-onboard-folders.grill-scope-collapsed {
   max-height: 5.2em;
   overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 1.5em), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 1.5em), transparent 100%);
 }
 .grill-scope-group {
   font-weight: var(--font-semibold, 600);

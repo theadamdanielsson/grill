@@ -1,5 +1,22 @@
 # Changelog
 
+## 5.2.2
+
+- **Fix: "Your progress" always showed 0% accuracy**, even with a real answer history.
+  It summed the note-level `correct`/`partial`/`incorrect` counters, which turn out not
+  to be reliably kept in sync — concept-level scheduling (concepts.json) is the counter
+  that's actually written and verified on every graded answer. Accuracy now sums that
+  instead, the same ground truth "due now" right next to it already reads.
+- **Fix: the Custom Study checkbox list clipped mid-row when collapsed**, cutting a
+  section label (e.g. "Folders") off mid-word at a fixed height regardless of how much
+  content a given vault's list actually has. Faded out instead of hard-clipped, so a
+  partial row reads as "there's more" rather than as broken rendering.
+- **Change: the Custom Study "Untested" checkbox is now "Study only untested"**, so it
+  reads as a different control from the map's own "Untested" filter chip below it — the
+  two do different things (session scope vs. what the map draws) but sat close enough
+  with the same label to read as a duplicate.
+- **Change: the Custom Study dropdown caret is a triangle (▾), not a chevron (⌄).**
+
 ## 5.2.1
 
 - **Fix: one heavily-studied note could dominate a whole session.** Due/struggling
