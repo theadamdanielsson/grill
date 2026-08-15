@@ -16,6 +16,10 @@
   two do different things (session scope vs. what the map draws) but sat close enough
   with the same label to read as a duplicate.
 - **Change: the Custom Study dropdown caret is a triangle (▾), not a chevron (⌄).**
+- **Fix: two regex lookbehinds broke on iOS before 16.4** (Obsidian's plugin review
+  flags this as an error, and Grill isn't desktop-only). One was introduced by this
+  same release's embed-misparsing fix; the other was in the 5.2.0 read-aloud language
+  splitter. Both rewritten to the same effective behavior without lookbehind.
 
 ## 5.2.1
 

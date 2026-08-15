@@ -175,20 +175,12 @@ interface Mark {
 }
 
 // Order matters: Anki `{{c1::..}}` before the generic curly `{{..}}`.
-// The wikilink branch has a negative lookbehind on `!`: without it, an embed like
-// `![[Screenshot 2026-07-14 at 12.07.15.png]]` sitting mid-line (itemsForNote's own
-// `^!\[` skip only catches an embed that IS the whole line) parses as an ordinary
-// `[[wikilink]]`, and the filename — often just the right shape to pass `goodTerm`
-// (a handful of words, no stopwords) — becomes a real scheduled concept with no
-// actual content. The image's real content never becomes a concept either way
-// (it's invisible to this text-only extractor); this just stops the filename from
-// impersonating one.
 const INLINE_RE = new RegExp(
 	"\\{\\{c(\\d+)::([^}]+?)(?:::([^}]+?))?\\}\\}" + // 1=cN 2=text 3=hint
 		"|==(?:(\\d+);;)?([^=]+?)(?:;;([^=]+?))?==" + // 4=seq 5=text 6=hint
 		"|\\{\\{([^}]+?)\\}\\}" + // 7=text
 		"|\\*\\*([^*]+?)\\*\\*" + // 8=text
-		"|(?<!!)\\[\\[([^\\]|]+)(?:\\|([^\\]]+))?\\]\\]", // 9=target 10=alias
+		"|\\[\\[([^\\]|]+)(?:\\|([^\\]]+))?\\]\\]", // 9=target 10=alias
 	"g",
 );
 
@@ -205,6 +197,15 @@ function parseInline(line: string): { display: string; marks: Mark[] } {
 	while ((m = INLINE_RE.exec(line))) {
 		display += line.slice(last, m.index);
 		last = m.index + m[0].length;
+		// An embed (`![[target]]`) matches the same `[[...]]` pattern as a real wikilink.
+		// No lookbehind here (unsupported on iOS < 16.4, and Grill ships on mobile) — a
+		// plain check of the preceding character instead. Left as literal, unmarked text:
+		// its filename has no business becoming a term/cloze candidate (see itemsForNote's
+		// own `^!\[` skip for the same reasoning when an embed is a whole line by itself).
+		if (m[9] !== undefined && m.index > 0 && line[m.index - 1] === "!") {
+			display += m[0];
+			continue;
+		}
 		let text: string, hint: string | undefined, group: string, kind: MarkKind;
 		if (m[1] !== undefined) {
 			text = m[2]; hint = m[3]; group = `a${m[1]}`; kind = "anki";

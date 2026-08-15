@@ -166,10 +166,19 @@ export const AUTO_VOICE_PREF: VoicePref = { lang: "", voiceURI: "" };
  * forcing a switch. */
 function splitByLanguage(text: string): { text: string; lang: string | null }[] {
 	const overall = detectLang(text);
-	const parts = text
-		.split(/("[^"]*"|'[^']*'|(?<=[.!?])\s+)/)
+	// No lookbehind (unsupported on iOS < 16.4, and Grill ships on mobile): split on the
+	// sentence-ending punctuation itself rather than the zero-width point after it, which
+	// peels it off into its own piece, then fold each punctuation-only piece back onto the
+	// end of the previous one — same effective split as `(?<=[.!?])\s+` without the syntax.
+	const rawParts = text
+		.split(/("[^"]*"|'[^']*'|[.!?]\s+)/)
 		.map((p) => p.trim())
 		.filter(Boolean);
+	const parts: string[] = [];
+	for (const p of rawParts) {
+		if (/^[.!?]+$/.test(p) && parts.length) parts[parts.length - 1] += p;
+		else parts.push(p);
+	}
 	const runs: { text: string; lang: string | null }[] = [];
 	for (const part of parts) {
 		const lang = detectLang(part) ?? overall;
