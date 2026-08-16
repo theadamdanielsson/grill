@@ -1,5 +1,14 @@
 # Changelog
 
+## 5.3.2
+
+- **Fix: the duplicate-filename warning renagged on every single Obsidian
+  reload.** If two of your notes share a name (Grill tracks progress by
+  filename, not folder — see the warning's own text), it now only warns again
+  when the actual list of collisions changes, not every time the plugin loads.
+  Rename the notes it flagged, or wait it out; it stays quiet either way once
+  it's told you once.
+
 ## 5.3.1
 
 - **No functional change.** Rewrote the plugin description (what shows in Obsidian's

@@ -127,6 +127,12 @@ interface GrillSettings {
 	 * flat. Sticky across reopens — a power user who turns it on shouldn't have to
 	 * re-expand every time. */
 	showAdvancedSettings: boolean;
+	/** Sorted basenames `warnOnDuplicateBasenames` last actually warned about, so the
+	 * same unresolved duplicate list doesn't re-notify on every single plugin load —
+	 * only a CHANGE in the duplicate set (a new collision, or an old one resolved)
+	 * warns again. The underlying check stays on: this only silences repeating
+	 * yourself, not the warning itself. */
+	lastWarnedDuplicateBasenames: string[];
 }
 
 interface PluginData {
@@ -175,6 +181,7 @@ function defaultSettings(): GrillSettings {
 		newConceptsPerDay: 20,
 		legacyDefaultsMigrated: false,
 		showAdvancedSettings: false,
+		lastWarnedDuplicateBasenames: [],
 	};
 }
 
@@ -254,6 +261,9 @@ export default class GrillPlugin extends Plugin {
 		if (typeof s.newConceptsPerDay === "number") settings.newConceptsPerDay = s.newConceptsPerDay;
 		if (typeof s.legacyDefaultsMigrated === "boolean") settings.legacyDefaultsMigrated = s.legacyDefaultsMigrated;
 		if (typeof s.showAdvancedSettings === "boolean") settings.showAdvancedSettings = s.showAdvancedSettings;
+		if (Array.isArray(s.lastWarnedDuplicateBasenames)) {
+			settings.lastWarnedDuplicateBasenames = s.lastWarnedDuplicateBasenames.filter((v): v is string => typeof v === "string");
+		}
 		// One-time upgrade for legacy installs. persist() writes the whole settings
 		// object, so an existing user has the old shipped defaults saved to disk —
 		// changing defaultSettings() alone never reaches them. Carry the two changed
@@ -521,15 +531,27 @@ export default class GrillPlugin extends Plugin {
 		return false;
 	}
 
-	/** One-time startup check (see `duplicateBasenames`): if two of Grill's eligible
-	 * notes share a filename, Grill's basename-keyed mastery/concepts can't tell them
+	/** Startup check (see `duplicateBasenames`): if two of Grill's eligible notes
+	 * share a filename, Grill's basename-keyed mastery/concepts can't tell them
 	 * apart, so their scheduling/progress silently mixes together and which file wins
 	 * a given lookup isn't guaranteed stable. Not fixable without a schema migration —
-	 * this just makes it visible instead of a silent, confusing mastery-map glitch. */
+	 * this just makes it visible instead of a silent, confusing mastery-map glitch.
+	 *
+	 * Only actually shows the Notice when the duplicate SET has changed since the last
+	 * time it warned (a new collision appeared, or an old one got renamed away) —
+	 * runs on every plugin load, but the same unresolved duplicates you haven't gotten
+	 * around to renaming yet don't re-nag you every single time you open Obsidian. */
 	private warnOnDuplicateBasenames(): void {
 		const eligible = this.app.vault.getMarkdownFiles().filter((f) => !this.isExcluded(f.path));
-		const dupes = duplicateBasenames(eligible);
-		if (!dupes.length) return;
+		const dupes = duplicateBasenames(eligible); // already sorted, so array equality below is order-stable
+		const s = this.data.settings;
+		const unchanged =
+			dupes.length === s.lastWarnedDuplicateBasenames.length &&
+			dupes.every((d, i) => d === s.lastWarnedDuplicateBasenames[i]);
+		if (unchanged) return;
+		s.lastWarnedDuplicateBasenames = dupes;
+		void this.persist();
+		if (!dupes.length) return; // the only change worth persisting silently: it just resolved
 		const shown = dupes.slice(0, 5).join(", ");
 		const more = dupes.length > 5 ? ` and ${dupes.length - 5} more` : "";
 		new Notice(
