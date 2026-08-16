@@ -801,6 +801,17 @@
 .grill-mc-btn:disabled {
   opacity: 0.6;
 }
+/* mc/multi/match choices render through the same markdown/LaTeX path as the question
+   stem (see view.ts's mc/tf branch comment) — that wraps a single-line choice in its
+   own <p>, which carries the theme's normal paragraph margin. A choice is always one
+   line here, so it only ever needs the one margin reset, not the question stem's
+   first-child/last-child pair (which exists for multi-paragraph prompts). */
+.grill-mc-btn p,
+.grill-multi-btn p,
+.grill-match-btn p,
+.grill-match-label p {
+  margin: 0;
+}
 .grill-btn-row {
   display: flex;
   gap: 0.5em;

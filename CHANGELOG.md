@@ -1,5 +1,14 @@
 # Changelog
 
+## 5.3.3
+
+- **Fix: multiple-choice, select-all, and matching answer options showed raw
+  markdown/LaTeX source instead of rendering it.** The question stem itself
+  always rendered properly (`$\dfrac{1}{\sqrt{n}}$` as an actual fraction);
+  the choice buttons underneath it didn't, printing the literal `$...$`
+  source instead — visible on any math-heavy note. Choices now render
+  through the same path as the question text.
+
 ## 5.3.2
 
 - **Fix: the duplicate-filename warning renagged on every single Obsidian

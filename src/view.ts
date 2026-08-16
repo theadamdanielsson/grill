@@ -2029,7 +2029,11 @@ export class SessionView extends ItemView {
 			const mcRow = card.createDiv({ cls: isTf ? "grill-mc-row grill-mc-row-tf" : "grill-mc-row" });
 			const options = isTf ? ["True", "False"] : [...(q.choices as string[])].sort(() => Math.random() - 0.5);
 			for (const choice of options) {
-				const b = mcRow.createEl("button", { text: choice, cls: isTf ? "grill-mc-btn grill-tf-btn" : "grill-mc-btn" });
+				const b = mcRow.createEl("button", { cls: isTf ? "grill-mc-btn grill-tf-btn" : "grill-mc-btn" });
+				// Rendered, not plain text: a choice can carry the same inline LaTeX/markdown
+				// the question stem does (a formula among the options, not just in the prompt),
+				// and createEl's `text:` option would show it as raw, unrendered `$...$` source.
+				this.md(choice, b, q.node);
 				b.onclick = () => {
 					mcRow.querySelectorAll("button").forEach((other) => (other.disabled = true));
 					this.mcPicked = choice;
@@ -2042,7 +2046,8 @@ export class SessionView extends ItemView {
 			const multiRow = card.createDiv({ cls: "grill-multi-row" });
 			const options = [...(q.choices as string[])].sort(() => Math.random() - 0.5);
 			for (const choice of options) {
-				const b = multiRow.createEl("button", { text: choice, cls: "grill-multi-btn" });
+				const b = multiRow.createEl("button", { cls: "grill-multi-btn" });
+				this.md(choice, b, q.node); // see the mc/tf branch above for why this isn't `text:`
 				b.onclick = () => {
 					if (multiSelected.has(choice)) {
 						multiSelected.delete(choice);
@@ -2071,7 +2076,11 @@ export class SessionView extends ItemView {
 			};
 			for (const p of pairs) {
 				const lrow = leftCol.createDiv({ cls: "grill-match-row" });
-				lrow.createSpan({ cls: "grill-match-label", text: p.left });
+				// createDiv, not createSpan: MarkdownRenderer wraps its output in a block-level
+				// <p>, which browsers won't nest cleanly inside an inline <span> — a flex child
+				// (this row is `display: flex`) behaves the same either way, so div is the safe
+				// choice here regardless.
+				this.md(p.left, lrow.createDiv({ cls: "grill-match-label" }), q.node);
 				slots.set(p.left, lrow.createDiv({ cls: "grill-match-slot", text: "Tap a match →" }));
 				leftRows.set(p.left, lrow);
 				lrow.onclick = () => setArmed(armed === p.left ? null : p.left);
@@ -2086,7 +2095,8 @@ export class SessionView extends ItemView {
 			};
 			const shuffledRight = [...pairs.map((p) => p.right)].sort(() => Math.random() - 0.5);
 			for (const right of shuffledRight) {
-				const b = rightCol.createEl("button", { text: right, cls: "grill-match-btn" });
+				const b = rightCol.createEl("button", { cls: "grill-match-btn" });
+				this.md(right, b, q.node); // see the mc/tf branch above for why this isn't `text:`
 				b.onclick = () => {
 					if (b.hasClass("is-used") || !armed) return;
 					assignTo(armed, right, b);
