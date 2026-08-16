@@ -1,8 +1,6 @@
 ![Grill: your notes, quizzed, inside your knowledge graph](docs/hero.svg)
 
-*Grill quizzes you on your own Obsidian notes, marks your answers, and colours in a live map of them as you prove what you know — on your own AI key, or none at all.*
-
-I take a lot of notes and almost never go back to them. Re-reading a note isn't the same as remembering it, and I couldn't be bothered to turn everything into flashcards, so Grill quizzes me on the notes I've already got.
+I take a lot of notes to learn new information and needed a system to learn them more deeply. Grill works by creating questions according to the underlying information and your preferences. It then tests you and tracks your knowledge through spaced repition while visualizing your progress in the native knowledge graph. Works using BYOK, fully local, or a mix of both.
 
 ![Grill's home screen: pick a scope and get grilled](docs/screenshot-home.png)
 
