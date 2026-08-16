@@ -8,7 +8,7 @@
 import { requestUrl } from "obsidian";
 import type { ImageInput } from "./images";
 import { safeSlice } from "./text";
-import type { SessionDebrief, TagAssignment } from "./debrief";
+import type { Arc, CanonMisconception, SessionDebrief, TagAssignment } from "./debrief";
 import type { BridgeCandidate, RawBridge } from "./bridges";
 
 export type ProviderId = "anthropic" | "openai" | "gemini" | "deepseek" | "ollama" | "custom";
@@ -1668,5 +1668,83 @@ export async function debriefSession(
 			nextFocus: d?.nextFocus ?? [],
 		},
 		assignments: data?.assignments ?? [],
+	};
+}
+
+// ------------------------------------------------------------------ arc synthesis
+
+/** The arc engine: a narrative over many sessions' accumulated data, not one
+ * session's transcript (that's DEBRIEF_RULES). Input is deliberately the same
+ * small, already-capped structures the dashboard itself renders (see
+ * MISC_SHOWN_CAP, topMisconceptions, ARC_LOG_CAP) — never raw note text or a
+ * whole-vault scan, the failure mode a related tool hit (an uncapped whole-corpus
+ * request blowing past its model's context window). Never user-editable; only
+ * the persona on top is, same as the debrief. */
+const ARC_RULES = `You're looking at this student's accumulated progress across many study sessions, not one session. Write a short arc: what's changed, what's still recurring.
+
+Arc rules:
+- headline: one plain sentence naming the overall trajectory.
+- resolved: for each resolved misconception given, one short plain-language phrase naming what they used to get wrong. Empty array if none yet.
+- stillWorking: for each active misconception given, one short plain-language phrase, ranked most-recurring first. Empty array if none.
+- shift: one sentence naming a genuine change over time grounded in the data given (e.g. moved from confusing X to confusing Y, or resolved a cluster of related mistakes). Empty string if there's no real shift yet, never invent one to fill the field.
+- Never claim mastery of something backed by fewer than 3 observations, in either direction. Thin evidence, no claim.
+- Plain punctuation, never em dashes. State what the data shows, not a guess beyond it.
+- Write it in whatever language the student's preferences say, or otherwise the language their persona/preferences are written in (English if neither gives a signal).`;
+
+const arcSystem = (persona: string): string => `${persona.trim() || DEFAULT_PERSONA}\n\n${ARC_RULES}`;
+
+function arcSchema(): Record<string, unknown> {
+	return {
+		type: "object",
+		properties: {
+			headline: { type: "string" },
+			resolved: { type: "array", items: { type: "string" } },
+			stillWorking: { type: "array", items: { type: "string" } },
+			shift: { type: "string" },
+		},
+		required: ["headline", "resolved", "stillWorking", "shift"],
+		additionalProperties: false,
+	};
+}
+
+export async function synthesizeArc(
+	cfg: LLMConfig,
+	resolved: CanonMisconception[],
+	stillActive: CanonMisconception[],
+	recentHeadlines: string[],
+	persona: string = DEFAULT_PERSONA,
+	instructions = "",
+): Promise<Arc> {
+	const fmt = (c: CanonMisconception): string => `${c.label} (seen ${c.count}x, first ${c.firstSeen.slice(0, 10)}, last ${c.lastSeen.slice(0, 10)})`;
+	const user =
+		`RESOLVED MISCONCEPTIONS (beaten over time):\n${resolved.length ? resolved.map(fmt).join("\n") : "none yet"}\n\n` +
+		`STILL ACTIVE MISCONCEPTIONS:\n${stillActive.length ? stillActive.map(fmt).join("\n") : "none"}\n\n` +
+		`RECENT SESSION HEADLINES (oldest first):\n${recentHeadlines.length ? recentHeadlines.join("\n") : "none"}` +
+		(instructions
+			? "\n\nThe student wrote these study preferences; honor anything relevant here too, especially " +
+				`what language to write in.\n<preferences>\n${instructions}\n</preferences>`
+			: "");
+	// Reasoning models (gpt-5.1 and similar) spend part of the token budget on
+	// hidden reasoning before any visible output, and how much they spend scales
+	// with how much there is to synthesize, not with this schema's four short
+	// fields: a registry with 20+ resolved misconceptions measurably burned a full
+	// 2000-token budget on reasoning alone and returned nothing (finish_reason
+	// "length", zero content) even though 2000 matches debriefSession/gradeAnswer
+	// elsewhere in this file. 4000 gives real headroom, and "low" effort is the
+	// right default for this call specifically: it's synthesizing already-computed
+	// structured data (the registry, past headlines), not reasoning through a
+	// student's raw answer the way grading/debriefing do, so it doesn't need
+	// medium's deeper reasoning budget to do this well.
+	const data = (await callJSON(cfg, arcSystem(persona), user, arcSchema(), 4000, [], "low")) as {
+		headline?: string;
+		resolved?: string[];
+		stillWorking?: string[];
+		shift?: string;
+	};
+	return {
+		headline: cleanText(data?.headline ?? ""),
+		resolved: data?.resolved ?? [],
+		stillWorking: data?.stillWorking ?? [],
+		shift: cleanText(data?.shift ?? ""),
 	};
 }

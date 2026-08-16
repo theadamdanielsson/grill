@@ -11,8 +11,19 @@ import {
 } from "obsidian";
 import { configureFSRSWeights, MasteryMap } from "./mastery";
 import { CalPoint, isCalPoint } from "./calibration";
-import { LLMConfig, PROVIDERS, ProviderId, Question, listModels, testModel } from "./llm";
+import { LLMConfig, PROVIDERS, ProviderId, Question, listModels, synthesizeArc, testModel } from "./llm";
 import { ConceptMap, dueConceptCount, migrateResetScheduling, rebalanceDueDates, reconcileConcepts } from "./concepts";
+import {
+	ACTIVE_DAYS_BETWEEN_ARCS,
+	activeDayCount,
+	Arc,
+	ArcEntry,
+	ARC_LOG_CAP,
+	isArcEntry,
+	logArcEntry,
+	MIN_ACTIVE_DAYS_FOR_ARC,
+	topMisconceptions,
+} from "./debrief";
 import { extractConcepts } from "./generate-local";
 import { countTrainableReviews, MIN_REVIEWS_FOR_OPTIMIZATION, optimizeFSRSWeights } from "./optimizer";
 import { dueFiles, duplicateBasenames } from "./scope";
@@ -133,12 +144,24 @@ interface GrillSettings {
 	 * warns again. The underlying check stays on: this only silences repeating
 	 * yourself, not the warning itself. */
 	lastWarnedDuplicateBasenames: string[];
+	/** One-time flag: has this vault's arcLog been seeded from its existing session
+	 * history yet (see GrillStore.backfillArcLog)? Sticks after the first launch so
+	 * a vault with genuinely no session history yet (arcLog legitimately empty)
+	 * doesn't get rescanned on every subsequent launch. */
+	arcBackfilled: boolean;
 }
 
 interface PluginData {
 	settings: GrillSettings;
 	/** Rolling metacognitive-calibration buffer (confidence vs outcome). */
 	calibration: CalPoint[];
+	/** Recent session headlines, one per active day (see ArcEntry, logArcEntry).
+	 * Doubles as the active-day counter maybeSynthesizeArc gates on. */
+	arcLog: ArcEntry[];
+	/** Last synthesized arc, plus the active-day count it was generated at, so
+	 * maybeSynthesizeArc knows how much new evidence has accumulated since. Null
+	 * until the vault has MIN_ACTIVE_DAYS_FOR_ARC of history. */
+	arc: { data: Arc; atActiveDays: number } | null;
 }
 
 function defaultSettings(): GrillSettings {
@@ -182,11 +205,12 @@ function defaultSettings(): GrillSettings {
 		legacyDefaultsMigrated: false,
 		showAdvancedSettings: false,
 		lastWarnedDuplicateBasenames: [],
+		arcBackfilled: false,
 	};
 }
 
 export default class GrillPlugin extends Plugin {
-	data: PluginData = { settings: defaultSettings(), calibration: [] };
+	data: PluginData = { settings: defaultSettings(), calibration: [], arcLog: [], arc: null };
 	store!: GrillStore;
 	/** In-memory mastery cache; source of truth is <folder>/mastery.json. */
 	mastery: MasteryMap = {};
@@ -264,6 +288,7 @@ export default class GrillPlugin extends Plugin {
 		if (Array.isArray(s.lastWarnedDuplicateBasenames)) {
 			settings.lastWarnedDuplicateBasenames = s.lastWarnedDuplicateBasenames.filter((v): v is string => typeof v === "string");
 		}
+		if (typeof s.arcBackfilled === "boolean") settings.arcBackfilled = s.arcBackfilled;
 		// One-time upgrade for legacy installs. persist() writes the whole settings
 		// object, so an existing user has the old shipped defaults saved to disk —
 		// changing defaultSettings() alone never reaches them. Carry the two changed
@@ -277,7 +302,13 @@ export default class GrillPlugin extends Plugin {
 			settings.legacyDefaultsMigrated = true;
 		}
 		const calibration = Array.isArray(stored?.calibration) ? stored.calibration.filter(isCalPoint) : [];
-		this.data = { settings, calibration };
+		const arcLog = Array.isArray(stored?.arcLog) ? stored.arcLog.filter(isArcEntry) : [];
+		const storedArc = stored?.arc;
+		const arc =
+			storedArc && typeof storedArc.atActiveDays === "number" && storedArc.data && typeof storedArc.data.headline === "string"
+				? storedArc
+				: null;
+		this.data = { settings, calibration, arcLog, arc };
 		configureFSRSWeights(settings.fsrsPersonalization?.weights ?? null);
 
 		this.store = new GrillStore(this.app, () => this.data.settings.folder);
@@ -386,6 +417,22 @@ export default class GrillPlugin extends Plugin {
 				}
 			}),
 		);
+		// A folder move alone leaves the basename unchanged, and everything Grill
+		// keys on is the basename — the dashboard's folder-coverage grouping
+		// re-resolves live off the current file list on every render, so a pure
+		// move needs no migration at all. An actual rename does change the key
+		// mastery.json/concepts.json/misconceptions.json all reference, and without
+		// this they'd stay attributed to the old, now-nonexistent name until
+		// something happened to re-touch the note — a real, possibly long-lived
+		// staleness, not just a cosmetic one.
+		this.registerEvent(
+			this.app.vault.on("rename", (file, oldPath) => {
+				if (!(file instanceof TFile) || file.extension !== "md") return;
+				const oldName = oldPath.slice(oldPath.lastIndexOf("/") + 1).replace(/\.md$/, "");
+				if (oldName === file.basename) return;
+				void this.renameTrackedNote(oldName, file.basename);
+			}),
+		);
 		if (!Platform.isMobile) {
 			this.statusBar = this.addStatusBarItem();
 			this.statusBar.addClass("mod-clickable");
@@ -431,6 +478,7 @@ export default class GrillPlugin extends Plugin {
 				}
 				this.refreshStatusBar();
 				this.warnOnDuplicateBasenames();
+				void this.maybeSynthesizeArc();
 				// A pane already open at this point rendered its start screen from the
 				// empty mastery placeholder (see refreshIfOnStartScreen) — bring it up to
 				// date now that the real data has loaded.
@@ -605,6 +653,47 @@ export default class GrillPlugin extends Plugin {
 		this.modifyTimers.set(file.path, id);
 	}
 
+	/** Migrate mastery.json's key, concepts.json's `note` field, and the
+	 * misconception registry's `notes` lists from an old basename to the new one
+	 * after an actual rename (see the rename listener in onload). Never clobbers a
+	 * record already sitting at the new name — that's the same duplicate-basename
+	 * situation Grill already warns about elsewhere (renaming into a collision),
+	 * and merging two real histories together silently would be the wrong call;
+	 * leaving the old-name record in place (orphaned, same as if the note had been
+	 * deleted) is the safe default there. */
+	private async renameTrackedNote(oldName: string, newName: string): Promise<void> {
+		let touched = false;
+		if (this.mastery[oldName] && !this.mastery[newName]) {
+			this.mastery[newName] = this.mastery[oldName];
+			delete this.mastery[oldName];
+			touched = true;
+		}
+		for (const cm of Object.values(this.concepts)) {
+			if (cm.note === oldName) {
+				cm.note = newName;
+				touched = true;
+			}
+		}
+		if (touched) {
+			await this.store.saveMastery(this.mastery);
+			await this.store.saveConcepts(this.concepts);
+		}
+
+		const reg = await this.store.loadRegistry();
+		let regTouched = false;
+		for (const c of Object.values(reg)) {
+			const idx = c.notes.indexOf(oldName);
+			if (idx === -1) continue;
+			if (c.notes.includes(newName)) {
+				c.notes.splice(idx, 1); // already tracked under the new name too; drop the stale duplicate
+			} else {
+				c.notes[idx] = newName;
+			}
+			regTouched = true;
+		}
+		if (regTouched) await this.store.saveRegistry(reg);
+	}
+
 	/** Re-extract just this one file's concepts and fold them into the live map, so
 	 * an edit (a new `[!grill]` callout, a changed vocab entry) is reflected in the
 	 * due-count/dashboard without waiting for a session to touch this note. Same
@@ -670,6 +759,67 @@ export default class GrillPlugin extends Plugin {
 		const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
 		const view = leaf?.view;
 		if (view instanceof SessionView) view.showDashboard();
+	}
+
+	/** Re-synthesize the progress-dashboard arc if enough new study days have
+	 * accumulated since the last one. Called once from onLayoutReady (Obsidian
+	 * launch), never on a timer or on dashboard render — the gate check itself is
+	 * local date math over arcLog, so it costs nothing on the launches where it
+	 * declines to call the LLM (the common case). See ACTIVE_DAYS_BETWEEN_ARCS
+	 * and MIN_ACTIVE_DAYS_FOR_ARC in debrief.ts for why the unit is days, not
+	 * sessions or wall-clock time. */
+	async maybeSynthesizeArc(): Promise<void> {
+		// A vault with real session history from before this feature existed starts
+		// with an empty (or nearly empty) arcLog otherwise, making an established
+		// user wait MIN_ACTIVE_DAYS_FOR_ARC days from scratch despite already having
+		// weeks of real evidence in the misconception registry. Always merge, never
+		// gate on arcLog being empty: a brand-new vault has no session files to find
+		// (backfillArcLog naturally returns []), and a vault with a few days already
+		// logged organically since this feature shipped still needs the rest of its
+		// real history folded in, not skipped because arcLog wasn't literally empty.
+		// logArcEntry dedupes by date, so re-deriving a day already present (from
+		// its own session file) is a harmless no-op, not a double-count. Runs once,
+		// ever, per vault; only marked done on success, so a read error retries on
+		// the next launch instead of silently giving up forever.
+		if (!this.data.settings.arcBackfilled) {
+			try {
+				const historical = await this.store.backfillArcLog(ARC_LOG_CAP);
+				let merged = this.data.arcLog;
+				for (const entry of historical) merged = logArcEntry(merged, entry);
+				this.data.arcLog = merged;
+				this.data.settings.arcBackfilled = true;
+				await this.persist();
+			} catch {
+				// best-effort; arcBackfilled stays false so this retries next launch
+			}
+		}
+		const days = activeDayCount(this.data.arcLog);
+		const threshold = this.data.arc ? this.data.arc.atActiveDays + ACTIVE_DAYS_BETWEEN_ARCS : MIN_ACTIVE_DAYS_FOR_ARC;
+		if (days < threshold) return;
+		const cfg = this.llmConfig();
+		if (!cfg) return;
+		try {
+			const reg = await this.store.loadRegistry();
+			const top = topMisconceptions(reg, 30);
+			const resolved = top.filter((c) => c.status === "resolved");
+			const stillActive = top.filter((c) => c.status === "active");
+			const headlines = this.data.arcLog.map((e) => e.headline);
+			const { persona, preferences } = await this.store.loadInstructions();
+			const data = await synthesizeArc(cfg, resolved, stillActive, headlines, persona, preferences);
+			this.data.arc = { data, atActiveDays: days };
+			await this.persist();
+			for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
+				if (leaf.view instanceof SessionView) leaf.view.refreshIfOnDashboard();
+			}
+		} catch (e) {
+			// Best-effort: launch shouldn't fail or nag the user on a bad key/network
+			// blip, so this never surfaces as a Notice. Still logged (not swallowed
+			// silently) so a real, recurring failure is at least visible in DevTools
+			// instead of just reading as "nothing ever appears" with no trail. The
+			// gate re-checks on the next launch since atActiveDays is only advanced
+			// on success.
+			console.error("Grill: arc synthesis failed", e);
+		}
 	}
 
 	/** Active provider config for LLM calls; null if a needed key is missing. */

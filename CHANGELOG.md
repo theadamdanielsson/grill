@@ -1,5 +1,47 @@
 # Changelog
 
+## 5.4.0
+
+- **New: "Your arc" on the progress dashboard.** A short, synthesized read on how
+  you've actually changed over time, not just another stat readout: what used to
+  trip you up and doesn't anymore, what's still recurring, and one sentence naming
+  a genuine shift if there is one. Stays quiet until you've studied on at least 3
+  separate days (thin evidence, nothing honest to say yet), then refreshes every 3
+  study days after that. Only ever looks at your already-computed misconception
+  counts and past session headlines, never raw note text, and only runs once at
+  Obsidian launch, gated behind a cheap local check — never on a timer, never just
+  from opening the dashboard, so it costs nothing on the launches where there's
+  nothing new to say. An existing vault's real history is backfilled from its own
+  past sessions the first time, so upgrading doesn't mean starting the 3-day clock
+  from zero.
+- **Changed: "Concept coverage" now groups by folder, not by individual note.**
+  With the learning graph already covering the granular per-note view, this reads
+  better at a broader stroke — a chapter's overall shakiness, not 100+ individual
+  notes competing for a handful of slots. Lists every folder now (previously
+  silently capped to 6 with no indication more existed), in natural reading order
+  (Chapter 1, 2, ... 12, not sorted by shakiness), with a "Show N more" past 10 so
+  a genuinely large vault's dashboard doesn't build hundreds of rows up front.
+  Two differently-located folders that happen to share a name no longer get merged
+  into one misleading row.
+- **Fix: long "resolved"/"beaten" misconception lists rendered as one giant
+  comma-joined sentence** instead of a readable list. Both the arc's Resolved
+  section and the existing "What you keep getting wrong" card's Beaten line now
+  render one row per item, capped and expandable like everything else on the
+  dashboard.
+- **Fix: renaming a note left its mastery, concept, and misconception history
+  silently attributed to the old name** until something happened to re-touch it —
+  Grill had no listener for Obsidian's own rename event at all. Now migrates all
+  three the moment the rename happens. A folder move alone (basename unchanged)
+  never needed this: folder grouping is resolved fresh on every dashboard render,
+  not cached.
+- **Fix: the review heatmap's columns were a fixed 15px wide** regardless of how
+  wide the panel actually was, so most of a comfortably wide dashboard sat empty
+  next to a small cluster of squares in the corner. Columns now fill the available
+  width.
+- **Changed: "View your progress" is a full button now**, matching the dashboard's
+  other calls to action, not a small underlined text link easy to miss next to the
+  arcade-styled buttons around it.
+
 ## 5.3.3
 
 - **Fix: multiple-choice, select-all, and matching answer options showed raw

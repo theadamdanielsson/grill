@@ -25,6 +25,66 @@ export interface SessionDebrief {
 	nextFocus: string[];
 }
 
+/** One session's headline, logged the moment an AI debrief is produced. The
+ * running log this builds up is what synthesizeArc reads for "recent session
+ * headlines" and is also the whole basis for active-day counting below — one
+ * small persisted list serves both, instead of a separate day tracker plus a
+ * separate re-parse of past session note files. */
+export interface ArcEntry {
+	/** Calendar date the session ended, `YYYY-MM-DD` (local), not a timestamp:
+	 * arc cadence counts distinct study days, not sessions or wall-clock time. */
+	date: string;
+	headline: string;
+}
+
+/** A synthesized narrative over many sessions: what's changed, not what happened
+ * in any one session (that's SessionDebrief's job). */
+export interface Arc {
+	/** One plain sentence naming the overall trajectory. */
+	headline: string;
+	/** Misconceptions that were active and are now resolved, in plain language. */
+	resolved: string[];
+	/** Misconceptions still active, ranked by recurrence. */
+	stillWorking: string[];
+	/** One sentence naming a genuine change over time, or "" if there isn't one yet. */
+	shift: string;
+}
+
+/** True when a stored value is a usable arc log entry (guards loaded data.json). */
+export function isArcEntry(v: unknown): v is ArcEntry {
+	const e = v as ArcEntry | null;
+	return !!e && typeof e.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(e.date) && typeof e.headline === "string";
+}
+
+/** Distinct calendar days represented in the arc log — the unit arc cadence is
+ * gated on. Sessions cluster in bursts (a real vault can log 8 sessions in one
+ * afternoon), so counting sessions instead of days would fire the synthesis call
+ * roughly hourly during a cram burst and say nothing new each time; days is the
+ * unit that actually has time for retention/change to show. */
+export function activeDayCount(log: ArcEntry[]): number {
+	return new Set(log.map((e) => e.date)).size;
+}
+
+/** Days of real study history required before the first arc synthesis — thin
+ * evidence (a single day) has nothing to say yet: no misconception has had time
+ * to resolve, so `resolved`/`shift` would come back empty every time. */
+export const MIN_ACTIVE_DAYS_FOR_ARC = 3;
+/** Active days between re-synthesis once the first arc exists. Also day-based
+ * for the same reason as activeDayCount. */
+export const ACTIVE_DAYS_BETWEEN_ARCS = 3;
+/** Cap on how many recent headlines synthesizeArc is given — keeps the call's
+ * input small and bounded regardless of vault size or history length, the same
+ * reasoning as MISC_SHOWN_CAP in the dashboard. */
+export const ARC_LOG_CAP = 12;
+
+/** Append this session's headline to the arc log, deduped to one entry per day
+ * (a cram day's last headline wins) and capped to the most recent ARC_LOG_CAP
+ * days so the log can't grow unbounded over a long-lived vault. */
+export function logArcEntry(log: ArcEntry[], entry: ArcEntry): ArcEntry[] {
+	const withoutToday = log.filter((e) => e.date !== entry.date);
+	return [...withoutToday, entry].slice(-ARC_LOG_CAP);
+}
+
 /** One raw misconception tag from this session mapped to a canonical one. */
 export interface TagAssignment {
 	rawTag: string;

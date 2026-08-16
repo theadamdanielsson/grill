@@ -1577,22 +1577,39 @@ settings:
   gap: 0.3em;
   margin-top: 0.2em;
 }
-.grill-misc-beaten {
+/* The arc's one-sentence trajectory line: reads as the card's lead, same weight as a
+ * card's own headline elsewhere, not just another .grill-meta row underneath it. */
+.grill-arc-headline {
+  font-size: var(--font-ui-medium, 1em);
+  font-weight: var(--font-semibold, 600);
+  margin-bottom: 0.3em;
+}
+/* One resolved/beaten phrase per row (wraps normally), not .grill-chip (nowrap +
+ * ellipsis, sized for short note names) — these are full sentences and need to
+ * read, not truncate. Shared by the arc's Resolved list and the dashboard's own
+ * Beaten list (former .grill-misc-beaten, same border-left-and-indent shape). */
+.grill-arc-resolved-row {
   border-left: 2px solid var(--grill-correct);
   padding-left: 0.6em;
-  margin-bottom: 0.75em;
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
 }
 
 /* heatmap: a GitHub-style contribution grid, sized to actually fill the card instead
  * of sitting cramped in a corner, with month labels above and a legend below so a bare
- * grid of squares reads as a real chart rather than decoration. */
+ * grid of squares reads as a real chart rather than decoration. Columns are `1fr`, not
+ * a fixed pixel width — the column count (WEEKS) is fixed at render time, so `1fr`
+ * stretches those columns to actually fill the card's width instead of leaving most of
+ * it as dead space on any panel wider than ~200px, which a fixed width always did once
+ * the sidebar was wider than a handful of 15px columns. overflow-x is kept as a safety
+ * net, not the primary fit mechanism anymore. */
 .grill-heatmap-wrap {
   overflow-x: auto;
 }
 .grill-hm-months {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: 15px;
+  grid-auto-columns: 1fr;
   gap: 3px;
   margin-bottom: 3px;
   font-size: var(--font-ui-smaller, 0.75em);
@@ -1602,7 +1619,7 @@ settings:
   display: grid;
   grid-template-rows: repeat(7, 1fr);
   grid-auto-flow: column;
-  grid-auto-columns: 15px;
+  grid-auto-columns: 1fr;
   gap: 3px;
 }
 /* Lit like the rest of the screen: dim ember when idle, ramping up through gold as the

@@ -11,7 +11,7 @@
 import { App, TFile, normalizePath } from "obsidian";
 import { MasteryMap, Verdict, normalizeMastery } from "./mastery";
 import { DEFAULT_PERSONA, Question } from "./llm";
-import { MisconceptionRegistry, SessionDebrief } from "./debrief";
+import { ArcEntry, MisconceptionRegistry, SessionDebrief } from "./debrief";
 import { ConceptMap } from "./concepts";
 import { safeSlice } from "./text";
 import { BridgeMap } from "./bridges";
@@ -445,5 +445,47 @@ export class GrillStore {
 		} catch {
 			return null;
 		}
+	}
+
+	/** One-time backfill for a vault that already has real session history from
+	 * before the arc feature existed: without this, activeDayCount only sees days
+	 * logged going forward, so an existing user with weeks of real study behind
+	 * them would be made to wait MIN_ACTIVE_DAYS_FOR_ARC days from scratch despite
+	 * already having a misconception registry full of real evidence. Reads past
+	 * session notes' own filenames (the date) and their embedded debrief callout
+	 * (the headline, if any) — the same two fields writeSessionNote itself writes
+	 * (`> [!summary] Debrief`, `> ${headline}`) — so this only ever reconstructs
+	 * what a running arcLog would already have if the feature had shipped earlier.
+	 * Capped to the most recent `cap` distinct days, same as logArcEntry's ongoing
+	 * cap, so a heavy vault's backfill costs one read per recent day, not one per
+	 * lifetime session. Best-effort: an unparseable or unreadable file just yields
+	 * no headline for that day rather than failing the whole backfill. */
+	async backfillArcLog(cap: number): Promise<ArcEntry[]> {
+		const dateFromName = /(\d{4}-\d{2}-\d{2}) \d{2}\.\d{2}(?:\.\d{2})?\.md$/;
+		const headlineFromBody = /^> \[!summary\] Debrief\n> (.+)$/m;
+		const prefix = normalizePath(`${this.folder()}/Sessions`) + "/";
+		const byDate = new Map<string, TFile>();
+		for (const f of this.app.vault.getMarkdownFiles()) {
+			if (!f.path.startsWith(prefix)) continue;
+			const m = dateFromName.exec(f.name);
+			if (!m) continue;
+			const existing = byDate.get(m[1]);
+			if (!existing || f.name > existing.name) byDate.set(m[1], f); // last session of the day wins
+		}
+		const recentDates = [...byDate.keys()].sort().slice(-cap);
+		const out: ArcEntry[] = [];
+		for (const date of recentDates) {
+			const file = byDate.get(date);
+			if (!file) continue;
+			let headline = "";
+			try {
+				const body = await this.app.vault.cachedRead(file);
+				headline = headlineFromBody.exec(body)?.[1]?.trim() ?? "";
+			} catch {
+				// best-effort, see doc comment
+			}
+			out.push({ date, headline });
+		}
+		return out;
 	}
 }

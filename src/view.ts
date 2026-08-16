@@ -50,6 +50,7 @@ import {
 	activeMisconceptionsByNote,
 	deterministicDebrief,
 	dismissMisconception,
+	logArcEntry,
 	mergeAssignments,
 	MisconceptionRegistry,
 	resolveMisconception,
@@ -333,6 +334,13 @@ export class SessionView extends ItemView {
 	 * generation, and practice-only — grading and feedback run, but nothing is written to
 	 * the schedule, stats, or misconception registry. */
 	private replayMode = false;
+	/** Dashboard's "Concept coverage" list starts capped (see MISC_SHOWN_CAP) even
+	 * for a vault with dozens of folders — a "Show N more" click sets this and
+	 * re-renders with the full list, rather than the dashboard ever building every
+	 * folder's DOM row up front regardless of whether it'll be seen. Resets each
+	 * time the view is torn down and rebuilt, same as every other screen's local
+	 * UI state here — not worth persisting. */
+	private coverageExpanded = false;
 	/** The live learning-graph canvas controller on the start screen, if any. */
 	private map: LearningMap | null = null;
 	/** Set by renderMap once mounted: rebuilds the map from exactly a given note set (or
@@ -474,6 +482,14 @@ export class SessionView extends ItemView {
 	 * never interrupts an active question, loading screen, or summary. */
 	refreshIfOnStartScreen(): void {
 		if (this.contentEl.querySelector(".grill-scope-header")) this.renderStart();
+	}
+
+	/** Called after maybeSynthesizeArc finishes in the background post-launch, so a
+	 * dashboard pane already open at that point picks up the freshly synthesized
+	 * arc instead of waiting for the next manual open. Same idle-screen guard as
+	 * refreshIfOnStartScreen: only re-renders if still idle on the dashboard. */
+	refreshIfOnDashboard(): void {
+		if (this.contentEl.querySelector(".grill-dashboard-screen")) void this.renderDashboard();
 	}
 
 	/** Public entry so the plugin can force the first-run screen on install. */
@@ -859,9 +875,12 @@ export class SessionView extends ItemView {
 		const mapWrap = screen.createDiv({ cls: "grill-map-wrap" });
 		void this.renderMap(mapWrap);
 
-		const dash = screen.createDiv({ cls: "grill-meta grill-dash-link" });
-		const dashLink = dash.createSpan({ cls: "grill-chip-link", text: "View your progress" });
-		dashLink.onclick = () => this.showDashboard();
+		// Full-width ghost CTA, same shape as the due-review button above (mod-cta
+		// grill-due-cta): a small underlined text link undersold this next to the
+		// arcade-styled buttons surrounding it. Ghost, not the solid grill-primary-cta
+		// treatment, since starting a session is still the screen's actual primary action.
+		const dashBtn = screen.createEl("button", { text: "View your progress", cls: "mod-cta grill-due-cta grill-dash-link" });
+		dashBtn.onclick = () => this.showDashboard();
 
 		const recent = this.recentSessions();
 		if (recent.length) {
@@ -1194,7 +1213,10 @@ export class SessionView extends ItemView {
 		const map = this.plugin.mastery;
 		const eligible = this.allEligible();
 
-		const screen = wrap.createDiv({ cls: "grill-arcade-screen" });
+		// grill-dashboard-screen: unique marker (unlike grill-arcade-screen, shared
+		// with the start/summary screens) so refreshIfOnDashboard can tell this
+		// screen is still open before re-rendering it out from under the user.
+		const screen = wrap.createDiv({ cls: "grill-arcade-screen grill-dashboard-screen" });
 		const head = screen.createDiv({ cls: "grill-meta-row" });
 		head.createSpan({ cls: "grill-score", text: "Your progress" });
 		const back = head.createSpan({ cls: "grill-chip-link", text: "Back" });
@@ -1257,12 +1279,42 @@ export class SessionView extends ItemView {
 			});
 		}
 
-		// What you keep getting wrong. Both lists only ever grow (a canonical tag is
-		// never deleted, just marked resolved), so past a handful of months of daily
-		// use this section would otherwise become a permanently-scrolling wall. Cap
-		// what's shown — already-sorted worst/most-recurring first — to the section's
-		// actual purpose: today's live problems, not a lifetime transcript.
+		// Shared with "What you keep getting wrong" below: both lists only ever grow
+		// (a canonical tag is never deleted, just marked resolved; arc.resolved only
+		// accumulates the same way), so past a handful of months of daily use either
+		// would otherwise become a permanently-scrolling wall. Cap what's shown to
+		// each section's actual purpose, not a lifetime transcript.
 		const MISC_SHOWN_CAP = 10;
+
+		// Your arc: synthesized in the background by maybeSynthesizeArc (main.ts),
+		// gated on active-day history — absent, quietly, until the vault has enough
+		// of it (see MIN_ACTIVE_DAYS_FOR_ARC). Never generated from this render path,
+		// so opening the dashboard is never what triggers or waits on the LLM call.
+		const arc = this.plugin.data.arc?.data;
+		if (arc) {
+			screen.createDiv({ cls: "grill-section-label", text: "Your arc" });
+			const arcCard = screen.createDiv({ cls: "grill-card" });
+			arcCard.createDiv({ cls: "grill-arc-headline", text: arc.headline });
+			if (arc.shift) arcCard.createDiv({ cls: "grill-meta", text: arc.shift });
+			// One row per resolved item, not a single comma-joined sentence: a vault
+			// with a real history behind it (backfilled or just lived-in) can easily
+			// have 15-20 of these, and a wall-of-text paragraph at that length is
+			// exactly the "textblock at scale" this list existed to avoid — same
+			// MISC_SHOWN_CAP reasoning as "What you keep getting wrong" below.
+			if (arc.resolved.length) {
+				arcCard.createDiv({ cls: "grill-section-label", text: "Resolved" });
+				const list = arcCard.createDiv({ cls: "grill-misc-list" });
+				for (const item of arc.resolved.slice(0, MISC_SHOWN_CAP)) {
+					list.createDiv({ cls: "grill-arc-resolved-row", text: item });
+				}
+				if (arc.resolved.length > MISC_SHOWN_CAP) {
+					arcCard.createDiv({ cls: "grill-meta", text: `+${arc.resolved.length - MISC_SHOWN_CAP} more` });
+				}
+			}
+		}
+
+		// What you keep getting wrong — already-sorted worst/most-recurring first
+		// (see MISC_SHOWN_CAP above).
 		const reg = await this.plugin.store.loadRegistry();
 		const top = topMisconceptions(reg, 100);
 		const activeAll = top.filter((c) => c.status === "active");
@@ -1306,12 +1358,16 @@ export class SessionView extends ItemView {
 			}
 		}
 		if (beaten.length) {
+			// One row per beaten tag, not a single comma-joined sentence — same
+			// "textblock at scale" fix as the arc's Resolved list above, and the same
+			// MISC_SHOWN_CAP already used to cap `beaten` itself.
+			miscCard.createDiv({ cls: "grill-section-label", text: "Beaten" });
+			const beatenList = miscCard.createDiv({ cls: "grill-misc-list" });
+			for (const c of beaten) {
+				beatenList.createDiv({ cls: "grill-arc-resolved-row", text: c.label });
+			}
 			const more = beatenAll.length - beaten.length;
-			const suffix = more > 0 ? `, and ${more} more` : "";
-			miscCard.createDiv({
-				cls: "grill-meta grill-misc-beaten",
-				text: `Beaten: ${beaten.map((c) => c.label).join(", ")}${suffix}`,
-			});
+			if (more > 0) miscCard.createDiv({ cls: "grill-meta", text: `+${more} more` });
 		}
 
 		// Concept coverage: honest counts from the per-concept scheduler.
@@ -1325,26 +1381,70 @@ export class SessionView extends ItemView {
 				cls: "grill-meta",
 				text: `${tested.length} concepts tested so far: ${known} solid, ${tested.length - known} still shaky.`,
 			});
-			const byNote = new Map<string, { tested: number; known: number }>();
+			// Grouped by folder, not by individual note: the graph is already the
+			// granular per-note/per-concept view, so this list reads better at a
+			// broader stroke — a chapter/topic folder's overall shakiness, not 109
+			// individual note rows competing for the same 6 slots. Grill otherwise
+			// tracks progress by filename only (see the duplicate-basename warning
+			// elsewhere), so folder is resolved here, once, from the live file list
+			// rather than being state Grill maintains itself.
+			// Keyed by full folder path, not name: two differently-located folders that
+			// happen to share a name (e.g. a "Chapter 1" under two different subjects
+			// in the same vault) are genuinely different folders and would otherwise
+			// silently merge into one misleading row.
+			const pathByBasename = new Map(eligible.map((f) => [f.basename, f.parent && f.parent.path !== "/" ? f.parent.path : "/"]));
+			const byFolder = new Map<string, { tested: number; known: number }>();
 			for (const c of tested) {
-				const e = byNote.get(c.note) ?? { tested: 0, known: 0 };
+				const path = pathByBasename.get(c.note) ?? "?";
+				const e = byFolder.get(path) ?? { tested: 0, known: 0 };
 				e.tested++;
 				if (statusOf(c) === "known") e.known++;
-				byNote.set(c.note, e);
+				byFolder.set(path, e);
 			}
-			const rows = [...byNote.entries()]
-				.map(([note, e]) => ({ note, ...e, shaky: e.tested - e.known }))
-				.sort((a, b) => b.shaky - a.shaky)
-				.slice(0, 6);
+			// Label with just the folder's own name normally; only fall back to
+			// "parent/name" for paths whose bare name collides with another path in
+			// this same list, so the common case stays short and only the genuinely
+			// ambiguous ones pay for disambiguation.
+			const nameOf = (path: string): string => (path === "/" ? "(root)" : path === "?" ? "Other" : path.split("/").pop() ?? path);
+			const nameCounts = new Map<string, number>();
+			for (const path of byFolder.keys()) nameCounts.set(nameOf(path), (nameCounts.get(nameOf(path)) ?? 0) + 1);
+			const labelOf = (path: string): string => {
+				if (path === "/" || path === "?" || (nameCounts.get(nameOf(path)) ?? 0) <= 1) return nameOf(path);
+				const segments = path.split("/");
+				return segments.slice(-2).join("/");
+			};
+			// All folders, not just the shakiest few — a note-count cap made sense
+			// when the list was 109 individual notes, but a folder is already the
+			// broad-strokes unit, so the count that actually needs capping is how
+			// many DOM rows get built at once (matters for a genuinely massive
+			// vault), not how many folders exist. Same MISC_SHOWN_CAP as the
+			// misconception lists, expandable in place rather than a dead-end
+			// "+N more" label, since unlike those lists there's no note/tag to click
+			// into instead — the only way to see the rest is to reveal them here.
+			// Natural/numeric order (Chapter 1, 2, ... 12), not sorted by shakiness:
+			// that made sense while only the top few fit and the rest were hidden, but
+			// now that every folder is listed, a scannable, predictable order beats a
+			// shaky-first ordering that scattered "Chapter 12" in among "Chapter 2"
+			// and "Chapter 3".
+			const allRows = [...byFolder.entries()]
+				.map(([path, e]) => ({ folder: labelOf(path), ...e, shaky: e.tested - e.known }))
+				.sort((a, b) => a.folder.localeCompare(b.folder, undefined, { numeric: true }));
+			const rows = this.coverageExpanded ? allRows : allRows.slice(0, MISC_SHOWN_CAP);
 			const list = coverageCard.createDiv({ cls: "grill-meter-list" });
 			for (const r of rows) {
 				const row = list.createDiv({ cls: "grill-meter-row" });
-				const link = row.createSpan({ cls: "grill-meter-label grill-chip-link", text: r.note });
-				link.onclick = () => this.openNote(r.note);
+				row.createSpan({ cls: "grill-meter-label", text: r.folder });
 				const track = row.createDiv({ cls: "grill-meter-track" });
 				const pct = r.tested ? Math.round((100 * r.known) / r.tested) : 0;
 				track.createDiv({ cls: "grill-meter-fill" }).setCssStyles({ width: `${pct}%` });
 				row.createSpan({ cls: "grill-meter-value", text: `${r.known}/${r.tested}` });
+			}
+			if (!this.coverageExpanded && allRows.length > rows.length) {
+				const more = coverageCard.createDiv({ cls: "grill-chip-link grill-meta", text: `Show ${allRows.length - rows.length} more folders` });
+				more.onclick = () => {
+					this.coverageExpanded = true;
+					void this.renderDashboard();
+				};
 			}
 		}
 
@@ -2559,6 +2659,14 @@ export class SessionView extends ItemView {
 					mergeAssignments(reg, out.assignments);
 					this.dirty = true;
 				}
+				// Feeds maybeSynthesizeArc's active-day gate and its "recent headlines"
+				// input (see logArcEntry) — only on a real AI debrief, same as the arc
+				// synthesis itself only runs with a configured provider.
+				const pad = (n: number) => String(n).padStart(2, "0");
+				const today = new Date();
+				const date = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+				this.plugin.data.arcLog = logArcEntry(this.plugin.data.arcLog, { date, headline: debrief.headline });
+				await this.plugin.persist();
 			} catch (e) {
 				new Notice(`Grill: debrief unavailable, showing a plain summary. ${(e as Error).message}`, 6000);
 				debrief = deterministicDebrief(this.results);
