@@ -1067,6 +1067,40 @@
   border-radius: var(--grill-radius-m);
   border: 1px solid var(--background-modifier-border);
 }
+/* Plain <img> + absolutely-positioned boxes at normalized (0-1) coordinates — the
+ * browser's own responsive image sizing keeps the boxes tracking the image exactly
+ * at any width, so no canvas or resize-listener is needed. */
+.grill-occlusion-wrap {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  margin-top: var(--grill-space-sm);
+}
+.grill-occlusion-img {
+  display: block;
+  max-width: 100%;
+  max-height: 420px;
+  border-radius: var(--grill-radius-m);
+  border: 1px solid var(--background-modifier-border);
+}
+.grill-occlusion-box {
+  position: absolute;
+  background: var(--grill-accent, var(--interactive-accent));
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px var(--grill-accent-contrast, var(--text-on-accent));
+}
+.grill-occlusion-box.is-revealed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 4px;
+  background: color-mix(in srgb, var(--grill-accent, var(--interactive-accent)) 85%, transparent);
+  color: var(--grill-accent-contrast, var(--text-on-accent));
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  text-align: center;
+  overflow: hidden;
+}
 /* Coordinated spacing for structural markdown a model might emit inside these two
  * cards (lists, an occasional heading) — previously unstyled, falling through to
  * generic Obsidian reading-view defaults with no card-aware spacing. */

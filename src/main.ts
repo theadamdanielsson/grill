@@ -54,7 +54,11 @@ interface GrillSettings {
 	includedFolders: string[];
 	/** One-time flag: the first-run "what's Grill's" onboarding has been completed. */
 	onboarded: boolean;
-	/** Send embedded images to the model when it supports vision. */
+	/** Send embedded images to the model when it supports vision. Image occlusion
+	 * rides entirely on this + the model's own vision capability (see view.ts's
+	 * appendOcclusionConcepts) — no separate toggle: whether an occlusion question
+	 * actually shows up depends on whether the model finds something worth redacting
+	 * on a given image, not a count the student dials in. */
 	sendImages: boolean;
 	/** Where questions come from: an LLM, or the note's own structure (no key). */
 	questionSource: "ai" | "local";
@@ -80,10 +84,18 @@ interface GrillSettings {
 	 * resolved language, a specific voiceURI always uses that exact voice. */
 	ttsVoiceURI: string;
 	/** Missing-link finder: surface a "these two notes should be linked" question in
-	 * AI sessions and offer to write the link. On by default. */
+	 * AI sessions and offer to write the link. On by default. How many actually show
+	 * up isn't a count the student dials in — it's however many pairs the adjudicator
+	 * confirms are genuinely related this session (see view.ts's appendBridgeTargets
+	 * and BRIDGE_TARGET_CAP), naturally zero on a session with no real connections. */
 	graphInsights: boolean;
-	/** How many missing-link bridge questions to add per session (0 disables). */
-	bridgesPerSession: number;
+	/** Additive to the lexical missing-link prefilter: also embed notes (via
+	 * whichever provider is configured, when it supports embeddings) and surface
+	 * pairs with strong semantic similarity but too little shared vocabulary to
+	 * pass the lexical gate. Off by default — coverage is uneven across providers
+	 * (see the setting's own description) and it costs an extra call per new/changed
+	 * note. Only consulted when `graphInsights` is also on. */
+	semanticBridges: boolean;
 	/** Careful grading: grade an answer with a small consensus of calls (opt-in,
 	 * higher cost) to reduce leniency error. Off by default. */
 	carefulGrade: boolean;
@@ -192,7 +204,7 @@ function defaultSettings(): GrillSettings {
 		ttsLanguage: "",
 		ttsVoiceURI: "",
 		graphInsights: true,
-		bridgesPerSession: 1,
+		semanticBridges: false,
 		carefulGrade: false,
 		conceptsMigrated: false,
 		graphColorMode: "mastery",
@@ -253,7 +265,7 @@ export default class GrillPlugin extends Plugin {
 		if (typeof s.ttsLanguage === "string") settings.ttsLanguage = s.ttsLanguage;
 		if (typeof s.ttsVoiceURI === "string") settings.ttsVoiceURI = s.ttsVoiceURI;
 		if (typeof s.graphInsights === "boolean") settings.graphInsights = s.graphInsights;
-		if (typeof s.bridgesPerSession === "number") settings.bridgesPerSession = s.bridgesPerSession;
+		if (typeof s.semanticBridges === "boolean") settings.semanticBridges = s.semanticBridges;
 		if (typeof s.carefulGrade === "boolean") settings.carefulGrade = s.carefulGrade;
 		if (typeof s.conceptsMigrated === "boolean") settings.conceptsMigrated = s.conceptsMigrated;
 		if (["mastery", "recency", "dueness", "misconceptions"].includes(s.graphColorMode as string)) {
@@ -354,6 +366,11 @@ export default class GrillPlugin extends Plugin {
 			id: "rebalance-due-dates",
 			name: "Rebalance upcoming due dates",
 			callback: () => void this.rebalanceSchedule(),
+		});
+		this.addCommand({
+			id: "export-review-log",
+			name: "Export review log as CSV",
+			callback: () => void this.exportReviewLog(),
 		});
 		this.registerEvent(
 			this.app.workspace.on("file-menu", (menu, file) => {
@@ -504,6 +521,18 @@ export default class GrillPlugin extends Plugin {
 			new Notice("Grill: couldn't create the instructions file.");
 			return;
 		}
+		await this.app.workspace.getLeaf(true).openFile(file);
+	}
+
+	/** Write Grill/review-log.csv from every concept's raw FSRS review history and
+	 * open it — an audit trail for optimizer.ts's fit, portable outside this plugin. */
+	async exportReviewLog(): Promise<void> {
+		const file = await this.store.exportReviewLog(this.concepts);
+		if (!file) {
+			new Notice("Grill: couldn't write the review log.");
+			return;
+		}
+		new Notice(`Grill: exported review log to ${file.path}.`);
 		await this.app.workspace.getLeaf(true).openFile(file);
 	}
 
@@ -1415,7 +1444,9 @@ class GrillSettingTab extends PluginSettingTab {
 				.setName("Find missing links")
 				.setDesc(
 					"In AI sessions, look for two of your notes that clearly relate but aren't linked, quiz you on the " +
-						"connection, and offer to add the [[link]] for you. Needs a key; off for no-key sessions.",
+						"connection, and offer to add the [[link]] for you. How many show up isn't a count you dial in — " +
+						"it's however many pairs actually turn out to be genuinely related this session, naturally zero " +
+						"some sessions. Needs a key; off for no-key sessions.",
 				)
 				.addToggle((t) =>
 					t.setValue(s.graphInsights).onChange(async (v) => {
@@ -1426,19 +1457,21 @@ class GrillSettingTab extends PluginSettingTab {
 				);
 
 			if (s.graphInsights) {
-				this.sliderSetting(
-					containerEl,
-					"Missing-link questions per session",
-					"How many connection questions to add at most, on top of your normal review.",
-					0,
-					3,
-					Math.min(Math.max(s.bridgesPerSession, 0), 3),
-					(v) => String(v),
-					async (v) => {
-						s.bridgesPerSession = v;
-						await this.plugin.persist();
-					},
-				);
+				new Setting(containerEl)
+					.setName("Find missing links by meaning, not just wording")
+					.setDesc(
+						"Also embed your notes and look for pairs that are conceptually related even when they don't share " +
+							"vocabulary — the lexical search above can miss those. Needs an OpenAI or Gemini key, or a local " +
+							"Ollama server with an embedding model pulled (e.g. `ollama pull nomic-embed-text`); off for " +
+							"Anthropic and DeepSeek, which have no embeddings API to call. Costs one extra request per " +
+							"new or changed note, capped per session.",
+					)
+					.addToggle((t) =>
+						t.setValue(s.semanticBridges).onChange(async (v) => {
+							s.semanticBridges = v;
+							await this.plugin.persist();
+						}),
+					);
 			}
 
 			new Setting(containerEl)

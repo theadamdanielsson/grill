@@ -128,8 +128,10 @@ export interface Question {
 	 * instantly against `modelAnswer` ("True"/"False"). "multi" renders `choices` as
 	 * togglable options where 2+ are correct (`correctChoices`), graded instantly by set
 	 * comparison. "match" renders `pairs` as two columns to connect, graded instantly by
-	 * per-pair comparison. */
-	type?: "write" | "mc" | "blank" | "tf" | "multi" | "match";
+	 * per-pair comparison. "occlusion" shows `occlusionImage` with `occlusionRegions`
+	 * redacted; the student names what's hidden, graded like "write" (free text, LLM-graded)
+	 * against `modelAnswer`. */
+	type?: "write" | "mc" | "blank" | "tf" | "multi" | "match" | "occlusion";
 	/** For `type: "mc"`: the options shown, one of which must equal `modelAnswer`
 	 * exactly (case-insensitive compare at grade time). Unused for "tf" (always
 	 * rendered as a fixed True/False pair) and for "multi" (see `choices` below). */
@@ -141,6 +143,17 @@ export interface Question {
 	/** For `type: "match"`: the correct left/right pairs. Rendered as a fixed-order left
 	 * column and a shuffled right-column pool the student connects them to. */
 	pairs?: { left: string; right: string }[];
+	/** For `type: "occlusion"`: the vault path of the note-embedded image, resolved to a
+	 * displayable URL at render time via `app.vault.getResourcePath` (same pattern
+	 * `renderRelevantImage` already uses) — never re-sent as base64 except at generation
+	 * time (see `generateOcclusionRegions`). */
+	occlusionImage?: string;
+	/** For `type: "occlusion"`: one or more redacted regions, normalized (0-1, top-left
+	 * origin) so they survive the image being resized/re-rendered at any resolution.
+	 * `modelAnswer` is the joined labels (`" / "`-separated, same convention "blank"
+	 * uses for its multi-blank answers) so grading/display code that already reads
+	 * `modelAnswer` generically needs no occlusion-specific branch. */
+	occlusionRegions?: { x: number; y: number; w: number; h: number; label: string }[];
 }
 
 /** Mirrors the `questionFormats` setting. The single choke point every question-serving
@@ -206,6 +219,97 @@ export function supportsVision(provider: ProviderId, model: string): boolean {
 		case "deepseek":
 		case "custom":
 			return false;
+	}
+}
+
+/** Whether this provider has an embeddings endpoint at all — gates the semantic
+ * bridge prefilter (bridges.ts's detectSemanticBridgeCandidates) before a call is
+ * ever attempted. Anthropic has no first-party embeddings API (they point users at
+ * a separate vendor); DeepSeek has none either. Coverage is real but uneven — the
+ * settings UI (main.ts) states this plainly rather than implying it works for
+ * every provider. */
+export function supportsEmbeddings(provider: ProviderId): boolean {
+	return provider === "openai" || provider === "gemini" || provider === "ollama" || provider === "custom";
+}
+
+/** Ollama has no dedicated "embedding model" setting — `cfg.model` is the chat
+ * model the user configured, which usually isn't embedding-capable. Nomic's is
+ * small, fast, and the model most Ollama-embedding guides point at; the settings
+ * description tells the user to `ollama pull` it before turning semantic bridges on. */
+const OLLAMA_EMBED_MODEL = "nomic-embed-text";
+
+/** Embed a batch of note texts with whichever provider `cfg` points at, for the
+ * semantic bridge prefilter. Returns `null` on any failure (bad key, unsupported
+ * model, network error, or a provider this simply doesn't handle) rather than
+ * throwing — this is an additive enhancement over the always-available lexical
+ * prefilter, so a failure here should silently fall back, not surface as an error
+ * the way a student-facing grading/generation call would. */
+export async function embedTexts(cfg: LLMConfig, texts: string[]): Promise<number[][] | null> {
+	if (!texts.length) return [];
+	try {
+		switch (cfg.provider) {
+			case "openai": {
+				const r = await requestUrl({
+					url: "https://api.openai.com/v1/embeddings",
+					method: "POST",
+					headers: { "content-type": "application/json", authorization: `Bearer ${cfg.apiKey}` },
+					body: JSON.stringify({ model: "text-embedding-3-small", input: texts }),
+					throw: false,
+				});
+				if (r.status >= 400) return null;
+				const data = (r.json as { data?: { embedding: number[] }[] } | undefined)?.data;
+				return data ? data.map((d) => d.embedding) : null;
+			}
+			case "gemini": {
+				const r = await requestUrl({
+					url: "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:batchEmbedContents",
+					method: "POST",
+					headers: { "content-type": "application/json", "x-goog-api-key": cfg.apiKey },
+					body: JSON.stringify({
+						requests: texts.map((t) => ({
+							model: "models/text-embedding-004",
+							content: { parts: [{ text: t }] },
+						})),
+					}),
+					throw: false,
+				});
+				if (r.status >= 400) return null;
+				const embeddings = (r.json as { embeddings?: { values: number[] }[] } | undefined)?.embeddings;
+				return embeddings ? embeddings.map((e) => e.values) : null;
+			}
+			case "ollama": {
+				const r = await requestUrl({
+					url: `${(cfg.baseUrl ?? "http://localhost:11434").replace(/\/$/, "")}/api/embed`,
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ model: OLLAMA_EMBED_MODEL, input: texts }),
+					throw: false,
+				});
+				if (r.status >= 400) return null;
+				const embeddings = (r.json as { embeddings?: number[][] } | undefined)?.embeddings;
+				return embeddings ?? null;
+			}
+			case "custom": {
+				// Best-effort: same OpenAI-compatible shape as chat/completions. Whether
+				// the endpoint actually has an /embeddings route at all depends entirely
+				// on what the user pointed the base URL at — a 4xx here just means no
+				// semantic candidates this session, not a broken setup.
+				const r = await requestUrl({
+					url: `${(cfg.baseUrl ?? "").replace(/\/$/, "")}/embeddings`,
+					method: "POST",
+					headers: { "content-type": "application/json", authorization: `Bearer ${cfg.apiKey}` },
+					body: JSON.stringify({ model: cfg.model, input: texts }),
+					throw: false,
+				});
+				if (r.status >= 400) return null;
+				const data = (r.json as { data?: { embedding: number[] }[] } | undefined)?.data;
+				return data ? data.map((d) => d.embedding) : null;
+			}
+			default:
+				return null;
+		}
+	} catch {
+		return null;
 	}
 }
 
@@ -1558,6 +1662,91 @@ export async function adjudicateBridges(
 			bridgeConcept,
 			relationship: cleanText(p.relationship ?? "").trim(),
 		});
+	}
+	return out;
+}
+
+// ------------------------------------------------------------------ image occlusion
+
+const OCCLUSION_RULES = `You're looking at an image embedded in the student's note. Propose 1-3 regions to redact for an image-occlusion recall question: labels, key structures, or values a student studying this material should be able to name from memory when that part of the image is hidden.
+
+Rules:
+- Each region needs a normalized bounding box (x, y, w, h, all 0-1, top-left origin, fractions of the image's width/height) covering ONE labeled element — a caption, a part label, a value. You are not precise at pixel-level placement, so err generously: make the box noticeably bigger than the element itself (extra margin on every side, at least 5-8% of the image's width/height) rather than tight around it — a box that's a little too big still hides the answer; a box that's too small or misplaced leaves it visible or covers the wrong thing, which is worse.
+- 'label' is the short, exact text or name that belongs in that region (what the student must recall), grounded in what's actually drawn or written there.
+- Only propose regions for elements that are genuinely testable (a specific label, name, or value) — skip decorative or ungrabbable parts of the image.
+- If the image has nothing worth occluding (a photo with no labels, a purely decorative image), return an empty regions array rather than inventing one.`;
+
+const occlusionSystem = (persona: string): string => `${persona.trim() || DEFAULT_PERSONA}\n\n${OCCLUSION_RULES}`;
+
+function occlusionSchema(): Record<string, unknown> {
+	return {
+		type: "object",
+		properties: {
+			regions: {
+				type: "array",
+				items: {
+					type: "object",
+					properties: {
+						x: { type: "number" },
+						y: { type: "number" },
+						w: { type: "number" },
+						h: { type: "number" },
+						label: { type: "string" },
+					},
+					required: ["x", "y", "w", "h", "label"],
+					additionalProperties: false,
+				},
+			},
+		},
+		required: ["regions"],
+		additionalProperties: false,
+	};
+}
+
+/** Ask a vision-capable model to propose 1-3 occlusion regions on a note-embedded
+ * image — the auto-detected counterpart to every existing occlusion plugin's manual
+ * box-drawing. Caller (view.ts's appendOcclusionConcepts) gates this on
+ * supportsVision(cfg.provider, cfg.model); drops any region with a missing label or
+ * out-of-bounds/degenerate coordinates rather than surfacing a broken card. */
+export async function generateOcclusionRegions(
+	cfg: LLMConfig,
+	image: ImageInput,
+	noteContext: string,
+	persona: string = DEFAULT_PERSONA,
+): Promise<{ x: number; y: number; w: number; h: number; label: string }[]> {
+	const user = `Note context (for what the image is about — not itself to be quizzed on):\n${safeSlice(noteContext, 1000)}`;
+	// A reasoning model (the common case for vision-capable models — gpt-5.x, etc.)
+	// spends part of max_completion_tokens on hidden reasoning before it ever writes
+	// the JSON output; 800 (and then 2000) both measured too tight, leaving some
+	// vision-capable models with nothing left to actually answer with (an empty
+	// response, indistinguishable from "found nothing worth occluding" without the
+	// caller-side logging appendOcclusionConcepts now does). Two changes together
+	// instead of just raising the cap further: "low" effort keeps the hidden-reasoning
+	// spend itself down (this is a small, bounded-difficulty task — find labeled parts
+	// of one image — not one that benefits from deep reasoning), and 4000 leaves real
+	// headroom even so, matching questionsSchema/arcSchema's own generous budgets.
+	const data = (await callJSON(cfg, occlusionSystem(persona), user, occlusionSchema(), 4000, [image], "low")) as {
+		regions?: { x?: number; y?: number; w?: number; h?: number; label?: string }[];
+	};
+	const inUnit = (n: unknown): n is number => typeof n === "number" && n >= 0 && n <= 1;
+	// A vision model's bounding box is a guess, not a measurement — pad it out on
+	// every side so a slightly mispositioned box still covers its target (a box a
+	// bit too big still hides the answer; the prompt's own "err generously" guidance
+	// isn't reliably followed, so this is a code-side backstop, not a duplicate of it).
+	const PAD = 0.06;
+	const clamp01 = (n: number): number => Math.min(1, Math.max(0, n));
+	const out: { x: number; y: number; w: number; h: number; label: string }[] = [];
+	for (const r of data.regions ?? []) {
+		const label = cleanText((r.label ?? "").trim());
+		if (!label) continue;
+		if (!inUnit(r.x) || !inUnit(r.y) || !inUnit(r.w) || !inUnit(r.h)) continue;
+		if (r.w <= 0 || r.h <= 0 || r.x + r.w > 1.001 || r.y + r.h > 1.001) continue;
+		const x0 = clamp01(r.x - PAD);
+		const y0 = clamp01(r.y - PAD);
+		const x1 = clamp01(r.x + r.w + PAD);
+		const y1 = clamp01(r.y + r.h + PAD);
+		out.push({ x: x0, y: y0, w: x1 - x0, h: y1 - y0, label });
+		if (out.length >= 3) break;
 	}
 	return out;
 }

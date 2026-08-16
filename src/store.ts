@@ -28,6 +28,20 @@ export interface CachedQuestion extends Question {
 /** Per-concept bank of cached questions, keyed by concept id. */
 export type QuestionBank = Record<string, CachedQuestion[]>;
 
+/** One note's cached embedding vector for the semantic bridge prefilter. */
+export interface EmbeddingRecord {
+	/** Content hash of the note text at embedding time; a mismatch means the note
+	 * changed and this entry needs re-embedding. */
+	hash: string;
+	vector: number[];
+	/** Guards against mixing vectors from two different embedding models/dimensions
+	 * if the user switches provider between sessions. */
+	model: string;
+}
+
+/** Cached embeddings, keyed by note basename (same key space as mastery/graph). */
+export type EmbeddingMap = Record<string, EmbeddingRecord>;
+
 export interface SessionEntry {
 	node: string;
 	question: string;
@@ -79,6 +93,14 @@ export class GrillStore {
 
 	private questionsPath(): string {
 		return normalizePath(`${this.folder()}/questions.json`);
+	}
+
+	private reviewLogPath(): string {
+		return normalizePath(`${this.folder()}/review-log.csv`);
+	}
+
+	private embeddingsPath(): string {
+		return normalizePath(`${this.folder()}/embeddings.json`);
 	}
 
 	private static readonly INSTRUCTIONS_CAP = 2000;
@@ -211,6 +233,37 @@ export class GrillStore {
 		}
 	}
 
+	/** Export every concept's raw review history as a flat CSV — a portable audit
+	 * trail for the FSRS personalization optimizer.ts fits against, independent of
+	 * this plugin's own JSON shape. Overwrites on each export (a snapshot, not a
+	 * template like the instructions file), so `vault.modify` when the file's
+	 * already there rather than `createInstructions`'s create-once dance. */
+	async exportReviewLog(concepts: ConceptMap): Promise<TFile | null> {
+		await this.ensureFolder(this.folder());
+		const csvField = (v: string): string => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+		const rows = ["concept_id,note,elapsed_days,rating,timestamp"];
+		for (const [id, cm] of Object.entries(concepts)) {
+			for (const entry of cm.reviewLog ?? []) {
+				rows.push(
+					[csvField(id), csvField(cm.note), entry.elapsedDays.toFixed(4), String(entry.rating), entry.t].join(","),
+				);
+			}
+		}
+		const csv = rows.join("\n") + "\n";
+		const path = this.reviewLogPath();
+		try {
+			const existing = this.app.vault.getAbstractFileByPath(path);
+			if (existing instanceof TFile) {
+				await this.app.vault.modify(existing, csv);
+				return existing;
+			}
+			return await this.app.vault.create(path, csv);
+		} catch {
+			const after = this.app.vault.getAbstractFileByPath(path);
+			return after instanceof TFile ? after : null;
+		}
+	}
+
 	private async ensureFolder(path: string): Promise<void> {
 		if (!(await this.app.vault.adapter.exists(path))) {
 			await this.app.vault.createFolder(path).catch(() => {});
@@ -233,6 +286,28 @@ export class GrillStore {
 	async saveMastery(map: MasteryMap): Promise<void> {
 		await this.ensureFolder(this.folder());
 		await this.app.vault.adapter.write(this.masteryPath(), JSON.stringify(map, null, 1));
+	}
+
+	/** Cached note embeddings for the semantic bridge prefilter (bridges.ts's
+	 * detectSemanticBridgeCandidates). `hash` guards each entry against the note's
+	 * content changing since it was embedded; `model` guards against silently mixing
+	 * vectors from two different embedding models/dimensions if the user switches
+	 * provider. Same load/save shape as loadMastery/saveMastery. */
+	async loadEmbeddings(): Promise<EmbeddingMap> {
+		const path = this.embeddingsPath();
+		if (await this.app.vault.adapter.exists(path)) {
+			try {
+				return JSON.parse(await this.app.vault.adapter.read(path)) as EmbeddingMap;
+			} catch {
+				return {};
+			}
+		}
+		return {};
+	}
+
+	async saveEmbeddings(map: EmbeddingMap): Promise<void> {
+		await this.ensureFolder(this.folder());
+		await this.app.vault.adapter.write(this.embeddingsPath(), JSON.stringify(map));
 	}
 
 	/** The canonical misconception registry (recomputable projection over raw tags). */

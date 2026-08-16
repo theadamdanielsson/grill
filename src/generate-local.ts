@@ -19,10 +19,13 @@
 
 import { FormatMode, Question } from "./llm";
 import { QDifficulty } from "./mastery";
-import { safeSlice } from "./text";
+import { hashStr, safeSlice } from "./text";
 
-/** The kind of structural element a concept was pulled from. */
-export type ConceptKind = "heading" | "term" | "definition" | "formula" | "card" | "note" | "authored";
+/** The kind of structural element a concept was pulled from. "occlusion" concepts are
+ * built by view.ts's appendOcclusionConcepts (a vision-model call proposing regions on
+ * a note-embedded image), not extracted here like every other kind — see localQuestionForConcept's
+ * occlusion branch for how they turn back into a Question. */
+export type ConceptKind = "heading" | "term" | "definition" | "formula" | "card" | "note" | "authored" | "occlusion";
 
 /** A deterministically-identified unit of knowledge within a note. Concept ids
  * are stable across sessions (no model inference), so both the scheduler and
@@ -36,14 +39,20 @@ export interface Concept {
 	sourceHash: string;
 	/** Material the AI needs to write a fresh question about this concept. */
 	context: string;
-	/** The deterministic question for no-key mode. Absent for the note fallback. */
+	/** The deterministic question for no-key mode. Absent for the note fallback, and
+	 * for "occlusion" concepts — occlusion has no no-key path (see view.ts's
+	 * appendOcclusionConcepts): its question is a one-time vision-model call cached
+	 * directly into the question bank (store.ts's QuestionBank), not re-derivable
+	 * from note text every session the way everything else here is. */
 	local?: {
 		question: string;
 		answer: string;
 		hint?: string;
-		type?: "write" | "mc" | "blank" | "tf" | "multi";
+		type?: "write" | "mc" | "blank" | "tf" | "multi" | "match";
 		choices?: string[];
 		correctChoices?: string[];
+		/** "match" only: the pairs to connect (see LocalItem.pairs). */
+		pairs?: { left: string; right: string }[];
 	};
 	/** True for a user-authored `> [!grill]` question: asked verbatim, never rewritten
 	 * by the model, and graded against `rubric`/its answer (or the note) rather than a
@@ -67,10 +76,12 @@ interface LocalItem {
 	label: string;
 	/** Answer format, mirroring Question's — set only when mixed formats are on, or for
 	 * an authored callout with a tf/mc/multi-shaped answer (see parseGrillCallout). */
-	type?: "write" | "mc" | "blank" | "tf" | "multi";
+	type?: "write" | "mc" | "blank" | "tf" | "multi" | "match";
 	choices?: string[];
 	/** "multi" only: the subset of `choices` that's correct (see parseGrillCallout). */
 	correctChoices?: string[];
+	/** "match" only: the correct left/right pairs to connect (see applyMatchMix). */
+	pairs?: { left: string; right: string }[];
 	/** Colon-form definitions only: the raw definition text with no "**term:**"
 	 * prefix, kept so the mix-formats pass can use it as an MC distractor/choice
 	 * without leaking the term name. Never copied onto the final Question. */
@@ -608,7 +619,7 @@ function itemsForNote(text: string, cap: number, mode: FormatMode): LocalItem[] 
 		push(formulaCard(line, heading, mixFormats));
 	}
 	flushHeading();
-	return applyMcMix(items.slice(0, cap), mode);
+	return applyMcMix(applyMatchMix(items.slice(0, cap), mode), mode);
 }
 
 /** Convert some colon-form definitions into multiple-choice: the correct definition
@@ -628,7 +639,9 @@ function applyMcMix(items: LocalItem[], mode: FormatMode): LocalItem[] {
 	if (pool.length < 4) return items;
 	let n = 0;
 	return items.map((it) => {
-		if (it.kind !== "definition" || !it.defText) return it;
+		// Already converted by applyMatchMix (which runs first) — leave it be rather
+		// than reconvert it back down to a single-fact mc question.
+		if (it.kind !== "definition" || !it.defText || it.type) return it;
 		n += 1;
 		if (mode === "mixed" && n % 3 !== 1) return it;
 		const distractors = pool
@@ -648,6 +661,44 @@ function applyMcMix(items: LocalItem[], mode: FormatMode): LocalItem[] {
 	});
 }
 
+/** Convert some colon-form definitions into "match": the concept's own term/definition
+ * plus 2 other term/definition pairs sampled from other terms in the same note, all
+ * three shown together to connect — the deterministic counterpart to the AI path's own
+ * 'match' generation (see llm.ts's FORMAT_MIX_INSTRUCTIONS: "'match'... question asks
+ * the student to match related pairs"). Needs a pool of at least 3 eligible definitions
+ * (itself plus 2 distractors) to clear questionDefect's minimum pair count. Runs before
+ * applyMcMix (see its own type guard) so a match-converted item isn't reconverted.
+ *
+ * "mixed" converts roughly one in five eligible definitions — sparser than MC's one in
+ * three, since match pulls in 2 other terms at once and a note shouldn't turn into an
+ * all-matching quiz. "mc" ("Multiple choice only") converts every eligible definition,
+ * same as applyMcMix — 'match' already counts as a structured format satisfying that
+ * setting (see formatSatisfies). */
+function applyMatchMix(items: LocalItem[], mode: FormatMode): LocalItem[] {
+	if (mode === "write") return items;
+	const pool = items.filter((it) => it.kind === "definition" && it.defText);
+	if (pool.length < 3) return items;
+	let n = 0;
+	return items.map((it) => {
+		if (it.kind !== "definition" || !it.defText) return it;
+		n += 1;
+		if (mode === "mixed" && n % 5 !== 1) return it;
+		const others = pool
+			.filter((p) => p !== it)
+			.sort(() => Math.random() - 0.5)
+			.slice(0, 2);
+		if (others.length < 2) return it;
+		const pairs = [it, ...others].map((p) => ({ left: p.label, right: p.defText as string }));
+		return {
+			...it,
+			question: "Match each term to its definition.",
+			answer: pairs.map((p) => `${p.left} → ${p.right}`).join("; "),
+			type: "match" as const,
+			pairs,
+		};
+	});
+}
+
 // ------------------------------------------------------------ concept extraction
 
 /** Stable, url-ish slug for a concept id. */
@@ -655,12 +706,6 @@ function slug(s: string): string {
 	return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "x";
 }
 
-/** Cheap deterministic hash (djb2) → base36. Used to notice a concept's source changed. */
-function hashStr(s: string): string {
-	let h = 5381;
-	for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
-	return h.toString(36);
-}
 
 const MIN_CONCEPTS_BEFORE_FALLBACK = 2;
 
@@ -703,6 +748,7 @@ export function extractConcepts(note: string, text: string, mode: FormatMode = "
 				type: it.type,
 				choices: it.choices,
 				correctChoices: it.correctChoices,
+				pairs: it.pairs,
 			},
 			...(it.kind === "authored" ? { authored: true, rubric: it.rubric } : {}),
 		});
@@ -811,7 +857,12 @@ export function localQuestionForConcept(c: Concept, difficulty: QDifficulty = "m
 		hints: { tier1: c.local.hint ?? "", tier2: "", tier3: "" },
 		...(c.authored ? { authored: true, rubric: c.rubric } : {}),
 		...(c.local.type
-			? { type: c.local.type, choices: c.local.choices, correctChoices: c.local.correctChoices }
+			? {
+					type: c.local.type,
+					choices: c.local.choices,
+					correctChoices: c.local.correctChoices,
+					pairs: c.local.pairs,
+				}
 			: {}),
 	};
 }

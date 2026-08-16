@@ -1,5 +1,28 @@
 # Changelog
 
+## 5.5.0
+
+- **New: export your review log as CSV.** Command palette → "Export review log as
+  CSV" writes every concept's raw FSRS review history (per review: when, days
+  since the one before it, what you rated it) to Grill/review-log.csv — a portable
+  audit trail for the FSRS personalization fit, independent of this plugin's own
+  JSON.
+- **New: matching questions in no-key sessions.** "From my notes" mode could
+  already produce multiple-choice, fill-in-the-blank, true/false, and
+  select-all-that-apply questions straight from a note's own structure — matching
+  (connect each term to its definition) was AI-only until now.
+- **New: missing links by meaning, not just wording.** The lexical search for
+  un-linked but related notes can miss pairs that are genuinely connected but
+  don't share vocabulary. Turn on "Find missing links by meaning" (Settings →
+  Grill, under Find missing links) and Grill also embeds your notes and looks for
+  conceptual similarity. Needs an OpenAI or Gemini key, or a local Ollama server
+  with an embedding model pulled (`ollama pull nomic-embed-text`); off for
+  Anthropic and DeepSeek, which have no embeddings API to call.
+- **Changed: missing-link questions are no longer a count you dial in.** However
+  many pairs the adjudicator actually confirms as genuinely related show up —
+  naturally zero on a session with no real connections, capped only as a sanity
+  bound against flooding a session, not a slider to tune.
+
 ## 5.4.0
 
 - **New: "Your arc" on the progress dashboard.** A short, synthesized read on how

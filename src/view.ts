@@ -2,12 +2,12 @@
 
 import { ItemView, MarkdownRenderer, Notice, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
-import { adjudicateBridges, ConceptTarget, debriefSession, explainQuestion, formatSatisfies, generateQuestions, Grade, gradeAnswer, LLMConfig, Question, supportsVision, Verdict } from "./llm";
+import { adjudicateBridges, ConceptTarget, debriefSession, embedTexts, explainQuestion, formatSatisfies, generateOcclusionRegions, generateQuestions, Grade, gradeAnswer, LLMConfig, Question, supportsEmbeddings, supportsVision, Verdict } from "./llm";
 import { Concept, ConceptKind, extractConcepts, localQuestionForConcept, localQuestions } from "./generate-local";
-import { BridgeMap, detectBridgeCandidates, pairKey } from "./bridges";
+import { BridgeMap, CANDIDATE_CAP, detectBridgeCandidates, detectSemanticBridgeCandidates, pairKey } from "./bridges";
 import { buildGraph, formatGrade, gradeScore, type GraphNode } from "./graph";
 import { GraphAppearance, LearningMap, MapPalette } from "./mapview";
-import type { CachedQuestion, QuestionBank } from "./store";
+import type { CachedQuestion, EmbeddingMap, QuestionBank } from "./store";
 import {
 	ConceptMap,
 	ConceptMastery,
@@ -26,7 +26,7 @@ import {
 } from "./concepts";
 import { collectNoteImages, ImageInput } from "./images";
 import { collectNotePdfText } from "./pdf";
-import { safeSlice } from "./text";
+import { hashStr, safeSlice } from "./text";
 import {
 	buildDueDateHistogram,
 	DueDateHistogram,
@@ -320,6 +320,9 @@ export class SessionView extends ItemView {
 	private conceptById = new Map<string, Concept>();
 	/** Missing-link records (which pairs surfaced / were linked), held for the session. */
 	private bridges: BridgeMap = {};
+	/** Cached note embeddings for the semantic bridge prefilter (bridges.ts's
+	 * detectSemanticBridgeCandidates), held for the session like `bridges`. */
+	private embeddings: EmbeddingMap = {};
 	/** Per-concept cache of generated questions, reused across reviews. */
 	private questionBank: QuestionBank = {};
 	/** True once `questionBank` has been loaded from disk, either by starting a session or
@@ -330,6 +333,7 @@ export class SessionView extends ItemView {
 	 * `dirty`, which flushes concepts/mastery/registry). */
 	private bankDirty = false;
 	private bridgesDirty = false;
+	private embeddingsDirty = false;
 	/** Replay ("Redo this quiz") of a saved session's questions: same questions, no
 	 * generation, and practice-only — grading and feedback run, but nothing is written to
 	 * the schedule, stats, or misconception registry. */
@@ -2088,6 +2092,7 @@ export class SessionView extends ItemView {
 		} else {
 			this.md(q.question, qEl, q.node);
 		}
+		if (q.type === "occlusion") this.renderOcclusionImage(card, q, false);
 
 		if (ttsAvailable()) {
 			// Derived from the raw markdown, not qEl's rendered text: MarkdownRenderer.render
@@ -2412,6 +2417,9 @@ export class SessionView extends ItemView {
 			if (showExpectedAnswer) {
 				reviewCard.createDiv({ cls: "grill-block-label", text: "Expected answer" });
 				this.md(r.modelAnswer, reviewCard.createDiv({ cls: "grill-model-answer" }), r.node);
+				if (this.questions[this.idx].type === "occlusion") {
+					this.renderOcclusionImage(reviewCard, this.questions[this.idx], true);
+				}
 			}
 			if (showExplain) this.offerExplanation(reviewCard, r);
 		}
@@ -2575,6 +2583,30 @@ export class SessionView extends ItemView {
 		if (!hydrated) {
 			holder.empty();
 			holder.createEl("img", { attr: { src: this.app.vault.getResourcePath(dest) } });
+		}
+	}
+
+	/** Render an occlusion question's image: a plain `<img>` (same
+	 * `app.vault.getResourcePath` pattern renderRelevantImage uses above) in a
+	 * `position: relative` wrapper, with each region an absolutely-positioned box at
+	 * its normalized coordinates — no canvas; the browser's own responsive image
+	 * sizing does the resolution/DPI work for free, and percentage-based boxes track
+	 * it exactly. Blank redaction boxes before an answer; `revealed` swaps each box's
+	 * content for its label afterward, so the region stays visually anchored instead
+	 * of just disappearing. */
+	private renderOcclusionImage(parent: HTMLElement, q: Question, revealed: boolean): void {
+		if (!q.occlusionImage) return;
+		const dest = this.app.vault.getAbstractFileByPath(q.occlusionImage);
+		if (!(dest instanceof TFile)) return;
+		const wrap = parent.createDiv({ cls: "grill-occlusion-wrap" });
+		wrap.createEl("img", { cls: "grill-occlusion-img", attr: { src: this.app.vault.getResourcePath(dest) } });
+		for (const r of q.occlusionRegions ?? []) {
+			const box = wrap.createDiv({ cls: revealed ? "grill-occlusion-box is-revealed" : "grill-occlusion-box" });
+			box.style.left = `${r.x * 100}%`;
+			box.style.top = `${r.y * 100}%`;
+			box.style.width = `${r.w * 100}%`;
+			box.style.height = `${r.h * 100}%`;
+			if (revealed) box.setText(r.label);
 		}
 	}
 
@@ -3113,11 +3145,76 @@ export class SessionView extends ItemView {
 	}
 
 	/** Missing-link finder: propose un-linked note pairs, confirm the real ones with the
-	 * model, and append up to `max` as bridge questions (a capstone at the session's end).
-	 * A bonus feature: any failure is swallowed so it never breaks a session. */
-	private async appendBridgeTargets(cfg: LLMConfig, names: string[], max: number): Promise<void> {
+	 * model, and append up to BRIDGE_TARGET_CAP as bridge questions (a capstone at the
+	 * session's end). A bonus feature: any failure is swallowed so it never breaks a session. */
+	/** How many notes to embed (or re-embed after a content change) in one session —
+	 * bounds cost the same way BRIDGE_TARGET_CAP bounds bridge questions, so opening
+	 * a large vault for the first time with semantic bridges on doesn't fire off
+	 * hundreds of embedding calls at once. */
+	private static readonly EMBED_CAP_PER_SESSION = 20;
+
+	/** Refresh cached embeddings for this session's notes: only the ones with no
+	 * vector yet, whose content changed since it was embedded (hash mismatch), or
+	 * whose vector came from a different provider/model, up to EMBED_CAP_PER_SESSION.
+	 * Failures (embedTexts returning null) are silent — semantic bridges are additive,
+	 * the lexical prefilter never depends on this having succeeded. */
+	private async refreshEmbeddings(cfg: LLMConfig, names: string[]): Promise<void> {
+		// Custom endpoints reuse cfg.model as the embedding model (see llm.ts's
+		// embedTexts); every other supported provider embeds with one fixed model
+		// regardless of cfg.model, so the provider id alone is the right cache key.
+		const modelKey = cfg.provider === "custom" ? `custom:${cfg.model}` : cfg.provider;
+		const stale = names.filter((n) => {
+			const rec = this.embeddings[n];
+			return !rec || rec.model !== modelKey || rec.hash !== hashStr(this.noteText[n] ?? "");
+		});
+		if (!stale.length) return;
+		const batch = stale.slice(0, SessionView.EMBED_CAP_PER_SESSION);
+		const vectors = await embedTexts(
+			cfg,
+			batch.map((n) => safeSlice(this.noteText[n] ?? "", 2000)),
+		);
+		if (!vectors) return;
+		for (let i = 0; i < batch.length; i++) {
+			const v = vectors[i];
+			if (!v) continue;
+			this.embeddings[batch[i]] = { hash: hashStr(this.noteText[batch[i]] ?? ""), vector: v, model: modelKey };
+		}
+		this.embeddingsDirty = true;
+	}
+
+	/** Ceiling on confirmed bridge questions actually added to a session — not a
+	 * student-facing dial (see graphInsights' doc comment): how many actually show up
+	 * is however many the adjudicator confirms as genuinely related, naturally zero
+	 * some sessions, this only stops a session with an unusually connected note set
+	 * from turning into mostly bridge questions. */
+	private static readonly BRIDGE_TARGET_CAP = 2;
+
+	private async appendBridgeTargets(cfg: LLMConfig, names: string[]): Promise<void> {
+		const max = SessionView.BRIDGE_TARGET_CAP;
 		try {
 			const cands = detectBridgeCandidates(this.app, names, this.byName, this.noteText, this.bridges);
+			const s = this.plugin.data.settings;
+			if (s.semanticBridges && supportsEmbeddings(cfg.provider)) {
+				await this.refreshEmbeddings(cfg, names);
+				const semantic = detectSemanticBridgeCandidates(
+					this.app,
+					names,
+					this.byName,
+					this.noteText,
+					this.bridges,
+					Object.fromEntries(Object.entries(this.embeddings).map(([n, r]) => [n, r.vector])),
+				);
+				// Two different scales (rarity-sum vs. cosine similarity) — concatenate
+				// rather than merge into one ranking, then truncate back to the shared
+				// cap. The real precision gate is adjudicateBridges below either way.
+				const seen = new Set(cands.map((c) => pairKey(c.a, c.b)));
+				for (const c of semantic) {
+					if (cands.length >= CANDIDATE_CAP) break;
+					if (seen.has(pairKey(c.a, c.b))) continue;
+					seen.add(pairKey(c.a, c.b));
+					cands.push(c);
+				}
+			}
 			if (!cands.length) return;
 			const confirmed = await adjudicateBridges(cfg, cands, this.sessionPersona);
 			let added = 0;
@@ -3178,6 +3275,85 @@ export class SessionView extends ItemView {
 			this.bridges[key] = { a: fromNote, b: toNote, bridgeConcept: "", status, lastSeen: now, lastQuestion };
 		}
 		this.bridgesDirty = true;
+	}
+
+	/** Ceiling on how many not-yet-occluded images get a vision call in one session —
+	 * not a student-facing dial (see sendImages' doc comment): whether an occlusion
+	 * question shows up at all depends on the model actually finding something worth
+	 * redacting, naturally zero for an image with nothing labeled on it. This only
+	 * stops a vault with many new images from firing off a burst of vision calls the
+	 * first time sendImages is turned on. */
+	private static readonly OCCLUSION_SCAN_CAP = 2;
+
+	/** Image occlusion: for each note-embedded image, an ordinary FSRS-scheduled
+	 * concept whose question is "what's hidden in the redacted region(s)". Unlike a
+	 * bridge question (novel, one-off, kept out of scheduling), a redacted region on
+	 * a specific image is stable and worth reviewing again — so this builds a real
+	 * `Concept` and caches its `Question` straight into `questionBank` (see
+	 * `cacheHit`/`buildPrebuilt`), the same durable path an AI-generated variant uses.
+	 * There's no `.local` for these: unlike every other concept kind, an occlusion
+	 * question isn't re-derivable from note text, so it can't be rebuilt fresh each
+	 * session the way `.local` questions are — it has to be cached once and reused.
+	 * The vision call itself only runs for images with no fresh cache entry yet, up to
+	 * OCCLUSION_SCAN_CAP; an already-cached image still gets its `Concept` rebuilt
+	 * every session (cheap, no call) so `pickConcepts` can see it's due. */
+	private async appendOcclusionConcepts(cfg: LLMConfig, names: string[]): Promise<void> {
+		const cap = SessionView.OCCLUSION_SCAN_CAP;
+		let calls = 0;
+		for (const n of names) {
+			for (const img of this.noteImages[n] ?? []) {
+				const id = `${n}::occlusion::${img.path}`;
+				const sourceHash = hashStr(img.dataBase64);
+				const cached = (this.questionBank[id] ?? []).find((e) => e.sourceHash === sourceHash);
+				if (!cached) {
+					if (calls >= cap) continue;
+					calls += 1;
+					let regions: { x: number; y: number; w: number; h: number; label: string }[];
+					try {
+						regions = await generateOcclusionRegions(cfg, img, this.noteText[n] ?? "", this.sessionPersona);
+					} catch (e) {
+						// Occlusion is a bonus; never fail the session over it — but log so a
+						// silent "nothing ever shows up" has a trail in the console instead of
+						// looking indistinguishable from "this image legitimately had nothing
+						// worth redacting" (the !regions.length case right below).
+						console.error(`Grill: occlusion generation failed for ${img.path}:`, e);
+						continue;
+					}
+					if (!regions.length) {
+						console.debug(`Grill: occlusion found nothing worth redacting in ${img.path}.`);
+						continue;
+					}
+					const q: CachedQuestion = {
+						node: n,
+						conceptId: id,
+						question: "What's hidden in the redacted region(s) of this image?",
+						difficulty: "medium",
+						modelAnswer: regions.map((r) => r.label).join(" / "),
+						acceptableAnswers: [],
+						commonErrors: [],
+						hints: { tier1: "", tier2: "", tier3: "" },
+						type: "occlusion",
+						occlusionImage: img.path,
+						occlusionRegions: regions,
+						sourceHash,
+						timesShown: 0,
+					};
+					this.questionBank[id] = [q];
+					this.bankDirty = true;
+				}
+				const concept: Concept = {
+					id,
+					note: n,
+					label: `Image: ${img.path.split("/").pop() ?? img.path}`,
+					kind: "occlusion",
+					sourceHash,
+					context: "",
+				};
+				const arr = this.conceptsByNote.get(n);
+				if (arr) arr.push(concept);
+				else this.conceptsByNote.set(n, [concept]);
+			}
+		}
 	}
 
 	/** Move to question `idx`, generating it (and prefetching the next) as needed. */
@@ -3295,10 +3471,12 @@ export class SessionView extends ItemView {
 			this.plugin.mastery = await this.plugin.store.loadMastery();
 			this.registry = await this.plugin.store.loadRegistry();
 			this.bridges = await this.plugin.store.loadBridges();
+			this.embeddings = await this.plugin.store.loadEmbeddings();
 			this.questionBank = await this.plugin.store.loadQuestionBank();
 			this.bankLoaded = true;
 			this.bankDirty = false;
 			this.bridgesDirty = false;
+			this.embeddingsDirty = false;
 			const instr = await this.plugin.store.loadInstructions();
 			this.sessionPersona = instr.persona;
 			this.sessionInstructions = instr.preferences;
@@ -3367,6 +3545,18 @@ export class SessionView extends ItemView {
 					8000,
 				);
 			}
+
+			// Image occlusion: DEFERRED, not shipped. Dogfooding showed general-purpose
+			// vision-LLM bounding-box grounding is too imprecise (regions land near but not
+			// on their targets, even with generous prompt padding) — not fit to ship. The
+			// plumbing (appendOcclusionConcepts below, generateOcclusionRegions in llm.ts,
+			// the "occlusion" Question type, its rendering in renderQuestion/renderFeedback)
+			// is left in place for when this is redone with OCR-based region geometry
+			// (e.g. Tesseract.js) instead of asking the model to guess pixel coordinates —
+			// just never called, so no occlusion concept is ever created.
+			// if (cfg && vision) {
+			// 	await this.appendOcclusionConcepts(cfg, names);
+			// }
 
 			const selectedFiles = names.map((n) => byName.get(n)).filter((f): f is TFile => !!f);
 			const graph = buildSessionGraph(this.app, selectedFiles);
@@ -3454,9 +3644,9 @@ export class SessionView extends ItemView {
 				return;
 			}
 
-			// Missing-link finder: append up to N bridge questions as a capstone (AI only).
-			if (s.graphInsights && s.bridgesPerSession > 0 && cfg) {
-				await this.appendBridgeTargets(cfg, names, s.bridgesPerSession);
+			// Missing-link finder: append a capstone of confirmed connections (AI only).
+			if (s.graphInsights && cfg) {
+				await this.appendBridgeTargets(cfg, names);
 			}
 
 			// A due review's targets are, by construction, concepts that have already been
@@ -3655,6 +3845,7 @@ export class SessionView extends ItemView {
 		}
 		revealCard.createDiv({ cls: "grill-block-label", text: "Answer" });
 		this.md(q.modelAnswer, revealCard.createDiv({ cls: "grill-model-answer" }), q.node);
+		if (q.type === "occlusion") this.renderOcclusionImage(revealCard, q, true);
 
 		// Self-grade never scores until a rating button below is clicked, so this is
 		// still "before answering" as far as the schedule is concerned — same simple
@@ -3871,6 +4062,10 @@ export class SessionView extends ItemView {
 		if (this.bridgesDirty) {
 			this.bridgesDirty = false;
 			await this.plugin.store.saveBridges(this.bridges);
+		}
+		if (this.embeddingsDirty) {
+			this.embeddingsDirty = false;
+			await this.plugin.store.saveEmbeddings(this.embeddings);
 		}
 	}
 

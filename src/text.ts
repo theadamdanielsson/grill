@@ -23,3 +23,11 @@ export function safeSlice(s: string, max: number): string {
 	const chars = Array.from(s);
 	return chars.length <= max ? s : chars.slice(0, max).join("");
 }
+
+/** Cheap deterministic hash (djb2) → base36. Used to notice a concept's source (or,
+ * for embeddings.json, a note's own text) changed since it was last processed. */
+export function hashStr(s: string): string {
+	let h = 5381;
+	for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+	return h.toString(36);
+}
