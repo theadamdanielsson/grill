@@ -24,9 +24,15 @@ import { nodeRadius, gradeScore, formatGrade, type GradeFormat } from "./graph";
 
 export interface MapPalette {
 	unpracticed: string;
-	inProgress: string;
 	struggling: string;
 	known: string;
+	/** Two extra waypoints for the mastery gradient (see masteryColor) — struggling and
+	 * known both peg red to 255 (they're both warm fire-theme colours), so a straight
+	 * two-colour lerp between them barely moves and reads flat. Routing through these,
+	 * Grill's own accent/gold tokens rather than new colours, gives the gradient real
+	 * visual range while staying in-theme. */
+	accent: string;
+	gold: string;
 	edge: string;
 	edgeInherited: string;
 	edgeProven: string;
@@ -38,8 +44,9 @@ export interface MapPalette {
 	surface: string;
 }
 
-/** What a node's colour encodes. "mastery" is the original 4-state status; the rest are
- * continuous 0-1 metrics rendered as a gradient between two palette colours. */
+/** What a node's colour encodes. "mastery" is the 3-state Untested/Learning/Known status
+ * (same split as the dashboard's own stat tiles); the rest are continuous 0-1 metrics
+ * rendered as a gradient between two palette colours. */
 export type ColorMode = "mastery" | "recency" | "dueness" | "misconceptions";
 
 /** Numeric overlay next to each node: off, or a formatted grade score. */
@@ -96,19 +103,6 @@ interface SimLink extends SimulationLinkDatum<SimNode> {
 	tier: EdgeTier;
 }
 
-function nodeColour(state: GraphNode["state"], p: MapPalette): string {
-	switch (state) {
-		case "known":
-			return p.known;
-		case "struggling":
-			return p.struggling;
-		case "in-progress":
-			return p.inProgress;
-		default:
-			return p.unpracticed;
-	}
-}
-
 /** Days it takes a metric to fully redden, per non-mastery colour mode. Tuned so the
  * gradient actually moves within a normal study cadence: staleness maxes out around a
  * month untouched, overdue maxes out two weeks past due (FSRS intervals are usually much
@@ -120,10 +114,17 @@ const MISCONCEPTION_WINDOW = 3;
 
 const DAY_MS = 86_400_000;
 
-/** 0 (safe/green) to 1 (urgent/red) for a non-mastery colour mode. Null for an unpracticed
- * node — the caller renders those as the plain unpracticed grey regardless of mode, since
- * "never studied" isn't a position on any of these scales. */
-function badness(nd: GraphNode, mode: ColorMode, now: number): number | null {
+/** 0 (safe/green) to 1 (urgent/red) for the active colour mode. Null for an unpracticed
+ * node — the caller renders those as the plain unpracticed colour regardless of mode,
+ * since "never studied" isn't a position on any of these scales.
+ *
+ * "mastery" is continuous here too, off the exact same `gradeScore` the numeric overlay
+ * shows (formatGrade turns that same number into "92%" or "A-") — not the coarse 3-state
+ * Untested/Learning/Known bucket (see graph.ts's `noteState`, still used for the dashboard's
+ * own stat tiles and the map's filter chips, just not for this gradient anymore). A 95%
+ * node now visibly reads as near-known-coloured even on a session where it hasn't crossed
+ * the Known bar yet — the map's job is showing the gradient, not replicating that bar. */
+function badness(nd: GraphNode, mode: ColorMode, coverageWeight: number, now: number): number | null {
 	if (nd.state === "unpracticed") return null;
 	switch (mode) {
 		case "recency": {
@@ -138,18 +139,32 @@ function badness(nd: GraphNode, mode: ColorMode, now: number): number | null {
 		}
 		case "misconceptions":
 			return Math.min(1, nd.misconceptions / MISCONCEPTION_WINDOW);
-		case "mastery":
-			return null;
+		case "mastery": {
+			const score = gradeScore(nd, coverageWeight);
+			return score === null ? null : Math.min(1, Math.max(0, 1 - score));
+		}
 	}
 }
 
-/** Resolve a node's fill colour for the active colour mode: the original 4-state mastery
- * colour, or a green-to-red gradient over a continuous metric (badness 0..1). */
-function nodeFillColour(nd: GraphNode, mode: ColorMode, p: MapPalette, now: number): string {
-	if (mode === "mastery") return nodeColour(nd.state, p);
-	const b = badness(nd, mode, now);
+/** Mastery-mode gradient: struggling -> accent -> gold -> known as badness (1 - score)
+ * falls. Three segments through Grill's own existing brand tones, not a straight
+ * two-colour lerp — struggling and known both peg red to 255 (both are warm fire-theme
+ * colours), so lerping directly between them barely moves the visible hue and reads flat
+ * against the rest of the arcade's punchier palette. */
+function masteryColor(badnessValue: number, p: MapPalette): string {
+	const t = Math.min(1, Math.max(0, badnessValue));
+	if (t >= 2 / 3) return lerpColor(p.accent, p.struggling, (t - 2 / 3) * 3);
+	if (t >= 1 / 3) return lerpColor(p.gold, p.accent, (t - 1 / 3) * 3);
+	return lerpColor(p.known, p.gold, t * 3);
+}
+
+/** Resolve a node's fill colour for the active colour mode: a gradient over a continuous
+ * metric (badness 0..1) — mastery gets the 4-stop in-theme gradient above; the rest use
+ * the plain 2-stop known/struggling lerp. */
+function nodeFillColour(nd: GraphNode, mode: ColorMode, p: MapPalette, coverageWeight: number, now: number): string {
+	const b = badness(nd, mode, coverageWeight, now);
 	if (b === null) return p.unpracticed;
-	return lerpColor(p.known, p.struggling, b);
+	return mode === "mastery" ? masteryColor(b, p) : lerpColor(p.known, p.struggling, b);
 }
 
 export class LearningMap {
@@ -642,7 +657,7 @@ export class LearningMap {
 			const y = this.sy(nd);
 			const r = this.radius(nd);
 			const square = nd.state !== "unpracticed";
-			const fill = nodeFillColour(nd, this.colorMode, this.palette, now);
+			const fill = nodeFillColour(nd, this.colorMode, this.palette, this.coverageWeight, now);
 			const alpha = dimNode(nd.id);
 			ctx.globalAlpha = alpha;
 			ctx.fillStyle = fill;
@@ -668,13 +683,40 @@ export class LearningMap {
 				ctx.lineWidth = 2;
 				this.nodePath(x, y, r + 3, square);
 				ctx.stroke();
+			} else if (this.colorMode === "mastery" && nd.state === "known") {
+				// Mastery mode's fill is now a continuous gradient (see masteryColor), so a
+				// node that's genuinely crossed the durable "known" bar (concepts.ts's
+				// noteAggregate coverage check — the same one the dashboard's "Known" stat
+				// counts) needs its own explicit marker, not just "the fill looks pretty
+				// gold" — a 95%-gradient node that hasn't actually cleared that bar yet
+				// would otherwise be visually indistinguishable from one that has.
+				ctx.strokeStyle = this.palette.known;
+				ctx.lineWidth = 2;
+				this.nodePath(x, y, r + 2, square);
+				ctx.stroke();
 			}
 			if (this.numberMode !== "off") {
 				const score = gradeScore(nd, this.coverageWeight);
 				if (score !== null && x >= -60 && x <= w + 60 && y >= -20 && y <= h + 20) {
 					ctx.globalAlpha = alpha;
-					ctx.fillStyle = contrastText(fill);
-					ctx.fillText(formatGrade(score, this.numberMode), x, y + 0.5);
+					// Known nodes force white rather than the usual fill-contrast pick — the
+					// gradient's known end is a light gold that contrastText reads as black on,
+					// so without this the ring is the only known signal and the number itself
+					// looks the same as any other high-scoring node. White ties the two markers
+					// together: ring AND white text both mean "this one's actually proven." But
+					// forcing white overrides contrastText's own legibility guarantee, so on a
+					// light gold fill (which is exactly what a high-scoring known node has) white
+					// alone can wash out — a thin black outline keeps it readable regardless.
+					const label = formatGrade(score, this.numberMode);
+					const forceWhite = this.colorMode === "mastery" && nd.state === "known";
+					if (forceWhite) {
+						ctx.strokeStyle = "#000000";
+						ctx.lineWidth = 2.5;
+						ctx.lineJoin = "round";
+						ctx.strokeText(label, x, y + 0.5);
+					}
+					ctx.fillStyle = forceWhite ? "#ffffff" : contrastText(fill);
+					ctx.fillText(label, x, y + 0.5);
 				}
 			}
 		}

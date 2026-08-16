@@ -1,5 +1,26 @@
 # Changelog
 
+## 5.6.0
+
+- **Fix: the learning map's colours could flatly disagree with its own numbers, and
+  with the dashboard.** A note reading 95% could still show up red, because the map's
+  colour and its numeric overlay were computed by two different formulas. Colour
+  ("Known" vs "Learning" vs "Untested") now matches the dashboard's own stat tiles
+  exactly — same three buckets, same coverage-based definition, no separate
+  "in-progress" shade with nothing on the dashboard for it to correspond to.
+- **Changed: the mastery colour mode is now a continuous gradient**, not a hard
+  3-state jump, so the map actually shows gradation in how well you know each note
+  instead of an all-or-nothing colour. Routed through Grill's own accent and gold
+  tones (not a flat two-colour blend, which barely moved since Known and Learning
+  both peg red to max) so it stays vivid instead of reading dull. A genuinely
+  "Known" note (durably proven, the same bar the dashboard counts) still gets its
+  own gold ring and white outlined text on top of the gradient, so that signal isn't
+  lost in the continuous scale.
+- **New: a "Known" filter chip** on the map, alongside the existing Due/Untested/
+  Learning/Stale/Misconceptions/Stuck/Unlinked chips.
+- **Changed: untested notes are grey again** on the map, not orange — grey/dim reads
+  as dormant, distinct from any lit, in-progress colour.
+
 ## 5.5.0
 
 - **New: export your review log as CSV.** Command palette → "Export review log as

@@ -6,17 +6,21 @@
  * produces laid-out nodes + tiered edges. The Obsidian-facing side (enumerating links,
  * reading CSS colours, canvas drawing) lives in the view.
  *
- * Node colour maps a note's aggregate mastery, derived the same way as `noteAggregate`:
- * grey = not practised, in-progress = tested but not solid, struggling, known. Node size
- * grows with proven strength (mean FSRS stability of the note's tested concepts). Edges come
- * in three tiers: structural (a link, always shown), inherited (both ends practised), proven
- * (the relationship was quizzed and passed).
+ * Node colour is exactly the same 3-bucket split as the start screen's own Untested /
+ * Learning / Known stat tiles (renderStart's addStat, backed by concepts.ts's
+ * noteAggregate) — deliberately identical logic, not just a similar one, so the map is
+ * literally a picture of those three numbers: grey = untested, struggling = "Learning",
+ * known = confirmed-known coverage >= 80%. No fourth bucket in between — the dashboard
+ * doesn't have one, so the map doesn't either. Node size grows with proven strength (mean
+ * FSRS stability of the note's tested concepts). Edges come in three tiers: structural (a
+ * link, always shown), inherited (both ends practised), proven (the relationship was
+ * quizzed and passed).
  */
 
 import type { ConceptMap, ConceptMastery } from "./concepts";
 import { conceptMasteryScore, isLeech, statusOf } from "./mastery";
 
-export type NodeState = "unpracticed" | "in-progress" | "struggling" | "known";
+export type NodeState = "unpracticed" | "struggling" | "known";
 export type EdgeTier = "structural" | "inherited" | "proven";
 
 export interface GraphNode {
@@ -60,7 +64,15 @@ export interface LearningGraph {
 	edges: GraphEdge[];
 }
 
-/** Coverage of confirmed-known concepts for a note to read "known" (matches concepts.ts). */
+/** Coverage of confirmed-known concepts for a note to read "known" — matches
+ * concepts.ts's noteAggregate exactly (same 0.8 bar, same "count individually
+ * confirmed-known concepts" definition), since that function is what the dashboard's
+ * headline "Known" stat is built from (view.ts's renderStart, via statusOf reading
+ * mastery[note].aggStatus). The map's node colour needs to agree with that number,
+ * not with a differently-computed one — a graph showing dozens of "known"-coloured
+ * notes while the dashboard says 5 is a worse, more confusing mismatch than the
+ * per-node number/colour disagreement this constant used to cause (see MIN_STABILITY
+ * below for the rest of that history). */
 const COVERAGE_KNOWN = 0.8;
 /** Coverage's denominator caps at this many concepts (matches concepts.ts COVERAGE_TARGET). */
 const COVERAGE_TARGET = 8;
@@ -72,9 +84,27 @@ function conceptTested(cm: ConceptMastery): boolean {
 }
 
 /** A note's full derived state from its concept mastery records: colour state, proven
- * strength, coverage, mastery, and recency/due timestamps. Mirrors `noteAggregate`: any
- * struggling tested concept → struggling; else high confirmed-known coverage → known; else
- * in-progress. Strength = mean stability of tested concepts (drives node size). */
+ * strength, coverage, mastery, and recency/due timestamps. Strength = mean stability of
+ * tested concepts (drives node size).
+ *
+ * Colour state is `noteAggregate` (concepts.ts), copied exactly — not "inspired by," not
+ * "mostly matching": the same `coverage >= 0.8 ? known : struggling` split, on the same
+ * definition of coverage, so the map's node counts and the dashboard's Untested/Learning/
+ * Known tiles can never read differently. Two things this deliberately does NOT do,
+ * because both were tried and made the map read as MORE inconsistent with the dashboard,
+ * not less:
+ *  - No separate "in-progress" bucket. The dashboard has exactly three numbers; giving
+ *    the map a fourth colour with nothing to anchor it to was confusing on its own terms.
+ *  - No per-concept "any single struggling concept veto"s the whole note. Real idea (a
+ *    good average shouldn't launder one unresolved miss) but it's a DIFFERENT formula
+ *    from noteAggregate's plain coverage check, so it could — and did — disagree with the
+ *    dashboard's own Known count for the same note.
+ *
+ * `mastery` (mean retrievability x confidence, see conceptMasteryScore) is still computed
+ * and still drives the map's numeric overlay (via gradeScore) — a deliberate, separate,
+ * softer number that answers a different question ("how confident right now") than colour
+ * does ("known by the same definition as the dashboard"). It was tried as the colour
+ * signal too; reverted for the same reason as the veto above. */
 export function noteState(
 	records: ConceptMastery[],
 	now = new Date(),
@@ -104,20 +134,10 @@ export function noteState(
 	// Coverage denominator caps at COVERAGE_TARGET rather than the note's full concept
 	// count, so a note only reads "known" once a REPRESENTATIVE sample is confirmed —
 	// not off a couple of lucky answers, but also not scaled by how many candidate
-	// concepts happened to get extracted from a dense note. A note reads "in-progress"
-	// while its tested parts are solid but coverage is still low.
+	// concepts happened to get extracted from a dense note.
 	let known = 0;
-	let anyStruggling = false;
 	for (const c of records) {
-		const s = statusOf(c);
-		if (s === "known") known++;
-		// Genuinely shaky, matching noteAggregate: actually missed at least once and not
-		// yet re-confirmed (stability still below S_SOLID). A concept that's only ever
-		// been answered correctly is provisional, not struggling — otherwise every
-		// note's first-ever correct answer on a fresh concept paints it red, and it can
-		// never progress past red as long as untested concepts keep getting their first
-		// (correct) exposure.
-		else if (conceptTested(c) && c.incorrect + c.partial > 0) anyStruggling = true;
+		if (statusOf(c) === "known") known++;
 	}
 	let stabSum = 0;
 	let masterySum = 0;
@@ -136,7 +156,7 @@ export function noteState(
 	}
 	const coverage = known / Math.max(1, Math.min(records.length, COVERAGE_TARGET));
 	const mastery = masteryCount > 0 ? masterySum / masteryCount : null;
-	const state: NodeState = anyStruggling ? "struggling" : coverage >= COVERAGE_KNOWN ? "known" : "in-progress";
+	const state: NodeState = coverage >= COVERAGE_KNOWN ? "known" : "struggling";
 	const leeches = records.filter(isLeech).length;
 	return { practiced: true, state, strength: stabSum / tested.length, coverage, mastery, lastSeen, dueAt, leeches };
 }

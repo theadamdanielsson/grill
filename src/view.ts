@@ -942,8 +942,14 @@ export class SessionView extends ItemView {
 		return {
 			known: v("--grill-gold-lit", "#ffe98a"),
 			struggling: v("--grill-flame-hot", "#ff5a1f"),
-			inProgress: v("--grill-accent", "#ff8c2b"),
-			unpracticed: "#4a3018",
+			accent: v("--grill-accent", "#ff8c2b"),
+			gold: v("--grill-gold", "#ffd23f"),
+			// Grey/dim, not lit — "never studied" isn't a position on the mastery gradient
+			// or a colour any dashboard stat tile owns, so it gets its own dormant tone
+			// (Grill's own established "muted" token, not Obsidian's --text-muted: the
+			// arcade screen is fixed-dark, and that one resolves to dark ink on a light
+			// Obsidian theme — see .grill-arcade-screen's own comment on this).
+			unpracticed: v("--grill-dim", "#c9a875"),
 			edge: v("--grill-grid", "#3a1c0a"),
 			edgeInherited: v("--grill-ember-dark", "#5c1400"),
 			edgeProven: v("--grill-gold", "#ffd23f"),
@@ -1137,6 +1143,7 @@ export class SessionView extends ItemView {
 				// the one true definition, which this agrees with by construction.
 				{ kind: "untested", label: "Untested", match: (n) => n.state === "unpracticed" },
 				{ kind: "struggling", label: "Learning", match: (n) => n.state === "struggling" },
+				{ kind: "known", label: "Known", match: (n) => n.state === "known" },
 				{
 					kind: "stale",
 					label: `Stale (${STALE_DAYS}d+)`,
