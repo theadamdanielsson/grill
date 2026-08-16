@@ -17,6 +17,7 @@ import { Concept, ConceptKind } from "./generate-local";
 import {
 	applyRating,
 	DueDateHistogram,
+	fuzzInterval,
 	MasteryMap,
 	NoteStatus,
 	QDifficulty,
@@ -188,12 +189,13 @@ export function recordConceptAnswer(
 	dueDateHistogram?: DueDateHistogram,
 	confidence: number | null = null,
 	hintsUsed = 0,
+	easyWeekdays?: ReadonlySet<number>,
 ): void {
 	const cm = map[conceptId];
 	if (!cm) return;
 	const rating = toRating(verdict, difficulty, confidence, hintsUsed);
 	logReview(cm, now, rating);
-	applyRating(cm, rating, now, desiredRetention, dueDateHistogram);
+	applyRating(cm, rating, now, desiredRetention, dueDateHistogram, easyWeekdays);
 }
 
 /** Self-grade path: the user's own Again/Hard/Good/Easy rating is the signal. */
@@ -204,11 +206,12 @@ export function recordConceptRating(
 	now = new Date(),
 	desiredRetention?: number,
 	dueDateHistogram?: DueDateHistogram,
+	easyWeekdays?: ReadonlySet<number>,
 ): void {
 	const cm = map[conceptId];
 	if (!cm) return;
 	logReview(cm, now, rating);
-	applyRating(cm, rating, now, desiredRetention, dueDateHistogram);
+	applyRating(cm, rating, now, desiredRetention, dueDateHistogram, easyWeekdays);
 }
 
 /** Round-robin concepts across their notes (preserving each note's given order),
@@ -406,6 +409,156 @@ export function conceptTargetDifficulty(cm: ConceptMastery | undefined): QDiffic
 	if (statusOf(cm) === "struggling") return "easy"; // a lapse resets to easy
 	if (cm.streak >= 3) return "hard"; // survived several spaced recalls: stretch
 	return "medium";
+}
+
+/** Post-session pass: within a note's own concepts, spread due dates that landed
+ * close together. `dueDateHistogram` (mastery.ts) already load-balances across the
+ * WHOLE vault, but concepts sharing a note share context — they're more likely to be
+ * forgotten together than unrelated ones — so keeping siblings apart specifically
+ * matters more than vault-wide day-crowding alone catches. (The idea comes from
+ * fsrs4anki-helper's "disperse siblings" tool for Anki.)
+ *
+ * Greedy, not that tool's binary-search maximin optimizer: sort a note's due concepts
+ * by their own fuzz-window lower bound, then walk forward assigning each the earliest
+ * day that's both inside its own window and at least a day past the previous
+ * concept's assigned day. Concepts whose windows don't actually overlap anything
+ * fall out to their own original day unchanged, so this only ever touches concepts
+ * that were genuinely competing for the same handful of days. Skips concepts under
+ * fuzzInterval's own 2.5-day floor (nothing to disperse within) and anything not
+ * still comfortably in the future (an already-due or near-due concept's urgency is
+ * not this function's to touch). Call once per touched note at session end, not per
+ * rating — needs every sibling's CURRENT dueAt at once, not one at a time. */
+export function disperseSiblingDueDates(map: ConceptMap, noteNames: Iterable<string>, now: Date): void {
+	const byNote = new Map<string, ConceptMastery[]>();
+	for (const cm of Object.values(map)) {
+		if (!conceptTested(cm) || !cm.dueAt) continue;
+		let arr = byNote.get(cm.note);
+		if (!arr) byNote.set(cm.note, (arr = []));
+		arr.push(cm);
+	}
+	for (const note of new Set(noteNames)) {
+		const siblings = byNote.get(note);
+		if (!siblings || siblings.length < 2) continue;
+		const windows = siblings
+			.map((cm) => {
+				const days = (new Date(cm.dueAt as string).getTime() - now.getTime()) / 86400_000;
+				if (days < 2.5) return null; // matches fuzzInterval's own no-jitter floor
+				const range = days < 7 ? 1 : days * (days < 30 ? 0.15 : 0.05);
+				const lo = Math.ceil(Math.max(2, days - range));
+				const hi = Math.floor(days + range);
+				if (hi <= lo) return null; // no real window to move within
+				return { cm, lo, hi, original: Math.round(days) };
+			})
+			.filter((w): w is { cm: ConceptMastery; lo: number; hi: number; original: number } => w !== null)
+			.sort((a, b) => a.lo - b.lo);
+		let prev = -Infinity;
+		for (const w of windows) {
+			const assigned = Math.min(w.hi, Math.max(w.lo, prev + 1));
+			prev = assigned;
+			// Only touch dueAt (and so only this concept's persisted state) when the
+			// dispersed day actually differs — most siblings, most sessions, aren't
+			// crowded and shouldn't churn on every save.
+			if (assigned !== w.original) {
+				w.cm.dueAt = new Date(now.getTime() + assigned * 86400_000).toISOString();
+			}
+		}
+	}
+}
+
+/** Rebuild the due-date schedule's day-crowding from scratch, vault-wide. Every
+ * future-due concept keeps roughly its own target day — derived from its CURRENT
+ * `dueAt`, not recomputed from stability, so this only re-smooths WHEN things land,
+ * never reschedules WHAT'S actually due — but gets re-fuzzed through a freshly built,
+ * empty histogram instead of whichever partial one it happened to land against when
+ * it was originally scheduled. Fixes pile-ups a big import or a long stretch of study
+ * can leave behind: a batch of concepts created together each got fuzzed against a
+ * histogram that didn't yet reflect what all its OWN siblings would independently
+ * pick, so collisions the load-balancer would have caught had it seen the whole
+ * picture at once can still slip through. (Same idea as fsrs4anki-helper's `flatten`,
+ * scoped to the future queue only — see the skip condition below.)
+ *
+ * Processes nearer-due concepts first, so they keep first claim on their preferred
+ * days, same priority order normal scheduling already gives them. Skips anything not
+ * still comfortably in the future: an already-due or near-due concept's urgency is
+ * not this function's to touch (matches `disperseSiblingDueDates`'s same floor, for
+ * the same reason). On-demand only — a settings-tab button / command, never run
+ * automatically. Returns how many concepts actually moved. */
+export function rebalanceDueDates(map: ConceptMap, now: Date, easyWeekdays?: ReadonlySet<number>): number {
+	const candidates = Object.values(map)
+		.filter((cm) => conceptTested(cm) && cm.dueAt)
+		.map((cm) => ({ cm, days: (new Date(cm.dueAt as string).getTime() - now.getTime()) / 86400_000 }))
+		.filter((c) => c.days >= 2.5) // matches fuzzInterval's own no-jitter floor
+		.sort((a, b) => a.days - b.days);
+	const histogram: DueDateHistogram = new Map();
+	let changed = 0;
+	for (const { cm, days } of candidates) {
+		const newDueAt = new Date(now.getTime() + fuzzInterval(days, now, histogram, easyWeekdays) * 86400_000).toISOString();
+		if (newDueAt !== cm.dueAt) changed++;
+		cm.dueAt = newDueAt;
+	}
+	return changed;
+}
+
+export interface TrueRetentionSummary {
+	/** Real (non-first-exposure) reviews counted. */
+	n: number;
+	/** Observed pass rate, 0-1. */
+	rate: number;
+}
+
+/** Below this many real reviews, an observed rate is too noisy to report —
+ * mirrors calibration.ts's own minN=10 for the same reason, doubled since this
+ * draws from the whole vault's history rather than one setting's worth of intent. */
+const TRUE_RETENTION_MIN_N = 20;
+
+/** Observed pass rate on real (non-first-exposure) reviews across the whole vault:
+ * among each concept's `reviewLog` entries after its first, the share rated
+ * anything but Again. `desiredRetention` (mastery.ts's FSRS setting) is a PROMISE
+ * — "you'll recall this about X% of the time at its due date" — and nothing
+ * previously checked whether the schedule is actually keeping it on THIS vault's
+ * real material. Distinct from calibration.ts's metric: that's stated confidence
+ * vs. outcome (a metacognition check), this is the schedule's own implicit target
+ * vs. what actually happened, and needs no opt-in setting since it just reads
+ * data already logged. Returns null under `TRUE_RETENTION_MIN_N` reviews. */
+export function trueRetention(concepts: ConceptMap): TrueRetentionSummary | null {
+	let total = 0;
+	let passed = 0;
+	for (const cm of Object.values(concepts)) {
+		const log = cm.reviewLog;
+		if (!log || log.length < 2) continue;
+		for (let i = 1; i < log.length; i++) {
+			total++;
+			if (log[i].rating !== 1) passed++;
+		}
+	}
+	if (total < TRUE_RETENTION_MIN_N) return null;
+	return { n: total, rate: passed / total };
+}
+
+/** One-line human summary for the session debrief, or "" when there's not enough
+ * data yet. `desiredRetentionPct` is the raw "Review frequency" setting value
+ * (70-97), not a 0-1 fraction. Points at the FSRS optimizer (optimizer.ts) when
+ * the schedule is running noticeably under target — that's the concrete fix a
+ * gap like this calls for. */
+export function trueRetentionLine(concepts: ConceptMap, desiredRetentionPct: number): string {
+	const s = trueRetention(concepts);
+	if (!s) return "";
+	const observedPct = Math.round(s.rate * 100);
+	const targetPct = Math.round(desiredRetentionPct);
+	const gap = observedPct - targetPct;
+	if (Math.abs(gap) <= 5) {
+		return `True retention: ${observedPct}% across your last ${s.n} reviews — tracking your ${targetPct}% target closely.`;
+	}
+	if (gap < 0) {
+		return (
+			`True retention: ${observedPct}% across your last ${s.n} reviews, under your ${targetPct}% target. ` +
+			`Worth a look: Settings → Personalize FSRS to your own memory, or lowering Review frequency.`
+		);
+	}
+	return (
+		`True retention: ${observedPct}% across your last ${s.n} reviews, above your ${targetPct}% target — ` +
+		`you could raise Review frequency for fewer, longer-spaced reviews without losing much.`
+	);
 }
 
 /** One-time migration (chosen: reset scheduling, keep stats). Preserve each

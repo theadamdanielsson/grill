@@ -9,11 +9,12 @@ import {
 	TFolder,
 	WorkspaceLeaf,
 } from "obsidian";
-import { MasteryMap } from "./mastery";
+import { configureFSRSWeights, MasteryMap } from "./mastery";
 import { CalPoint, isCalPoint } from "./calibration";
 import { LLMConfig, PROVIDERS, ProviderId, Question, listModels, testModel } from "./llm";
-import { ConceptMap, dueConceptCount, migrateResetScheduling, reconcileConcepts } from "./concepts";
+import { ConceptMap, dueConceptCount, migrateResetScheduling, rebalanceDueDates, reconcileConcepts } from "./concepts";
 import { extractConcepts } from "./generate-local";
+import { countTrainableReviews, MIN_REVIEWS_FOR_OPTIMIZATION, optimizeFSRSWeights } from "./optimizer";
 import { dueFiles, duplicateBasenames } from "./scope";
 import { GrillStore } from "./store";
 import { SessionView, VIEW_TYPE } from "./view";
@@ -96,6 +97,24 @@ interface GrillSettings {
 	 * things come due more often = progress feels faster, at the cost of more
 	 * reviews. Higher = longer intervals, fewer but higher-stakes reviews. */
 	desiredRetention: number;
+	/** This vault's own personalized FSRS-6 weights, fit by optimizer.ts from its
+	 * logged review history (concepts.ts's `reviewLog`) instead of the library's
+	 * pooled-population defaults — the way Anki's own optimizer personalizes per
+	 * user. null = library defaults (also the state until there's enough review
+	 * history to fit from — see MIN_REVIEWS_FOR_OPTIMIZATION). */
+	fsrsPersonalization: {
+		weights: number[];
+		fitAt: string;
+		reviewCount: number;
+		/** Percent reduction in prediction loss vs the library defaults, on this
+		 * vault's own data at fit time — shown so "personalized" isn't a black box. */
+		improvementPct: number;
+	} | null;
+	/** Weekdays (0=Sunday..6=Saturday) fuzzInterval steers reviews AWAY from when an
+	 * equally-uncrowded alternative day exists in its jitter window — "I don't want to
+	 * study much on Sundays" without a hard cap that would just push the backlog
+	 * elsewhere. Empty = no preference, matching every existing vault's behavior. */
+	easyDays: number[];
 	/** Cap on how many never-before-tested concepts a session will introduce per
 	 * calendar day, independent of questionsPerSession (which governs one sitting, not
 	 * the day). Once hit, sessions fill remaining slots from
@@ -151,6 +170,8 @@ function defaultSettings(): GrillSettings {
 		graphNumberMode: "percent",
 		graphCoverageWeight: 15,
 		desiredRetention: 90,
+		fsrsPersonalization: null,
+		easyDays: [],
 		newConceptsPerDay: 20,
 		legacyDefaultsMigrated: false,
 		showAdvancedSettings: false,
@@ -219,6 +240,17 @@ export default class GrillPlugin extends Plugin {
 		// stuck weighting coverage 4x heavier than intended against the new score.
 		if (s.graphCoverageWeight === 60) settings.graphCoverageWeight = 15;
 		if (typeof s.desiredRetention === "number") settings.desiredRetention = s.desiredRetention;
+		if (
+			s.fsrsPersonalization &&
+			Array.isArray(s.fsrsPersonalization.weights) &&
+			s.fsrsPersonalization.weights.every((w) => typeof w === "number") &&
+			typeof s.fsrsPersonalization.fitAt === "string"
+		) {
+			settings.fsrsPersonalization = s.fsrsPersonalization;
+		}
+		if (Array.isArray(s.easyDays)) {
+			settings.easyDays = s.easyDays.filter((d): d is number => typeof d === "number" && d >= 0 && d <= 6);
+		}
 		if (typeof s.newConceptsPerDay === "number") settings.newConceptsPerDay = s.newConceptsPerDay;
 		if (typeof s.legacyDefaultsMigrated === "boolean") settings.legacyDefaultsMigrated = s.legacyDefaultsMigrated;
 		if (typeof s.showAdvancedSettings === "boolean") settings.showAdvancedSettings = s.showAdvancedSettings;
@@ -236,6 +268,7 @@ export default class GrillPlugin extends Plugin {
 		}
 		const calibration = Array.isArray(stored?.calibration) ? stored.calibration.filter(isCalPoint) : [];
 		this.data = { settings, calibration };
+		configureFSRSWeights(settings.fsrsPersonalization?.weights ?? null);
 
 		this.store = new GrillStore(this.app, () => this.data.settings.folder);
 
@@ -270,6 +303,16 @@ export default class GrillPlugin extends Plugin {
 			id: "open-instructions",
 			name: "Open persona & instructions",
 			callback: () => void this.openInstructions(),
+		});
+		this.addCommand({
+			id: "optimize-fsrs-parameters",
+			name: "Optimize FSRS parameters from your review history",
+			callback: () => void this.optimizeFsrsParameters(),
+		});
+		this.addCommand({
+			id: "rebalance-due-dates",
+			name: "Rebalance upcoming due dates",
+			callback: () => void this.rebalanceSchedule(),
 		});
 		this.registerEvent(
 			this.app.workspace.on("file-menu", (menu, file) => {
@@ -404,6 +447,58 @@ export default class GrillPlugin extends Plugin {
 			return;
 		}
 		await this.app.workspace.getLeaf(true).openFile(file);
+	}
+
+	/** Fit personalized FSRS weights from this vault's own logged review history
+	 * (see optimizer.ts) and switch the scheduler over to them. Safe to call
+	 * anytime, from the command palette or the settings button: too little data
+	 * or a fit that doesn't beat the library defaults on this vault's own data
+	 * both leave settings untouched. */
+	async optimizeFsrsParameters(): Promise<void> {
+		const trainable = countTrainableReviews(this.concepts);
+		if (trainable < MIN_REVIEWS_FOR_OPTIMIZATION) {
+			new Notice(
+				`Grill: not enough review history yet to personalize FSRS (${trainable}/${MIN_REVIEWS_FOR_OPTIMIZATION} reviews). ` +
+					"Keep studying — this gets better with more real reviews to fit against.",
+			);
+			return;
+		}
+		new Notice(`Grill: optimizing FSRS parameters from ${trainable} reviews...`);
+		const result = await optimizeFSRSWeights(this.concepts);
+		if (!result.weights) {
+			new Notice("Grill: your current schedule already fits this vault as well as a refit would — no change made.");
+			return;
+		}
+		const improvementPct = ((result.baselineLoss - result.finalLoss) / result.baselineLoss) * 100;
+		this.data.settings.fsrsPersonalization = {
+			weights: result.weights,
+			fitAt: new Date().toISOString(),
+			reviewCount: result.reviewsUsed,
+			improvementPct,
+		};
+		configureFSRSWeights(result.weights);
+		await this.persist();
+		new Notice(
+			`Grill: FSRS parameters personalized from ${result.reviewsUsed} reviews ` +
+				`(${improvementPct.toFixed(1)}% tighter fit than the defaults). Applies to every review from now on.`,
+		);
+	}
+
+	/** On-demand fix for pile-ups a big import or a long study stretch can leave in the
+	 * future due-date queue (see rebalanceDueDates's doc comment in concepts.ts): keeps
+	 * what's due WHEN it's due, just re-smooths the day-crowding against a clean slate.
+	 * Safe to call anytime, including mid-session (SessionView's own `concepts` map is
+	 * the same object once a session has loaded one — see the field comment on
+	 * `concepts` above). */
+	async rebalanceSchedule(): Promise<void> {
+		const easyWeekdays = new Set(this.data.settings.easyDays);
+		const changed = rebalanceDueDates(this.concepts, new Date(), easyWeekdays);
+		if (changed > 0) await this.store.saveConcepts(this.concepts);
+		new Notice(
+			changed > 0
+				? `Grill: rebalanced ${changed} upcoming due date${changed === 1 ? "" : "s"}.`
+				: "Grill: upcoming due dates are already well-spread — nothing to rebalance.",
+		);
 	}
 
 	/** True if a note path is outside Grill's territory: in the Grill folder, outside the
@@ -1071,6 +1166,65 @@ class GrillSettingTab extends PluginSettingTab {
 			);
 
 		if (s.showAdvancedSettings) {
+			const trainable = countTrainableReviews(this.plugin.concepts);
+			const fp = s.fsrsPersonalization;
+			const fsrsDesc = fp
+				? `Active: fit from ${fp.reviewCount} reviews on ${new Date(fp.fitAt).toLocaleDateString()}, ` +
+					`${fp.improvementPct.toFixed(1)}% tighter fit than the library defaults on this vault's own data at the time. ` +
+					"Re-run occasionally as more review history accumulates, or reset to the shared library defaults."
+				: `Off: scheduling runs on FSRS-6's library defaults, fit across a large pooled population, not this vault. ` +
+					`Needs ${MIN_REVIEWS_FOR_OPTIMIZATION} real reviews to fit against (${trainable}/${MIN_REVIEWS_FOR_OPTIMIZATION} so far) — ` +
+					"keep studying and re-open this panel to check progress.";
+			new Setting(containerEl)
+				.setName("Personalize FSRS to your own memory")
+				.setDesc(
+					"Fits FSRS's ~21 scheduling weights to how YOU actually forget, from your own logged review history, " +
+						"instead of the library's one-size-fits-all defaults — the same idea as Anki's own FSRS optimizer, run " +
+						"locally with no data leaving your machine. " +
+						fsrsDesc,
+				)
+				.addButton((b) =>
+					b.setButtonText("Optimize now").onClick(async () => {
+						await this.plugin.optimizeFsrsParameters();
+						this.display();
+					}),
+				)
+				.addButton((b) => {
+					b.setButtonText("Reset to defaults").setDisabled(!fp);
+					if (fp) {
+						b.onClick(async () => {
+							s.fsrsPersonalization = null;
+							configureFSRSWeights(null);
+							await this.plugin.persist();
+							new Notice("Grill: FSRS parameters reset to the library defaults.");
+							this.display();
+						});
+					}
+					return b;
+				});
+
+			const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+			const easyDaysSetting = new Setting(containerEl)
+				.setName("Light review days")
+				.setDesc(
+					"Toggle on any weekday you'd rather Grill went easier on. Doesn't cap or skip that day outright " +
+						"(the backlog still has to go somewhere) — it just steers newly-scheduled reviews off it toward " +
+						"an equally-uncrowded day nearby whenever one's available. Toggle order: " +
+						WEEKDAY_NAMES.join(", ") +
+						".",
+				);
+			WEEKDAY_NAMES.forEach((full, weekday) => {
+				easyDaysSetting.addToggle((t) =>
+					t
+						.setTooltip(full)
+						.setValue(s.easyDays.includes(weekday))
+						.onChange(async (v) => {
+							s.easyDays = v ? [...new Set([...s.easyDays, weekday])] : s.easyDays.filter((d) => d !== weekday);
+							await this.plugin.persist();
+						}),
+				);
+			});
+
 			new Setting(containerEl)
 				.setName("Confidence check")
 				.setDesc(
@@ -1273,6 +1427,17 @@ class GrillSettingTab extends PluginSettingTab {
 		new Setting(containerEl).setName("Storage").setHeading();
 
 		if (s.showAdvancedSettings) {
+			new Setting(containerEl)
+				.setName("Rebalance upcoming due dates")
+				.setDesc(
+					"Keeps what's due WHEN it's due, but re-smooths the days they land on against a clean slate — " +
+						"fixes pile-ups a big import or a long study stretch can leave behind, where several concepts " +
+						"scheduled around the same time each landed against a load-balancer that hadn't yet seen all " +
+						"its own siblings. Only touches concepts still comfortably in the future; never pulls in or " +
+						"pushes out anything already due or overdue.",
+				)
+				.addButton((b) => b.setButtonText("Rebalance").onClick(() => void this.plugin.rebalanceSchedule()));
+
 			new Setting(containerEl)
 				.setName("Show quiz history in a note's backlinks")
 				.setDesc(

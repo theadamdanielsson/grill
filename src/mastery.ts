@@ -108,6 +108,14 @@ export interface Schedulable {
 	difficulty: number | null;
 	lastSeen: string | null;
 	dueAt: string | null;
+	/** Consecutive "Again"s recorded WHILE already a leech (see `isLeech`), reset to 0
+	 * the instant a rating lifts it out of leech state — a genuine recovery, not just
+	 * one lucky hit on the way there. Undefined/0 = never been a leech, or recovered.
+	 * Read by `applyRating` to widen the relearn gap the longer a concept keeps
+	 * failing (see `AGAIN_RELEARN_MIN/MAX_MINUTES`'s doc comment), so a genuine leech
+	 * gradually stops competing for session slots at ordinary-miss cadence instead of
+	 * indefinitely. */
+	leechStreak?: number;
 }
 
 /** Question difficulty tier, used to make grading difficulty-aware. */
@@ -151,6 +159,13 @@ const AGAIN_RELEARN_MAX_MINUTES = 30;
  * max — chosen well under a day, since anything scaling toward day-scale gaps
  * belongs to `optimalInterval`, not this same-day relearn buffer. */
 const AGAIN_RELEARN_REFERENCE_STABILITY = 2;
+/** Ceiling on how far `leechStreak` widens the relearn gap (see `Schedulable.leechStreak`
+ * and `isLeech`): each consecutive Again-while-already-a-leech multiplies the ordinary
+ * gap by (1 + streak), so a fresh leech (streak 1) gets 2x, capped here at 9x so a
+ * concept that's failed for a very long time still relearns same-day (9 * 30min = 4.5h)
+ * rather than sliding toward `optimalInterval`'s day-granularity territory, which would
+ * make it indistinguishable from an ordinary spaced-out review. */
+const LEECH_RELEARN_STREAK_CAP = 8;
 
 function clamp(v: number, min: number, max: number): number {
 	return Math.min(max, Math.max(min, v));
@@ -161,15 +176,26 @@ function againRelearnMinutes(postFailStability: number): number {
 	return Math.round(AGAIN_RELEARN_MIN_MINUTES + frac * (AGAIN_RELEARN_MAX_MINUTES - AGAIN_RELEARN_MIN_MINUTES));
 }
 
-/** Single shared engine instance: stateless besides its fixed params, so one
- * instance safely serves every concept/note. Deliberately left at library defaults
- * — current FSRS-6 weights, `enable_short_term: true` (the real fix for same-day
- * repeats: a same-day review, elapsed days t=0, gets a dedicated short-term
- * stability formula instead of being run through the ordinary multi-day one).
- * `request_retention`/`enable_fuzz`/`maximum_interval` are irrelevant here: Grill
- * never calls the library's own interval/fuzz methods (`next`/`repeat`/
- * `next_interval`), only the lower-level `next_state`, so those params go unused. */
-const engine = fsrs();
+/** Shared engine instance: stateless besides its fixed params, so one instance
+ * safely serves every concept/note. Left at library defaults — current FSRS-6
+ * weights, `enable_short_term: true` (the real fix for same-day repeats: a
+ * same-day review, elapsed days t=0, gets a dedicated short-term stability
+ * formula instead of being run through the ordinary multi-day one) — UNLESS
+ * `configureFSRSWeights` (below) has swapped in this vault's own optimized
+ * weights (see optimizer.ts). `request_retention`/`enable_fuzz`/`maximum_interval`
+ * are irrelevant either way: Grill never calls the library's own interval/fuzz
+ * methods (`next`/`repeat`/`next_interval`), only the lower-level `next_state`,
+ * so those params go unused. */
+let engine = fsrs();
+
+/** Swap the shared engine's weights: personalized (fit by optimizer.ts from this
+ * vault's own review history) or, with `null`, back to the FSRS-6 library
+ * defaults. Called once at plugin load with whatever's in settings, and again
+ * whenever the optimizer produces a new fit. Every other export in this file
+ * reads `engine` through a closure, so nothing needs to know this happened. */
+export function configureFSRSWeights(weights: number[] | null): void {
+	engine = weights && weights.length ? fsrs({ w: weights }) : fsrs();
+}
 
 /** Recall probability right now, per FSRS's own forgetting curve — delegates to the
  * engine's decay/weights so this stays consistent with whatever `next_state` below
@@ -279,6 +305,14 @@ export function buildDueDateHistogram(dueAts: Iterable<string | null>): DueDateH
 	return hist;
 }
 
+/** Added to a candidate day's real histogram count before comparison when that day
+ * falls on a user-designated "easy" weekday (see `fuzzInterval`'s `easyWeekdays`) —
+ * large enough that any ordinary day's real count (single/low-double digits even in
+ * an active vault) always wins the comparison when one's available in the window, but
+ * finite so an easy day is still chosen (least-bad among equals) rather than the
+ * function failing when EVERY candidate day in the window happens to be an easy one. */
+const EASY_DAY_PENALTY = 1000;
+
 /** Anki-style interval fuzz so same-session items don't all resurface the same day.
  * With a due-date histogram supplied, picks the least-crowded whole day within the
  * jitter window instead of a random offset in it — smooths review load across days
@@ -287,31 +321,47 @@ export function buildDueDateHistogram(dueAts: Iterable<string | null>): DueDateH
  * but only wired into its legacy SM-2 path, never its FSRS one — this wires it all
  * the way through.) Ties broken randomly among equally least-crowded days. Falls
  * back to the original pure-random jitter when no histogram is given, or the
- * window is too narrow to have more than one whole-day candidate. */
-export function fuzzInterval(days: number, now = new Date(), histogram?: DueDateHistogram): number {
+ * window is too narrow to have more than one whole-day candidate.
+ *
+ * `easyWeekdays` (0=Sunday..6=Saturday, from the "Light review days" setting) makes
+ * those weekdays read as artificially crowded for THIS comparison only — the
+ * histogram itself still records each day's real count (see the `.set` below), so a
+ * later call with a different/empty `easyWeekdays` (or none at all) isn't misled by a
+ * penalty that was never really there. Anki's own scheduler and true-recall (a
+ * comparable Obsidian plugin) both call this "easy days"; this is the same idea
+ * layered on Grill's own per-day load-balancing rather than a flat daily review cap. */
+export function fuzzInterval(
+	days: number,
+	now = new Date(),
+	histogram?: DueDateHistogram,
+	easyWeekdays?: ReadonlySet<number>,
+): number {
 	if (days < 2.5) return days;
 	const range = days < 7 ? 1 : days * (days < 30 ? 0.15 : 0.05);
 	if (histogram) {
 		const loDay = Math.ceil(Math.max(2, days - range));
 		const hiDay = Math.floor(days + range);
 		if (hiDay > loDay) {
-			let best: number[] = [];
-			let bestCount = Infinity;
+			let best: { day: number; realCount: number }[] = [];
+			let bestEffective = Infinity;
 			for (let d = loDay; d <= hiDay; d++) {
-				const count = histogram.get(dayKey(new Date(now.getTime() + d * 86400_000))) ?? 0;
-				if (count < bestCount) {
-					bestCount = count;
-					best = [d];
-				} else if (count === bestCount) {
-					best.push(d);
+				const candidate = new Date(now.getTime() + d * 86400_000);
+				const realCount = histogram.get(dayKey(candidate)) ?? 0;
+				const effective = easyWeekdays?.has(candidate.getDay()) ? realCount + EASY_DAY_PENALTY : realCount;
+				if (effective < bestEffective) {
+					bestEffective = effective;
+					best = [{ day: d, realCount }];
+				} else if (effective === bestEffective) {
+					best.push({ day: d, realCount });
 				}
 			}
 			const chosen = best[Math.floor(Math.random() * best.length)];
 			// Reserve the chosen day immediately so several ratings applied in the same
 			// session (a whole batch coming due together) spread out against each other,
 			// not just against days that were already crowded before the session started.
-			histogram.set(dayKey(new Date(now.getTime() + chosen * 86400_000)), bestCount + 1);
-			return chosen;
+			// Stores the REAL count, never the easy-day-penalized one (see doc comment).
+			histogram.set(dayKey(new Date(now.getTime() + chosen.day * 86400_000)), chosen.realCount + 1);
+			return chosen.day;
 		}
 	}
 	return Math.max(2, days + (Math.random() - 0.5) * 2 * range);
@@ -325,13 +375,15 @@ export function fuzzInterval(days: number, now = new Date(), histogram?: DueDate
  * FSRS-standard 0.9 default when omitted, e.g. for callers that don't thread settings
  * through). `dueDateHistogram`, when passed, load-balances the fuzzed due date
  * against everything else already due (see `fuzzInterval`); omit it for the
- * original pure-random fuzz. */
+ * original pure-random fuzz. `easyWeekdays`, passed through to `fuzzInterval`, steers
+ * the fuzzed due date off those weekdays where a same-crowdedness alternative exists. */
 export function applyRating(
 	m: Schedulable,
 	rating: number,
 	now: Date,
 	desiredRetention = DESIRED_RETENTION,
 	dueDateHistogram?: DueDateHistogram,
+	easyWeekdays?: ReadonlySet<number>,
 ): void {
 	// ts-fsrs's own calendar-day diff (midnight to midnight, not a continuous ms-based
 	// count), floored to >=0 defensively — next_state throws on a negative t, which a
@@ -365,12 +417,20 @@ export function applyRating(
 		m.streak = 0;
 	}
 
+	// Track BEFORE computing the relearn gap below, so a streak that just started
+	// (this Again is what tipped it into leech territory) already widens THIS gap,
+	// not only the next one — isLeech reads the just-updated incorrect/stability above.
+	m.leechStreak = rating === 1 && isLeech(m) ? (m.leechStreak ?? 0) + 1 : 0;
+
 	if (rating === 1) {
 		// Relearn shortly, not this instant — scaled by the concept's own new (lower)
-		// stability, not a flat constant. See AGAIN_RELEARN_MIN/MAX_MINUTES.
-		m.dueAt = new Date(now.getTime() + againRelearnMinutes(m.stability) * 60_000).toISOString();
+		// stability, not a flat constant (see AGAIN_RELEARN_MIN/MAX_MINUTES), and widened
+		// further the longer it's been a leech (see LEECH_RELEARN_STREAK_CAP) so a genuine
+		// leech gradually stops competing for session slots at ordinary-miss cadence.
+		const leechMultiplier = 1 + Math.min(m.leechStreak, LEECH_RELEARN_STREAK_CAP);
+		m.dueAt = new Date(now.getTime() + againRelearnMinutes(m.stability) * leechMultiplier * 60_000).toISOString();
 	} else {
-		const days = fuzzInterval(optimalInterval(m.stability, desiredRetention), now, dueDateHistogram);
+		const days = fuzzInterval(optimalInterval(m.stability, desiredRetention), now, dueDateHistogram, easyWeekdays);
 		m.dueAt = new Date(now.getTime() + days * 86400_000).toISOString();
 	}
 

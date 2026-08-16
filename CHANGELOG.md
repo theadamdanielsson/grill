@@ -1,5 +1,34 @@
 # Changelog
 
+## 5.3.0
+
+- **New: Grill can now fit FSRS's scheduling weights to your own memory, not just the
+  library's population-wide defaults.** Settings → "Personalize FSRS to your own
+  memory" (or the **Optimize FSRS parameters** command) replays your own logged review
+  history through the same maths Anki's own FSRS optimizer uses, entirely on-device —
+  needs at least 400 real reviews before there's enough signal to fit against, and
+  never installs a fit that doesn't actually beat the defaults on your own data.
+- **New: a concept that keeps failing (a "leech") now genuinely resurfaces less
+  often**, not just a passive "Stuck" tag on the graph with no effect on scheduling.
+  Each consecutive miss while already flagged a leech widens its relearn gap, so a
+  handful of stubborn concepts stop competing for session slots at the same cadence
+  as an ordinary miss.
+- **New: "True retention" in the session debrief** — your actual pass rate on real
+  (non-first-exposure) reviews, next to your Review Frequency target, so you can see
+  whether the schedule is actually delivering the retention it promises instead of
+  just trusting the FSRS maths in the abstract.
+- **New: concepts from the same note spread their due dates apart.** Same-note
+  concepts are more likely to be forgotten together than unrelated ones, so at
+  session end Grill now spreads a note's own concepts across their fuzz windows on
+  top of the vault-wide day-balancing every rating already did.
+- **New: "Light review days."** Settings → toggle any weekday you'd rather Grill went
+  easier on; it steers newly-scheduled reviews off that day toward an
+  equally-uncrowded one nearby, without a hard cap that would just push the backlog
+  elsewhere.
+- **New: "Rebalance upcoming due dates" command**, for recovering from a pile-up a
+  big import or a long study break can leave in the future queue — re-smooths
+  day-crowding against a clean slate without touching what's already due.
+
 ## 5.2.3
 
 - **Fix: a direct `.style.display` assignment flagged as an error by Obsidian's plugin

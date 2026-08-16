@@ -18,9 +18,11 @@ import {
 	noteAggregate,
 	pickConcepts,
 	priorityNotes,
+	disperseSiblingDueDates,
 	recordConceptAnswer,
 	recordConceptRating,
 	reconcileConcepts,
+	trueRetentionLine,
 } from "./concepts";
 import { collectNoteImages, ImageInput } from "./images";
 import { collectNotePdfText } from "./pdf";
@@ -305,6 +307,12 @@ export class SessionView extends ItemView {
 	 * from the full concept map — lets fuzzInterval spread newly-scheduled reviews
 	 * across less-crowded days instead of pure random jitter. See applyGrade. */
 	private dueDateHistogram: DueDateHistogram = new Map();
+	/** "Light review days" setting (0=Sunday..6=Saturday) as a Set, for fuzzInterval's
+	 * easy-day steering — see applyGrade/markCorrect. Cheap to derive fresh each call,
+	 * unlike dueDateHistogram, which needs session-lifetime mutation to load-balance. */
+	private easyWeekdays(): ReadonlySet<number> {
+		return new Set(this.plugin.data.settings.easyDays);
+	}
 	/** Each selected note's current concepts, for recomputing its aggregate. */
 	private conceptsByNote = new Map<string, Concept[]>();
 	/** Concept lookup by id, for prebuilt (authored / cached) questions. */
@@ -2547,6 +2555,11 @@ export class SessionView extends ItemView {
 			}
 		}
 
+		// Spread each touched note's own due concepts apart where their fuzz windows
+		// let it, on top of the vault-wide load-balancing every rating already did —
+		// see disperseSiblingDueDates's doc comment for why siblings need their own pass.
+		disperseSiblingDueDates(this.concepts, sessionNodes, new Date());
+		this.dirty = true;
 		await this.flush();
 		const note = await this.plugin.store.writeSessionNote(
 			this.results,
@@ -2607,6 +2620,10 @@ export class SessionView extends ItemView {
 			const line = calibrationLine(this.plugin.data.calibration);
 			if (line) this.md(line, box.createDiv({ cls: "grill-debrief-calibration grill-meta" }), sourcePath);
 		}
+		// True retention: always on, no opt-in needed — reads reviewLog data that's
+		// already logged regardless of settings, unlike the stated-confidence check above.
+		const retentionLine = trueRetentionLine(this.concepts, this.plugin.data.settings.desiredRetention);
+		if (retentionLine) this.md(retentionLine, box.createDiv({ cls: "grill-debrief-calibration grill-meta" }), sourcePath);
 	}
 
 	private renderSummary(note: TFile | null, debrief?: SessionDebrief): void {
@@ -3580,7 +3597,7 @@ export class SessionView extends ItemView {
 			if (rating !== null) {
 				// Self-grade: the student's own Again/Hard/Good/Easy already IS the ground
 				// truth (no third-party verdict to second-guess), so no override snapshot.
-				recordConceptRating(this.concepts, cid, rating, new Date(), retention, this.dueDateHistogram);
+				recordConceptRating(this.concepts, cid, rating, new Date(), retention, this.dueDateHistogram, this.easyWeekdays());
 			} else {
 				// Snapshot the pre-answer state before mutating it — see pendingOverride's
 				// doc comment. structuredClone is safe here: ConceptMastery is plain JSON
@@ -3607,6 +3624,7 @@ export class SessionView extends ItemView {
 					// a genuinely-guessed correct answer should land as Hard, not Good/Easy.
 					this.pendingConfidence,
 					hintsUsed,
+					this.easyWeekdays(),
 				);
 			}
 		}
@@ -3645,6 +3663,7 @@ export class SessionView extends ItemView {
 				this.dueDateHistogram,
 				o.confidence,
 				o.hintsUsed,
+				this.easyWeekdays(),
 			);
 		}
 		// Correct note-level counters: undo the wrong bucket, credit the right one, and
