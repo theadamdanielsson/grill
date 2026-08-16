@@ -1,9 +1,9 @@
 {
 	"id": "grill",
 	"name": "Grill",
-	"version": "5.3.0",
+	"version": "5.3.1",
 	"minAppVersion": "1.8.0",
-	"description": "Learn what's in your notes: Grill quizzes you on your own notes, marks your answers, and colours in a live map of them as you prove what you know. Bring your own key, or run offline with Ollama.",
+	"description": "Quiz yourself on your own notes with your own AI key — Claude, GPT, Gemini, DeepSeek, or local Ollama — or run fully offline with no key at all. Grades your answers and maps what you know.",
 	"author": "Adam Danielsson",
 	"authorUrl": "https://github.com/theadamdanielsson",
 	"isDesktopOnly": false,

@@ -1,6 +1,6 @@
 ![Grill: your notes, quizzed, inside your knowledge graph](docs/hero.svg)
 
-*Grill quizzes you on your own Obsidian notes, marks your answers, and colours in a live map of them as you prove what you know.*
+*Grill quizzes you on your own Obsidian notes, marks your answers, and colours in a live map of them as you prove what you know — on your own AI key, or none at all.*
 
 I take a lot of notes and almost never go back to them. Re-reading a note isn't the same as remembering it, and I couldn't be bothered to turn everything into flashcards, so Grill quizzes me on the notes I've already got.
 
@@ -20,6 +20,7 @@ Focus a session on a folder or tag from the **Study** dropdown; Grill weights it
 
 ## What you get
 
+- **Your key, or fully offline:** Claude, GPT, Gemini, DeepSeek, any OpenAI-compatible endpoint (OpenRouter, Groq, LM Studio), local Ollama, or a no-key deterministic mode. Same engine either way — your model, your cost, your data staying on whichever machine you point it at. No account with Grill, no server of mine in the middle, ever.
 - **Questions from your own notes:** the AI writes recall questions from what you actually wrote (or, with no key, straight from your notes' structure).
 - **A live map of what you know:** your notes as a graph, coloured and grown by how well you know each. A *learning* graph (what you've proven), distinct from Obsidian's link graph.
 - **Fair grading:** answers are marked against a rubric written with the question: partial credit, three hints, and no confidently-wrong nitpicks.
@@ -28,7 +29,6 @@ Focus a session on a folder or tag from the **Study** dropdown; Grill weights it
 - **Edit a bad question instead of just deleting it:** the pencil on the home screen opens every cached question, grouped by note and searchable, for fixing in place.
 - **Reads embedded PDFs:** a `![[worksheet.pdf]]` embed isn't invisible to Grill — it pulls the PDF's text in and quizzes on it like any other note content, worked exercises included.
 - **Real spaced repetition:** FSRS scheduling per concept resurfaces what's due; edit a note and only the changed parts re-open.
-- **Your key, or fully offline:** Claude, GPT, Gemini, DeepSeek, any OpenAI-compatible endpoint (OpenRouter, Groq, LM Studio), local Ollama, or a no-key deterministic mode.
 
 Full detail on how each of these actually works — scheduling, the knowledge graph, missing-link detection, custom questions, PDFs, persona/instructions — is in **[docs/features.md](docs/features.md)**, not down here.
 

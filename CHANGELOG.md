@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.3.1
+
+- **No functional change.** Rewrote the plugin description (what shows in Obsidian's
+  in-app community-plugin browser) to lead with "your own AI key, or none at all"
+  instead of burying BYOK at the end of the sentence, and reordered the README's
+  feature list to lead with the same. Cut as its own release because the in-app
+  description only refreshes on a new version, not on a `main` commit.
+
 ## 5.3.0
 
 - **New: Grill can now fit FSRS's scheduling weights to your own memory, not just the
