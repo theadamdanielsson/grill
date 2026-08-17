@@ -594,7 +594,20 @@ async function callJSONOnce(
 		/* non-JSON error body */
 	}
 	if (resp.status >= 400) throw apiError(resp.status, json, resp.text);
-	const text = call.extract(json);
+	// A 2xx with an empty/null body (a local/custom endpoint restarting mid-response, a
+	// proxy returning an empty 200) makes every provider's extract() throw a raw
+	// TypeError reading a property off null — that never reaches the `!text` check
+	// below, so it bypassed callJSON's retry-once safety net entirely and surfaced to
+	// the student as a hard crash instead of the intended "Empty model response"
+	// retry-then-friendly-error path. Normalize any extraction failure (null body or an
+	// unexpected response shape) into that same path instead of letting it escape as an
+	// unrelated exception type.
+	let text: string | null | undefined;
+	try {
+		text = call.extract(json);
+	} catch {
+		text = null;
+	}
 	if (!text) throw new Error("Empty model response");
 	try {
 		return JSON.parse(text) as unknown;
@@ -1183,11 +1196,28 @@ async function runGenerationPass(
 	for (let i = 0; i < raw.length; i++) {
 		const q = raw[i];
 		if (!q?.question) continue;
-		// Map by the echoed concept number; fall back to position. This guards
-		// against the model reordering questions vs the concept list, and dedups.
-		let idx = typeof q.n === "number" && q.n >= 1 && q.n <= targets.length ? q.n - 1 : i;
-		if (idx >= targets.length || used.has(idx)) idx = i;
-		if (idx >= targets.length || used.has(idx)) continue;
+		// Map by the echoed concept number; fall back to array position only when the
+		// model didn't attempt to echo one at all — that's ordinary non-compliance with
+		// the instruction, and a model that's simply not echoing `n` is still writing
+		// its answers in the order it was asked, so trusting position there is safe.
+		// An `n` that WAS present but invalid/out-of-range/already-claimed is a
+		// stronger confusion signal (the model tried to tell us something and got it
+		// wrong) and is NOT silently trusted to position: this candidate's actual
+		// content could belong to any target, not necessarily the one at raw index i,
+		// so pairing it positionally risked stamping the wrong note name/content onto
+		// a target (node is taken from the matched target, never the model's own
+		// words — see `node: t.note` below). Dropping it here just leaves that target
+		// unfilled, which the trailing pass below turns into a concrete retry reason,
+		// instead of risking a silent wrong pairing.
+		let idx: number;
+		if (typeof q.n !== "number") {
+			idx = i;
+			if (idx >= targets.length || used.has(idx)) continue;
+		} else {
+			if (q.n < 1 || q.n > targets.length) continue;
+			idx = q.n - 1;
+			if (used.has(idx)) continue;
+		}
 		used.add(idx);
 		const t = targets[idx];
 		const candidate: Question = {
