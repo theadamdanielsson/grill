@@ -773,7 +773,7 @@ Difficulty tiers:
 Question craft:
 - Answerable from the student's own notes, specific, and requiring genuine recall: never yes/no, never 'what does the note say'.
 - Test the actual material, never the note's own title, filename, section heading, or place in the folder structure — a concept label is a pointer to what to ask about, not the subject itself.
-- Self-contained: the student sees only the question text. Inline any data the question needs.
+- Self-contained: the student sees only the question text, never the source note. Never refer to a table, image, diagram, code block, heading, or "the note above" — the student can't see it. If the question needs that data, inline it directly into the question text instead of pointing at it.
 - If a note contradicts your general knowledge, the note wins; ground questions in the note.
 - Any variable, formula, or equation in your question or answer must be real LaTeX ($...$ inline, $$...$$ for a standalone equation) — Obsidian renders it natively. This applies even when the student's own notes write math as plain text (e.g. "pi^e", "r_n", "i=r+pi^e"): translate that into proper LaTeX ($\\pi^e$, $r_n$, $i = r + \\pi^e$) rather than copying the plain-text notation verbatim.
 - Use plain punctuation and never use em dashes.
