@@ -1,7 +1,7 @@
 {
 	"id": "grill",
 	"name": "Grill",
-	"version": "5.6.0",
+	"version": "5.6.1",
 	"minAppVersion": "1.8.0",
 	"description": "Quiz yourself on your own notes with your own AI key — Claude, GPT, Gemini, DeepSeek, or local Ollama — or run fully offline with no key at all. Grades your answers and maps what you know.",
 	"author": "Adam Danielsson",
