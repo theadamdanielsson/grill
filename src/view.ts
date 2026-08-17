@@ -65,6 +65,21 @@ import { SessionEntry } from "./store";
 
 export const VIEW_TYPE = "grill-session";
 
+/** Uniform (Fisher-Yates) shuffle for MC/multi choice order and match-pair pool order.
+ * `.sort(() => Math.random() - 0.5)` is a well-known anti-pattern here: a sort
+ * comparator has to be consistent across calls to produce a fair result, and a random
+ * one isn't — V8's TimSort-derived sort is non-uniform on it, systematically favoring
+ * some positions over others (and differently on different engines, so desktop and
+ * mobile Obsidian wouldn't even be biased the same way). Doesn't mutate the input. */
+function shuffled<T>(arr: readonly T[]): T[] {
+	const out = arr.slice();
+	for (let i = out.length - 1; i > 0; i--) {
+		const j = Math.floor(Math.random() * (i + 1));
+		[out[i], out[j]] = [out[j], out[i]];
+	}
+	return out;
+}
+
 /** Grill's own flame silhouette for the verdict badge (7x10, crisp pixel blocks — the
  * same shape-rendering technique used in the plugin's hero art) instead of a generic
  * Lucide circle-check/circle-x, which every other app also uses. One shape for every
@@ -2139,7 +2154,7 @@ export class SessionView extends ItemView {
 		const matchPicks: Record<string, string> = {};
 		if (isMc || isTf) {
 			const mcRow = card.createDiv({ cls: isTf ? "grill-mc-row grill-mc-row-tf" : "grill-mc-row" });
-			const options = isTf ? ["True", "False"] : [...(q.choices as string[])].sort(() => Math.random() - 0.5);
+			const options = isTf ? ["True", "False"] : shuffled(q.choices as string[]);
 			for (const choice of options) {
 				const b = mcRow.createEl("button", { cls: isTf ? "grill-mc-btn grill-tf-btn" : "grill-mc-btn" });
 				// Rendered, not plain text: a choice can carry the same inline LaTeX/markdown
@@ -2156,7 +2171,7 @@ export class SessionView extends ItemView {
 			// Select all that apply: togglable options, an explicit Submit gathers them
 			// (unlike mc/tf, a single click can't be "the answer" here).
 			const multiRow = card.createDiv({ cls: "grill-multi-row" });
-			const options = [...(q.choices as string[])].sort(() => Math.random() - 0.5);
+			const options = shuffled(q.choices as string[]);
 			for (const choice of options) {
 				const b = multiRow.createEl("button", { cls: "grill-multi-btn" });
 				this.md(choice, b, q.node); // see the mc/tf branch above for why this isn't `text:`
@@ -2205,7 +2220,7 @@ export class SessionView extends ItemView {
 				slots.get(leftKey)!.setText(right);
 				setArmed(null);
 			};
-			const shuffledRight = [...pairs.map((p) => p.right)].sort(() => Math.random() - 0.5);
+			const shuffledRight = shuffled(pairs.map((p) => p.right));
 			for (const right of shuffledRight) {
 				const b = rightCol.createEl("button", { cls: "grill-match-btn" });
 				this.md(right, b, q.node); // see the mc/tf branch above for why this isn't `text:`
@@ -3718,24 +3733,37 @@ export class SessionView extends ItemView {
 			const chosenChoices = multiPicks ?? [];
 			const correct = new Set(correctChoices.map(norm));
 			const chosen = new Set(chosenChoices.map(norm));
-			let hits = 0;
-			for (const c of correct) if (chosen.has(c)) hits++;
-			const misses = correct.size - hits;
-			const extraItems = chosenChoices.filter((c) => !correct.has(norm(c)));
-			const missedItems = correctChoices.filter((c) => !chosen.has(norm(c)));
-			const wrong = misses + extraItems.length;
-			if (wrong === 0) verdict = "correct";
-			else if (hits > 0 && wrong <= Math.max(1, Math.ceil(correct.size / 2))) verdict = "partial";
-			else verdict = "incorrect";
-			if (verdict === "correct") {
-				feedback = "Correct — every one.";
+			if (correct.size < 2) {
+				// Defensive: isMulti's render check (above) already requires
+				// correctChoices.length >= 2 before showing checkboxes at all — this can
+				// only be reached if a 'multi' question ever slips past that with fewer
+				// than 2 correct choices (currently prevented upstream by questionDefect
+				// in llm.ts and the local callout parser, but this branch has no guard of
+				// its own). Without this, `wrong === 0` below is vacuously true when
+				// correct.size is 0, silently grading "Correct" no matter what the student
+				// typed. Fail closed instead of trusting two distant files to stay in sync.
+				verdict = "incorrect";
+				feedback = "This question couldn't be graded as written — marked incorrect rather than automatically correct.";
 			} else {
-				const lines: string[] = [];
-				if (extraItems.length) {
-					lines.push(`"${extraItems.join('", "')}" ${extraItems.length > 1 ? "don't" : "doesn't"} belong.`);
+				let hits = 0;
+				for (const c of correct) if (chosen.has(c)) hits++;
+				const misses = correct.size - hits;
+				const extraItems = chosenChoices.filter((c) => !correct.has(norm(c)));
+				const missedItems = correctChoices.filter((c) => !chosen.has(norm(c)));
+				const wrong = misses + extraItems.length;
+				if (wrong === 0) verdict = "correct";
+				else if (hits > 0 && wrong <= Math.max(1, Math.ceil(correct.size / 2))) verdict = "partial";
+				else verdict = "incorrect";
+				if (verdict === "correct") {
+					feedback = "Correct — every one.";
+				} else {
+					const lines: string[] = [];
+					if (extraItems.length) {
+						lines.push(`"${extraItems.join('", "')}" ${extraItems.length > 1 ? "don't" : "doesn't"} belong.`);
+					}
+					if (missedItems.length) lines.push(`Missing: ${missedItems.join(", ")}.`);
+					feedback = lines.join(" ");
 				}
-				if (missedItems.length) lines.push(`Missing: ${missedItems.join(", ")}.`);
-				feedback = lines.join(" ");
 			}
 		} else if (q.type === "match") {
 			const pairs = q.pairs ?? [];
