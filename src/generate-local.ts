@@ -714,44 +714,62 @@ const MIN_CONCEPTS_BEFORE_FALLBACK = 2;
 export function extractConcepts(note: string, text: string, mode: FormatMode = "write"): Concept[] {
 	const items = itemsForNote(text, ITEM_CAP_PER_NOTE, mode);
 	const concepts: Concept[] = [];
-	const usedIds = new Set<string>();
-	const labelById = new Map<string, string>();
+
+	// Two passes so id assignment never depends on document order. The single-pass
+	// version used to give the plain (unsuffixed) id to whichever colliding label was
+	// simply seen FIRST while walking the note top to bottom — so moving a heading
+	// above another, with no content change to either one, could silently swap which
+	// concept the plain id (and so its whole FSRS history) pointed at, reattaching one
+	// concept's scheduling onto a completely different concept with no warning.
+	//
+	// Pass 1: group items by base id (note+kind+slug(label)). slug() is lossy (strips
+	// punctuation, truncates past 48 chars), so two genuinely different labels can
+	// land on the same base.
+	const byBase = new Map<string, LocalItem[]>();
 	for (const it of items) {
-		// Same note+kind+label is treated as the same concept (first wins), so ids
-		// are position-independent and stable across edits — a later dedup can't
-		// reassign one concept's history to another.
 		const base = `${note}::${it.kind}:${slug(it.label)}`;
-		// slug() is lossy (strips all punctuation, truncates past 48 chars), so two
-		// genuinely DIFFERENT labels can land on the same base id — without this check
-		// the second one was silently dropped and never became schedulable. Only
-		// disambiguate when the collision is real (a different label claiming an
-		// already-used id); the common case — the same label re-extracted — still
-		// resolves to the original, unsuffixed id, so no existing concept gets renamed.
-		const id = usedIds.has(base) && labelById.get(base) !== it.label ? `${base}-${hashStr(it.label).slice(0, 6)}` : base;
-		if (usedIds.has(id) && labelById.get(id) === it.label) continue;
-		usedIds.add(id);
-		labelById.set(id, it.label);
-		concepts.push({
-			id,
-			note,
-			label: it.label,
-			kind: it.kind,
-			// Authored questions re-open on any edit to the question, answer, or rubric.
-			sourceHash: hashStr(
-				it.kind === "authored" ? `${it.question} ${it.answer} ${it.rubric ?? ""}` : it.answer,
-			),
-			context: it.answer,
-			local: {
-				question: it.question,
-				answer: it.answer,
-				hint: it.hint,
-				type: it.type,
-				choices: it.choices,
-				correctChoices: it.correctChoices,
-				pairs: it.pairs,
-			},
-			...(it.kind === "authored" ? { authored: true, rubric: it.rubric } : {}),
-		});
+		const group = byBase.get(base);
+		if (group) group.push(it);
+		else byBase.set(base, [it]);
+	}
+	// Pass 2: assign ids. A base with only one distinct label needs no disambiguation
+	// at all — every instance (even a verbatim repeat later in the note) resolves to
+	// that same plain id, first occurrence wins (dedup), same as before. A base with
+	// 2+ distinct labels is a genuine collision: sort the distinct labels themselves,
+	// not their document position, so the plain id always lands on the same label
+	// regardless of where either one sits in the note — order-independent and stable
+	// across a pure reorder.
+	for (const [base, group] of byBase) {
+		const distinctLabels = [...new Set(group.map((it) => it.label))].sort();
+		const idForLabel = new Map(
+			distinctLabels.map((label, i) => [label, i === 0 ? base : `${base}-${hashStr(label).slice(0, 6)}`]),
+		);
+		const placed = new Set<string>();
+		for (const it of group) {
+			if (placed.has(it.label)) continue; // repeat of a label already placed from this base
+			placed.add(it.label);
+			concepts.push({
+				id: idForLabel.get(it.label)!,
+				note,
+				label: it.label,
+				kind: it.kind,
+				// Authored questions re-open on any edit to the question, answer, or rubric.
+				sourceHash: hashStr(
+					it.kind === "authored" ? `${it.question} ${it.answer} ${it.rubric ?? ""}` : it.answer,
+				),
+				context: it.answer,
+				local: {
+					question: it.question,
+					answer: it.answer,
+					hint: it.hint,
+					type: it.type,
+					choices: it.choices,
+					correctChoices: it.correctChoices,
+					pairs: it.pairs,
+				},
+				...(it.kind === "authored" ? { authored: true, rubric: it.rubric } : {}),
+			});
+		}
 	}
 	// A sparse or prose-heavy note still gets schedulable concepts the AI can range
 	// over. It has no `local` question (nothing deterministic to show). Chunked, not
@@ -818,11 +836,12 @@ export function extractConcepts(note: string, text: string, mode: FormatMode = "
 					rawChunks.push({ label, text: slice });
 				}
 			}
+			const wholeIds = new Set<string>();
 			for (let chunk = 0; chunk < rawChunks.length && concepts.length < ITEM_CAP_PER_NOTE; chunk++) {
 				const { label, text: slice } = rawChunks[chunk];
 				const id = `${note}::note:whole:${chunk}`;
-				if (usedIds.has(id) || !slice) continue;
-				usedIds.add(id);
+				if (wholeIds.has(id) || !slice) continue;
+				wholeIds.add(id);
 				concepts.push({
 					id,
 					note,
