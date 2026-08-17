@@ -43,20 +43,31 @@ export interface CalibrationSummary {
 	signal: "overconfident" | "underconfident" | "well-calibrated";
 }
 
-/** Brier score (mean squared error of confidence vs outcome) and directional bias.
- * Returns null until there are at least `minN` points, so a couple of answers can't
- * label you. */
+/** How many of the most recent points the summary actually reflects. `buf` itself
+ * stays unbounded (see pushCalibration's doc comment — full history has real value
+ * and storing it costs nothing), but averaging the WHOLE lifetime buffer made the
+ * signal less responsive to recent behavior the longer someone used Grill: an early
+ * bad stretch stayed baked into the average forever, diluting further with every
+ * subsequent answer, even as the copy ("across your last N answers") claimed to be
+ * describing something current. Slicing to a bounded recent window is what actually
+ * makes this a rolling score instead of a lifetime one. */
+const CALIBRATION_WINDOW = 200;
+
+/** Brier score (mean squared error of confidence vs outcome) and directional bias,
+ * over the most recent CALIBRATION_WINDOW points. Returns null until there are at
+ * least `minN` points, so a couple of answers can't label you. */
 export function calibrationSummary(buf: CalPoint[], minN = 10): CalibrationSummary | null {
 	if (buf.length < minN) return null;
+	const recent = buf.length > CALIBRATION_WINDOW ? buf.slice(-CALIBRATION_WINDOW) : buf;
 	let se = 0;
 	let sumC = 0;
 	let sumOk = 0;
-	for (const p of buf) {
+	for (const p of recent) {
 		se += (p.c - p.ok) ** 2;
 		sumC += p.c;
 		sumOk += p.ok;
 	}
-	const n = buf.length;
+	const n = recent.length;
 	const bias = (sumC - sumOk) / n;
 	const signal = bias > 0.1 ? "overconfident" : bias < -0.1 ? "underconfident" : "well-calibrated";
 	return { n, brier: se / n, bias, signal };

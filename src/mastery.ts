@@ -284,8 +284,19 @@ export function optimalInterval(stability: number, desiredRetention = DESIRED_RE
 	return Math.max(1, Math.min(interval, MAX_INTERVAL_DAYS));
 }
 
+/** Local calendar day (not UTC): the day-crowding histogram/easy-weekday check below
+ * both reason about "which day" and "which weekday" a candidate falls on in the
+ * user's own local sense of a day, since that's what "Light review days: Sunday"
+ * actually means to them. Using `.toISOString().slice(0,10)` here (UTC) used to
+ * disagree with `candidate.getDay()` (already local, a few lines down) for anyone
+ * not on UTC — for a large chunk of most days, the UTC calendar date is already the
+ * next (or previous) one relative to local time, so the histogram bucket and the
+ * "is this an easy weekday" check could silently reason about two different days. */
 function dayKey(date: Date): string {
-	return date.toISOString().slice(0, 10);
+	const y = date.getFullYear();
+	const m = String(date.getMonth() + 1).padStart(2, "0");
+	const d = String(date.getDate()).padStart(2, "0");
+	return `${y}-${m}-${d}`;
 }
 
 /** How many concepts already land on a given due date (YYYY-MM-DD), built once per
@@ -299,7 +310,11 @@ export function buildDueDateHistogram(dueAts: Iterable<string | null>): DueDateH
 	const hist: DueDateHistogram = new Map();
 	for (const dueAt of dueAts) {
 		if (!dueAt) continue;
-		const key = dueAt.slice(0, 10);
+		// Must bucket exactly the way dayKey does (local calendar day) — dueAt is a
+		// UTC ISO timestamp, so slicing its first 10 characters would silently switch
+		// back to UTC-day bucketing here while fuzzInterval's own lookup (below) uses
+		// dayKey's local day, breaking the very match this histogram exists to enable.
+		const key = dayKey(new Date(dueAt));
 		hist.set(key, (hist.get(key) ?? 0) + 1);
 	}
 	return hist;

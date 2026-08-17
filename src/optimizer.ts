@@ -158,6 +158,11 @@ export async function optimizeFSRSWeights(concepts: ConceptMap): Promise<Optimiz
 	}
 
 	const sequences = capTrainingSet(allSequences);
+	// The count actually trained on, not `reviewsUsed` above: capTrainingSet can drop
+	// whole sequences once the vault has far more history than MAX_TRAINING_REVIEWS
+	// needs, so reporting the pre-cap count back to the user overstates what the fit
+	// actually saw (e.g. "personalized from 9,500 reviews" when only 8,000 were used).
+	const trainingReviewsUsed = sequences.reduce((n, s) => n + s.length - 1, 0);
 	const baselineLoss = computeLoss(baseline, sequences);
 
 	let w = baseline.slice();
@@ -174,9 +179,19 @@ export async function optimizeFSRSWeights(concepts: ConceptMap): Promise<Optimiz
 		const currentLoss = computeLoss(w, sequences);
 		const grad = new Array(n).fill(0);
 		for (let k = 0; k < n; k++) {
+			// Clip the probe point itself, not just the weight update below (line ~188)
+			// — `w` is already valid every time this loop runs, but a dimension sitting
+			// right at its ceiling (several FSRS-6 weights have tight ones, see clipParameters)
+			// can still get nudged just outside the valid domain by GRAD_EPS alone, and an
+			// invalid parameter can make computeLoss return NaN. That NaN would then
+			// permanently poison this dimension's Adam moments for the rest of the run
+			// (no reset exists), wasting the remaining iteration budget on one dead
+			// dimension with no visible signal. Clipping the probe keeps every loss
+			// evaluation inside the domain FSRS itself is defined on.
 			const wPlus = w.slice();
 			wPlus[k] += GRAD_EPS;
-			grad[k] = (computeLoss(wPlus, sequences) - currentLoss) / GRAD_EPS;
+			const clippedPlus = clipParameters(wPlus, RELEARNING_STEPS, ENABLE_SHORT_TERM);
+			grad[k] = (computeLoss(clippedPlus, sequences) - currentLoss) / GRAD_EPS;
 		}
 		for (let k = 0; k < n; k++) {
 			m[k] = ADAM_BETA1 * m[k] + (1 - ADAM_BETA1) * grad[k];
@@ -205,5 +220,5 @@ export async function optimizeFSRSWeights(concepts: ConceptMap): Promise<Optimiz
 	// a personalization worth keeping — report it as "no improvement" rather than
 	// silently installing weights that are, by this vault's own measure, worse.
 	const weights = bestLoss < baselineLoss - 1e-4 ? bestW : null;
-	return { weights, baselineLoss, finalLoss: bestLoss, reviewsUsed, iterations };
+	return { weights, baselineLoss, finalLoss: bestLoss, reviewsUsed: trainingReviewsUsed, iterations };
 }
