@@ -8,7 +8,7 @@
  *   and the graph.
  */
 
-import { App, TFile, normalizePath } from "obsidian";
+import { App, Notice, TFile, normalizePath } from "obsidian";
 import { MasteryMap, Verdict, normalizeMastery } from "./mastery";
 import { DEFAULT_PERSONA, Question } from "./llm";
 import { ArcEntry, MisconceptionRegistry, SessionDebrief } from "./debrief";
@@ -270,22 +270,70 @@ export class GrillStore {
 		}
 	}
 
-	async loadMastery(): Promise<MasteryMap> {
-		const path = this.masteryPath();
-		if (await this.app.vault.adapter.exists(path)) {
-			try {
-				const parsed = JSON.parse(await this.app.vault.adapter.read(path)) as MasteryMap;
-				return normalizeMastery(parsed);
-			} catch {
-				return {};
-			}
+	/** Shared JSON load for every store below. A parse failure (a truncated write from
+	 * an interrupted save, a sync conflict, disk corruption) used to just silently
+	 * return an empty object, indistinguishable from "this store has always been
+	 * empty" — the student's entire mastery/concept/question history could vanish
+	 * with no notice at all. Instead: back up the unreadable bytes next to the
+	 * original (so there's at least a chance of manual recovery) and warn once via
+	 * Notice, before falling back to `fallback` the same way every caller already
+	 * expects. Best-effort: if even the backup write fails, still degrade to
+	 * `fallback` rather than throwing and breaking plugin load entirely. */
+	private async loadJSON<T>(path: string, fallback: T): Promise<T> {
+		if (!(await this.app.vault.adapter.exists(path))) return fallback;
+		let raw: string;
+		try {
+			raw = await this.app.vault.adapter.read(path);
+		} catch {
+			return fallback; // unreadable (permissions, sync lock) — nothing to back up
 		}
-		return {};
+		try {
+			return JSON.parse(raw) as T;
+		} catch {
+			const name = path.split("/").pop() ?? path;
+			try {
+				await this.app.vault.adapter.write(`${path}.corrupt-${Date.now()}.json`, raw);
+				new Notice(
+					`Grill: ${name} couldn't be read (corrupted JSON) and has been reset. ` +
+						`The unreadable file was kept alongside it as a .corrupt backup in case it's recoverable.`,
+					12000,
+				);
+			} catch {
+				/* best-effort backup — see doc comment above */
+			}
+			return fallback;
+		}
+	}
+
+	/** Shared JSON save for every store below: write to a sibling `.tmp` path, then
+	 * rename it over the real one — POSIX rename() (what desktop's FileSystemAdapter
+	 * uses under the hood) atomically replaces an existing destination file with no
+	 * window where neither the old nor new content is on disk, so a crash, disk-full,
+	 * or sync conflict mid-write hits the `.tmp` file, never the live one, and the
+	 * store a user already has stays intact instead of getting truncated in place.
+	 * Deliberately does NOT remove() the destination first: doing so would open
+	 * exactly the gap this is meant to close (old file gone, new one not yet renamed
+	 * into place). Falls back to a direct write (today's prior behavior, no worse
+	 * than before) if the platform's adapter doesn't cooperate with rename-over-
+	 * existing-file for any reason (e.g. some mobile filesystem backends). */
+	private async saveJSON(path: string, data: string): Promise<void> {
+		const tmp = `${path}.tmp`;
+		try {
+			await this.app.vault.adapter.write(tmp, data);
+			await this.app.vault.adapter.rename(tmp, path);
+		} catch {
+			await this.app.vault.adapter.write(path, data).catch(() => undefined);
+			await this.app.vault.adapter.remove(tmp).catch(() => undefined);
+		}
+	}
+
+	async loadMastery(): Promise<MasteryMap> {
+		return normalizeMastery(await this.loadJSON<MasteryMap>(this.masteryPath(), {}));
 	}
 
 	async saveMastery(map: MasteryMap): Promise<void> {
 		await this.ensureFolder(this.folder());
-		await this.app.vault.adapter.write(this.masteryPath(), JSON.stringify(map, null, 1));
+		await this.saveJSON(this.masteryPath(), JSON.stringify(map, null, 1));
 	}
 
 	/** Cached note embeddings for the semantic bridge prefilter (bridges.ts's
@@ -294,114 +342,63 @@ export class GrillStore {
 	 * vectors from two different embedding models/dimensions if the user switches
 	 * provider. Same load/save shape as loadMastery/saveMastery. */
 	async loadEmbeddings(): Promise<EmbeddingMap> {
-		const path = this.embeddingsPath();
-		if (await this.app.vault.adapter.exists(path)) {
-			try {
-				return JSON.parse(await this.app.vault.adapter.read(path)) as EmbeddingMap;
-			} catch {
-				return {};
-			}
-		}
-		return {};
+		return this.loadJSON<EmbeddingMap>(this.embeddingsPath(), {});
 	}
 
 	async saveEmbeddings(map: EmbeddingMap): Promise<void> {
 		await this.ensureFolder(this.folder());
-		await this.app.vault.adapter.write(this.embeddingsPath(), JSON.stringify(map));
+		await this.saveJSON(this.embeddingsPath(), JSON.stringify(map));
 	}
 
 	/** The canonical misconception registry (recomputable projection over raw tags). */
 	async loadRegistry(): Promise<MisconceptionRegistry> {
-		const path = this.registryPath();
-		if (await this.app.vault.adapter.exists(path)) {
-			try {
-				return JSON.parse(await this.app.vault.adapter.read(path)) as MisconceptionRegistry;
-			} catch {
-				return {};
-			}
-		}
-		return {};
+		return this.loadJSON<MisconceptionRegistry>(this.registryPath(), {});
 	}
 
 	async saveRegistry(reg: MisconceptionRegistry): Promise<void> {
 		await this.ensureFolder(this.folder());
-		await this.app.vault.adapter.write(this.registryPath(), JSON.stringify(reg, null, 1));
+		await this.saveJSON(this.registryPath(), JSON.stringify(reg, null, 1));
 	}
 
 	/** Per-concept scheduling state (the source of truth for scheduling). */
 	async loadConcepts(): Promise<ConceptMap> {
-		const path = this.conceptsPath();
-		if (await this.app.vault.adapter.exists(path)) {
-			try {
-				return JSON.parse(await this.app.vault.adapter.read(path)) as ConceptMap;
-			} catch {
-				return {};
-			}
-		}
-		return {};
+		return this.loadJSON<ConceptMap>(this.conceptsPath(), {});
 	}
 
 	async saveConcepts(map: ConceptMap): Promise<void> {
 		await this.ensureFolder(this.folder());
-		await this.app.vault.adapter.write(this.conceptsPath(), JSON.stringify(map, null, 1));
+		await this.saveJSON(this.conceptsPath(), JSON.stringify(map, null, 1));
 	}
 
 	/** Missing-link records: which note pairs have been surfaced, answered, or linked. */
 	async loadBridges(): Promise<BridgeMap> {
-		const path = this.bridgesPath();
-		if (await this.app.vault.adapter.exists(path)) {
-			try {
-				return JSON.parse(await this.app.vault.adapter.read(path)) as BridgeMap;
-			} catch {
-				return {};
-			}
-		}
-		return {};
+		return this.loadJSON<BridgeMap>(this.bridgesPath(), {});
 	}
 
 	async saveBridges(map: BridgeMap): Promise<void> {
 		await this.ensureFolder(this.folder());
-		await this.app.vault.adapter.write(this.bridgesPath(), JSON.stringify(map, null, 1));
+		await this.saveJSON(this.bridgesPath(), JSON.stringify(map, null, 1));
 	}
 
 	/** Persisted learning-graph node positions, so the map is stable across opens. */
 	async loadGraphLayout(): Promise<Record<string, { x: number; y: number }>> {
-		const path = normalizePath(`${this.folder()}/graph-layout.json`);
-		if (await this.app.vault.adapter.exists(path)) {
-			try {
-				return JSON.parse(await this.app.vault.adapter.read(path)) as Record<string, { x: number; y: number }>;
-			} catch {
-				return {};
-			}
-		}
-		return {};
+		return this.loadJSON<Record<string, { x: number; y: number }>>(normalizePath(`${this.folder()}/graph-layout.json`), {});
 	}
 
 	async saveGraphLayout(pos: Record<string, { x: number; y: number }>): Promise<void> {
 		await this.ensureFolder(this.folder());
-		await this.app.vault.adapter.write(
-			normalizePath(`${this.folder()}/graph-layout.json`),
-			JSON.stringify(pos, null, 0),
-		);
+		await this.saveJSON(normalizePath(`${this.folder()}/graph-layout.json`), JSON.stringify(pos, null, 0));
 	}
 
 	/** Per-concept question bank, reused across reviews so a due concept isn't
 	 * re-generated by a fresh API call every time it comes up. */
 	async loadQuestionBank(): Promise<QuestionBank> {
-		const path = this.questionsPath();
-		if (await this.app.vault.adapter.exists(path)) {
-			try {
-				return JSON.parse(await this.app.vault.adapter.read(path)) as QuestionBank;
-			} catch {
-				return {};
-			}
-		}
-		return {};
+		return this.loadJSON<QuestionBank>(this.questionsPath(), {});
 	}
 
 	async saveQuestionBank(map: QuestionBank): Promise<void> {
 		await this.ensureFolder(this.folder());
-		await this.app.vault.adapter.write(this.questionsPath(), JSON.stringify(map, null, 1));
+		await this.saveJSON(this.questionsPath(), JSON.stringify(map, null, 1));
 	}
 
 	/** Write a `[[toBase]]` link into `from`'s body under a `## Related` section
