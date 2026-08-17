@@ -3116,8 +3116,13 @@ export class SessionView extends ItemView {
 		// inserted whenever it was first generated, not why this target is being served
 		// now — falling back to the cached value would leak a stale "you missed X" or
 		// "same mistake as X" banner into a later, unrelated normal-scheduling serve.
+		// Same reasoning for node: the cached entry's node is frozen at whatever the
+		// note was named when this question was first generated. sourceHash tracks the
+		// note's CONTENT, not its filename, so a rename alone never busts the cache —
+		// t.note is always the note's current basename, so re-stamp it on every serve
+		// rather than let a renamed note keep showing its old name indefinitely.
 		const { sourceHash: _sh, timesShown: _ts, lastShownAt: _ls, ...q } = hit;
-		return { ...q, routedFrom: t.routedFrom, contagionFrom: t.contagionFrom };
+		return { ...q, node: t.note, routedFrom: t.routedFrom, contagionFrom: t.contagionFrom };
 	}
 
 	/** Cache freshly generated questions per concept for reuse on later reviews. Skips
