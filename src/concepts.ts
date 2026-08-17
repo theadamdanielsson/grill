@@ -159,8 +159,20 @@ export function conceptTested(cm: ConceptMastery | undefined): boolean {
  * next question generated for this concept reflects the new text; if an edit really did
  * make the old material stale, that's the student's to judge next time it comes up, not
  * an unrequested reset sprung on them now. Orphaned records are left in the map (kept
- * for stats) but simply won't be in `concepts` so they aren't scheduled. */
+ * for stats) but simply won't be in `concepts` so they aren't scheduled.
+ *
+ * "Aren't scheduled" has to be enforced here, not just asserted: dueConceptCount,
+ * disperseSiblingDueDates, and rebalanceDueDates all iterate the persisted map
+ * directly (not the freshly-extracted list), gated only on `cm.dueAt` — with no other
+ * way to tell a stale concept apart from a live one. `concepts` here is authoritative
+ * for every note it actually covers (every call site passes a note's COMPLETE current
+ * extraction, never a partial one), so any existing record for one of those notes
+ * whose id didn't come back this time is a genuine content-based orphan — its heading
+ * or definition was edited past recognition. Clear its `dueAt` so it stops counting as
+ * due everywhere that gate is checked; stats/streak/review history stay untouched. */
 export function reconcileConcepts(map: ConceptMap, concepts: Concept[]): void {
+	const freshIds = new Set(concepts.map((c) => c.id));
+	const touchedNotes = new Set(concepts.map((c) => c.note));
 	for (const c of concepts) {
 		const existing = map[c.id];
 		if (!existing) {
@@ -171,6 +183,9 @@ export function reconcileConcepts(map: ConceptMap, concepts: Concept[]): void {
 		existing.kind = c.kind;
 		existing.note = c.note;
 		existing.sourceHash = c.sourceHash;
+	}
+	for (const [id, cm] of Object.entries(map)) {
+		if (cm.dueAt && touchedNotes.has(cm.note) && !freshIds.has(id)) cm.dueAt = null;
 	}
 }
 
