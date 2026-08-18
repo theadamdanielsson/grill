@@ -541,11 +541,18 @@ export interface FreshContentPolicy {
  * backfilled from whatever's left, in priority > fresh > overflow order. */
 export function reserveFreshSlots<T>(priority: T[], fresh: T[], overflow: T[], cap: number, policy: FreshContentPolicy): T[] {
 	const shareCeiling = Math.min(fresh.length, Math.ceil(cap * policy.share));
-	// Anki's actual rule ("only 10 new cards appear if 190 of your 200 review slots are
-	// already full"): room for fresh material is whatever's genuinely left after the
-	// backlog is served, not a slice guaranteed to exist regardless of backlog size.
+	// Anki's rule ("only 10 new cards appear if 190 of your 200 review slots are already
+	// full") is about a whole day's review LIMIT, not a single small session cap. Applied
+	// literally at session-cap scale (default questionsPerSession=5, MAX_DUE_PER_NOTE=4),
+	// it meant one or two notes with any real backlog permanently filled roomLeft to 0 —
+	// fresh material got zero slots every session, forever, since the backlog it was
+	// waiting to clear was itself the thing being reviewed every session. A floor of at
+	// least one fresh slot (whenever fresh content exists and the policy's share allows
+	// any at all) guarantees a vault always keeps introducing new material, however slowly,
+	// instead of a note's back half never being reached once its front half matures.
 	const roomLeft = Math.max(0, cap - priority.length);
-	const freshReserve = policy.alwaysGuarantee ? shareCeiling : Math.min(shareCeiling, roomLeft);
+	const minFloor = shareCeiling > 0 ? 1 : 0;
+	const freshReserve = policy.alwaysGuarantee ? shareCeiling : Math.max(minFloor, Math.min(shareCeiling, roomLeft));
 	const priorityTaken = priority.slice(0, Math.max(0, cap - freshReserve));
 	const freshTaken = fresh.slice(0, freshReserve);
 	const filler = [...priority.slice(priorityTaken.length), ...fresh.slice(freshTaken.length), ...overflow];

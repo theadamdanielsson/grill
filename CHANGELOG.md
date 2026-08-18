@@ -1,5 +1,19 @@
 # Changelog
 
+## 5.7.3
+
+- **Fix: new material could get starved to zero forever once any real backlog built
+  up.** `reserveFreshSlots`'s "Anki-modeled" policy (5.7.0) gave fresh/untested
+  material a session slot only if the due/struggling backlog didn't already fill the
+  whole session — literal at Anki's daily-review-limit scale, but at
+  `questionsPerSession`'s much smaller per-sitting scale (default 5, with
+  `MAX_DUE_PER_NOTE` at 4), it took just one or two notes with any backlog to zero
+  fresh material out permanently: the backlog it was waiting to clear was itself what
+  got reviewed every session, so it never cleared. A note's back half could go
+  unintroduced indefinitely. Fresh material now gets a guaranteed floor of at least one
+  slot per session (whenever fresh content exists and the "New material share" setting
+  allows any at all), so a vault always keeps introducing new content, however slowly.
+
 ## 5.7.2
 
 - **Fix: cleared the remaining Obsidian plugin-review cautions.** Removed a couple
