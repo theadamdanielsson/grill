@@ -1,8 +1,9 @@
 /** Quiz session side panel. */
 
-import { ItemView, MarkdownRenderer, Notice, setIcon, TFile, WorkspaceLeaf } from "obsidian";
+import { ItemView, MarkdownRenderer, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
-import { adjudicateBridges, ConceptTarget, debriefSession, embedTexts, explainQuestion, formatSatisfies, generateOcclusionRegions, generateQuestions, Grade, gradeAnswer, LLMConfig, Question, supportsEmbeddings, supportsVision, Verdict } from "./llm";
+import { adjudicateBridges, ConceptTarget, debriefSession, embedTexts, explainQuestion, formatSatisfies, generateQuestions, Grade, gradeAnswer, LLMConfig, Question, supportsEmbeddings, supportsVision, Verdict } from "./llm";
+import { detectOcclusionRegions } from "./ocr";
 import { Concept, ConceptKind, extractConcepts, localQuestionForConcept, localQuestions } from "./generate-local";
 import { BridgeMap, CANDIDATE_CAP, detectBridgeCandidates, detectSemanticBridgeCandidates, pairKey } from "./bridges";
 import { buildGraph, formatGrade, gradeScore, type GraphNode } from "./graph";
@@ -833,6 +834,13 @@ export class SessionView extends ItemView {
 				if (scopedFiles?.length) void this.startScopedSession(scopedFiles, false);
 			};
 			const checked: Scope[] = [];
+			// Notes among `untested` confirmed to have nothing Grill can quiz at all (no
+			// extractable text structure, and — unless occlusion is on — no image either).
+			// Starts empty (so the checkbox's initial count matches `untested.length`
+			// exactly) and fills in once the async check below resolves; `recompute`
+			// reads it by closure, so a scope resolved after that point already excludes
+			// them, no separate wiring needed.
+			let untestableBasenames = new Set<string>();
 			const recompute = (): void => {
 				if (!checked.length) {
 					previewScope(null, "Whole vault");
@@ -840,7 +848,9 @@ export class SessionView extends ItemView {
 				}
 				const byPath = new Map<string, TFile>();
 				for (const scope of checked) {
-					for (const f of filesForScope(this.app, scope, eligible, this.plugin.concepts)) byPath.set(f.path, f);
+					for (const f of filesForScope(this.app, scope, eligible, this.plugin.concepts, untestableBasenames)) {
+						byPath.set(f.path, f);
+					}
 				}
 				// "filter(s)", not "selected": the button below already says "Study N
 				// selected" for the resolved file count — reusing the same word here for a
@@ -848,7 +858,7 @@ export class SessionView extends ItemView {
 				// answers to "how many are selected?" sitting a few lines apart.
 				previewScope([...byPath.values()], `${checked.length} filter${checked.length === 1 ? "" : "s"}`);
 			};
-			const addScopeRow = (parent: HTMLElement, label: string, scope: Scope): void => {
+			const addScopeRow = (parent: HTMLElement, label: string, scope: Scope): { row: HTMLElement; cb: HTMLInputElement; lbl: HTMLElement } => {
 				const row = parent.createDiv({ cls: "grill-onboard-row" });
 				const cb = row.createEl("input", { attr: { type: "checkbox" } });
 				cb.onchange = () => {
@@ -861,6 +871,7 @@ export class SessionView extends ItemView {
 				};
 				const lbl = row.createEl("label", { text: label });
 				lbl.onclick = () => cb.click();
+				return { row, cb, lbl };
 			};
 
 			if (activeEligible && active) {
@@ -870,7 +881,52 @@ export class SessionView extends ItemView {
 			// same control as the map's "Untested" filter chip below (renderMap) — that one
 			// only ever narrows what the map draws; this one picks the session's scope.
 			if (untested.length) {
-				addScopeRow(scopeBox, `Study only untested (${untested.length})`, { kind: "untested", id: "untested" });
+				const untestedScope: Scope = { kind: "untested", id: "untested" };
+				const { row: untestedRow, cb: untestedCb, lbl: untestedLbl } = addScopeRow(
+					scopeBox,
+					`Study only untested (${untested.length})`,
+					untestedScope,
+				);
+				// `untested` is mastery-derived only (never tested), which says nothing about
+				// whether any of those notes actually have anything extractable — a note that's
+				// all images and link stubs reads as "untested" forever, not "unquizzable". This
+				// note-by-note check (extraction is synchronous once the text's in hand; only the
+				// read itself is async) is what makes that distinction, scoped to just this ≤tens
+				// of notes bucket rather than the whole vault so it stays cheap. See scope.ts's
+				// untestedFiles for where the result actually gets applied.
+				void (async () => {
+					const occlusionOn = this.plugin.data.settings.enableOcclusion && !Platform.isMobile;
+					const untestable = new Set<string>();
+					for (const f of untested) {
+						if (occlusionOn && (this.app.metadataCache.getFileCache(f)?.embeds?.length ?? 0) > 0) continue;
+						const text = await this.app.vault.cachedRead(f);
+						if (extractConcepts(f.basename, text, this.plugin.data.settings.questionFormats).length === 0) {
+							untestable.add(f.basename);
+						}
+					}
+					if (!untestable.size) return;
+					untestableBasenames = untestable;
+					// Keep the top stat tile honest too — same correction, same reasoning —
+					// but only while it's still showing the whole vault: a scoped preview
+					// (`scopedFiles` set) already computed its own count off a different file
+					// list, which this isn't in a position to correct.
+					if (scopedFiles === null) {
+						const rawUntested = eligible.filter((f) => statusOf(map[f.basename]) === "untested").length;
+						untestedStat.setText(String(rawUntested - untestable.size));
+					}
+					const testableCount = untested.length - untestable.size;
+					if (testableCount === 0) {
+						untestedRow.remove();
+						if (untestedCb.checked) {
+							const i = checked.findIndex((s) => s.kind === "untested");
+							if (i >= 0) checked.splice(i, 1);
+							recompute();
+						}
+						return;
+					}
+					untestedLbl.setText(`Study only untested (${testableCount})`);
+					if (untestedCb.checked) recompute();
+				})();
 			}
 			if (folders.length) {
 				scopeBox.createDiv({ cls: "grill-scope-group", text: "Folders" });
@@ -3299,50 +3355,54 @@ export class SessionView extends ItemView {
 		this.bridgesDirty = true;
 	}
 
-	/** Ceiling on how many not-yet-occluded images get a vision call in one session —
+	/** Ceiling on how many not-yet-scanned images get run through OCR in one session —
 	 * not a student-facing dial (see sendImages' doc comment): whether an occlusion
-	 * question shows up at all depends on the model actually finding something worth
-	 * redacting, naturally zero for an image with nothing labeled on it. This only
-	 * stops a vault with many new images from firing off a burst of vision calls the
-	 * first time sendImages is turned on. */
-	private static readonly OCCLUSION_SCAN_CAP = 2;
+	 * question shows up at all depends on OCR actually finding something legible on
+	 * a given image, naturally zero for one with no real text in it. This only stops
+	 * a vault with many new images from front-loading a burst of OCR passes the first
+	 * time occlusion is turned on; each pass is local and cheap (roughly a second),
+	 * but still not free at session-start time. */
+	private static readonly OCCLUSION_SCAN_CAP = 6;
 
 	/** Image occlusion: for each note-embedded image, an ordinary FSRS-scheduled
-	 * concept whose question is "what's hidden in the redacted region(s)". Unlike a
-	 * bridge question (novel, one-off, kept out of scheduling), a redacted region on
-	 * a specific image is stable and worth reviewing again — so this builds a real
-	 * `Concept` and caches its `Question` straight into `questionBank` (see
-	 * `cacheHit`/`buildPrebuilt`), the same durable path an AI-generated variant uses.
-	 * There's no `.local` for these: unlike every other concept kind, an occlusion
-	 * question isn't re-derivable from note text, so it can't be rebuilt fresh each
-	 * session the way `.local` questions are — it has to be cached once and reused.
-	 * The vision call itself only runs for images with no fresh cache entry yet, up to
-	 * OCCLUSION_SCAN_CAP; an already-cached image still gets its `Concept` rebuilt
-	 * every session (cheap, no call) so `pickConcepts` can see it's due. */
-	private async appendOcclusionConcepts(cfg: LLMConfig, names: string[]): Promise<void> {
+	 * concept whose question is "what's hidden in the redacted region(s)", answered
+	 * with whatever OCR (ocr.ts) found there. Unlike a bridge question (novel,
+	 * one-off, kept out of scheduling), a redacted region on a specific image is
+	 * stable and worth reviewing again. OCR's own result is cached into
+	 * `questionBank` (see `cacheHit`/`buildPrebuilt`) purely to avoid re-running it
+	 * every session, the same durable-cache shape the earlier vision-LLM version used
+	 * for the same reason — but unlike that version, the concept built here also gets
+	 * a real `.local` (OCR's answer needs no model to grade), so occlusion works in
+	 * no-key sessions too, not just AI ones. The OCR pass itself only runs for images
+	 * with no fresh cache entry yet, up to OCCLUSION_SCAN_CAP; an already-cached image
+	 * still gets its `Concept` rebuilt every session (cheap, no OCR) so `pickConcepts`
+	 * can see it's due. */
+	private async appendOcclusionConcepts(names: string[]): Promise<void> {
 		const cap = SessionView.OCCLUSION_SCAN_CAP;
-		let calls = 0;
+		let scans = 0;
 		for (const n of names) {
 			for (const img of this.noteImages[n] ?? []) {
 				const id = `${n}::occlusion::${img.path}`;
 				const sourceHash = hashStr(img.dataBase64);
+				let regions: { x: number; y: number; w: number; h: number; label: string }[];
 				const cached = (this.questionBank[id] ?? []).find((e) => e.sourceHash === sourceHash);
-				if (!cached) {
-					if (calls >= cap) continue;
-					calls += 1;
-					let regions: { x: number; y: number; w: number; h: number; label: string }[];
+				if (cached) {
+					regions = cached.occlusionRegions ?? [];
+				} else {
+					if (scans >= cap) continue;
+					scans += 1;
 					try {
-						regions = await generateOcclusionRegions(cfg, img, this.noteText[n] ?? "", this.sessionPersona);
+						regions = await detectOcclusionRegions(img);
 					} catch (e) {
 						// Occlusion is a bonus; never fail the session over it — but log so a
 						// silent "nothing ever shows up" has a trail in the console instead of
 						// looking indistinguishable from "this image legitimately had nothing
-						// worth redacting" (the !regions.length case right below).
-						console.error(`Grill: occlusion generation failed for ${img.path}:`, e);
+						// legible on it" (the !regions.length case right below).
+						console.error(`Grill: OCR failed for ${img.path}:`, e);
 						continue;
 					}
 					if (!regions.length) {
-						console.debug(`Grill: occlusion found nothing worth redacting in ${img.path}.`);
+						console.debug(`Grill: occlusion found nothing legible in ${img.path}.`);
 						continue;
 					}
 					const q: CachedQuestion = {
@@ -3370,6 +3430,13 @@ export class SessionView extends ItemView {
 					kind: "occlusion",
 					sourceHash,
 					context: "",
+					local: {
+						question: "What's hidden in the redacted region(s) of this image?",
+						answer: regions.map((r) => r.label).join(" / "),
+						type: "occlusion",
+					},
+					occlusionImage: img.path,
+					occlusionRegions: regions,
 				};
 				const arr = this.conceptsByNote.get(n);
 				if (arr) arr.push(concept);
@@ -3539,6 +3606,10 @@ export class SessionView extends ItemView {
 			const names = expandSelectionWithLinks(this.app, seed, byName, this.plugin.mastery, notesCap);
 			const vision = !!cfg && s.questionSource === "ai" && s.sendImages && supportsVision(cfg.provider, cfg.model);
 			this.sessionVision = vision;
+			// Desktop-only for now: Tesseract.js's worker+WASM combination is unverified on
+			// mobile's webview, so occlusion silently no-ops there rather than risking a
+			// broken or crawling-slow session on a phone.
+			const occlusionEnabled = s.enableOcclusion && !Platform.isMobile;
 			this.noteText = {};
 			this.noteImages = {};
 			this.notesWithUnsentImages = new Set();
@@ -3591,6 +3662,12 @@ export class SessionView extends ItemView {
 					if (imgs.length) this.noteImages[n] = imgs;
 				} else if (this.app.metadataCache.getFileCache(file)?.embeds?.length) {
 					this.notesWithUnsentImages.add(n);
+					// Local OCR occlusion needs the same decoded images the vision path uses,
+					// even when nothing's being sent to a model at all.
+					if (occlusionEnabled) {
+						const imgs = await collectNoteImages(this.app, file, IMAGES_PER_NOTE_CAP);
+						if (imgs.length) this.noteImages[n] = imgs;
+					}
 				}
 			}
 			await this.plugin.store.savePdfCache(pdfCache);
@@ -3605,17 +3682,12 @@ export class SessionView extends ItemView {
 				);
 			}
 
-			// Image occlusion: DEFERRED, not shipped. Dogfooding showed general-purpose
-			// vision-LLM bounding-box grounding is too imprecise (regions land near but not
-			// on their targets, even with generous prompt padding) — not fit to ship. The
-			// plumbing (appendOcclusionConcepts below, generateOcclusionRegions in llm.ts,
-			// the "occlusion" Question type, its rendering in renderQuestion/renderFeedback)
-			// is left in place for when this is redone with OCR-based region geometry
-			// (e.g. Tesseract.js) instead of asking the model to guess pixel coordinates —
-			// just never called, so no occlusion concept is ever created.
-			// if (cfg && vision) {
-			// 	await this.appendOcclusionConcepts(cfg, names);
-			// }
+			// Image occlusion: local OCR (ocr.ts), not a model call — see
+			// appendOcclusionConcepts's own doc comment for why this replaced the earlier
+			// vision-LLM version (dogfooding found bbox-guessing too imprecise to ship).
+			if (occlusionEnabled) {
+				await this.appendOcclusionConcepts(names);
+			}
 
 			const selectedFiles = names.map((n) => byName.get(n)).filter((f): f is TFile => !!f);
 			const graph = buildSessionGraph(this.app, selectedFiles);

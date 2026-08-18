@@ -79,21 +79,32 @@ export function dueFiles(eligible: TFile[], concepts: ConceptMap, now = new Date
  * cache: that cache can drift stale (see renderMap's repair pass in view.ts, which
  * found 14 real notes wrongly still reading "untested"), so a second, permanent scope
  * category built on it would just reproduce the same class of bug it exists to avoid. */
-export function untestedFiles(eligible: TFile[], concepts: ConceptMap): TFile[] {
+/** `untestable`: basenames already confirmed to have nothing Grill can quiz at all
+ * (no extractable text structure, and — unless image occlusion is on — nothing else),
+ * so they're excluded here rather than counted as a testable backlog. See view.ts's
+ * renderStart, which computes this asynchronously (it needs each note's actual text,
+ * not just its mastery record) and re-resolves this scope once that's ready. */
+export function untestedFiles(eligible: TFile[], concepts: ConceptMap, untestable: Set<string> = new Set()): TFile[] {
 	const tested = new Set<string>();
 	for (const cm of Object.values(concepts)) if (conceptTested(cm)) tested.add(cm.note);
-	return eligible.filter((f) => !tested.has(f.basename));
+	return eligible.filter((f) => !tested.has(f.basename) && !untestable.has(f.basename));
 }
 
-/** Resolve a scope to the eligible notes it covers. */
-export function filesForScope(app: App, scope: Scope, eligible: TFile[], concepts: ConceptMap = {}): TFile[] {
+/** Resolve a scope to the eligible notes it covers. `untestable`: see `untestedFiles`. */
+export function filesForScope(
+	app: App,
+	scope: Scope,
+	eligible: TFile[],
+	concepts: ConceptMap = {},
+	untestable: Set<string> = new Set(),
+): TFile[] {
 	switch (scope.kind) {
 		case "all":
 			return eligible;
 		case "due":
 			return dueFiles(eligible, concepts);
 		case "untested":
-			return untestedFiles(eligible, concepts);
+			return untestedFiles(eligible, concepts, untestable);
 		case "note":
 			return eligible.filter((f) => f.path === scope.id);
 		case "folder":

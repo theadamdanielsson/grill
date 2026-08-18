@@ -1,5 +1,28 @@
 # Changelog
 
+## 5.8.0
+
+- **Feature: image occlusion, done with local OCR instead of a model.** A note-embedded
+  image (a chart, diagram, or screenshot) can now become a real FSRS-scheduled
+  question: "what's hidden in the redacted region(s)". An earlier version of this tried
+  asking a vision-capable model to *guess* which pixels to redact — dogfooding found
+  the boxes landed near but not on their targets, so it never shipped. This version
+  runs OCR entirely on-device (tesseract.js) and redacts whatever text it actually
+  found, at exactly the box it found it in — no guessing, and no model needed to grade
+  it either, so it works in no-key ("From my notes") sessions too. Off by default:
+  first use downloads a small (~10MB) recognition engine, cached locally after that; no
+  image or note content ever leaves your device. New setting under Advanced: "Image
+  occlusion". Desktop only for now.
+- **Fix: "Study only untested" could promise a session it couldn't deliver.** That
+  count (and the dashboard's "Untested" tile) came purely from mastery records — never
+  tested says nothing about whether a note has anything Grill can actually extract a
+  question from. A note that's all images and one-word link stubs read as "untested"
+  forever, and if enough of a custom-study batch landed on notes like that, the session
+  came back with a bare "couldn't find concepts to quiz in these notes" and nothing to
+  do about it. Both numbers now exclude notes confirmed to have nothing extractable
+  (checked once, only over that bucket, so it stays cheap) — and if image occlusion is
+  on, a note's embedded images count as real content too.
+
 ## 5.7.3
 
 - **Fix: new material could get starved to zero forever once any real backlog built

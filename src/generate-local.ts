@@ -39,21 +39,26 @@ export interface Concept {
 	sourceHash: string;
 	/** Material the AI needs to write a fresh question about this concept. */
 	context: string;
-	/** The deterministic question for no-key mode. Absent for the note fallback, and
-	 * for "occlusion" concepts — occlusion has no no-key path (see view.ts's
-	 * appendOcclusionConcepts): its question is a one-time vision-model call cached
-	 * directly into the question bank (store.ts's QuestionBank), not re-derivable
-	 * from note text every session the way everything else here is. */
+	/** The deterministic question for no-key mode. Absent for the note fallback. An
+	 * "occlusion" concept's `local` is built by view.ts's appendOcclusionConcepts from
+	 * locally-run OCR (see ocr.ts), not extracted here like every other kind — its
+	 * answer is literally the text the OCR engine found under the redacted region(s),
+	 * which is why it's fully deterministic and needs no model to grade. */
 	local?: {
 		question: string;
 		answer: string;
 		hint?: string;
-		type?: "write" | "mc" | "blank" | "tf" | "multi" | "match";
+		type?: "write" | "mc" | "blank" | "tf" | "multi" | "match" | "occlusion";
 		choices?: string[];
 		correctChoices?: string[];
 		/** "match" only: the pairs to connect (see LocalItem.pairs). */
 		pairs?: { left: string; right: string }[];
 	};
+	/** "occlusion" concepts only: the vault path of the note-embedded image and its
+	 * redacted regions (normalized 0-1, top-left origin) — see ocr.ts's
+	 * detectOcclusionRegions and view.ts's renderOcclusionImage. */
+	occlusionImage?: string;
+	occlusionRegions?: { x: number; y: number; w: number; h: number; label: string }[];
 	/** True for a user-authored `> [!grill]` question: asked verbatim, never rewritten
 	 * by the model, and graded against `rubric`/its answer (or the note) rather than a
 	 * model-written rubric. */
@@ -882,6 +887,9 @@ export function localQuestionForConcept(c: Concept, difficulty: QDifficulty = "m
 					correctChoices: c.local.correctChoices,
 					pairs: c.local.pairs,
 				}
+			: {}),
+		...(c.local.type === "occlusion"
+			? { occlusionImage: c.occlusionImage, occlusionRegions: c.occlusionRegions }
 			: {}),
 	};
 }

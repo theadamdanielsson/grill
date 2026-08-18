@@ -26,6 +26,7 @@ import {
 	topMisconceptions,
 } from "./debrief";
 import { extractConcepts } from "./generate-local";
+import { terminateOcrWorker } from "./ocr";
 import { countTrainableReviews, MIN_REVIEWS_FOR_OPTIMIZATION, optimizeFSRSWeights } from "./optimizer";
 import { dueFiles, duplicateBasenames } from "./scope";
 import { GrillStore } from "./store";
@@ -55,12 +56,14 @@ interface GrillSettings {
 	includedFolders: string[];
 	/** One-time flag: the first-run "what's Grill's" onboarding has been completed. */
 	onboarded: boolean;
-	/** Send embedded images to the model when it supports vision. Image occlusion
-	 * rides entirely on this + the model's own vision capability (see view.ts's
-	 * appendOcclusionConcepts) — no separate toggle: whether an occlusion question
-	 * actually shows up depends on whether the model finds something worth redacting
-	 * on a given image, not a count the student dials in. */
+	/** Send embedded images to the model when it supports vision. Independent of image
+	 * occlusion (`enableOcclusion` below): that runs local OCR, not a model call. */
 	sendImages: boolean;
+	/** Image occlusion: redact a legible region of a note-embedded image (found via
+	 * local OCR, no AI key needed — see ocr.ts) and quiz on what's hidden there. Off
+	 * by default: it's a real (~10MB, one-time, cached) engine download the first time
+	 * it runs, and desktop-only for now (see view.ts's appendOcclusionConcepts). */
+	enableOcclusion: boolean;
 	/** Where questions come from: an LLM, or the note's own structure (no key). */
 	questionSource: "ai" | "local";
 	/** How answers are graded: an LLM, or the user grades themselves (no key). */
@@ -208,6 +211,7 @@ function defaultSettings(): GrillSettings {
 		includedFolders: [],
 		onboarded: false,
 		sendImages: true,
+		enableOcclusion: false,
 		questionSource: "ai",
 		gradingMode: "ai",
 		questionFormats: "mixed",
@@ -271,6 +275,7 @@ export default class GrillPlugin extends Plugin {
 			settings.includedFolders = s.includedFolders.filter((v): v is string => typeof v === "string");
 		if (typeof s.onboarded === "boolean") settings.onboarded = s.onboarded;
 		if (typeof s.sendImages === "boolean") settings.sendImages = s.sendImages;
+		if (typeof s.enableOcclusion === "boolean") settings.enableOcclusion = s.enableOcclusion;
 		if (s.questionSource === "ai" || s.questionSource === "local") settings.questionSource = s.questionSource;
 		if (s.gradingMode === "ai" || s.gradingMode === "self") settings.gradingMode = s.gradingMode;
 		if (s.questionFormats === "write" || s.questionFormats === "mixed" || s.questionFormats === "mc") settings.questionFormats = s.questionFormats;
@@ -646,6 +651,10 @@ export default class GrillPlugin extends Plugin {
 				}
 			})();
 		});
+	}
+
+	onunload(): void {
+		void terminateOcrWorker();
 	}
 
 	statusBar: HTMLElement | null = null;
@@ -1552,6 +1561,29 @@ class GrillSettingTab extends PluginSettingTab {
 						s.sendImages = v;
 						await this.plugin.persist();
 					}),
+				);
+		}
+
+		// Independent of questionSource — occlusion needs no AI key, so it's offered
+		// regardless of whether the rest of a session is AI-generated or from-your-notes.
+		if (s.showAdvancedSettings) {
+			new Setting(containerEl)
+				.setName("Image occlusion")
+				.setDesc(
+					"Quiz on note-embedded images (diagrams, charts, screenshots) by redacting a legible " +
+						"label found in them, using OCR that runs entirely on your device — no image or note " +
+						"content is ever sent anywhere, and it works with no AI key. The first time it runs, it " +
+						"downloads a small (~10MB) text-recognition engine, cached locally after that. " +
+						"Desktop only for now.",
+				)
+				.addToggle((t) =>
+					t
+						.setValue(s.enableOcclusion)
+						.setDisabled(Platform.isMobile)
+						.onChange(async (v) => {
+							s.enableOcclusion = v;
+							await this.plugin.persist();
+						}),
 				);
 		}
 

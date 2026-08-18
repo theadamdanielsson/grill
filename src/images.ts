@@ -34,7 +34,7 @@ function toBase64(buf: ArrayBuffer): string {
 	return btoa(bin);
 }
 
-function loadImage(url: string): Promise<HTMLImageElement> {
+export function loadImage(url: string): Promise<HTMLImageElement> {
 	return new Promise((resolve, reject) => {
 		const img = new Image();
 		img.onload = () => resolve(img);
