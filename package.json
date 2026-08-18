@@ -1,6 +1,6 @@
 {
   "name": "grill",
-  "version": "5.7.1",
+  "version": "5.7.2",
   "description": "Learn what's in your Obsidian notes: Grill quizzes you on your own notes, marks your answers, and colours in a live map of them as you prove what you know. For Obsidian.",
   "main": "main.js",
   "scripts": {

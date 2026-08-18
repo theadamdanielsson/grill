@@ -1,5 +1,17 @@
 # Changelog
 
+## 5.7.2
+
+- **Fix: cleared the remaining Obsidian plugin-review cautions.** Removed a couple
+  of no-op type assertions, switched a review-grade comparison onto the shared
+  `Rating` enum, called `window.setTimeout` (popout-window-safe) instead of the
+  bare global, replaced `Vault.delete()` with `FileManager.trashFile()` so
+  removing a reference document respects your system-trash preference, and
+  built the streak flame icon through Obsidian's own `createSvg()` DOM helper
+  instead of raw `document.createElementNS`. Also contained pdf.js's untyped
+  `loadPdfJs()` result to a single boundary cast so `any` no longer flows
+  through the PDF-extraction code. No user-visible behavior change.
+
 ## 5.7.1
 
 - **Fix: the new reference-documents manifest read used the low-level Adapter API
