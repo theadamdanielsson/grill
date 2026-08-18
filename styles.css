@@ -686,6 +686,99 @@
 .grill-redo-note {
   font-size: 0.85em;
 }
+
+/* Upload/remove area for Instructions.md's "## Reference documents" section
+   (grill-documents code block) — a Claude-style attach area, not a settings
+   modal, since it lives right where the rest of the instructions do. */
+.grill-doc-area {
+  margin: 0.5em 0;
+}
+.grill-doc-dropzone {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3em;
+  padding: 1.2em 1em;
+  border: 2px dashed var(--background-modifier-border);
+  border-radius: var(--radius-m, 6px);
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: border-color 0.1s ease, background-color 0.1s ease;
+}
+.grill-doc-dropzone:hover,
+.grill-doc-dropzone:focus-visible {
+  border-color: var(--interactive-accent);
+  color: var(--text-normal);
+}
+.grill-doc-dropzone.is-dragover {
+  border-color: var(--interactive-accent);
+  background-color: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+.grill-doc-dropzone.is-busy {
+  opacity: 0.6;
+  pointer-events: none;
+}
+.grill-doc-dropzone-icon {
+  font-size: 1.4em;
+  line-height: 1;
+}
+.grill-doc-dropzone-text {
+  font-size: 0.85em;
+}
+.grill-doc-dropzone-caption {
+  font-size: 0.75em;
+  opacity: 0.7;
+}
+.grill-doc-input {
+  /* Native picker only; the dropzone itself handles click/drag, so the input
+     stays functional (not display:none, which some platforms won't let you
+     .click() programmatically) but fully invisible and out of the flow. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.grill-doc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+  margin-top: 0.6em;
+}
+.grill-doc-empty {
+  margin: 0;
+}
+.grill-doc-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6em;
+  padding: 0.3em 0.6em;
+  border-radius: var(--radius-s, 4px);
+  background-color: var(--background-secondary);
+}
+.grill-doc-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9em;
+}
+.grill-doc-remove {
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.85em;
+  padding: 0.1em 0.4em;
+}
+.grill-doc-remove:hover {
+  color: var(--text-error, #e93147);
+}
+
 /* Offer to write a missing [[link]] into the note, on a bridge question's feedback. */
 .grill-bridge-link {
   display: flex;

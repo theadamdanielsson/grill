@@ -163,16 +163,18 @@ export type FormatMode = "write" | "mixed" | "mc";
 
 /** Whether a question's format satisfies the `questionFormats` setting. "mixed" accepts
  * anything. "write" requires a plain free-response question (no `type`, or `type:
- * "write"`). "mc" ("Multiple choice only") requires SOME structured format — 'mc'
- * ideally, but falling back to another structured type (blank/tf/multi/match) is the
- * documented behavior for a concept that genuinely can't be posed as a single-answer
- * choice (see the setting's own description); only a bare free-response "write"
- * question actually fails it. */
+ * "write"`). "mc" ("Multiple choice only") means what its name says: literal `type:
+ * "mc"`, not merely "not write" — a fill-in-the-blank or true/false question is still
+ * a format the student didn't ask for. (An earlier version of this function accepted
+ * any structured type here, on the theory that some concepts "genuinely can't be posed
+ * as a single-answer choice" — in practice that just meant a setting literally called
+ * "Multiple choice only" silently served blank/tf/match questions instead, which reads
+ * as the setting not working, not as a reasonable fallback.) */
 export function formatSatisfies(type: Question["type"] | undefined, mode: FormatMode): boolean {
 	const t = type ?? "write";
 	if (mode === "mixed") return true;
-	if (mode === "write") return t === "write";
-	return t !== "write";
+	if (mode === "mc") return t === "mc";
+	return t === "write";
 }
 
 export type Verdict = "correct" | "partial" | "incorrect";
@@ -806,13 +808,29 @@ Return exactly one question per concept, in the same order as the concept list. 
  * student has opted into mixed question formats (default: on, but a real toggle —
  * see `questionFormats` setting) — this instruction is pure prompt overhead paid on
  * every single generation call with no caching in this codebase, so users who don't
- * want the structured formats shouldn't pay for it. */
-const FORMAT_MIX_INSTRUCTIONS =
+ * want the structured formats shouldn't pay for it.
+ *
+ * `strictMc`: true only for the "mc" FormatMode, where every target is tagged
+ * '[format: mc]' (see view.ts) and there is no acceptable substitute — the escape
+ * hatch below ("use 'write' instead if X is a bad fit") exists for 'mixed' mode,
+ * where format is a per-concept judgement call and forcing a bad fit would be worse
+ * than picking a different structured type. Under strict "Multiple choice only" that
+ * escape hatch is exactly how a 'blank'/'tf' question used to leak through despite the
+ * setting — see formatSatisfies. Every concept CAN be phrased as a 4-option MC
+ * question (a genuinely open "explain X" concept becomes "which of these best
+ * explains X"), so there is no legitimate reason to leave 'mc' when this is set. */
+const formatMixInstructions = (strictMc: boolean): string =>
 	"\n\nAnswer format ('type'): a concept tagged '[format: X]' below has already been assigned that format — set " +
-	"'type' to X and write it in that shape. Use 'write' instead ONLY if X is a genuinely bad fit for that " +
-	"concept's actual content (e.g. 'match'/'multi' need several distinct related items, not one fact) — don't " +
-	"explain the substitution, just make it. A concept with no '[format: X]' tag is your own judgement call: " +
-	"default to 'write' unless it obviously suits a structured format better. Leave 'choices', 'correctChoices', " +
+	"'type' to X and write it in that shape." +
+	(strictMc
+		? " The student has 'Multiple choice only' set: X is always 'mc' here, with no exceptions — if a concept " +
+			"seems like an awkward fit for multiple choice, rephrase it as one anyway (e.g. turn an open 'explain " +
+			"X' into 'which of these best explains X', with 3 plausible wrong options) rather than switching format."
+		: " Use 'write' instead ONLY if X is a genuinely bad fit for that concept's actual content (e.g. " +
+			"'match'/'multi' need several distinct related items, not one fact) — don't explain the substitution, " +
+			"just make it. A concept with no '[format: X]' tag is your own judgement call: default to 'write' " +
+			"unless it obviously suits a structured format better.") +
+	" Leave 'choices', 'correctChoices', " +
 	"and 'pairs' as empty arrays except where a type below says to fill them.\n" +
 	"- 'write' (free response, the default): question is an open prompt.\n" +
 	"- 'mc' (multiple choice): question is a normal question (not \"which of the following...\"); 'choices' has " +
@@ -1183,7 +1201,7 @@ async function runGenerationPass(
 		// formatNudge actively steers toward whatever format hasn't appeared yet, which
 		// is exactly wrong for a fixed single format (e.g. "mc only") — every target
 		// already carries that same [format: X] tag, so there's nothing to vary toward.
-		(mixFormats ? FORMAT_MIX_INSTRUCTIONS + (varyFormats ? formatNudge(formatCounts) : "") : "");
+		(mixFormats ? formatMixInstructions(formatMode === "mc") + (varyFormats ? formatNudge(formatCounts) : "") : "");
 	type RawQ = Omit<Question, "node" | "conceptId"> & { n?: number };
 	const data = (await callJSON(cfg, tutorSystem(persona), { cacheable, rest }, questionsSchema(mixFormats), 8000, images)) as {
 		questions: RawQ[];
@@ -1288,18 +1306,22 @@ async function runGenerationPass(
 			continue;
 		}
 		// The per-target "[format: X]" tag (above) is only a prompt hint — the model can
-		// still hand back plain "write" despite it. Under "mc" ("Multiple choice only")
-		// that specific substitution is the one thing the setting promises never happens
-		// (see formatSatisfies), so it's rejected here and fed back as a defect reason for
-		// the one retry pass, same as any other quality gate. A no-op for "write"/"mixed":
-		// "write" mode already forces type "write" server-side above, and "mixed" accepts
-		// anything.
+		// still hand back a different type despite it. Under "mc" ("Multiple choice only")
+		// ANY non-'mc' type is rejected, not just plain "write" — that's the whole point
+		// of a setting named "Multiple choice only" (see formatSatisfies) — fed back as a
+		// defect reason for the one retry pass, same as any other quality gate. A no-op
+		// for "write"/"mixed": "write" mode already forces type "write" server-side above,
+		// and "mixed" accepts anything.
 		if (!formatSatisfies(candidate.type, formatMode)) {
 			defects.set(
 				idx,
-				"came back as a plain free-response question, but the student has 'Multiple choice only' set — " +
-					"use 'mc', or another structured format (blank/tf/multi/match) only if this concept genuinely " +
-					"can't be posed as a single-answer choice",
+				formatMode === "mc"
+					? `came back as '${candidate.type ?? "write"}', but the student has 'Multiple choice only' set — ` +
+						"rephrase this exact concept as a proper 'mc' question with 3-4 plausible choices, do not " +
+						"switch to any other format"
+					: "came back as a plain free-response question, but the student has 'Multiple choice only' set — " +
+						"use 'mc', or another structured format (blank/tf/multi/match) only if this concept genuinely " +
+						"can't be posed as a single-answer choice",
 			);
 			continue;
 		}

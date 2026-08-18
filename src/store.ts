@@ -15,6 +15,7 @@ import { ArcEntry, MisconceptionRegistry, SessionDebrief } from "./debrief";
 import { ConceptMap } from "./concepts";
 import { safeSlice } from "./text";
 import { BridgeMap } from "./bridges";
+import { PdfCacheMap } from "./pdf";
 
 /** A generated question cached for reuse. `sourceHash` ties it to the concept's
  * source text at generation time; a mismatch means the note changed and the entry
@@ -103,12 +104,49 @@ export class GrillStore {
 		return normalizePath(`${this.folder()}/embeddings.json`);
 	}
 
+	private pdfCachePath(): string {
+		return normalizePath(`${this.folder()}/pdf-cache.json`);
+	}
+
+	/** Where uploads from the Instructions note's document area land. Same folder
+	 * a hand-written `![[file.pdf]]` embed would use, so the two mechanisms (drop
+	 * a file in the upload area vs. embed one manually anywhere in the vault)
+	 * are just two ways of doing the same thing, not two separate systems. */
+	private attachmentsFolder(): string {
+		return normalizePath(`${this.folder()}/Attachments`);
+	}
+
 	private static readonly INSTRUCTIONS_CAP = 2000;
 
-	/** Total characters of referenced-note text that [[wikilinks]] in the
-	 * instructions may inline, shared across the whole file, so a linked style guide
-	 * can't inflate every session's prompt without bound. */
+	/** Total characters of referenced-note text that [[wikilinks]] in persona/
+	 * preferences may inline, shared across the whole file, so a linked style
+	 * guide can't inflate every session's prompt without bound. */
 	private static readonly INSTRUCTIONS_CONTEXT_CAP = 4000;
+
+	/** The fenced code block in Instructions.md that lists attached reference
+	 * documents, rendered as an upload/remove area by the grill-documents
+	 * code-block processor in main.ts. JSON body so add/remove can rewrite it
+	 * precisely without disturbing anything else the user wrote in the file. */
+	private static readonly REFERENCE_DOCS_FENCE = "```grill-documents";
+
+	/** Per-file size ceiling — this is the real analogue to a chat app's upload
+	 * limit (Claude.ai caps a single PDF around 30 MB too): a genuine technical
+	 * constraint, since extraction runs client-side on pdf.js and an unbounded
+	 * file size is an unbounded parse cost on the student's own machine. */
+	static readonly MAX_REFERENCE_DOC_BYTES = 30 * 1024 * 1024;
+
+	/** Document COUNT is a different problem from per-file size, and a small cap
+	 * here was the wrong instinct: this list is a persistent course library (every
+	 * worksheet across a semester, easily 15-30+ files for one class), not a
+	 * single chat turn's attachments — the right comparison is a Claude Project's
+	 * knowledge base, not a message's attachment limit. Per-session prompt size
+	 * is bounded elsewhere now (each document's real content flows through the
+	 * same concept-extraction/FSRS pipeline a note does — see view.ts's session
+	 * start — so it's the per-concept context size that matters, not a document-
+	 * count-driven text budget); this cap only guards the pathological case
+	 * (thousands of files bloating the manifest JSON and the chip list), not
+	 * normal comprehensive use. */
+	static readonly MAX_REFERENCE_DOCS = 300;
 
 	private static readonly INSTRUCTIONS_TEMPLATE = [
 		"## Persona",
@@ -140,6 +178,22 @@ export class GrillStore {
 		"     it short; long text costs more tokens every session. -->",
 		"",
 		"",
+		"## Reference documents",
+		"<!-- Drop worksheets, past exams, or official solutions below and Grill reads",
+		"     their real text into every session — the same idea as attaching a file in",
+		"     an AI chat, not a description of the document, the document itself. PDFs",
+		"     are text-extracted (first 40 pages, cached so re-opening a session doesn't",
+		"     re-parse them); other file types are stored but not read yet. 30 MB per",
+		"     file, 300 documents max — this is a course library, not a single",
+		"     message's attachments, so attach every worksheet you have. Each session",
+		"     splits a shared text budget evenly across whatever's attached, so a",
+		"     bigger library means less depth per document, not documents silently",
+		"     dropped. -->",
+		"",
+		"```grill-documents",
+		'{"v":1,"files":[]}',
+		"```",
+		"",
 	].join("\n");
 
 	/** The user's persona override and question/grading preferences, parsed from the two
@@ -157,20 +211,29 @@ export class GrillStore {
 			const lower = raw.toLowerCase();
 			const pIdx = lower.indexOf("## persona");
 			const fIdx = lower.indexOf("## preferences");
+			// A third heading now sits after Preferences (see REFERENCE_DOCS_FENCE below) —
+			// without accounting for it, Preferences' old "run to end of file" slice would
+			// swallow the reference-documents heading and its raw JSON fence as literal,
+			// ugly prose. (Attached documents' real content doesn't belong in preferences
+			// at all, ugly or not — see listReferenceDocFiles: it flows into the same
+			// concept-extraction pipeline a note's text does, not this advisory channel.)
+			const rIdx = lower.indexOf("## reference documents");
+			const nextBoundary = (start: number): number => {
+				const after = [pIdx, fIdx, rIdx].filter((i) => i > start);
+				return after.length ? Math.min(...after) : raw.length;
+			};
 			let persona = "";
 			let preferences = "";
-			// Legacy file with no section headings: treat the whole thing as preferences.
+			// Legacy file with no section headings: treat the whole thing as preferences,
+			// same as before — EXCEPT still stop at the reference-documents fence if one
+			// somehow exists in an otherwise-legacy file (the upload area's "add" flow can
+			// append that section to any file, headings or not), so its raw JSON manifest
+			// never leaks into the prompt as prose.
 			if (pIdx === -1 && fIdx === -1) {
-				preferences = safeSlice(strip(raw), cap);
+				preferences = safeSlice(strip(raw.slice(0, rIdx === -1 ? raw.length : rIdx)), cap);
 			} else {
-				if (pIdx !== -1) {
-					const end = fIdx > pIdx ? fIdx : raw.length;
-					persona = safeSlice(strip(raw.slice(pIdx + "## persona".length, end)), cap);
-				}
-				if (fIdx !== -1) {
-					const end = pIdx > fIdx ? pIdx : raw.length;
-					preferences = safeSlice(strip(raw.slice(fIdx + "## preferences".length, end)), cap);
-				}
+				if (pIdx !== -1) persona = safeSlice(strip(raw.slice(pIdx + "## persona".length, nextBoundary(pIdx))), cap);
+				if (fIdx !== -1) preferences = safeSlice(strip(raw.slice(fIdx + "## preferences".length, nextBoundary(fIdx))), cap);
 			}
 			// Expand any [[wikilinks]] by inlining the referenced notes, under one shared
 			// budget across the file, so a longer style guide can live in its own note.
@@ -216,6 +279,154 @@ export class GrillStore {
 			out += `\n\nReferenced note "${linkpath}":\n${slice}${slice.length < body.length ? "\n[truncated]" : ""}`;
 		}
 		return out;
+	}
+
+	/** Pull the grill-documents fence's JSON body straight out of raw file text,
+	 * independent of loadInstructions' section-slicing above (that path strips
+	 * code fences along with everything else non-prose, so it can't be reused
+	 * here). Malformed JSON or a missing/incomplete fence both just mean "nothing
+	 * attached yet" rather than an error the caller has to handle. */
+	private static parseDocManifest(raw: string): string[] {
+		const fenceIdx = raw.indexOf(GrillStore.REFERENCE_DOCS_FENCE);
+		if (fenceIdx === -1) return [];
+		const bodyStart = raw.indexOf("\n", fenceIdx) + 1;
+		const end = bodyStart > 0 ? raw.indexOf("```", bodyStart) : -1;
+		if (bodyStart <= 0 || end === -1) return [];
+		try {
+			const data = JSON.parse(raw.slice(bodyStart, end)) as { files?: unknown };
+			return Array.isArray(data.files) ? data.files.filter((f): f is string => typeof f === "string") : [];
+		} catch {
+			return [];
+		}
+	}
+
+	/** The names (not full paths — always resolved against attachmentsFolder()) of
+	 * documents currently listed in Instructions.md's upload area, in the order
+	 * they were added. [] if the file or the section doesn't exist yet. */
+	async listReferenceDocNames(): Promise<string[]> {
+		const path = this.instructionsPath();
+		if (!(await this.app.vault.adapter.exists(path))) return [];
+		try {
+			return GrillStore.parseDocManifest(await this.app.vault.adapter.read(path));
+		} catch {
+			return [];
+		}
+	}
+
+	/** Rewrite just the grill-documents fence's JSON body in place, creating the
+	 * file/section/fence as needed (from the template, which already ships an
+	 * empty one) — so attaching the very first document and removing the last
+	 * one both just work without a separate migration step. Never touches
+	 * anything else in the file: persona, preferences, and the user's own
+	 * comments are byte-for-byte untouched by this.
+	 *
+	 * Goes through `vault.process` when the file already exists, not a raw
+	 * adapter write: the upload area renders INSIDE this exact note, so it's
+	 * open in an editor essentially every time this runs. `vault.process` is
+	 * Obsidian's own safe read-modify-write for a file that might be open —
+	 * an adapter-level write here risked the editor's in-memory buffer (which
+	 * might hold an edit the user just made) clobbering this change right back,
+	 * or this change getting silently lost to the next autosave. */
+	private async writeDocManifest(files: string[]): Promise<void> {
+		await this.ensureFolder(this.folder());
+		const path = this.instructionsPath();
+		const rewrite = (raw: string): string => {
+			const block = `${GrillStore.REFERENCE_DOCS_FENCE}\n${JSON.stringify({ v: 1, files })}\n\`\`\``;
+			const fenceIdx = raw.indexOf(GrillStore.REFERENCE_DOCS_FENCE);
+			if (fenceIdx === -1) return raw.replace(/\s*$/, "") + `\n\n## Reference documents\n${block}\n`;
+			const bodyStart = raw.indexOf("\n", fenceIdx) + 1;
+			const end = bodyStart > 0 ? raw.indexOf("```", bodyStart) : -1;
+			return end === -1 ? raw.slice(0, fenceIdx) + block : raw.slice(0, fenceIdx) + block + raw.slice(end + 3);
+		};
+		const existing = this.app.vault.getAbstractFileByPath(path);
+		if (existing instanceof TFile) await this.app.vault.process(existing, rewrite);
+		else await this.app.vault.create(path, rewrite(GrillStore.INSTRUCTIONS_TEMPLATE));
+	}
+
+	/** The attached documents, resolved to real TFiles (silently dropping any
+	 * manifest entry that's missing, renamed, or not a PDF — same "just don't
+	 * show it" tolerance loadReferenceDocNames already has for a broken fence).
+	 * This is the actual integration point: view.ts's session start feeds each
+	 * of these through extractConcepts() exactly like a note's own text, so a
+	 * question can genuinely come from an uploaded worksheet — see the "Reference
+	 * documents" loop in startScopedSession, not anything in this file. Nothing
+	 * here inlines document text into persona/preferences anymore; that channel
+	 * is advisory-only (see loadInstructions/TUTOR_RULES) and could never make a
+	 * question's actual content come from an attached document, only its tone. */
+	async listReferenceDocFiles(): Promise<TFile[]> {
+		const names = await this.listReferenceDocNames();
+		const files: TFile[] = [];
+		for (const name of names) {
+			const dest = this.app.vault.getAbstractFileByPath(normalizePath(`${this.attachmentsFolder()}/${name}`));
+			if (dest instanceof TFile && dest.extension.toLowerCase() === "pdf") files.push(dest);
+		}
+		return files;
+	}
+
+	/** Cache of extracted PDF text keyed by vault path, shared by every code path
+	 * that reads a PDF (note embeds via view.ts, and the upload area above) so a
+	 * worksheet costs one real pdf.js parse total, not one per place it's used —
+	 * see pdf.ts's PdfCacheMap doc comment for the invalidation rule. */
+	async loadPdfCache(): Promise<PdfCacheMap> {
+		return this.loadJSON<PdfCacheMap>(this.pdfCachePath(), {});
+	}
+
+	async savePdfCache(map: PdfCacheMap): Promise<void> {
+		await this.ensureFolder(this.folder());
+		await this.saveJSON(this.pdfCachePath(), JSON.stringify(map));
+	}
+
+	/** Copy a picked file's bytes into the Grill Attachments folder — deduplicating
+	 * the name if it collides with something already there, same as Obsidian's own
+	 * "insert attachment" would — and add it to the upload area's manifest. This is
+	 * the "upload" half of the Claude-style attach/remove area in Instructions.md. */
+	async addReferenceDoc(bytes: ArrayBuffer, suggestedName: string): Promise<{ file: TFile; files: string[] }> {
+		if (bytes.byteLength > GrillStore.MAX_REFERENCE_DOC_BYTES) {
+			const mb = (GrillStore.MAX_REFERENCE_DOC_BYTES / (1024 * 1024)).toFixed(0);
+			throw new Error(`"${suggestedName}" is over the ${mb} MB limit.`);
+		}
+		const existingCount = (await this.listReferenceDocNames()).length;
+		if (existingCount >= GrillStore.MAX_REFERENCE_DOCS) {
+			throw new Error(`You've hit the ${GrillStore.MAX_REFERENCE_DOCS}-document limit — remove one before adding another.`);
+		}
+		const dir = this.attachmentsFolder();
+		await this.ensureFolder(dir);
+		const dot = suggestedName.lastIndexOf(".");
+		const base = dot === -1 ? suggestedName : suggestedName.slice(0, dot);
+		const ext = dot === -1 ? "" : suggestedName.slice(dot);
+		let name = suggestedName;
+		let path = normalizePath(`${dir}/${name}`);
+		let n = 1;
+		while (this.app.vault.getAbstractFileByPath(path)) {
+			name = `${base} ${++n}${ext}`;
+			path = normalizePath(`${dir}/${name}`);
+		}
+		const file = await this.app.vault.createBinary(path, bytes);
+		const files = await this.listReferenceDocNames();
+		files.push(name);
+		await this.writeDocManifest(files);
+		return { file, files };
+	}
+
+	/** The "remove" half: drops the entry from the manifest and, if asked, deletes
+	 * the underlying file and its cached extraction too — a real removal, not
+	 * just hiding the line, since the whole point of removing something is that
+	 * it stops costing tokens and stops taking up space. */
+	async removeReferenceDoc(name: string, deleteFile: boolean): Promise<string[]> {
+		const files = (await this.listReferenceDocNames()).filter((f) => f !== name);
+		await this.writeDocManifest(files);
+		if (deleteFile) {
+			const dest = this.app.vault.getAbstractFileByPath(normalizePath(`${this.attachmentsFolder()}/${name}`));
+			if (dest instanceof TFile) {
+				await this.app.vault.delete(dest).catch(() => undefined);
+				const cache = await this.loadPdfCache();
+				if (cache[dest.path]) {
+					delete cache[dest.path];
+					await this.savePdfCache(cache);
+				}
+			}
+		}
+		return files;
 	}
 
 	/** Create the instructions file with a commented template if it does not exist,

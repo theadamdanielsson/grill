@@ -1,5 +1,56 @@
 # Changelog
 
+## 5.7.0
+
+- **Changed: how much of a session goes to new material is now a real, visible
+  setting, not a silent hardcoded 30%.** The old behavior guaranteed new/untested
+  material a fixed slice of every session no matter how large your due/struggling
+  backlog was — a rule with no basis in how FSRS or any real spaced-repetition tool
+  actually works. Replaced it with the same policy Anki's own v3 scheduler uses (the
+  actual reference implementation FSRS was built for): by default, new material only
+  gets whatever room is genuinely left after the backlog is served — a backlog that
+  already fills the session leaves zero room for new material, reviews win, same as
+  Anki's default. Two new settings under "Sessions": **"New material share"** (the
+  ceiling on new material's slice, whenever it's allowed to claim any — default 30%,
+  now adjustable) and **"Always guarantee new material"** (off by default; mirrors
+  Anki's "New cards ignore review limit" override for when you want new material every
+  session regardless of backlog size — this plugin's old, only, behavior, now opt-in).
+
+- **Fix: "Multiple choice only" could still serve fill-in-the-blank, true/false, or
+  matching questions.** The setting's own logic treated anything-but-free-response as
+  satisfying "mc" mode, on the theory that a concept "genuinely can't be posed as a
+  single-answer choice" sometimes — in practice that just meant a setting literally
+  named "Multiple choice only" silently didn't mean that. It now means exactly what it
+  says: every question is real multiple choice, no substitutions, and the model is told
+  to rephrase an awkward concept as MC rather than switch format.
+
+- **New: a "Reference documents" upload area right inside Instructions.md.**
+  Drop a worksheet, past exam, or official solution PDF onto it (or click to
+  browse) and Grill actually quizzes from it — the same idea as attaching a
+  file in an AI chat, not a paraphrase of one. Each attached document goes
+  through the exact same concept-extraction FSRS scheduling flow a note's own
+  text does (not an advisory "keep this in mind" side-channel — that channel
+  exists for tone/format only and can't change what a question is *about*, by
+  design, the same way persona/preferences can never move a grading verdict).
+  A well-structured worksheet's own numbered questions get reused close to
+  verbatim, same as they would from a note. Files list as removable chips;
+  removing one deletes both the reference and the underlying file. 30 MB per
+  file; 300 documents, because this is meant to hold a whole course's worth of
+  worksheets, not a single message's attachments — there's no shared per-
+  session text budget to exhaust as the library grows, since each document
+  only contributes the bounded context of whichever of its own concepts get
+  selected for that session, exactly like a note would. Extraction runs before
+  a session's own notes are processed, not after — the fresh-content reserve
+  that lets never-tested material into a session interleaves candidates by
+  note in first-seen order, so a document added after the notes loop was
+  always last into that interleave and could lose its reserved slot entirely
+  in a vault with many other untested notes, despite extracting correctly.
+- **New: PDF text extraction is now cached** (`Grill/pdf-cache.json`, keyed by
+  file path + mtime/size), shared between note-embedded PDFs and the upload
+  area above. A worksheet embedded in ten notes, or the same PDF re-opened
+  across many sessions, now costs one real pdf.js parse total instead of one
+  per session per note.
+
 ## 5.6.0
 
 - **Fix: the learning map's colours could flatly disagree with its own numbers, and

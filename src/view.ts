@@ -25,12 +25,13 @@ import {
 	trueRetentionLine,
 } from "./concepts";
 import { collectNoteImages, ImageInput } from "./images";
-import { collectNotePdfText } from "./pdf";
+import { collectNotePdfText, extractPdfTextCached } from "./pdf";
 import { hashStr, safeSlice } from "./text";
 import {
 	buildDueDateHistogram,
 	DueDateHistogram,
 	emptyMastery,
+	FreshContentPolicy,
 	interleaveByFolder,
 	NoteMastery,
 	pickCandidates,
@@ -3534,7 +3535,13 @@ export class SessionView extends ItemView {
 			// an unreasonable number of full notes in one go.
 			const notesCap = this.sessionScope ? NO_MEANINGFUL_CAP : autoNotesPoolCap(s.questionsPerSession, byName.size);
 			const priority = priorityNotes(this.concepts, (note) => byName.has(note));
-			const seed = pickCandidates(orderedNames, this.plugin.mastery, notesCap, priority);
+			// See "New material share" / "Always guarantee new material" in Settings —
+			// modeled on Anki's own new-vs-review balancing (see FreshContentPolicy).
+			const freshPolicy: FreshContentPolicy = {
+				share: Math.min(Math.max(s.freshContentShare, 0), 100) / 100,
+				alwaysGuarantee: s.freshContentAlwaysGuarantee,
+			};
+			const seed = pickCandidates(orderedNames, this.plugin.mastery, notesCap, priority, freshPolicy);
 			const names = expandSelectionWithLinks(this.app, seed, byName, this.plugin.mastery, notesCap);
 			const vision = !!cfg && s.questionSource === "ai" && s.sendImages && supportsVision(cfg.provider, cfg.model);
 			this.sessionVision = vision;
@@ -3542,6 +3549,36 @@ export class SessionView extends ItemView {
 			this.noteImages = {};
 			this.notesWithUnsentImages = new Set();
 			this.conceptsByNote = new Map();
+			// Loaded once for the whole scan and saved once after, not per file: a session
+			// touching a dozen notes that all embed the same worksheet should cost one
+			// pdf.js parse total (on a cache miss), not one per note (see pdf.ts).
+			const pdfCache = await this.plugin.store.loadPdfCache();
+			// Reference documents (Instructions.md's upload area), BEFORE the notes loop
+			// below — order matters here, not just correctness: pickConcepts' fresh-content
+			// reserve interleaves untested concepts round-robin by note in FIRST-APPEARANCE
+			// order (see interleaveByNote in concepts.ts), and that reserve is typically only
+			// ~30% of a session. In an established vault with dozens of never-tested notes,
+			// inserting these after the loop meant they were always last into that interleave
+			// and the reserve was spent entirely on other notes before ever reaching them —
+			// extraction worked, but a reference document could never actually win a slot.
+			// Going first here means they're first into the round-robin instead. Each document
+			// goes through the exact same extractConcepts() a note's text does, not a side-
+			// channel — this is what actually makes "Grill asks questions from the real
+			// worksheet" true, rather than just true-looking. Keyed by the file's full name
+			// WITH extension (e.g. "DA worksheets.pdf"), which can never collide with a real
+			// note's basename (a markdown note's basename never ends in .pdf) and, as a bonus,
+			// is exactly what openNote()/openLinkText needs to open the actual PDF when the
+			// student taps through from a question to its source. Always included regardless
+			// of session scope — a course's reference library isn't folder-bound the way a
+			// note is, so there's no "which folder is this relevant to" scoping decision to
+			// make here (see the doc comment on MAX_REFERENCE_DOCS in store.ts for why the
+			// library can be large rather than a curated handful).
+			for (const file of await this.plugin.store.listReferenceDocFiles()) {
+				const text = await extractPdfTextCached(this.app, file, pdfCache);
+				if (!text) continue;
+				this.conceptsByNote.set(file.name, extractConcepts(file.name, text, this.plugin.data.settings.questionFormats));
+				this.noteText[file.name] = text.length > NOTE_CHAR_CAP ? safeSlice(text, NOTE_CHAR_CAP) + "\n[truncated]" : text;
+			}
 			for (const n of names) {
 				const file = byName.get(n);
 				if (!file) continue;
@@ -3550,7 +3587,7 @@ export class SessionView extends ItemView {
 				// none of it in the note's own markdown text — pull the PDF's text in as if
 				// it were typed there, so it's not invisible to both the structural parser and
 				// the AI prompt below (see pdf.ts; a no-op for notes with no PDF embeds).
-				const pdfText = await collectNotePdfText(this.app, file);
+				const pdfText = await collectNotePdfText(this.app, file, pdfCache);
 				const text = pdfText ? `${raw}\n\n${pdfText}` : raw;
 				// Extract concepts from the FULL note; only the prompt context is truncated.
 				this.conceptsByNote.set(n, extractConcepts(n, text, this.plugin.data.settings.questionFormats));
@@ -3562,6 +3599,7 @@ export class SessionView extends ItemView {
 					this.notesWithUnsentImages.add(n);
 				}
 			}
+			await this.plugin.store.savePdfCache(pdfCache);
 			// "Send images" is on, but the chosen model can't actually read them: the
 			// session still runs fine (the model is told to quiz text only), but silently
 			// — with no visible sign the toggle isn't doing anything for this model, it
@@ -3621,7 +3659,7 @@ export class SessionView extends ItemView {
 
 			// No-key mode can only use concepts that carry a deterministic question.
 			const pickable = s.questionSource === "local" ? allConcepts.filter((c) => c.local) : allConcepts;
-			this.sessionConcepts = pickConcepts(pickable, this.concepts, want, this.dueOnly, new Date(), s.newConceptsPerDay);
+			this.sessionConcepts = pickConcepts(pickable, this.concepts, want, this.dueOnly, new Date(), s.newConceptsPerDay, freshPolicy);
 			if (this.sessionConcepts.length === 0) {
 				const cappedOut =
 					!this.dueOnly && blockedByDailyCap(pickable, this.concepts, s.newConceptsPerDay, new Date());

@@ -145,6 +145,18 @@ interface GrillSettings {
 	 * due/review material instead, so the due backlog can't balloon from unlimited
 	 * new material outrunning how fast it can actually be reviewed. 0 = no cap. */
 	newConceptsPerDay: number;
+	/** Ceiling on new/untested material's share of ONE session (0-100%), whenever it's
+	 * allowed to claim any room at all — see FreshContentPolicy in mastery.ts. Modeled on
+	 * Anki's real v3 scheduler, not an arbitrary number: this is the analogue of Anki's
+	 * new-card daily limit acting as a ceiling within whatever room the backlog leaves. */
+	freshContentShare: number;
+	/** Anki calls the equivalent toggle "New cards ignore review limit." Off (default,
+	 * matching Anki's own default): a due/struggling backlog that already fills a session
+	 * leaves no room for new material — reviews win, same as any real SRS tool when
+	 * you're genuinely behind. On: new material always gets its full freshContentShare
+	 * regardless of backlog size — this plugin's old, only, silent behavior, now an
+	 * explicit opt-in instead of the default. */
+	freshContentAlwaysGuarantee: boolean;
 	/** Settings-tab progressive disclosure: reveal the rarely-touched tuning/maintenance
 	 * settings (careful grading, coverage weighting, cache clearing, missing-link
 	 * bridges, etc.) below a single toggle instead of always showing all ~30 settings
@@ -215,6 +227,8 @@ function defaultSettings(): GrillSettings {
 		fsrsPersonalization: null,
 		easyDays: [],
 		newConceptsPerDay: 20,
+		freshContentShare: 30,
+		freshContentAlwaysGuarantee: false,
 		legacyDefaultsMigrated: false,
 		showAdvancedSettings: false,
 		lastWarnedDuplicateBasenames: [],
@@ -296,6 +310,8 @@ export default class GrillPlugin extends Plugin {
 			settings.easyDays = s.easyDays.filter((d): d is number => typeof d === "number" && d >= 0 && d <= 6);
 		}
 		if (typeof s.newConceptsPerDay === "number") settings.newConceptsPerDay = s.newConceptsPerDay;
+		if (typeof s.freshContentShare === "number") settings.freshContentShare = s.freshContentShare;
+		if (typeof s.freshContentAlwaysGuarantee === "boolean") settings.freshContentAlwaysGuarantee = s.freshContentAlwaysGuarantee;
 		if (typeof s.legacyDefaultsMigrated === "boolean") settings.legacyDefaultsMigrated = s.legacyDefaultsMigrated;
 		if (typeof s.showAdvancedSettings === "boolean") settings.showAdvancedSettings = s.showAdvancedSettings;
 		if (Array.isArray(s.lastWarnedDuplicateBasenames)) {
@@ -492,6 +508,114 @@ export default class GrillPlugin extends Plugin {
 						: "Same questions, and you grade yourself. No cost.",
 			});
 			btn.onclick = () => void this.startReplay(questions);
+		});
+
+		// Upload/remove area for Instructions.md's "## Reference documents" section —
+		// same idea as attaching a file in an AI chat, rendered where instructions
+		// already live rather than buried in a settings modal. Ignores `source`
+		// entirely and re-reads the manifest from disk on every render: the block is
+		// rebuilt in place after every add/remove (see renderList below), so trusting
+		// the store instead of the stale `source` this callback was invoked with
+		// avoids ever showing a list that's one action behind what's on disk.
+		this.registerMarkdownCodeBlockProcessor("grill-documents", (_source, el) => {
+			const root = el.createDiv({ cls: "grill-doc-area" });
+			const listEl = root.createDiv({ cls: "grill-doc-list" });
+
+			const renderList = (files: string[]) => {
+				listEl.empty();
+				if (!files.length) {
+					listEl.createEl("p", { cls: "grill-meta grill-doc-empty", text: "No documents attached yet." });
+					return;
+				}
+				for (const name of files) {
+					const row = listEl.createDiv({ cls: "grill-doc-row" });
+					row.createSpan({ cls: "grill-doc-name", text: name });
+					const remove = row.createEl("button", { cls: "grill-doc-remove clickable-icon", attr: { "aria-label": `Remove ${name}` } });
+					remove.setText("✕");
+					remove.onclick = () => {
+						void (async () => {
+							remove.disabled = true;
+							const files2 = await this.store.removeReferenceDoc(name, true);
+							new Notice(`Grill: removed "${name}".`);
+							renderList(files2);
+						})();
+					};
+				}
+			};
+
+			const handleFiles = (picked: FileList | null) => {
+				if (!picked || !picked.length) return;
+				void (async () => {
+					dropzone.addClass("is-busy");
+					status.setText("Adding…");
+					let files: string[] = await this.store.listReferenceDocNames();
+					let added = 0;
+					const errors: string[] = [];
+					for (let i = 0; i < picked.length; i++) {
+						const f = picked[i];
+						// Client-side size/count checks fail fast, before spending time reading the
+						// file into memory — addReferenceDoc enforces the same two limits itself
+						// (that's the real gate; this is just so a big or extra file doesn't sit
+						// there "adding" for a few seconds before being rejected).
+						if (files.length >= GrillStore.MAX_REFERENCE_DOCS) {
+							errors.push(`stopped at the ${GrillStore.MAX_REFERENCE_DOCS}-document limit (${picked.length - i} not added)`);
+							break;
+						}
+						if (f.size > GrillStore.MAX_REFERENCE_DOC_BYTES) {
+							errors.push(`"${f.name}" is over the ${(GrillStore.MAX_REFERENCE_DOC_BYTES / (1024 * 1024)).toFixed(0)} MB limit`);
+							continue;
+						}
+						try {
+							const bytes = await f.arrayBuffer();
+							const result = await this.store.addReferenceDoc(bytes, f.name);
+							files = result.files;
+							added++;
+						} catch (e) {
+							console.error(`Grill: couldn't add reference document "${f.name}"`, e);
+							errors.push(e instanceof Error ? e.message : `"${f.name}" couldn't be added`);
+						}
+					}
+					dropzone.removeClass("is-busy");
+					status.setText("Drop PDFs here, or click to browse");
+					renderList(files);
+					if (added === 1 && !errors.length) new Notice(`Grill: added "${picked[0].name}".`);
+					else if (added) new Notice(`Grill: added ${added} document${added === 1 ? "" : "s"}.`);
+					for (const msg of errors) new Notice(`Grill: ${msg}.`, 8000);
+				})();
+			};
+
+			const dropzone = root.createDiv({ cls: "grill-doc-dropzone", attr: { tabindex: "0", role: "button" } });
+			dropzone.createSpan({ cls: "grill-doc-dropzone-icon", text: "+" });
+			const status = dropzone.createSpan({ cls: "grill-doc-dropzone-text", text: "Drop PDFs here, or click to browse" });
+			dropzone.createSpan({
+				cls: "grill-doc-dropzone-caption",
+				text: `PDF only · up to ${(GrillStore.MAX_REFERENCE_DOC_BYTES / (1024 * 1024)).toFixed(0)} MB each · ${GrillStore.MAX_REFERENCE_DOCS} documents max`,
+			});
+			const input = dropzone.createEl("input", {
+				cls: "grill-doc-input",
+				attr: { type: "file", accept: ".pdf", multiple: true },
+			});
+			dropzone.onclick = () => input.click();
+			dropzone.onkeydown = (e) => {
+				if (e.key === "Enter" || e.key === " ") {
+					e.preventDefault();
+					input.click();
+				}
+			};
+			input.onclick = (e) => e.stopPropagation();
+			input.onchange = () => handleFiles(input.files);
+			dropzone.ondragover = (e) => {
+				e.preventDefault();
+				dropzone.addClass("is-dragover");
+			};
+			dropzone.ondragleave = () => dropzone.removeClass("is-dragover");
+			dropzone.ondrop = (e) => {
+				e.preventDefault();
+				dropzone.removeClass("is-dragover");
+				handleFiles(e.dataTransfer?.files ?? null);
+			};
+
+			void this.store.listReferenceDocNames().then(renderList);
 		});
 
 		this.app.workspace.onLayoutReady(() => {
@@ -1242,7 +1366,7 @@ class GrillSettingTab extends PluginSettingTab {
 			.setName("Question formats")
 			.setDesc(
 				"Mixed picks whichever format (multiple-choice, fill-in-the-blank, true/false, select-all, matching, " +
-					"or write-in) actually fits each concept. Set here, not in Instructions.md — a free-text preference " +
+					"or write-in) actually fits each concept. Set here, not in Instructions.md: a free-text preference " +
 					"there won't reliably stick.",
 			)
 			.addDropdown((d) =>
@@ -1484,7 +1608,7 @@ class GrillSettingTab extends PluginSettingTab {
 			"New concepts per day",
 			"Caps how many never-before-tested concepts a session will introduce per calendar day, on top " +
 				"of the per-session limits above. Once hit, sessions fill remaining slots by reviewing what's " +
-				"already due instead — so a few missed days can't leave the due queue permanently outrunning " +
+				"already due instead, so a few missed days can't leave the due queue permanently outrunning " +
 				"what you can actually review. 0 = no daily cap.",
 			0,
 			100,
@@ -1495,6 +1619,35 @@ class GrillSettingTab extends PluginSettingTab {
 				await this.plugin.persist();
 			},
 		);
+
+		this.sliderSetting(
+			containerEl,
+			"New material share",
+			"The most a single session lets new/untested material claim, whenever it's allowed to claim any " +
+				"room at all (see the toggle below).",
+			0,
+			100,
+			Math.min(Math.max(s.freshContentShare, 0), 100),
+			(v) => `${v}%`,
+			async (v) => {
+				s.freshContentShare = v;
+				await this.plugin.persist();
+			},
+		);
+
+		new Setting(containerEl)
+			.setName("Always guarantee new material")
+			.setDesc(
+				"Off (default): a full due/struggling backlog leaves no room for new material that session, " +
+					"reviews win. On: new material always gets its full share above, no matter how large the " +
+					"backlog is.",
+			)
+			.addToggle((t) =>
+				t.setValue(s.freshContentAlwaysGuarantee).onChange(async (v) => {
+					s.freshContentAlwaysGuarantee = v;
+					await this.plugin.persist();
+				}),
+			);
 
 		new Setting(containerEl)
 			.setName("End-of-session debrief")
@@ -1518,13 +1671,13 @@ class GrillSettingTab extends PluginSettingTab {
 					`${fp.improvementPct.toFixed(1)}% tighter fit than the library defaults on this vault's own data at the time. ` +
 					"Re-run occasionally as more review history accumulates, or reset to the shared library defaults."
 				: `Off: scheduling runs on FSRS-6's library defaults, fit across a large pooled population, not this vault. ` +
-					`Needs ${MIN_REVIEWS_FOR_OPTIMIZATION} real reviews to fit against (${trainable}/${MIN_REVIEWS_FOR_OPTIMIZATION} so far) — ` +
+					`Needs ${MIN_REVIEWS_FOR_OPTIMIZATION} real reviews to fit against (${trainable}/${MIN_REVIEWS_FOR_OPTIMIZATION} so far), ` +
 					"keep studying and re-open this panel to check progress.";
 			new Setting(containerEl)
 				.setName("Personalize FSRS to your own memory")
 				.setDesc(
 					"Fits FSRS's ~21 scheduling weights to how YOU actually forget, from your own logged review history, " +
-						"instead of the library's one-size-fits-all defaults — the same idea as Anki's own FSRS optimizer, run " +
+						"instead of the library's one-size-fits-all defaults. The same idea as Anki's own FSRS optimizer, run " +
 						"locally with no data leaving your machine. " +
 						fsrsDesc,
 				)
@@ -1553,7 +1706,7 @@ class GrillSettingTab extends PluginSettingTab {
 				.setName("Light review days")
 				.setDesc(
 					"Toggle on any weekday you'd rather Grill went easier on. Doesn't cap or skip that day outright " +
-						"(the backlog still has to go somewhere) — it just steers newly-scheduled reviews off it toward " +
+						"(the backlog still has to go somewhere); it just steers newly-scheduled reviews off it toward " +
 						"an equally-uncrowded day nearby whenever one's available. Toggle order: " +
 						WEEKDAY_NAMES.join(", ") +
 						".",
@@ -1588,7 +1741,7 @@ class GrillSettingTab extends PluginSettingTab {
 				.setName("Find missing links")
 				.setDesc(
 					"In AI sessions, look for two of your notes that clearly relate but aren't linked, quiz you on the " +
-						"connection, and offer to add the [[link]] for you. How many show up isn't a count you dial in — " +
+						"connection, and offer to add the [[link]] for you. How many show up isn't a count you dial in: " +
 						"it's however many pairs actually turn out to be genuinely related this session, naturally zero " +
 						"some sessions. Needs a key; off for no-key sessions.",
 				)
@@ -1605,7 +1758,7 @@ class GrillSettingTab extends PluginSettingTab {
 					.setName("Find missing links by meaning, not just wording")
 					.setDesc(
 						"Also embed your notes and look for pairs that are conceptually related even when they don't share " +
-							"vocabulary — the lexical search above can miss those. Needs an OpenAI or Gemini key, or a local " +
+							"vocabulary, which the lexical search above can miss. Needs an OpenAI or Gemini key, or a local " +
 							"Ollama server with an embedding model pulled (e.g. `ollama pull nomic-embed-text`); off for " +
 							"Anthropic and DeepSeek, which have no embeddings API to call. Costs one extra request per " +
 							"new or changed note, capped per session.",
@@ -1621,7 +1774,7 @@ class GrillSettingTab extends PluginSettingTab {
 			new Setting(containerEl)
 				.setName("Clear cached questions")
 				.setDesc(
-					"A concept's question is written once and reused verbatim on every later review — never silently " +
+					"A concept's question is written once and reused verbatim on every later review, never silently " +
 						"reworded. Use this to force every concept to write a fresh question next time it's due, e.g. right " +
 						"after a Grill update changes how questions are written (a new format, a prompt fix) so it reaches " +
 						"concepts you've already studied a lot, not just new ones. Doesn't affect a session already open.",
@@ -1779,8 +1932,8 @@ class GrillSettingTab extends PluginSettingTab {
 			new Setting(containerEl)
 				.setName("Rebalance upcoming due dates")
 				.setDesc(
-					"Keeps what's due WHEN it's due, but re-smooths the days they land on against a clean slate — " +
-						"fixes pile-ups a big import or a long study stretch can leave behind, where several concepts " +
+					"Keeps what's due WHEN it's due, but re-smooths the days they land on against a clean slate. " +
+						"Fixes pile-ups a big import or a long study stretch can leave behind, where several concepts " +
 						"scheduled around the same time each landed against a load-balancer that hadn't yet seen all " +
 						"its own siblings. Only touches concepts still comfortably in the future; never pulls in or " +
 						"pushes out anything already due or overdue.",

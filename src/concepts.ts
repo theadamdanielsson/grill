@@ -17,6 +17,7 @@ import { Concept, ConceptKind } from "./generate-local";
 import {
 	applyRating,
 	DueDateHistogram,
+	FreshContentPolicy,
 	fuzzInterval,
 	MasteryMap,
 	NoteStatus,
@@ -312,6 +313,7 @@ export function pickConcepts(
 	dueOnly = false,
 	now = new Date(),
 	newConceptsPerDay = 0,
+	freshPolicy: FreshContentPolicy = { share: 0.3, alwaysGuarantee: false },
 ): Concept[] {
 	if (dueOnly) {
 		const due = concepts.filter((c) => {
@@ -362,7 +364,7 @@ export function pickConcepts(
 		const remaining = Math.max(0, newConceptsPerDay - newConceptsIntroducedSince(map, todayStart));
 		untestedPool = untestedPool.slice(0, remaining);
 	}
-	return reserveFreshSlots(interleaveByNote(cappedDue), untestedPool, interleaveByNote(rest), cap);
+	return reserveFreshSlots(interleaveByNote(cappedDue), untestedPool, interleaveByNote(rest), cap, freshPolicy);
 }
 
 /** True when a (non-due) session came back empty ONLY because the daily new-concept

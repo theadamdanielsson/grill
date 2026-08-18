@@ -22,6 +22,21 @@ const MAX_PAGES_PER_PDF = 40;
  * parse cost; bound it defensively. */
 const MAX_PDFS_PER_NOTE = 2;
 
+/** One PDF's extracted text, memoized against the exact file state it was read
+ * from. `mtime`/`size` (not a content hash) are the cheap, already-available
+ * TFile.stat fields Obsidian keeps current without us reading the file —
+ * good enough to detect "this file changed since we last parsed it" without
+ * hashing multi-MB PDFs on every session start just to find out nothing moved. */
+export interface PdfCacheEntry {
+	mtime: number;
+	size: number;
+	text: string;
+}
+
+/** Keyed by vault path. Persisted by the caller (see GrillStore.loadPdfCache /
+ * savePdfCache) — this module only reads and mutates the map handed to it. */
+export type PdfCacheMap = Record<string, PdfCacheEntry>;
+
 async function extractPdfText(bytes: ArrayBuffer, label: string): Promise<string> {
 	try {
 		const pdfjsLib = await loadPdfJs();
@@ -56,11 +71,27 @@ async function extractPdfText(bytes: ArrayBuffer, label: string): Promise<string
 	}
 }
 
+/** Cache-aware single-PDF extraction: reuses `cache[dest.path]` verbatim when
+ * the file's mtime/size haven't moved since it was last parsed, so a worksheet
+ * embedded in ten different notes (or the same note opened every session) only
+ * ever costs one real pdf.js parse until the file actually changes. Mutates
+ * `cache` in place on a miss; the caller owns persisting it (see
+ * GrillStore.loadPdfCache/savePdfCache) so a batch of lookups across one
+ * session-start scan writes to disk once, not once per file. */
+export async function extractPdfTextCached(app: App, dest: TFile, cache: PdfCacheMap): Promise<string> {
+	const hit = cache[dest.path];
+	if (hit && hit.mtime === dest.stat.mtime && hit.size === dest.stat.size) return hit.text;
+	const bytes = await app.vault.readBinary(dest);
+	const text = await extractPdfText(bytes, dest.basename);
+	cache[dest.path] = { mtime: dest.stat.mtime, size: dest.stat.size, text };
+	return text;
+}
+
 /** Text extracted from the PDFs a note embeds, concatenated, or "" if it embeds
  * none (or none could be read). Meant to be appended to the note's own markdown
  * text before that combined text goes through extraction/truncation, so PDF
  * content is genuinely just more text to Grill, not a separate special case. */
-export async function collectNotePdfText(app: App, file: TFile): Promise<string> {
+export async function collectNotePdfText(app: App, file: TFile, cache: PdfCacheMap): Promise<string> {
 	const embeds = app.metadataCache.getFileCache(file)?.embeds ?? [];
 	const out: string[] = [];
 	const seen = new Set<string>();
@@ -74,8 +105,7 @@ export async function collectNotePdfText(app: App, file: TFile): Promise<string>
 		if (!dest || dest.extension.toLowerCase() !== "pdf" || seen.has(dest.path)) continue;
 		seen.add(dest.path);
 		try {
-			const bytes = await app.vault.readBinary(dest);
-			const text = await extractPdfText(bytes, dest.basename);
+			const text = await extractPdfTextCached(app, dest, cache);
 			if (text) out.push(text);
 		} catch (e) {
 			console.error(`Grill: couldn't read PDF attachment "${dest.basename}"`, e);

@@ -510,24 +510,42 @@ export function interleaveByFolder(names: string[], folderOf: (name: string) => 
  *  2. untested notes
  *  3. known notes not yet due (only if space remains), least-recently-seen first
  */
-/** Share of a capped candidate pool reserved for untested material, regardless of how
- * large the due/struggling backlog is. Without this, "struggling" candidates (anything
- * not yet confirmed known — see `statusOf`) queue-jump ahead of every untested one with
- * no limit on how many of them there can be, so in a large vault a handful of hard notes
- * can permanently fill the entire cap and starve the rest of the vault out of rotation
- * forever: confirmed in the wild on a 460-note vault where 84% of notes had zero
- * exposure after 32 sessions because a few "struggling" grammar notes never stopped
- * winning priority. Reserving a minimum share guarantees fresh content keeps entering
- * rotation even when the review backlog alone could fill every session. */
-const NEW_CONTENT_RESERVE_SHARE = 0.3;
+/** How `reserveFreshSlots` weighs new/untested material against a due/struggling
+ * backlog — user-configurable (see "New material" settings in main.ts), not a fixed
+ * constant. Modeled directly on Anki's own v3 scheduler, the actual reference
+ * implementation FSRS was built for: by default new cards are capped by whatever room
+ * is left in the review limit after the backlog is served (reviews win, new material
+ * shrinks as backlog grows — the opposite of always-guaranteed), with an explicit
+ * opt-in, `alwaysGuarantee`, mirroring Anki's real "New cards ignore review limit"
+ * toggle for a student who wants new material every session regardless of backlog
+ * size. `share` still bounds how much of a session new material can claim even when
+ * it isn't backlog-starved, same role the old fixed 0.3 played, just user-set now. */
+export interface FreshContentPolicy {
+	/** 0-1: the ceiling on new/untested material's portion of one session, whenever
+	 * it's allowed to claim any room at all. */
+	share: number;
+	/** Anki calls this "New cards ignore review limit." Off (Anki's default, and
+	 * this plugin's): the backlog is served first, and new material only gets
+	 * whatever's left within `share`'s ceiling — a backlog that already fills the
+	 * whole session leaves zero room for new material, same as reviews winning a
+	 * genuine backlog in any real SRS tool. On: new material always gets its full
+	 * `share`, no matter how large the backlog is (this plugin's old, only, silent
+	 * behavior — now an explicit, visible choice instead of the default). */
+	alwaysGuarantee: boolean;
+}
 
-/** Build a capped, priority-ordered selection from three priority-ordered buckets,
- * guaranteeing `fresh` a minimum share of `cap` (see `NEW_CONTENT_RESERVE_SHARE`)
- * instead of letting `priority` crowd it out entirely when the backlog is large.
- * Leftover room (priority smaller than its allotment, or fresh smaller than its
- * reserve) is backfilled from whatever's left, in priority > fresh > overflow order. */
-export function reserveFreshSlots<T>(priority: T[], fresh: T[], overflow: T[], cap: number): T[] {
-	const freshReserve = Math.min(fresh.length, Math.ceil(cap * NEW_CONTENT_RESERVE_SHARE));
+/** Build a capped, priority-ordered selection from three priority-ordered buckets.
+ * `policy` decides how much of `cap` untested `fresh` material can claim relative to
+ * the `priority` (due/struggling) backlog — see `FreshContentPolicy`. Leftover room
+ * (priority smaller than its allotment, or fresh smaller than its reserve) is
+ * backfilled from whatever's left, in priority > fresh > overflow order. */
+export function reserveFreshSlots<T>(priority: T[], fresh: T[], overflow: T[], cap: number, policy: FreshContentPolicy): T[] {
+	const shareCeiling = Math.min(fresh.length, Math.ceil(cap * policy.share));
+	// Anki's actual rule ("only 10 new cards appear if 190 of your 200 review slots are
+	// already full"): room for fresh material is whatever's genuinely left after the
+	// backlog is served, not a slice guaranteed to exist regardless of backlog size.
+	const roomLeft = Math.max(0, cap - priority.length);
+	const freshReserve = policy.alwaysGuarantee ? shareCeiling : Math.min(shareCeiling, roomLeft);
 	const priorityTaken = priority.slice(0, Math.max(0, cap - freshReserve));
 	const freshTaken = fresh.slice(0, freshReserve);
 	const filler = [...priority.slice(priorityTaken.length), ...fresh.slice(freshTaken.length), ...overflow];
@@ -539,6 +557,7 @@ export function pickCandidates(
 	map: MasteryMap,
 	cap: number,
 	priority: Map<string, string | null> = new Map(),
+	policy: FreshContentPolicy = { share: 0.3, alwaysGuarantee: false },
 ): string[] {
 	const due: string[] = [];
 	const untested: string[] = [];
@@ -550,5 +569,5 @@ export function pickCandidates(
 	}
 	due.sort((a, b) => (priority.get(a) ?? "").localeCompare(priority.get(b) ?? ""));
 	rest.sort((a, b) => (map[a]?.lastSeen ?? "").localeCompare(map[b]?.lastSeen ?? ""));
-	return reserveFreshSlots(due, untested, rest, cap);
+	return reserveFreshSlots(due, untested, rest, cap, policy);
 }
