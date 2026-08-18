@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.7.1
+
+- **Fix: the new reference-documents manifest read used the low-level Adapter API
+  instead of the Vault API** (`vault.adapter.read`/`.exists` rather than resolving a
+  real `TFile` and using `vault.cachedRead`), against Obsidian's own plugin
+  guidelines. No user-visible behavior change, just the correct API for reading a
+  file Obsidian already indexes as a TFile.
+
 ## 5.7.0
 
 - **Changed: how much of a session goes to new material is now a real, visible

@@ -304,10 +304,10 @@ export class GrillStore {
 	 * documents currently listed in Instructions.md's upload area, in the order
 	 * they were added. [] if the file or the section doesn't exist yet. */
 	async listReferenceDocNames(): Promise<string[]> {
-		const path = this.instructionsPath();
-		if (!(await this.app.vault.adapter.exists(path))) return [];
+		const file = this.app.vault.getAbstractFileByPath(this.instructionsPath());
+		if (!(file instanceof TFile)) return [];
 		try {
-			return GrillStore.parseDocManifest(await this.app.vault.adapter.read(path));
+			return GrillStore.parseDocManifest(await this.app.vault.cachedRead(file));
 		} catch {
 			return [];
 		}
