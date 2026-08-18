@@ -128,21 +128,15 @@ const FLAME_ICON_CELLS: [number, number][] = [
 ];
 /** Builds the flame icon as real SVG DOM nodes, not an innerHTML string — Obsidian's
  * plugin review flags raw innerHTML assignment as unsafe even for fully static,
- * hardcoded content like this, so every cell is its own createElementNS'd <rect>. */
+ * hardcoded content like this, so every cell is its own createSvg'd <rect> (Obsidian's
+ * own namespace-aware DOM helper, not document.createElementNS). */
 function renderFlameIcon(container: HTMLElement): void {
-	const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-	svg.setAttribute("viewBox", "0 0 7 10");
-	svg.setAttribute("shape-rendering", "crispEdges");
-	svg.setAttribute("fill", "currentColor");
+	const svg = container.createSvg("svg", {
+		attr: { viewBox: "0 0 7 10", "shape-rendering": "crispEdges", fill: "currentColor" },
+	});
 	for (const [x, y] of FLAME_ICON_CELLS) {
-		const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-		rect.setAttribute("x", String(x));
-		rect.setAttribute("y", String(y));
-		rect.setAttribute("width", "1");
-		rect.setAttribute("height", "1");
-		svg.appendChild(rect);
+		svg.createSvg("rect", { attr: { x, y, width: 1, height: 1 } });
 	}
-	container.appendChild(svg);
 }
 
 const NOTE_CHAR_CAP = 4000;

@@ -23,7 +23,7 @@
  * objective FSRS4Anki's optimizer trains against.
  */
 
-import { clipParameters, default_w, FSRSAlgorithm, generatorParameters, type FSRSState, type Grade } from "ts-fsrs";
+import { clipParameters, default_w, FSRSAlgorithm, generatorParameters, Rating, type FSRSState, type Grade } from "ts-fsrs";
 import { ConceptMap } from "./concepts";
 
 /** Below this many prediction-eligible reviews, a fit is too noisy to trust —
@@ -66,7 +66,7 @@ interface TrainingReview {
 type TrainingSequence = TrainingReview[];
 
 function clampGrade(r: number): Grade {
-	return Math.min(4, Math.max(1, Math.round(r))) as Grade;
+	return Math.min(4, Math.max(1, Math.round(r)));
 }
 
 function clamp01(x: number): number {
@@ -123,7 +123,7 @@ function computeLoss(weights: number[], sequences: TrainingSequence[]): number {
 			const { t, rating } = seq[i];
 			if (i > 0 && state) {
 				const r = clamp01(algo.forgetting_curve(t, state.stability));
-				const y = rating === 1 ? 0 : 1;
+				const y = rating === Rating.Again ? 0 : 1;
 				totalLoss += -(y * Math.log(r) + (1 - y) * Math.log(1 - r));
 				n++;
 			}
@@ -151,7 +151,7 @@ export interface OptimizeResult {
 export async function optimizeFSRSWeights(concepts: ConceptMap): Promise<OptimizeResult> {
 	const allSequences = buildSequences(concepts);
 	const reviewsUsed = allSequences.reduce((n, s) => n + s.length - 1, 0);
-	const baseline = (default_w as readonly number[]).slice();
+	const baseline = default_w.slice();
 	if (reviewsUsed < MIN_REVIEWS_FOR_OPTIMIZATION) {
 		const baselineLoss = computeLoss(baseline, allSequences);
 		return { weights: null, baselineLoss, finalLoss: baselineLoss, reviewsUsed, iterations: 0 };
@@ -213,7 +213,7 @@ export async function optimizeFSRSWeights(concepts: ConceptMap): Promise<Optimiz
 		// One dataset pass here can run tens of milliseconds on a large vault;
 		// yielding every iteration (not every gradient probe) keeps the UI responsive
 		// without fragmenting a single fit into hundreds of scheduler round-trips.
-		await new Promise((resolve) => setTimeout(resolve, 0));
+		await new Promise((resolve) => window.setTimeout(resolve, 0));
 	}
 
 	// A fit that doesn't clear the library defaults on this vault's own data isn't

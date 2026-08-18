@@ -418,7 +418,7 @@ export class GrillStore {
 		if (deleteFile) {
 			const dest = this.app.vault.getAbstractFileByPath(normalizePath(`${this.attachmentsFolder()}/${name}`));
 			if (dest instanceof TFile) {
-				await this.app.vault.delete(dest).catch(() => undefined);
+				await this.app.fileManager.trashFile(dest).catch(() => undefined);
 				const cache = await this.loadPdfCache();
 				if (cache[dest.path]) {
 					delete cache[dest.path];

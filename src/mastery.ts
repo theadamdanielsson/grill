@@ -18,7 +18,7 @@
  * review, not a value that needs remapping first.
  */
 
-import { dateDiffInDays, fsrs, type FSRSState, type Grade } from "ts-fsrs";
+import { dateDiffInDays, fsrs, type FSRSState } from "ts-fsrs";
 
 export type Verdict = "correct" | "partial" | "incorrect";
 
@@ -416,7 +416,7 @@ export function applyRating(
 		m.stability === null || m.difficulty === null || legacyDifficulty
 			? null
 			: { stability: m.stability, difficulty: m.difficulty };
-	const next = engine.next_state(memory, t, rating as Grade);
+	const next = engine.next_state(memory, t, rating);
 	m.stability = next.stability;
 	m.difficulty = next.difficulty;
 

@@ -13,6 +13,30 @@
 
 import { App, loadPdfJs, TFile } from "obsidian";
 
+/** Obsidian types `loadPdfJs()` as `Promise<any>` (it just re-exports pdf.js's own
+ * lazily-loaded module verbatim). This is the minimal slice of pdf.js's real API
+ * this file touches, declared once so the `any` is contained to a single cast at
+ * the loadPdfJs() call site instead of leaking untyped through every line below. */
+interface PdfTextItem {
+	str?: string;
+	hasEOL?: boolean;
+}
+interface PdfTextContent {
+	items: PdfTextItem[];
+}
+interface PdfPageProxy {
+	getTextContent(): Promise<PdfTextContent>;
+}
+interface PdfDocumentProxy {
+	numPages: number;
+	getPage(pageNumber: number): Promise<PdfPageProxy>;
+}
+interface PdfJsLib {
+	getDocument(params: { data: Uint8Array; cMapPacked: boolean; cMapUrl: string; standardFontDataUrl: string }): {
+		promise: Promise<PdfDocumentProxy>;
+	};
+}
+
 /** Ceiling on pages read per PDF — a safety valve against someone embedding an
  * entire textbook, not a token-budget cap (that's NOTE_CHAR_CAP in view.ts, applied
  * uniformly to a note's combined text after this runs). Parsing is local/CPU-only,
@@ -39,7 +63,7 @@ export type PdfCacheMap = Record<string, PdfCacheEntry>;
 
 async function extractPdfText(bytes: ArrayBuffer, label: string): Promise<string> {
 	try {
-		const pdfjsLib = await loadPdfJs();
+		const pdfjsLib = (await loadPdfJs()) as PdfJsLib;
 		const doc = await pdfjsLib.getDocument({
 			data: new Uint8Array(bytes),
 			cMapPacked: true,
@@ -55,7 +79,7 @@ async function extractPdfText(bytes: ArrayBuffer, label: string): Promise<string
 			// it recovers real paragraph/line structure (so downstream chunking can find
 			// a sane per-chunk label) instead of flattening a whole page into one line.
 			const text = content.items
-				.map((it: { str?: string; hasEOL?: boolean }) => (it.str ?? "") + (it.hasEOL ? "\n" : " "))
+				.map((it) => (it.str ?? "") + (it.hasEOL ? "\n" : " "))
 				.join("")
 				.trim();
 			if (text) pages.push(text);
