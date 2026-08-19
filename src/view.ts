@@ -176,6 +176,13 @@ const SEG_SEVERITY = ["grill-seg-correct", "grill-seg-current", "grill-seg-skipp
 /** Questions generated per model call. Small batches cut the wait before the
  * first question and let the next batch prefetch while the user answers. */
 const BATCH = 2;
+/** How many questions the background prefetch tries to keep buffered ahead of the one
+ * on screen (see prefetchAhead). A single BATCH's worth (2) isn't enough runway: a
+ * couple of quick MC/TF answers can outrun one model round-trip, so goToQuestion's own
+ * while-loop ends up blocking on loadNextBatch anyway — the exact "latency between
+ * cards" a background prefetch exists to hide. Deeper than BATCH so there's always at
+ * least one full batch already in flight or done by the time the buffer needs it. */
+const PREFETCH_LOOKAHEAD = 4;
 /** Deterministic per-session rotation for seedType(): mirrors how targetDifficulty is
  * already assigned server-side rather than left to the model. Left to its own
  * discretion, a model reliably regresses to only 'mc'/'blank'/'write' in practice — a
@@ -1544,8 +1551,9 @@ export class SessionView extends ItemView {
 	/** Every cached question in the bank, grouped by note and searchable — lets a bad
 	 * AI-generated (or no-key/local) question be fixed in place instead of only ever
 	 * deleted via "Bad question" mid-review. Authored `> [!grill]` callouts never enter
-	 * `questionBank` (`rememberGenerated` skips `c.authored`), so this list is already
-	 * just the generated/cached set — nothing here needs filtering out. */
+	 * `questionBank` (`rememberGenerated` skips `c.authored`); entries `rejected` via
+	 * "Bad question" do enter it (kept as tombstones, see reportBadQuestion) but are
+	 * filtered out below, so this list reads as just the live generated/cached set. */
 	private async renderManageQuestions(): Promise<void> {
 		await this.ensureQuestionBank();
 		// Plain (non-arcade) styling: this is a dense form/data screen, not one of the
@@ -1569,7 +1577,11 @@ export class SessionView extends ItemView {
 		type Entry = { conceptId: string; q: CachedQuestion };
 		const allEntries: Entry[] = [];
 		for (const [conceptId, qs] of Object.entries(this.questionBank)) {
-			for (const q of qs) allEntries.push({ conceptId, q });
+			// Rejected ("Bad question") entries are kept in the bank so their text still
+			// steers the model away from restating them, but they read as deleted to the
+			// student — hide them here rather than let a "deleted" question keep showing
+			// up in Manage questions.
+			for (const q of qs) if (!q.rejected) allEntries.push({ conceptId, q });
 		}
 
 		let cardSeq = 0;
@@ -3096,6 +3108,24 @@ export class SessionView extends ItemView {
 			return p;
 		}
 
+	/** Background top-up: keeps the buffer at least PREFETCH_LOOKAHEAD questions ahead
+	 * of `this.idx`, not just one loadNextBatch call's worth. loadNextBatch only ever
+	 * advances by a single step (one prebuilt question, or one BATCH-sized model call)
+	 * before returning, so calling it once per card — the previous behavior — left the
+	 * buffer exactly one shallow step ahead: a student answering a couple of quick
+	 * MC/TF questions faster than one round-trip could still catch up to it and land
+	 * back on goToQuestion's own blocking wait. Looping here (never awaited by the
+	 * caller) chains further calls in the background while the student is still on the
+	 * current card; loadNextBatch's `pending` guard makes that safe even if a previous
+	 * call is still in flight. */
+	private async prefetchAhead(): Promise<void> {
+		while (this.questions.length < this.targetCount && this.questions.length - this.idx < PREFETCH_LOOKAHEAD) {
+			const before = this.questions.length;
+			await this.loadNextBatch();
+			if (this.questions.length === before) break; // model produced nothing more / plan exhausted
+		}
+	}
+
 	/** A cached question for this concept that is safe to reuse now, or null. Requires a
 	 * bank entry whose source hash still matches the concept (note unchanged) AND whose
 	 * format satisfies the current "Question formats" setting (see `formatSatisfies`,
@@ -3121,7 +3151,9 @@ export class SessionView extends ItemView {
 		const bank = this.questionBank[conceptId];
 		if (!bank || !bank.length) return null;
 		const wantFormat = this.plugin.data.settings.questionFormats;
-		const fresh = bank.filter((e) => e.sourceHash === c.sourceHash && formatSatisfies(e.type, wantFormat));
+		const fresh = bank.filter(
+			(e) => e.sourceHash === c.sourceHash && !e.rejected && formatSatisfies(e.type, wantFormat),
+		);
 		if (!fresh.length) return null;
 		fresh.sort(
 			(a, b) => a.timesShown - b.timesShown || (a.lastShownAt ?? "").localeCompare(b.lastShownAt ?? ""),
@@ -3207,7 +3239,13 @@ export class SessionView extends ItemView {
 			// than a new one. Keeps rotation genuinely varied and stops MAX_VARIANTS slots
 			// filling up with near-duplicates of each other. Only affects what's persisted
 			// for future reuse; the question actually served this turn is unchanged.
-			const dup = kept.find((e) => questionSimilarity(e.question, q.question) >= NEAR_DUPLICATE_THRESHOLD);
+			// Never folds into a rejected entry — that would silently un-reject a "Bad
+			// question" variant just because the model regenerated something similar to
+			// it; a near-restatement of a rejected question is banked as its own fresh
+			// entry instead, so it can be independently rejected again if still bad.
+			const dup = kept.find(
+				(e) => !e.rejected && questionSimilarity(e.question, q.question) >= NEAR_DUPLICATE_THRESHOLD,
+			);
 			if (dup) {
 				dup.timesShown += 1;
 				dup.lastShownAt = new Date().toISOString();
@@ -3480,26 +3518,27 @@ export class SessionView extends ItemView {
 			return;
 		}
 		this.renderQuestion();
-		if (this.questions.length < this.targetCount) void this.loadNextBatch().catch(() => undefined);
+		if (this.questions.length < this.targetCount) void this.prefetchAhead().catch(() => undefined);
 	}
 
 	/** "Bad question": the current question is wrong, broken, or nonsensical — an AI
-	 * generation defect, not something to hold against the student. Purges the specific
-	 * cached variant so it can never be served again (a fresh one will be generated next
-	 * time this concept comes up), drops it from this session without recording an
-	 * answer or touching the concept's schedule, and shrinks the promised total by one
-	 * — same shortfall handling loadNextBatch already uses when the validator drops a
-	 * target. */
+	 * generation defect, not something to hold against the student. Tombstones the
+	 * specific cached variant (marks it `rejected` rather than removing it) so it can
+	 * never be served again, but its text still reaches the model as "already asked,
+	 * write something different" context next time this concept is due (see
+	 * priorQuestionsFor) — deleting the entry outright discarded that memory, so a
+	 * concept whose extracted source text is what's actually broken just regenerated
+	 * the same bad question again and again. Drops it from this session without
+	 * recording an answer or touching the concept's schedule, and shrinks the promised
+	 * total by one — same shortfall handling loadNextBatch already uses when the
+	 * validator drops a target. */
 	private async reportBadQuestion(): Promise<void> {
 		const q = this.questions[this.idx];
 		if (q.conceptId) {
-			const bank = this.questionBank[q.conceptId];
-			if (bank) {
-				const kept = bank.filter((e) => e.question !== q.question);
-				if (kept.length !== bank.length) {
-					this.questionBank[q.conceptId] = kept;
-					this.bankDirty = true;
-				}
+			const entry = this.questionBank[q.conceptId]?.find((e) => e.question === q.question);
+			if (entry && !entry.rejected) {
+				entry.rejected = true;
+				this.bankDirty = true;
 			}
 		}
 		this.questions.splice(this.idx, 1);
@@ -3776,7 +3815,12 @@ export class SessionView extends ItemView {
 			}
 
 			// Missing-link finder: append a capstone of confirmed connections (AI only).
-			if (s.graphInsights && cfg) {
+			// Due-only sessions (status bar, "Review due notes") skip this: they're
+			// scheduled review cards, not exploration, and a bridge question is never
+			// banked (see rememberGenerated) — appending one here guaranteed a live model
+			// call on a session that's otherwise built entirely to resolve from cache (see
+			// the comment right below). "Grill this note/folder" still gets bridges.
+			if (s.graphInsights && cfg && !this.dueOnly) {
 				await this.appendBridgeTargets(cfg, names);
 			}
 
@@ -3801,7 +3845,7 @@ export class SessionView extends ItemView {
 				return;
 			}
 			this.renderQuestion();
-			if (this.questions.length < this.targetCount) void this.loadNextBatch().catch(() => undefined);
+			if (this.questions.length < this.targetCount) void this.prefetchAhead().catch(() => undefined);
 		} catch (e) {
 			new Notice(`Grill: ${(e as Error).message}`, 8000);
 			this.renderStart();
@@ -4171,13 +4215,10 @@ export class SessionView extends ItemView {
 			}
 		}
 		this.recomputeAggregate(o.note);
-		const bank = this.questionBank[o.conceptId];
-		if (bank) {
-			const kept = bank.filter((e) => e.question !== r.question);
-			if (kept.length !== bank.length) {
-				this.questionBank[o.conceptId] = kept;
-				this.bankDirty = true;
-			}
+		const entry = this.questionBank[o.conceptId]?.find((e) => e.question === r.question);
+		if (entry && !entry.rejected) {
+			entry.rejected = true;
+			this.bankDirty = true;
 		}
 		const ri = this.results.lastIndexOf(r);
 		if (ri !== -1) this.results.splice(ri, 1);

@@ -24,6 +24,13 @@ export interface CachedQuestion extends Question {
 	sourceHash: string;
 	lastShownAt?: string;
 	timesShown: number;
+	/** Flagged "Bad question" mid-review. Kept (not removed) so its text still reaches
+	 * the model as "already tried, don't restate" context (see priorQuestionsFor in
+	 * view.ts) — deleting it outright let a malformed concept regenerate the same
+	 * broken question forever, since nothing recorded that this exact text had already
+	 * been rejected. Excluded from cacheHit (never re-served) and from the manage-
+	 * questions list (reads as gone to the student). */
+	rejected?: boolean;
 }
 
 /** Per-concept bank of cached questions, keyed by concept id. */

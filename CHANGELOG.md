@@ -1,5 +1,31 @@
 # Changelog
 
+## 5.8.1
+
+- **Fix: due reviews could trigger a missing-link question, and its live model call
+  stalled the review.** "Find missing links" was appended to every AI session
+  regardless of type, including the status bar's and "Review due notes"'s due-only
+  queue — genuinely scheduled review cards, not exploration. A bridge question is never
+  banked (it's a novel connection, not tied to one concept), so it always cost a real
+  model call, defeating a due session's own design: every concept in it has already
+  been asked before, so in the common case the whole thing should resolve from cache
+  with no model call at all. Missing links are now skipped for due-only sessions;
+  "Grill this note/folder" still gets them.
+- **Fix: the background prefetch that's supposed to hide question-generation latency
+  only ever stayed one shallow step ahead.** It fired a single `loadNextBatch()` call
+  per card, which advances by at most one batch (2 questions) from one model
+  round-trip, then stops — a couple of quick MC/TF answers could outrun that and catch
+  up to the buffer, landing back on the same synchronous wait it exists to avoid. The
+  prefetch now keeps looping in the background until 4 questions are buffered ahead of
+  wherever the student currently is, not 1.
+- **Fix: "Bad question" could keep coming back.** It purged the flagged question from
+  the cache outright — but that cache entry doubled as the "already asked this, write
+  something different" hint passed to the model on the concept's next review. Deleting
+  it erased that memory, so a concept whose extracted source text was itself the actual
+  defect just regenerated the same broken question again next time it came due. Rejected
+  questions are now kept as tombstones (never re-served, hidden from Manage questions)
+  instead of deleted, so the model still sees them as "don't restate this."
+
 ## 5.8.0
 
 - **Feature: image occlusion, done with local OCR instead of a model.** A note-embedded
