@@ -1,5 +1,22 @@
 # Changelog
 
+## 5.8.4
+
+- **Fix: the progress bar could re-partition segments already on screen, including
+  silently un-correcting a "Mark correct".** Past MAX_PROGRESS_SEGMENTS questions, the
+  bar buckets several questions into one segment, colored by the worst verdict in it —
+  and it recomputed bucket size fresh from the live `targetCount` on every render.
+  `targetCount` keeps shrinking through a session (a dropped validator batch during
+  background prefetch, "Bad question"), so a shrink didn't just stop adding segments
+  going forward, it silently redrew the boundaries for every segment already answered.
+  A bucket a "Mark correct" had just turned solid green could absorb a neighboring miss
+  on the very next render and read as never having been corrected — and the bar's total
+  segment count visibly changing mid-session, especially on a large due-only run, read
+  as it "not dividing up properly." Bucketing is now computed once, off the target
+  count at the moment the first question rendered, and never recomputed from a later
+  shrink — a session that ends earlier than planned just leaves a few trailing segments
+  gray instead of reshuffling the real ones.
+
 ## 5.8.3
 
 - **Fix: "New concepts per day" set to 0 meant unlimited, not none.** The setting's own

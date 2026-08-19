@@ -316,6 +316,18 @@ export class SessionView extends ItemView {
 	// Streaming generation state.
 	private questions: Question[] = [];
 	private targetCount = 0;
+	/** `targetCount` at the moment the first question rendered — a ceiling that only
+	 * ever holds steady or shrinks further from there, never grows back. `targetCount`
+	 * itself keeps shrinking through the session (a dropped validator batch, "Bad
+	 * question") — see progressBar's use of this instead: bucketing straight off the
+	 * live, shrinking `targetCount` recomputed `bucketSize` on every render, so a
+	 * shrink didn't just stop adding segments, it silently re-partitioned every segment
+	 * already on screen — a bucket a "Mark correct" had just turned solid green could
+	 * absorb a neighboring miss on the very next render and read as never having been
+	 * corrected. Frozen once, so already-rendered segments keep their boundaries and
+	 * colors for the rest of the session; a session that ends early than planned just
+	 * leaves a few trailing segments gray instead of reshuffling the real ones. */
+	private progressTotal = 0;
 	/** Relationships between the session's notes, from their links. */
 	private linksBlock = "";
 	/** Canonical misconception registry, held for the session (re-probe + resolve). */
@@ -2040,9 +2052,13 @@ export class SessionView extends ItemView {
 		// SEG_SEVERITY ranks a recorded wrong answer above "you're currently here" above a
 		// recorded correct answer, so one miss in a bucket doesn't get averaged away by the
 		// rest of it going well.
-		const bucketSize = Math.max(1, Math.ceil(this.targetCount / MAX_PROGRESS_SEGMENTS));
-		for (let start = 0; start < this.targetCount; start += bucketSize) {
-			const end = Math.min(start + bucketSize, this.targetCount);
+		//
+		// Bucketed off `progressTotal`, not the live `targetCount`: see its own doc
+		// comment — bucketing off a shrinking count re-partitions segments already on
+		// screen, not just the ones still to come.
+		const bucketSize = Math.max(1, Math.ceil(this.progressTotal / MAX_PROGRESS_SEGMENTS));
+		for (let start = 0; start < this.progressTotal; start += bucketSize) {
+			const end = Math.min(start + bucketSize, this.progressTotal);
 			let cls: string | null = null;
 			for (let i = start; i < end; i++) {
 				const r = this.results[i];
@@ -2955,6 +2971,7 @@ export class SessionView extends ItemView {
 		this.idx = 0;
 		this.pending = null;
 		this.targetCount = this.questions.length;
+		this.progressTotal = this.targetCount;
 		this.planCursor = 0;
 		this.routesUsed = 0;
 		this.routedNotes.clear();
@@ -3828,6 +3845,7 @@ export class SessionView extends ItemView {
 				this.questions = localQuestions(this.sessionConcepts, this.targetCount, (c) =>
 					conceptTargetDifficulty(this.concepts[c.id]),
 				);
+				this.progressTotal = this.targetCount;
 				this.renderQuestion();
 				return;
 			}
@@ -3865,6 +3883,7 @@ export class SessionView extends ItemView {
 				this.renderStart();
 				return;
 			}
+			this.progressTotal = this.targetCount;
 			this.renderQuestion();
 			if (this.questions.length < this.targetCount) void this.prefetchAhead().catch(() => undefined);
 		} catch (e) {
