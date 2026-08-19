@@ -1,5 +1,16 @@
 # Changelog
 
+## 5.8.2
+
+- **Fix: "Get grilled" — the default, primary review button — still triggered missing-
+  link questions and their latency.** 5.8.1 only excluded due-only sessions (status
+  bar, "Review due notes"); "Get grilled" sets `dueOnly` false too (it mixes due +
+  fresh material, same as a scoped "Grill this note/folder" session does), so it was
+  still bucketed in with deliberate exploration and still got bridges. Missing links
+  are now scoped to sessions the student explicitly picked content for — "Grill this
+  note/folder", a committed Custom Study pick — and skipped for both everyday review
+  flows, due-only and "Get grilled" alike.
+
 ## 5.8.1
 
 - **Fix: due reviews could trigger a missing-link question, and its live model call

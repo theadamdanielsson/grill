@@ -3815,12 +3815,15 @@ export class SessionView extends ItemView {
 			}
 
 			// Missing-link finder: append a capstone of confirmed connections (AI only).
-			// Due-only sessions (status bar, "Review due notes") skip this: they're
-			// scheduled review cards, not exploration, and a bridge question is never
-			// banked (see rememberGenerated) — appending one here guaranteed a live model
-			// call on a session that's otherwise built entirely to resolve from cache (see
-			// the comment right below). "Grill this note/folder" still gets bridges.
-			if (s.graphInsights && cfg && !this.dueOnly) {
+			// Restricted to a deliberately scoped session — "Grill this note/folder" or a
+			// committed Custom Study pick, both `sessionScope !== null` — never the two
+			// everyday review flows: due-only (status bar, "Review due notes") or "Get
+			// grilled" (sessionScope === null, the engine's own due+fresh mix, dueOnly
+			// false). Both of those read as ordinary review to the student, not
+			// exploration, and a bridge question is never banked (see rememberGenerated)
+			// — appending one guaranteed a live model call on what's otherwise meant to
+			// resolve from cache (see the due-only comment right below).
+			if (s.graphInsights && cfg && !this.dueOnly && this.sessionScope !== null) {
 				await this.appendBridgeTargets(cfg, names);
 			}
 
