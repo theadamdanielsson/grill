@@ -3764,13 +3764,31 @@ export class SessionView extends ItemView {
 
 			// No-key mode can only use concepts that carry a deterministic question.
 			const pickable = s.questionSource === "local" ? allConcepts.filter((c) => c.local) : allConcepts;
-			this.sessionConcepts = pickConcepts(pickable, this.concepts, want, this.dueOnly, new Date(), s.newConceptsPerDay, freshPolicy);
+			// The daily new-concept cap only governs the unscoped default flow ("Get
+			// grilled", sessionScope null) — a deliberately scoped pick ("Grill this
+			// note/folder", a committed Custom Study selection) isn't throttled by it, same
+			// reasoning as excluding those scopes from missing-links above: the cap exists
+			// to protect the passive daily flow from being flooded, not to silently trim a
+			// request the student explicitly made.
+			const applyDailyCap = this.sessionScope === null;
+			this.sessionConcepts = pickConcepts(
+				pickable,
+				this.concepts,
+				want,
+				this.dueOnly,
+				new Date(),
+				s.newConceptsPerDay,
+				freshPolicy,
+				applyDailyCap,
+			);
 			if (this.sessionConcepts.length === 0) {
 				const cappedOut =
-					!this.dueOnly && blockedByDailyCap(pickable, this.concepts, s.newConceptsPerDay, new Date());
+					applyDailyCap && blockedByDailyCap(pickable, this.concepts, s.newConceptsPerDay, new Date());
 				new Notice(
 					cappedOut
-						? `Grill: that's all the new material for today — you've hit your daily limit of ${s.newConceptsPerDay} new concepts. Come back tomorrow, or raise "New concepts per day" in Settings.`
+						? s.newConceptsPerDay === 0
+							? `Grill: nothing due, and "New concepts per day" is set to 0 — "Get grilled" won't introduce new material. Raise it in Settings, or use "Review N due now" / "Grill this note/folder" instead.`
+							: `Grill: that's all the new material for today — you've hit your daily limit of ${s.newConceptsPerDay} new concepts. Come back tomorrow, or raise "New concepts per day" in Settings.`
 						: s.questionSource === "local"
 							? "Grill: couldn't build questions from these notes' structure. Add some bold terms, headings, definitions or formulas, or switch questions to AI."
 							: "Grill: couldn't find concepts to quiz in these notes.",

@@ -314,6 +314,13 @@ export function pickConcepts(
 	now = new Date(),
 	newConceptsPerDay = 0,
 	freshPolicy: FreshContentPolicy = { share: 0.3, alwaysGuarantee: false },
+	// The daily cap exists to keep the *passive* default flow ("Get grilled", no
+	// explicit scope) from quietly flooding a sitting with never-before-tested
+	// material day after day. It has no business throttling a session the student
+	// deliberately scoped — "Grill this note/folder", a committed Custom Study pick —
+	// where asking for everything the scope actually contains, due or not, is the
+	// point. Callers pass false for those; true (the default) is "Get grilled".
+	applyDailyCap = true,
 ): Concept[] {
 	if (dueOnly) {
 		const due = concepts.filter((c) => {
@@ -348,7 +355,10 @@ export function pickConcepts(
 	// missed days can't leave the due queue permanently outrunning what's reviewable.
 	// Untested concepts beyond today's remaining quota simply don't enter this
 	// session's pool; due/rest (review of concepts already in the schedule) are
-	// unaffected, so a session still fills normally from what's actually due.
+	// unaffected, so a session still fills normally from what's actually due. 0 means
+	// exactly what it reads as — no new concepts, ever, not "no cap" — so it's a real
+	// way to make "Get grilled" pure review, not a footgun that silently uncaps it.
+	// Only applies when `applyDailyCap` (false for a deliberately scoped session).
 	//
 	// Interleave BEFORE slicing to `remaining`, not after: `untested` arrives grouped by
 	// note (concepts are appended note-by-note, and a note pickCandidates just prioritized
@@ -359,7 +369,7 @@ export function pickConcepts(
 	// note end to end, and the note you just got wrong would keep winning the slice again
 	// next session too.
 	let untestedPool = interleaveByNote(untested);
-	if (newConceptsPerDay > 0) {
+	if (applyDailyCap) {
 		const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 		const remaining = Math.max(0, newConceptsPerDay - newConceptsIntroducedSince(map, todayStart));
 		untestedPool = untestedPool.slice(0, remaining);
@@ -371,15 +381,16 @@ export function pickConcepts(
  * cap is spent: the scope DOES hold untested concepts, but the day's new-concept
  * budget is used up and there's nothing due/review to fall back on. Lets the UI say
  * "that's all for today" instead of the misleading "no quizzable concepts here" —
- * which otherwise sends users reformatting notes that are perfectly fine. Only
- * meaningful with a cap set (0 = no cap = never the blocker). */
+ * which otherwise sends users reformatting notes that are perfectly fine. 0 is a real
+ * cap (always blocked, not "no cap") — see pickConcepts. Only call this for the
+ * unscoped flow the cap actually governs; a scoped session (pickConcepts's
+ * `applyDailyCap = false`) never has anything to report here. */
 export function blockedByDailyCap(
 	concepts: Concept[],
 	map: ConceptMap,
 	newConceptsPerDay: number,
 	now = new Date(),
 ): boolean {
-	if (newConceptsPerDay <= 0) return false;
 	if (!concepts.some((c) => !conceptTested(map[c.id]))) return false;
 	const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 	return newConceptsIntroducedSince(map, todayStart) >= newConceptsPerDay;

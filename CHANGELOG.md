@@ -1,5 +1,26 @@
 # Changelog
 
+## 5.8.3
+
+- **Fix: "New concepts per day" set to 0 meant unlimited, not none.** The setting's own
+  slider read "0 = no daily cap" — technically documented, but backwards from what
+  dragging a "how much new material per day" control to its floor actually communicates.
+  With it at 0 and "New material share" nonzero, "Get grilled" pulled in never-before-
+  tested concepts with no daily limit at all, each one a genuine, uncacheable model
+  call — the real source of latency this whole run of fixes was chasing, unrelated to
+  missing-links or prefetch depth. 0 now means exactly what it reads as: no new
+  concepts, ever, pure review. Existing installs with 0 stored get carried to the
+  shipped default once (same one-shot precedent as 5.x's earlier default migration), so
+  nobody upgrades straight from "unlimited" to "none" with no signal — a deliberate 0
+  chosen after that sticks.
+- **Fix: the daily new-concept cap could throttle a session you explicitly scoped.**
+  "Grill this note/folder" and a committed Custom Study pick went through the same cap
+  as "Get grilled", so asking to be quizzed on one specific note could come back short
+  if the vault-wide daily budget happened to be spent — a limit meant to protect the
+  passive default flow, not something that should silently trim a deliberate, bounded
+  request. Scoped sessions now ignore the daily cap entirely; only "Get grilled" is
+  throttled by it.
+
 ## 5.8.2
 
 - **Fix: "Get grilled" — the default, primary review button — still triggered missing-

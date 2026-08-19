@@ -110,6 +110,14 @@ interface GrillSettings {
 	 * Guards the migration so it fires exactly once — after it, the user can freely
 	 * pick "off" / 0 again without being re-flipped on the next launch. */
 	legacyDefaultsMigrated: boolean;
+	/** One-time flag: installs where `newConceptsPerDay` was 0 have had it carried to
+	 * the shipped default once, the same protective one-shot as legacyDefaultsMigrated
+	 * above but for a later semantic change — 0 used to mean "no daily cap" (unlimited
+	 * new material every "Get grilled"); it now means what it reads as, zero new
+	 * concepts ever, so an untouched 0 needs carrying forward or those installs go
+	 * silently from unlimited to none. After this fires once, 0 sticks as a deliberate
+	 * choice. */
+	newConceptsCapMigrated: boolean;
 	/** What the graph's node colour encodes: the default 4-state mastery colour, or a
 	 * green-to-red gradient over a continuous metric. */
 	graphColorMode: ColorMode;
@@ -234,6 +242,7 @@ function defaultSettings(): GrillSettings {
 		freshContentShare: 30,
 		freshContentAlwaysGuarantee: false,
 		legacyDefaultsMigrated: false,
+		newConceptsCapMigrated: false,
 		showAdvancedSettings: false,
 		lastWarnedDuplicateBasenames: [],
 		arcBackfilled: false,
@@ -318,6 +327,7 @@ export default class GrillPlugin extends Plugin {
 		if (typeof s.freshContentShare === "number") settings.freshContentShare = s.freshContentShare;
 		if (typeof s.freshContentAlwaysGuarantee === "boolean") settings.freshContentAlwaysGuarantee = s.freshContentAlwaysGuarantee;
 		if (typeof s.legacyDefaultsMigrated === "boolean") settings.legacyDefaultsMigrated = s.legacyDefaultsMigrated;
+		if (typeof s.newConceptsCapMigrated === "boolean") settings.newConceptsCapMigrated = s.newConceptsCapMigrated;
 		if (typeof s.showAdvancedSettings === "boolean") settings.showAdvancedSettings = s.showAdvancedSettings;
 		if (Array.isArray(s.lastWarnedDuplicateBasenames)) {
 			settings.lastWarnedDuplicateBasenames = s.lastWarnedDuplicateBasenames.filter((v): v is string => typeof v === "string");
@@ -334,6 +344,16 @@ export default class GrillPlugin extends Plugin {
 			if (settings.graphNumberMode === "off") settings.graphNumberMode = "percent";
 			if (settings.newConceptsPerDay === 0) settings.newConceptsPerDay = 20;
 			settings.legacyDefaultsMigrated = true;
+		}
+		// A second, later one-shot: 0 stopped meaning "no daily cap" (unlimited new
+		// material in "Get grilled") and started meaning what it reads as, zero, ever.
+		// legacyDefaultsMigrated already fired for existing installs before this change
+		// existed, so it won't catch them — this carries an untouched 0 forward to the
+		// shipped default exactly once, same as above, so nobody upgrades straight from
+		// "unlimited" to "none" with no signal. A deliberate 0 chosen after this sticks.
+		if (!settings.newConceptsCapMigrated) {
+			if (settings.newConceptsPerDay === 0) settings.newConceptsPerDay = 20;
+			settings.newConceptsCapMigrated = true;
 		}
 		const calibration = Array.isArray(stored?.calibration) ? stored.calibration.filter(isCalPoint) : [];
 		const arcLog = Array.isArray(stored?.arcLog) ? stored.arcLog.filter(isArcEntry) : [];
@@ -1638,14 +1658,16 @@ class GrillSettingTab extends PluginSettingTab {
 		this.sliderSetting(
 			containerEl,
 			"New concepts per day",
-			"Caps how many never-before-tested concepts a session will introduce per calendar day, on top " +
-				"of the per-session limits above. Once hit, sessions fill remaining slots by reviewing what's " +
-				"already due instead, so a few missed days can't leave the due queue permanently outrunning " +
-				"what you can actually review. 0 = no daily cap.",
+			"Caps how many never-before-tested concepts \"Get grilled\" will introduce per calendar day, on " +
+				"top of the per-session limits above. Once hit, sessions fill remaining slots by reviewing " +
+				"what's already due instead, so a few missed days can't leave the due queue permanently " +
+				"outrunning what you can actually review. 0 = no new concepts at all, ever — pure review. " +
+				"Only governs \"Get grilled\": a deliberately scoped session (\"Grill this note/folder\", a " +
+				"committed Custom Study pick) is never throttled by this, whatever it's set to.",
 			0,
 			100,
 			Math.min(Math.max(s.newConceptsPerDay, 0), 100),
-			(v) => (v === 0 ? "No cap" : `${v}/day`),
+			(v) => (v === 0 ? "None" : `${v}/day`),
 			async (v) => {
 				s.newConceptsPerDay = v;
 				await this.plugin.persist();
