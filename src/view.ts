@@ -4,7 +4,15 @@ import { ItemView, MarkdownRenderer, Notice, Platform, setIcon, TFile, Workspace
 import type GrillPlugin from "./main";
 import { adjudicateBridges, ConceptTarget, debriefSession, embedTexts, explainQuestion, formatSatisfies, generateQuestions, Grade, gradeAnswer, LLMConfig, Question, supportsEmbeddings, supportsVision, Verdict } from "./llm";
 import { detectOcclusionRegions } from "./ocr";
-import { Concept, ConceptKind, extractConcepts, localQuestionForConcept, localQuestions } from "./generate-local";
+import {
+	Concept,
+	ConceptExtractionCacheMap,
+	ConceptKind,
+	extractConcepts,
+	extractConceptsCached,
+	localQuestionForConcept,
+	localQuestions,
+} from "./generate-local";
 import { BridgeMap, CANDIDATE_CAP, detectBridgeCandidates, detectSemanticBridgeCandidates, pairKey } from "./bridges";
 import { buildGraph, formatGrade, gradeScore, type GraphNode } from "./graph";
 import { GraphAppearance, LearningMap, MapPalette } from "./mapview";
@@ -27,7 +35,7 @@ import {
 } from "./concepts";
 import { collectNoteImages, ImageInput } from "./images";
 import { collectNotePdfText, extractPdfTextCached } from "./pdf";
-import { hashStr, safeSlice } from "./text";
+import { hashStr, mapWithConcurrency, safeSlice } from "./text";
 import {
 	buildDueDateHistogram,
 	DueDateHistogram,
@@ -141,6 +149,12 @@ function renderFlameIcon(container: HTMLElement): void {
 }
 
 const NOTE_CHAR_CAP = 4000;
+/** How many reference documents / notes startSession scans at once (see
+ * mapWithConcurrency in text.ts). These reads/parses are independent of each other,
+ * so serializing them one at a time (the old `for...await` loop) paid N round-trips
+ * of latency for nothing; this just bounds how many are in flight so a huge reference
+ * library doesn't try to open hundreds of files simultaneously. */
+const SESSION_SCAN_CONCURRENCY = 8;
 /** Sanity ceiling, not a meaningful UX cap, used wherever a session must not be capped
  * by the normal per-sitting settings: a due-only session's question count (due sessions
  * must not be capped by `questionsPerSession` — that setting is for how much a study
@@ -3088,6 +3102,7 @@ export class SessionView extends ItemView {
 						const t = q.type ?? "write";
 						formatCounts[t] = (formatCounts[t] ?? 0) + 1;
 					}
+					const genStart = Date.now();
 					const qs = await generateQuestions(
 						cfg,
 						batchNotesText,
@@ -3099,6 +3114,7 @@ export class SessionView extends ItemView {
 						this.plugin.data.settings.questionFormats,
 						formatCounts,
 					);
+					console.debug(`Grill: generateQuestions (${batch.length} target(s)) took ${Date.now() - genStart}ms`);
 					// The cursor already advanced past this whole batch (targets consumed,
 					// not questions produced — see above), so any target the validator
 					// dropped, partially or entirely, is never coming back. Shrink the
@@ -3674,6 +3690,15 @@ export class SessionView extends ItemView {
 			// touching a dozen notes that all embed the same worksheet should cost one
 			// pdf.js parse total (on a cache miss), not one per note (see pdf.ts).
 			const pdfCache = await this.plugin.store.loadPdfCache();
+			// See generate-local.ts's ConceptExtractionCacheMap: extractConcepts() is a
+			// real regex-parse cost, run again here for every reference document AND every
+			// note on every session start. Caching its output by (file, text-hash, format
+			// mode) means a session where nothing changed since last time — the common
+			// case, and exactly what a "due review" session is — skips that cost entirely
+			// instead of re-parsing a library of reference docs just to throw the same
+			// result away. Loaded/saved once per scan, same convention as pdfCache above.
+			const conceptCache = await this.plugin.store.loadConceptExtractionCache();
+			const formatMode = this.plugin.data.settings.questionFormats;
 			// Reference documents (Instructions.md's upload area), BEFORE the notes loop
 			// below — order matters here, not just correctness: pickConcepts' fresh-content
 			// reserve interleaves untested concepts round-robin by note in FIRST-APPEARANCE
@@ -3694,15 +3719,29 @@ export class SessionView extends ItemView {
 			// note is, so there's no "which folder is this relevant to" scoping decision to
 			// make here (see the doc comment on MAX_REFERENCE_DOCS in store.ts for why the
 			// library can be large rather than a curated handful).
-			for (const file of await this.plugin.store.listReferenceDocFiles()) {
+			// Both loops below are parallelized (mapWithConcurrency, text.ts) rather than a
+			// sequential for...await: each iteration only touches its own key in
+			// conceptsByNote/noteText/noteImages, so there's no shared state to race on
+			// except pdfCache — and the worst case there is two notes that embed the exact
+			// same not-yet-cached PDF both missing the cache at once and parsing it twice,
+			// a one-time, self-correcting cost on first sight of that file, not a
+			// correctness bug (see pdf.ts's extractPdfTextCached: last write wins, and both
+			// writes are the same value).
+			const refDocScanStart = Date.now();
+			const refDocFiles = await this.plugin.store.listReferenceDocFiles();
+			await mapWithConcurrency(refDocFiles, SESSION_SCAN_CONCURRENCY, async (file) => {
 				const text = await extractPdfTextCached(this.app, file, pdfCache);
-				if (!text) continue;
-				this.conceptsByNote.set(file.name, extractConcepts(file.name, text, this.plugin.data.settings.questionFormats));
+				if (!text) return;
+				this.conceptsByNote.set(file.name, extractConceptsCached(file.name, text, formatMode, conceptCache));
 				this.noteText[file.name] = text.length > NOTE_CHAR_CAP ? safeSlice(text, NOTE_CHAR_CAP) + "\n[truncated]" : text;
-			}
-			for (const n of names) {
+			});
+			console.debug(
+				`Grill: scanned ${refDocFiles.length} reference doc(s) in ${Date.now() - refDocScanStart}ms`,
+			);
+			const notesScanStart = Date.now();
+			await mapWithConcurrency(names, SESSION_SCAN_CONCURRENCY, async (n) => {
 				const file = byName.get(n);
-				if (!file) continue;
+				if (!file) return;
 				const raw = await this.app.vault.cachedRead(file);
 				// A note that only embeds a PDF (`![[worksheet.pdf]]`) has real content, just
 				// none of it in the note's own markdown text — pull the PDF's text in as if
@@ -3711,7 +3750,7 @@ export class SessionView extends ItemView {
 				const pdfText = await collectNotePdfText(this.app, file, pdfCache);
 				const text = pdfText ? `${raw}\n\n${pdfText}` : raw;
 				// Extract concepts from the FULL note; only the prompt context is truncated.
-				this.conceptsByNote.set(n, extractConcepts(n, text, this.plugin.data.settings.questionFormats));
+				this.conceptsByNote.set(n, extractConceptsCached(n, text, formatMode, conceptCache));
 				this.noteText[n] = text.length > NOTE_CHAR_CAP ? safeSlice(text, NOTE_CHAR_CAP) + "\n[truncated]" : text;
 				if (vision) {
 					const imgs = await collectNoteImages(this.app, file, IMAGES_PER_NOTE_CAP);
@@ -3725,8 +3764,10 @@ export class SessionView extends ItemView {
 						if (imgs.length) this.noteImages[n] = imgs;
 					}
 				}
-			}
+			});
+			console.debug(`Grill: scanned ${names.length} note(s) in ${Date.now() - notesScanStart}ms`);
 			await this.plugin.store.savePdfCache(pdfCache);
+			await this.plugin.store.saveConceptExtractionCache(conceptCache);
 			// "Send images" is on, but the chosen model can't actually read them: the
 			// session still runs fine (the model is told to quiz text only), but silently
 			// — with no visible sign the toggle isn't doing anything for this model, it
@@ -3742,9 +3783,12 @@ export class SessionView extends ItemView {
 			// appendOcclusionConcepts's own doc comment for why this replaced the earlier
 			// vision-LLM version (dogfooding found bbox-guessing too imprecise to ship).
 			if (occlusionEnabled) {
+				const occlusionStart = Date.now();
 				await this.appendOcclusionConcepts(names);
+				console.debug(`Grill: occlusion scan took ${Date.now() - occlusionStart}ms`);
 			}
 
+			const graphStart = Date.now();
 			const selectedFiles = names.map((n) => byName.get(n)).filter((f): f is TFile => !!f);
 			const graph = buildSessionGraph(this.app, selectedFiles);
 			this.linksBlock = formatLinksBlock(graph, this.plugin.mastery);
@@ -3752,6 +3796,7 @@ export class SessionView extends ItemView {
 			this.sessionNeighbors = new Map(
 				Object.entries(graph.adjacency).map(([n, adj]) => [n, [...new Set([...adj.linksTo, ...adj.linkedFrom])]]),
 			);
+			console.debug(`Grill: session graph build took ${Date.now() - graphStart}ms`);
 
 			// Concept layer: reconcile the extracted concepts (create new ones,
 			// re-open any whose source text changed), then pick which to test.

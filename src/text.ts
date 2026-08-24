@@ -31,3 +31,28 @@ export function hashStr(s: string): string {
 	for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
 	return h.toString(36);
 }
+
+/** Run `fn` over `items` with at most `limit` in flight at once, preserving output
+ * order. Session-start scans (reference documents, then notes) used to run these one
+ * at a time with a plain `for...await` loop — correct, but serializing N independent
+ * vault reads/PDF parses that don't depend on each other paid N round-trips of
+ * latency for no reason. A worker-pool pull loop (rather than chunking into batches
+ * of `limit`) keeps every slot busy even when items finish at different speeds, e.g.
+ * a cached PDF resolving instantly next to an uncached one still parsing. */
+export async function mapWithConcurrency<T, R>(
+	items: T[],
+	limit: number,
+	fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+	const results: R[] = new Array(items.length);
+	let next = 0;
+	async function worker(): Promise<void> {
+		for (;;) {
+			const i = next++;
+			if (i >= items.length) return;
+			results[i] = await fn(items[i], i);
+		}
+	}
+	await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+	return results;
+}

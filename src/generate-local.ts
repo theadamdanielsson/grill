@@ -861,6 +861,45 @@ export function extractConcepts(note: string, text: string, mode: FormatMode = "
 	return concepts;
 }
 
+/** One file's extracted concepts, memoized against the exact text (and format mode)
+ * they were extracted from. Keyed by djb2 hash (hashStr, from text.ts) rather than
+ * mtime/size like pdf.ts's PdfCacheEntry: a note's effective text is its own markdown
+ * plus any embedded PDFs' text (see view.ts's startSession), so a single file-level
+ * mtime/size can't detect "an embedded PDF changed but the note itself didn't" —
+ * hashing the actual combined text sidesteps that without tracking every source. */
+export interface ConceptExtractionCacheEntry {
+	hash: string;
+	mode: FormatMode;
+	concepts: Concept[];
+}
+
+/** Keyed the same way view.ts's `conceptsByNote` is: a note's basename, or a
+ * reference document's filename WITH extension. Persisted by the caller (see
+ * GrillStore.loadConceptExtractionCache/saveConceptExtractionCache) — this module
+ * only reads and mutates the map handed to it. */
+export type ConceptExtractionCacheMap = Record<string, ConceptExtractionCacheEntry>;
+
+/** Cache-aware extractConcepts: extractConcepts() is a real CPU cost (several regex
+ * passes over the full source text, capped per note but still run for every note AND
+ * every reference document on every single session start) — reusing the last result
+ * when the exact text and format mode haven't changed turns the common case of
+ * "nothing changed since last session" into one cheap hash-and-compare instead of a
+ * full re-parse. Mutates `cache` in place on a miss; the caller owns persisting it,
+ * same convention as pdf.ts's extractPdfTextCached. */
+export function extractConceptsCached(
+	note: string,
+	text: string,
+	mode: FormatMode,
+	cache: ConceptExtractionCacheMap,
+): Concept[] {
+	const hash = hashStr(text);
+	const hit = cache[note];
+	if (hit && hit.hash === hash && hit.mode === mode) return hit.concepts;
+	const concepts = extractConcepts(note, text, mode);
+	cache[note] = { hash, mode, concepts };
+	return concepts;
+}
+
 /** The no-key question for a concept (its deterministic card), tagged with the
  * concept id. Null for the note fallback, which has no fixed question. `difficulty`
  * defaults to "medium" for callers with no scheduling context to seed it from, but

@@ -16,6 +16,7 @@ import { ConceptMap } from "./concepts";
 import { safeSlice } from "./text";
 import { BridgeMap } from "./bridges";
 import { PdfCacheMap } from "./pdf";
+import { ConceptExtractionCacheMap } from "./generate-local";
 
 /** A generated question cached for reuse. `sourceHash` ties it to the concept's
  * source text at generation time; a mismatch means the note changed and the entry
@@ -113,6 +114,10 @@ export class GrillStore {
 
 	private pdfCachePath(): string {
 		return normalizePath(`${this.folder()}/pdf-cache.json`);
+	}
+
+	private conceptExtractionCachePath(): string {
+		return normalizePath(`${this.folder()}/concept-extraction-cache.json`);
 	}
 
 	/** Where uploads from the Instructions note's document area land. Same folder
@@ -381,6 +386,20 @@ export class GrillStore {
 	async savePdfCache(map: PdfCacheMap): Promise<void> {
 		await this.ensureFolder(this.folder());
 		await this.saveJSON(this.pdfCachePath(), JSON.stringify(map));
+	}
+
+	/** Cache of extractConcepts() output, keyed by note/reference-doc name, so the
+	 * regex-based structural parse (headings, bold terms, definitions, LaTeX, cloze
+	 * cards) only reruns for a file when its effective text actually changed since
+	 * last session — see generate-local.ts's ConceptExtractionCacheMap doc comment
+	 * for the invalidation rule. */
+	async loadConceptExtractionCache(): Promise<ConceptExtractionCacheMap> {
+		return this.loadJSON<ConceptExtractionCacheMap>(this.conceptExtractionCachePath(), {});
+	}
+
+	async saveConceptExtractionCache(map: ConceptExtractionCacheMap): Promise<void> {
+		await this.ensureFolder(this.folder());
+		await this.saveJSON(this.conceptExtractionCachePath(), JSON.stringify(map));
 	}
 
 	/** Copy a picked file's bytes into the Grill Attachments folder — deduplicating

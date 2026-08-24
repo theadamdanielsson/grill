@@ -1,5 +1,22 @@
 # Changelog
 
+## 5.8.5
+
+- **Fix: session start re-scanned every uploaded reference document and note from
+  scratch, every time — even a fully-cached review with no model call to make.**
+  "Get grilled" ran a mandatory, sequential scan of every attached reference document
+  (up to the 300-document cap) and every note in scope before it ever checked whether
+  the session's questions were already cached. PDF text itself was cached by mtime and
+  size, but the actual expensive step — the regex-based concept parser that reads
+  headings, bold terms, definitions, LaTeX and cloze cards out of the full text — reran
+  on every single file, uncached, on every single session start, one file at a time. A
+  due-review session that resolves entirely from the question bank still paid that cost
+  in full before showing a single card, and it scaled directly with how much you'd
+  uploaded. Concept extraction is now cached per file, invalidated the moment its
+  actual text changes rather than on a fixed schedule, and both scans now run in
+  parallel instead of one at a time — a review session with nothing changed since last
+  time should feel instant again, reference library or not.
+
 ## 5.8.4
 
 - **Fix: the progress bar could re-partition segments already on screen, including
