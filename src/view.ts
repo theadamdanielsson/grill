@@ -2282,17 +2282,30 @@ export class SessionView extends ItemView {
 			// Matching: fixed-order left column of prompts, shuffled right-column pool.
 			// Tap a left row to arm it, then tap a right option to assign the pair;
 			// tapping an already-assigned left row lets you reassign it before Submit.
+			// The ✕ on a filled slot clears it back to unmatched without picking a
+			// replacement — needed on its own (not just reassignment) for working a
+			// match by elimination: undo a guess and leave it open while you fill in
+			// the ones you're sure of first.
 			const pairs = q.pairs as { left: string; right: string }[];
 			const matchWrap = card.createDiv({ cls: "grill-match-wrap" });
 			const leftCol = matchWrap.createDiv({ cls: "grill-match-col" });
 			const rightCol = matchWrap.createDiv({ cls: "grill-match-col grill-match-pool" });
-			const slots = new Map<string, HTMLElement>();
+			const slots = new Map<string, { text: HTMLElement; clear: HTMLButtonElement }>();
 			const leftRows = new Map<string, HTMLElement>();
 			const rightBtns = new Map<string, HTMLButtonElement>();
 			let armed: string | null = null;
 			const setArmed = (left: string | null) => {
 				armed = left;
 				for (const [l, lrow] of leftRows) lrow.toggleClass("is-armed", l === left);
+			};
+			const clearAssignment = (leftKey: string) => {
+				const prev = matchPicks[leftKey];
+				if (!prev) return;
+				rightBtns.get(prev)?.removeClass("is-used");
+				delete matchPicks[leftKey];
+				const slot = slots.get(leftKey)!;
+				slot.text.setText("Tap a match →");
+				slot.clear.hide();
 			};
 			for (const p of pairs) {
 				const lrow = leftCol.createDiv({ cls: "grill-match-row" });
@@ -2301,7 +2314,19 @@ export class SessionView extends ItemView {
 				// (this row is `display: flex`) behaves the same either way, so div is the safe
 				// choice here regardless.
 				this.md(p.left, lrow.createDiv({ cls: "grill-match-label" }), q.node);
-				slots.set(p.left, lrow.createDiv({ cls: "grill-match-slot", text: "Tap a match →" }));
+				const slot = lrow.createDiv({ cls: "grill-match-slot" });
+				const slotText = slot.createSpan({ cls: "grill-match-slot-text", text: "Tap a match →" });
+				const clearBtn = slot.createEl("button", {
+					cls: "grill-match-clear clickable-icon",
+					attr: { "aria-label": "Clear this match" },
+				});
+				clearBtn.setText("✕");
+				clearBtn.hide();
+				clearBtn.onclick = (e) => {
+					e.stopPropagation(); // don't also arm/disarm the row underneath
+					clearAssignment(p.left);
+				};
+				slots.set(p.left, { text: slotText, clear: clearBtn });
 				leftRows.set(p.left, lrow);
 				lrow.onclick = () => setArmed(armed === p.left ? null : p.left);
 			}
@@ -2310,7 +2335,9 @@ export class SessionView extends ItemView {
 				if (prev) rightBtns.get(prev)?.removeClass("is-used");
 				matchPicks[leftKey] = right;
 				btn.addClass("is-used");
-				slots.get(leftKey)!.setText(right);
+				const slot = slots.get(leftKey)!;
+				slot.text.setText(right);
+				slot.clear.show();
 				setArmed(null);
 			};
 			const shuffledRight = shuffled(pairs.map((p) => p.right));

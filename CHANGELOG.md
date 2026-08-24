@@ -1,5 +1,15 @@
 # Changelog
 
+## 5.8.6
+
+- **Fix: no way to clear a match question's answer, only reassign it.** Once you'd
+  tapped a right-side answer onto a left term, the only way to change it was to arm
+  the row again and pick a *different* answer — there was no way to just undo it and
+  leave the row unmatched. That's exactly the move a match question by elimination
+  needs: clear a guess and come back to it after the ones you're sure of. A small ✕
+  now appears on any filled slot; tapping it frees that answer back into the pool and
+  resets the row to "Tap a match →" without touching your other picks.
+
 ## 5.8.5
 
 - **Fix: session start re-scanned every uploaded reference document and note from
