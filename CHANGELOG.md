@@ -1,5 +1,19 @@
 # Changelog
 
+## 5.8.7
+
+- **Improvement: a long note or a big reference document kept whatever fell in the
+  first 4000 characters, not whatever was actually relevant.** The prompt context sent
+  alongside a generation/grading call was a flat character-count truncation — a note
+  or an uploaded PDF past the cutoff just lost everything after it, regardless of
+  whether the material that got cut was the material actually being tested. A note
+  is now ranked by relevance to its own extracted concepts first: the sections that
+  actually contain quizzable material are kept in full, in their original order,
+  while everything else survives as a short stub (its heading, or its first line)
+  instead of disappearing outright. Falls back to the old flat truncation whenever
+  there's nothing to rank against or nothing matched — never worse than before,
+  often meaningfully better on long or reference-heavy notes.
+
 ## 5.8.6
 
 - **Fix: no way to clear a match question's answer, only reassign it.** Once you'd

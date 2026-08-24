@@ -900,6 +900,108 @@ export function extractConceptsCached(
 	return concepts;
 }
 
+/** Target size for a ranking chunk (see splitForRanking) — small enough that a score
+ * stays specific to one paragraph/section rather than blending several unrelated ones
+ * into a single bucket, large enough that most single-topic paragraphs survive intact
+ * instead of getting fragmented mid-thought. */
+const RANK_CHUNK_TARGET = 600;
+/** A skipped chunk still shows up as this many characters of its own text (its heading,
+ * or its first line) — the model sees the note kept a whole table of contents' worth
+ * of structure even where the actual prose got compressed away, rather than a hard
+ * edge where everything past some cutoff simply isn't there. */
+const RANK_STUB_CHARS = 80;
+
+interface RankedChunk {
+	heading: string;
+	body: string;
+	order: number;
+}
+
+/** Same heading-detection convention as itemsForNote's main walk, applied to whole
+ * paragraphs instead of single lines: a run of paragraphs under the most recent heading
+ * (or under none, for a preamble) accumulates into one chunk until it crosses
+ * RANK_CHUNK_TARGET, so scoring below operates on section-sized, not line-sized, units. */
+function splitForRanking(text: string): RankedChunk[] {
+	const paragraphs = text.split(/\n{2,}/);
+	const chunks: RankedChunk[] = [];
+	let heading = "";
+	let buf: string[] = [];
+	let order = 0;
+	const flush = () => {
+		const body = buf.join("\n\n").trim();
+		if (body) chunks.push({ heading, body, order: order++ });
+		buf = [];
+	};
+	for (const para of paragraphs) {
+		const hm = /^(#{1,6})\s+(.+?)\s*#*$/.exec(para.trim());
+		if (hm) {
+			flush();
+			heading = hm[2];
+			continue;
+		}
+		buf.push(para);
+		if (buf.join("\n\n").length >= RANK_CHUNK_TARGET) flush();
+	}
+	flush();
+	return chunks;
+}
+
+/** How many distinct query terms a chunk contains — a heading hit counts double, since
+ * a section whose own heading names the concept is a much stronger relevance signal
+ * than one that happens to mention the word once in passing. */
+function scoreChunk(chunk: RankedChunk, terms: string[]): number {
+	const headingLower = chunk.heading.toLowerCase();
+	const bodyLower = chunk.body.toLowerCase();
+	let score = 0;
+	for (const term of terms) {
+		if (headingLower.includes(term)) score += 2;
+		else if (bodyLower.includes(term)) score += 1;
+	}
+	return score;
+}
+
+/** Cheap, local replacement for a flat character-count truncation: rank a note's text
+ * by relevance to its own extracted concepts — the things Grill might actually quiz on
+ * from it — instead of just keeping whatever happens to fall before an arbitrary
+ * cutoff. The highest-scoring sections are kept in full, in their original order;
+ * everything else survives only as a short stub (its heading, or its first line), so
+ * the model still sees the note's overall shape instead of a document that silently
+ * ends partway through. Returns null (not a worse result of its own) when there's
+ * nothing to rank against (no concepts) or no term actually matched anything — a
+ * ranking with no real signal is worse than no ranking at all, so the caller should
+ * fall back to its own flat truncation in that case, not trust an arbitrary chunk
+ * selection. */
+export function selectRelevantText(text: string, concepts: Concept[], maxChars: number): string | null {
+	if (text.length <= maxChars) return text;
+	const terms = [...new Set(concepts.map((c) => c.label.trim().toLowerCase()).filter((t) => t.length >= 3))];
+	if (!terms.length) return null;
+	const chunks = splitForRanking(text);
+	if (chunks.length < 2) return null; // nothing to rank between
+	const scored = chunks.map((c) => ({ chunk: c, score: scoreChunk(c, terms) }));
+	if (!scored.some((s) => s.score > 0)) return null;
+	const ranked = [...scored].sort((a, b) => b.score - a.score || a.chunk.order - b.chunk.order);
+	const keep = new Set<number>();
+	let used = 0;
+	for (const { chunk, score } of ranked) {
+		if (score <= 0) break;
+		const piece = (chunk.heading ? `${chunk.heading}\n` : "") + chunk.body;
+		if (used + piece.length > maxChars) continue;
+		keep.add(chunk.order);
+		used += piece.length;
+	}
+	if (!keep.size) return null;
+	const parts: string[] = [];
+	for (const chunk of chunks) {
+		if (keep.has(chunk.order)) {
+			parts.push(chunk.heading ? `${chunk.heading}\n${chunk.body}` : chunk.body);
+		} else {
+			const stub = safeSlice(chunk.heading || chunk.body.replace(/\s+/g, " ").trim(), RANK_STUB_CHARS);
+			if (stub) parts.push(`[…] ${stub}`);
+		}
+	}
+	return parts.join("\n\n");
+}
+
 /** The no-key question for a concept (its deterministic card), tagged with the
  * concept id. Null for the note fallback, which has no fixed question. `difficulty`
  * defaults to "medium" for callers with no scheduling context to seed it from, but

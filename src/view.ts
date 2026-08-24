@@ -12,6 +12,7 @@ import {
 	extractConceptsCached,
 	localQuestionForConcept,
 	localQuestions,
+	selectRelevantText,
 } from "./generate-local";
 import { BridgeMap, CANDIDATE_CAP, detectBridgeCandidates, detectSemanticBridgeCandidates, pairKey } from "./bridges";
 import { buildGraph, formatGrade, gradeScore, type GraphNode } from "./graph";
@@ -3759,8 +3760,12 @@ export class SessionView extends ItemView {
 			await mapWithConcurrency(refDocFiles, SESSION_SCAN_CONCURRENCY, async (file) => {
 				const text = await extractPdfTextCached(this.app, file, pdfCache);
 				if (!text) return;
-				this.conceptsByNote.set(file.name, extractConceptsCached(file.name, text, formatMode, conceptCache));
-				this.noteText[file.name] = text.length > NOTE_CHAR_CAP ? safeSlice(text, NOTE_CHAR_CAP) + "\n[truncated]" : text;
+				const docConcepts = extractConceptsCached(file.name, text, formatMode, conceptCache);
+				this.conceptsByNote.set(file.name, docConcepts);
+				this.noteText[file.name] =
+					text.length > NOTE_CHAR_CAP
+						? (selectRelevantText(text, docConcepts, NOTE_CHAR_CAP) ?? safeSlice(text, NOTE_CHAR_CAP) + "\n[truncated]")
+						: text;
 			});
 			console.debug(
 				`Grill: scanned ${refDocFiles.length} reference doc(s) in ${Date.now() - refDocScanStart}ms`,
@@ -3777,8 +3782,18 @@ export class SessionView extends ItemView {
 				const pdfText = await collectNotePdfText(this.app, file, pdfCache);
 				const text = pdfText ? `${raw}\n\n${pdfText}` : raw;
 				// Extract concepts from the FULL note; only the prompt context is truncated.
-				this.conceptsByNote.set(n, extractConceptsCached(n, text, formatMode, conceptCache));
-				this.noteText[n] = text.length > NOTE_CHAR_CAP ? safeSlice(text, NOTE_CHAR_CAP) + "\n[truncated]" : text;
+				const noteConcepts = extractConceptsCached(n, text, formatMode, conceptCache);
+				this.conceptsByNote.set(n, noteConcepts);
+				// Rank by relevance to this note's own concepts (see selectRelevantText's
+				// doc comment) instead of a flat character cutoff, so a long note or a big
+				// PDF import keeps the sections that actually contain quizzable material
+				// rather than whatever happens to fall in the first NOTE_CHAR_CAP characters.
+				// Falls back to the old flat truncation when there's nothing to rank
+				// against or rank with — never worse than today, sometimes much better.
+				this.noteText[n] =
+					text.length > NOTE_CHAR_CAP
+						? (selectRelevantText(text, noteConcepts, NOTE_CHAR_CAP) ?? safeSlice(text, NOTE_CHAR_CAP) + "\n[truncated]")
+						: text;
 				if (vision) {
 					const imgs = await collectNoteImages(this.app, file, IMAGES_PER_NOTE_CAP);
 					if (imgs.length) this.noteImages[n] = imgs;
