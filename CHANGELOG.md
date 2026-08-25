@@ -1,5 +1,16 @@
 # Changelog
 
+## 5.8.8
+
+- **Fix: one wrong answer turned an entire progress-bar segment red, even with
+  several correct answers bucketed alongside it.** Past 30 questions, the session
+  progress bar buckets consecutive questions into a single segment and colored it by
+  the single worst outcome inside — a bucket of five correct answers and one miss
+  read identically to a bucket that was all misses. Bucket color is now based on what's
+  actually in it: solid green only if every answer was correct, solid red only if every
+  answer was wrong, and a mixed bucket (or a bucket of partial-credit answers) now
+  shows the "mixed" orange instead of defaulting to red.
+
 ## 5.8.7
 
 - **Improvement: a long note or a big reference document kept whatever fell in the

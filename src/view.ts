@@ -184,10 +184,6 @@ function autoNotesPoolCap(questionsPerSession: number, totalNotes: number): numb
 
 /** Progress bar segment cap — see progressBar's bucketing comment. */
 const MAX_PROGRESS_SEGMENTS = 30;
-/** Ascending severity for bucketing multiple questions into one progress segment: a
- * recorded wrong answer outranks "you're currently here", which outranks a recorded
- * correct answer. */
-const SEG_SEVERITY = ["grill-seg-correct", "grill-seg-current", "grill-seg-skipped", "grill-seg-partial", "grill-seg-incorrect"];
 /** Questions generated per model call. Small batches cut the wait before the
  * first question and let the next batch prefetch while the user answers. */
 const BATCH = 2;
@@ -2063,10 +2059,12 @@ export class SessionView extends ItemView {
 		// a due session can run to 200+ questions (see the end-session escape hatch above),
 		// and past a few dozen the fixed gaps alone overflow the bar's width, breaking the
 		// layout instead of showing progress. Beyond MAX_PROGRESS_SEGMENTS, consecutive
-		// questions are bucketed into one segment, colored by the worst thing in it —
-		// SEG_SEVERITY ranks a recorded wrong answer above "you're currently here" above a
-		// recorded correct answer, so one miss in a bucket doesn't get averaged away by the
-		// rest of it going well.
+		// questions are bucketed into one segment, colored by what's actually in it: solid
+		// green only if every answer in the bucket was correct, solid red only if every
+		// answer was wrong, and anything else (a mix, or a partial-credit verdict) reads as
+		// the "mixed" orange — a single miss among several correct answers no longer paints
+		// the whole bucket red, which used to make a bucket a "Mark correct" had just fixed
+		// look like it was never corrected.
 		//
 		// Bucketed off `progressTotal`, not the live `targetCount`: see its own doc
 		// comment — bucketing off a shrinking count re-partitions segments already on
@@ -2074,21 +2072,38 @@ export class SessionView extends ItemView {
 		const bucketSize = Math.max(1, Math.ceil(this.progressTotal / MAX_PROGRESS_SEGMENTS));
 		for (let start = 0; start < this.progressTotal; start += bucketSize) {
 			const end = Math.min(start + bucketSize, this.progressTotal);
-			let cls: string | null = null;
+			let correctCount = 0;
+			let partialCount = 0;
+			let incorrectCount = 0;
+			let skippedCount = 0;
+			let hasCurrent = false;
 			for (let i = start; i < end; i++) {
 				const r = this.results[i];
-				const rCls = r
-					? r.gaveUp
-						? "grill-seg-skipped"
-						: r.verdict === "correct"
-							? "grill-seg-correct"
-							: r.verdict === "partial"
-								? "grill-seg-partial"
-								: "grill-seg-incorrect"
-					: i === this.idx
-						? "grill-seg-current"
-						: null;
-				if (rCls && (!cls || SEG_SEVERITY.indexOf(rCls) > SEG_SEVERITY.indexOf(cls))) cls = rCls;
+				if (r) {
+					if (r.gaveUp) skippedCount++;
+					else if (r.verdict === "correct") correctCount++;
+					else if (r.verdict === "partial") partialCount++;
+					else incorrectCount++;
+				} else if (i === this.idx) {
+					hasCurrent = true;
+				}
+			}
+			const answered = correctCount + partialCount + incorrectCount + skippedCount;
+			let cls: string | null = null;
+			if (answered === 0) {
+				cls = hasCurrent ? "grill-seg-current" : null;
+			} else if (correctCount === answered) {
+				// A pure-correct bucket still yields to "you're currently here" if the
+				// question being displayed right now also falls in this bucket.
+				cls = hasCurrent ? "grill-seg-current" : "grill-seg-correct";
+			} else if (incorrectCount === answered) {
+				cls = "grill-seg-incorrect";
+			} else if (skippedCount === answered) {
+				cls = "grill-seg-skipped";
+			} else {
+				// Anything else is a mix of outcomes — including a bucket of only
+				// partial verdicts, which is itself already "mixed" per question.
+				cls = "grill-seg-partial";
 			}
 			const seg = bar.createDiv({ cls: "grill-seg" });
 			if (cls) seg.addClass(cls);
