@@ -3331,7 +3331,14 @@ export class SessionView extends ItemView {
 			// Written unconditionally on both paths: `kept` is already pruned to fresh-hash
 			// entries above, and skipping this on the dup path would silently stop that
 			// pruning from ever landing whenever a batch happens to produce a near-duplicate.
-			this.questionBank[q.conceptId] = kept.slice(-MAX_VARIANTS);
+			// Rejected tombstones are exempt from the MAX_VARIANTS cap: a plain slice(-N) on
+			// the combined array would eventually push a "Bad question" entry out of the kept
+			// window (it never gets touched/re-pushed once rejected, so it only drifts toward
+			// the front as fresh variants keep landing) — at which point nothing stops the
+			// model from regenerating and re-serving the exact question the student rejected.
+			const live = kept.filter((e) => !e.rejected);
+			const tombstones = kept.filter((e) => e.rejected);
+			this.questionBank[q.conceptId] = [...tombstones, ...live.slice(-MAX_VARIANTS)];
 			this.bankDirty = true;
 		}
 	}

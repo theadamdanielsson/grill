@@ -1,5 +1,17 @@
 # Changelog
 
+## 5.8.9
+
+- **Fix: a rejected "Bad question" could still come back.** 5.8.1 made "Bad question"
+  tombstone the rejected variant instead of deleting it, so its text would steer later
+  generations away from repeating it. But the per-concept variant cache is capped at
+  8 variants, and that cap was applied across rejected and live variants together —
+  once 8 newer variants piled up for the same concept, the tombstone aged out of the
+  cap and was silently dropped. With it gone, nothing stopped the model from
+  regenerating the same broken question, and it would get served again as if it were
+  new. Rejected variants are now exempt from the cap and are never evicted, so a "Bad
+  question" really doesn't come back.
+
 ## 5.8.8
 
 - **Fix: one wrong answer turned an entire progress-bar segment red, even with
