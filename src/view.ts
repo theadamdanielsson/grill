@@ -2059,12 +2059,8 @@ export class SessionView extends ItemView {
 		// a due session can run to 200+ questions (see the end-session escape hatch above),
 		// and past a few dozen the fixed gaps alone overflow the bar's width, breaking the
 		// layout instead of showing progress. Beyond MAX_PROGRESS_SEGMENTS, consecutive
-		// questions are bucketed into one segment, colored by what's actually in it: solid
-		// green only if every answer in the bucket was correct, solid red only if every
-		// answer was wrong, and anything else (a mix, or a partial-credit verdict) reads as
-		// the "mixed" orange — a single miss among several correct answers no longer paints
-		// the whole bucket red, which used to make a bucket a "Mark correct" had just fixed
-		// look like it was never corrected.
+		// questions are bucketed into one segment, colored by its majority outcome — see the
+		// bucketing loop below for why majority, not purity.
 		//
 		// Bucketed off `progressTotal`, not the live `targetCount`: see its own doc
 		// comment — bucketing off a shrinking count re-partitions segments already on
@@ -2092,18 +2088,30 @@ export class SessionView extends ItemView {
 			let cls: string | null = null;
 			if (answered === 0) {
 				cls = hasCurrent ? "grill-seg-current" : null;
-			} else if (correctCount === answered) {
-				// A pure-correct bucket still yields to "you're currently here" if the
-				// question being displayed right now also falls in this bucket.
-				cls = hasCurrent ? "grill-seg-current" : "grill-seg-correct";
-			} else if (incorrectCount === answered) {
-				cls = "grill-seg-incorrect";
-			} else if (skippedCount === answered) {
-				cls = "grill-seg-skipped";
 			} else {
-				// Anything else is a mix of outcomes — including a bucket of only
-				// partial verdicts, which is itself already "mixed" per question.
-				cls = "grill-seg-partial";
+				// Majority rules, not purity: at a bucket size of 2 (any session past ~30
+				// questions gets bucketed at all — see MAX_PROGRESS_SEGMENTS), requiring every
+				// answer in the bucket to agree made "mixed" orange the default outcome for a
+				// completely normal session, since a pair rarely lands on the exact same
+				// verdict — the fix this replaced for one miss painting a whole bucket red
+				// just repainted it orange instead, at any bucket size small enough that a
+				// single miss IS the majority. A clear correct-majority now reads green and a
+				// clear incorrect-majority reads red; only a genuine tie, or a bucket partial
+				// answers actually lead, falls back to orange. Partial never gets to lead into
+				// green outright: a partial-majority bucket is still "not quite," not a win.
+				const max = Math.max(correctCount, partialCount, incorrectCount, skippedCount);
+				const tied = [correctCount, partialCount, incorrectCount, skippedCount].filter((n) => n === max).length > 1;
+				if (tied || partialCount === max) {
+					cls = "grill-seg-partial";
+				} else if (correctCount === max) {
+					// A correct-majority bucket still yields to "you're currently here" if the
+					// question being displayed right now also falls in this bucket.
+					cls = hasCurrent ? "grill-seg-current" : "grill-seg-correct";
+				} else if (incorrectCount === max) {
+					cls = "grill-seg-incorrect";
+				} else {
+					cls = "grill-seg-skipped";
+				}
 			}
 			const seg = bar.createDiv({ cls: "grill-seg" });
 			if (cls) seg.addClass(cls);

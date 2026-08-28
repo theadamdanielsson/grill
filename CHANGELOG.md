@@ -1,5 +1,17 @@
 # Changelog
 
+## 5.8.10
+
+- **Fix: past 30 questions, most progress-bar segments read orange even in a session
+  going mostly fine.** 5.8.8 colored a bucketed segment orange the moment it wasn't
+  100% one verdict — but at the bucket sizes a normal session actually produces (as
+  small as 2 questions per segment, with three possible verdicts per question), almost
+  no bucket is perfectly uniform, so orange ended up the default outcome regardless of
+  how well the session was actually going. A bucket is now colored by its majority
+  verdict: mostly-correct reads green, mostly-incorrect reads red, and orange is kept
+  for genuine ties or a bucket a partial-credit answer actually leads — partial credit
+  still doesn't get to read as a win.
+
 ## 5.8.9
 
 - **Fix: a rejected "Bad question" could still come back.** 5.8.1 made "Bad question"
