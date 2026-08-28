@@ -32,6 +32,8 @@ Full detail on how each of these actually works — scheduling, the knowledge gr
 
 ![A partially correct answer, graded with specific feedback and the expected answer](docs/screenshot-feedback.png)
 
+![Got it right, and the concept still gets explained back to you, with a worked example](docs/screenshot-explanation.png)
+
 ## Without an API key
 
 You don't need a key to use Grill. In settings, set "Where questions come from" to "From my notes" and "Grading" to "I mark myself", and Grill runs entirely on your machine: it builds questions straight from your notes' own structure (bold terms and highlights become fill-in-the-blanks, headings become recall prompts, "Term: definition" lines and formulas become their own questions), you answer, reveal, and grade yourself Again / Hard / Good / Easy. That rating feeds the same spaced-repetition schedule the AI mode uses. Nothing gets sent anywhere, and there's nothing to pay.
