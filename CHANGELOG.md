@@ -1,5 +1,27 @@
 # Changelog
 
+## 5.9.0
+
+- **New: prompt context can now be picked by meaning, not just wording.** Long notes
+  and reference documents already got trimmed down to their most relevant sections
+  before hitting the AI prompt (5.8.7), but the ranking was exact-substring matching —
+  a section titled "how verbs change form" would never match a concept labeled "verb
+  conjugation," since they share no words. A new opt-in setting ("Pick prompt context
+  by meaning, not just wording," off by default) ranks by on-device embedding
+  similarity instead, catching paraphrases the old ranking missed. Runs entirely
+  locally — no API key, no note content sent anywhere — but downloads a small (~25MB)
+  model from Hugging Face the first time it runs, which is why it's opt-in rather than
+  automatic. Falls straight back to the exact-wording ranking on any failure, which
+  itself still falls back to a flat truncation, so this can never make things worse,
+  only sometimes better.
+- **Fix: three AI provider defaults had gone stale.** OpenAI's default (`gpt-5-mini`)
+  and Gemini's (`gemini-2.5-flash`) were both several generations behind and already on
+  their providers' deprecation paths; DeepSeek's (`deepseek-chat`) had been quietly
+  repurposed into a legacy alias rather than removed. New installs now default to
+  `gpt-5.6-terra`, `gemini-3.7-flash`, and `deepseek-v4-flash` respectively — this only
+  affects fresh setups and the fallback model list, never a model you've already
+  chosen in Settings.
+
 ## 5.8.10
 
 - **Fix: past 30 questions, most progress-bar segments read orange even in a session

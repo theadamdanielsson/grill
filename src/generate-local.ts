@@ -17,6 +17,7 @@
  * blanks: it skips stopwords, bare numbers, code, tables and generic headings.
  */
 
+import { cosineSim, embedLocal } from "./embed-local";
 import { FormatMode, Question } from "./llm";
 import { QDifficulty } from "./mastery";
 import { hashStr, safeSlice } from "./text";
@@ -960,24 +961,19 @@ function scoreChunk(chunk: RankedChunk, terms: string[]): number {
 	return score;
 }
 
-/** Cheap, local replacement for a flat character-count truncation: rank a note's text
- * by relevance to its own extracted concepts — the things Grill might actually quiz on
- * from it — instead of just keeping whatever happens to fall before an arbitrary
- * cutoff. The highest-scoring sections are kept in full, in their original order;
- * everything else survives only as a short stub (its heading, or its first line), so
- * the model still sees the note's overall shape instead of a document that silently
- * ends partway through. Returns null (not a worse result of its own) when there's
- * nothing to rank against (no concepts) or no term actually matched anything — a
- * ranking with no real signal is worse than no ranking at all, so the caller should
- * fall back to its own flat truncation in that case, not trust an arbitrary chunk
- * selection. */
-export function selectRelevantText(text: string, concepts: Concept[], maxChars: number): string | null {
-	if (text.length <= maxChars) return text;
-	const terms = [...new Set(concepts.map((c) => c.label.trim().toLowerCase()).filter((t) => t.length >= 3))];
-	if (!terms.length) return null;
-	const chunks = splitForRanking(text);
-	if (chunks.length < 2) return null; // nothing to rank between
-	const scored = chunks.map((c) => ({ chunk: c, score: scoreChunk(c, terms) }));
+/** Shared by selectRelevantText and selectRelevantTextSemantic: given per-chunk scores
+ * from whichever ranker produced them (exact-term matching or embedding cosine
+ * similarity), keep the highest-scoring chunks up to maxChars in their original order
+ * and stub the rest, so the model still sees the note's overall shape instead of a
+ * document that silently ends partway through. Null (not a worse result of its own)
+ * when nothing actually scored above zero — a ranking with no real signal is worse
+ * than no ranking at all, so the caller should fall back to a flat truncation instead
+ * of trusting an arbitrary chunk selection. */
+function assembleRanked(
+	chunks: RankedChunk[],
+	scored: { chunk: RankedChunk; score: number }[],
+	maxChars: number,
+): string | null {
 	if (!scored.some((s) => s.score > 0)) return null;
 	const ranked = [...scored].sort((a, b) => b.score - a.score || a.chunk.order - b.chunk.order);
 	const keep = new Set<number>();
@@ -1000,6 +996,58 @@ export function selectRelevantText(text: string, concepts: Concept[], maxChars: 
 		}
 	}
 	return parts.join("\n\n");
+}
+
+/** Cheap, local replacement for a flat character-count truncation: rank a note's text
+ * by relevance to its own extracted concepts — the things Grill might actually quiz on
+ * from it — instead of just keeping whatever happens to fall before an arbitrary
+ * cutoff. Exact-substring term matching only (a heading hit counts double — see
+ * scoreChunk), so it misses paraphrases: a section titled "how verbs change form"
+ * won't match a concept labeled "verb conjugation". See selectRelevantTextSemantic for
+ * the embedding-based upgrade; this stays the fallback for when that's off or
+ * unavailable. Returns null when there's nothing to rank against (no concepts) or no
+ * term actually matched anything — see assembleRanked. */
+export function selectRelevantText(text: string, concepts: Concept[], maxChars: number): string | null {
+	if (text.length <= maxChars) return text;
+	const terms = [...new Set(concepts.map((c) => c.label.trim().toLowerCase()).filter((t) => t.length >= 3))];
+	if (!terms.length) return null;
+	const chunks = splitForRanking(text);
+	if (chunks.length < 2) return null; // nothing to rank between
+	const scored = chunks.map((c) => ({ chunk: c, score: scoreChunk(c, terms) }));
+	return assembleRanked(chunks, scored, maxChars);
+}
+
+/** selectRelevantText's embedding-based upgrade: ranks chunks by semantic similarity to
+ * the note's own concept labels instead of exact-substring matching, so a paraphrase
+ * (a section that says "how verbs change form" for a concept labeled "verb
+ * conjugation") is recognized as relevant even though the two share no words. Embeds
+ * on-device via embed-local.ts — no API key, no network beyond the one-time model
+ * fetch, no note content sent anywhere. Null whenever embedLocal can't produce vectors
+ * (offline, unsupported platform, still loading) as well as every case
+ * selectRelevantText itself returns null for — callers should fall back to
+ * selectRelevantText in that case, never straight to a flat truncation, since the
+ * lexical ranking is a complete, working replacement on its own. */
+export async function selectRelevantTextSemantic(
+	text: string,
+	concepts: Concept[],
+	maxChars: number,
+): Promise<string | null> {
+	if (text.length <= maxChars) return text;
+	const terms = [...new Set(concepts.map((c) => c.label.trim()).filter((t) => t.length >= 3))];
+	if (!terms.length) return null;
+	const chunks = splitForRanking(text);
+	if (chunks.length < 2) return null;
+	const chunkTexts = chunks.map((c) => (c.heading ? `${c.heading}\n${c.body}` : c.body));
+	const vectors = await embedLocal([...terms, ...chunkTexts]);
+	if (!vectors) return null;
+	const termVecs = vectors.slice(0, terms.length);
+	const chunkVecs = vectors.slice(terms.length);
+	const scored = chunks.map((chunk, i) => {
+		let best = 0;
+		for (const termVec of termVecs) best = Math.max(best, cosineSim(termVec, chunkVecs[i]));
+		return { chunk, score: best };
+	});
+	return assembleRanked(chunks, scored, maxChars);
 }
 
 /** The no-key question for a concept (its deterministic card), tagged with the

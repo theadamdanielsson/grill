@@ -30,31 +30,41 @@ export const PROVIDERS: Record<ProviderId, ProviderInfo> = {
 		keyPlaceholder: "sk-ant-...",
 		keyUrl: "console.anthropic.com",
 		needsKey: true,
-		fallbackModels: ["claude-sonnet-5", "claude-opus-4-8", "claude-haiku-4-5"],
+		fallbackModels: ["claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5"],
 	},
 	openai: {
 		label: "OpenAI (ChatGPT)",
-		defaultModel: "gpt-5-mini",
+		// gpt-5-mini/gpt-5/gpt-4o are all past their replacement date on OpenAI's own
+		// deprecation schedule (shutdown 2026-12-11, gpt-5-mini's listed successor is
+		// gpt-5.6-terra) — the naming moved from size tiers (mini/nano) to codenames
+		// (sol/terra/luna) for the 5.6 generation. Terra is the direct mini replacement:
+		// balances intelligence and cost, same slot gpt-5-mini held.
+		defaultModel: "gpt-5.6-terra",
 		keyPlaceholder: "sk-...",
 		keyUrl: "platform.openai.com",
 		needsKey: true,
-		fallbackModels: ["gpt-5-mini", "gpt-5", "gpt-4o"],
+		fallbackModels: ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna"],
 	},
 	gemini: {
 		label: "Google (Gemini)",
-		defaultModel: "gemini-2.5-flash",
+		// gemini-2.5-flash is several generations behind (3.5/3.6/3.7 shipped since) and
+		// on Google's retirement path (~2026-10-16). 3.7 Flash is current stable.
+		defaultModel: "gemini-3.7-flash",
 		keyPlaceholder: "AIza...",
 		keyUrl: "aistudio.google.com",
 		needsKey: true,
-		fallbackModels: ["gemini-2.5-flash", "gemini-2.5-pro"],
+		fallbackModels: ["gemini-3.7-flash", "gemini-2.5-pro"],
 	},
 	deepseek: {
 		label: "DeepSeek",
-		defaultModel: "deepseek-chat",
+		// deepseek-chat/deepseek-reasoner were repurposed as legacy aliases onto the V4
+		// line rather than deleted, but the explicit V4 ids are the documented current
+		// path — flash is the direct deepseek-chat successor (fast/cheap default).
+		defaultModel: "deepseek-v4-flash",
 		keyPlaceholder: "sk-...",
 		keyUrl: "platform.deepseek.com",
 		needsKey: true,
-		fallbackModels: ["deepseek-chat", "deepseek-reasoner"],
+		fallbackModels: ["deepseek-v4-flash", "deepseek-v4-pro"],
 	},
 	ollama: {
 		label: "Ollama (local)",

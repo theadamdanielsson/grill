@@ -100,6 +100,14 @@ interface GrillSettings {
 	 * (see the setting's own description) and it costs an extra call per new/changed
 	 * note. Only consulted when `graphInsights` is also on. */
 	semanticBridges: boolean;
+	/** Rank a long note's content by on-device embedding similarity to its own concepts
+	 * (see generate-local.ts's selectRelevantTextSemantic) instead of exact-substring
+	 * matching, when deciding what survives into the AI prompt. Off by default: the
+	 * lexical ranker it upgrades already works, and this one fetches a small (~25MB)
+	 * model file from Hugging Face on first use — worth asking before doing that
+	 * automatically, even though no note content itself is ever sent anywhere. Falls
+	 * straight back to the lexical ranker on any failure either way. */
+	localEmbedContext: boolean;
 	/** Careful grading: grade an answer with a small consensus of calls (opt-in,
 	 * higher cost) to reduce leniency error. Off by default. */
 	carefulGrade: boolean;
@@ -230,6 +238,7 @@ function defaultSettings(): GrillSettings {
 		ttsVoiceURI: "",
 		graphInsights: true,
 		semanticBridges: false,
+		localEmbedContext: false,
 		carefulGrade: false,
 		conceptsMigrated: false,
 		graphColorMode: "mastery",
@@ -295,6 +304,7 @@ export default class GrillPlugin extends Plugin {
 		if (typeof s.ttsVoiceURI === "string") settings.ttsVoiceURI = s.ttsVoiceURI;
 		if (typeof s.graphInsights === "boolean") settings.graphInsights = s.graphInsights;
 		if (typeof s.semanticBridges === "boolean") settings.semanticBridges = s.semanticBridges;
+		if (typeof s.localEmbedContext === "boolean") settings.localEmbedContext = s.localEmbedContext;
 		if (typeof s.carefulGrade === "boolean") settings.carefulGrade = s.carefulGrade;
 		if (typeof s.conceptsMigrated === "boolean") settings.conceptsMigrated = s.conceptsMigrated;
 		if (["mastery", "recency", "dueness", "misconceptions"].includes(s.graphColorMode as string)) {
@@ -1824,6 +1834,23 @@ class GrillSettingTab extends PluginSettingTab {
 						}),
 					);
 			}
+
+			new Setting(containerEl)
+				.setName("Pick prompt context by meaning, not just wording")
+				.setDesc(
+					"When a long note or reference document gets trimmed to fit the AI prompt, keep the sections that are " +
+						"actually about what's being tested, even when they're worded differently from the concept itself " +
+						"(the default exact-wording match can miss a paraphrase). Runs entirely on-device — no key needed, " +
+						"no note content sent anywhere — but downloads a small (~25MB) embedding model from Hugging Face " +
+						"the first time it runs, so it's off by default: that download only happens if you ask for it. " +
+						"Falls straight back to exact-wording matching on any failure.",
+				)
+				.addToggle((t) =>
+					t.setValue(s.localEmbedContext).onChange(async (v) => {
+						s.localEmbedContext = v;
+						await this.plugin.persist();
+					}),
+				);
 
 			new Setting(containerEl)
 				.setName("Clear cached questions")

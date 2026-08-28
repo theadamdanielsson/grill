@@ -13,6 +13,7 @@ import {
 	localQuestionForConcept,
 	localQuestions,
 	selectRelevantText,
+	selectRelevantTextSemantic,
 } from "./generate-local";
 import { BridgeMap, CANDIDATE_CAP, detectBridgeCandidates, detectSemanticBridgeCandidates, pairKey } from "./bridges";
 import { buildGraph, formatGrade, gradeScore, type GraphNode } from "./graph";
@@ -3639,6 +3640,20 @@ export class SessionView extends ItemView {
 		await this.goToQuestion(this.idx);
 	}
 
+	/** What actually survives into a long note/reference doc's AI prompt context: the
+	 * embedding-ranked selection when "Pick prompt context by meaning" is on and the
+	 * on-device model actually produces vectors this run, otherwise the lexical
+	 * ranking, otherwise a flat truncation — three tiers, each one only used when the
+	 * one before it couldn't produce anything (see selectRelevantTextSemantic and
+	 * selectRelevantText's own doc comments for why each can come back null). */
+	private async selectPromptContext(text: string, concepts: Concept[]): Promise<string> {
+		if (this.plugin.data.settings.localEmbedContext) {
+			const semantic = await selectRelevantTextSemantic(text, concepts, NOTE_CHAR_CAP);
+			if (semantic) return semantic;
+		}
+		return selectRelevantText(text, concepts, NOTE_CHAR_CAP) ?? safeSlice(text, NOTE_CHAR_CAP) + "\n[truncated]";
+	}
+
 	private async startSession(): Promise<void> {
 		this.replayMode = false;
 		const s = this.plugin.data.settings;
@@ -3793,9 +3808,7 @@ export class SessionView extends ItemView {
 				const docConcepts = extractConceptsCached(file.name, text, formatMode, conceptCache);
 				this.conceptsByNote.set(file.name, docConcepts);
 				this.noteText[file.name] =
-					text.length > NOTE_CHAR_CAP
-						? (selectRelevantText(text, docConcepts, NOTE_CHAR_CAP) ?? safeSlice(text, NOTE_CHAR_CAP) + "\n[truncated]")
-						: text;
+					text.length > NOTE_CHAR_CAP ? await this.selectPromptContext(text, docConcepts) : text;
 			});
 			console.debug(
 				`Grill: scanned ${refDocFiles.length} reference doc(s) in ${Date.now() - refDocScanStart}ms`,
@@ -3814,16 +3827,14 @@ export class SessionView extends ItemView {
 				// Extract concepts from the FULL note; only the prompt context is truncated.
 				const noteConcepts = extractConceptsCached(n, text, formatMode, conceptCache);
 				this.conceptsByNote.set(n, noteConcepts);
-				// Rank by relevance to this note's own concepts (see selectRelevantText's
-				// doc comment) instead of a flat character cutoff, so a long note or a big
-				// PDF import keeps the sections that actually contain quizzable material
-				// rather than whatever happens to fall in the first NOTE_CHAR_CAP characters.
-				// Falls back to the old flat truncation when there's nothing to rank
-				// against or rank with — never worse than today, sometimes much better.
-				this.noteText[n] =
-					text.length > NOTE_CHAR_CAP
-						? (selectRelevantText(text, noteConcepts, NOTE_CHAR_CAP) ?? safeSlice(text, NOTE_CHAR_CAP) + "\n[truncated]")
-						: text;
+				// Rank by relevance to this note's own concepts (see selectPromptContext
+				// and selectRelevantText's doc comments) instead of a flat character
+				// cutoff, so a long note or a big PDF import keeps the sections that
+				// actually contain quizzable material rather than whatever happens to
+				// fall in the first NOTE_CHAR_CAP characters. Falls back to the old flat
+				// truncation when there's nothing to rank against or rank with — never
+				// worse than today, sometimes much better.
+				this.noteText[n] = text.length > NOTE_CHAR_CAP ? await this.selectPromptContext(text, noteConcepts) : text;
 				if (vision) {
 					const imgs = await collectNoteImages(this.app, file, IMAGES_PER_NOTE_CAP);
 					if (imgs.length) this.noteImages[n] = imgs;
