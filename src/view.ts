@@ -4098,10 +4098,14 @@ export class SessionView extends ItemView {
 				const cappedOut =
 					applyDailyCap && blockedByDailyCap(pickable, this.concepts, s.newConceptsPerDay, new Date());
 				new Notice(
+					// Both of these name where the number now lives. "New concepts per day" moved
+					// into the settings tab's collapsed Tuning block, so telling someone to
+					// "raise it in Settings" without saying where sends them scanning a page it
+					// isn't on — Study intensity is the control that actually governs it now.
 					cappedOut
 						? s.newConceptsPerDay === 0
-							? `Grill: nothing due, and "New concepts per day" is set to 0 — "Get grilled" won't introduce new material. Raise it in Settings, or use "Review N due now" / "Grill this note/folder" instead.`
-							: `Grill: that's all the new material for today — you've hit your daily limit of ${s.newConceptsPerDay} new concepts. Come back tomorrow, or raise "New concepts per day" in Settings.`
+							? `Grill: nothing due, and new concepts per day is set to 0 — "Get grilled" won't introduce new material. Raise it under Settings → Study intensity (or Tuning, for the exact number), or use "Review N due now" / "Grill this note/folder" instead.`
+							: `Grill: that's all the new material for today — you've hit your daily limit of ${s.newConceptsPerDay} new concepts. Come back tomorrow, or raise it under Settings → Study intensity.`
 						: s.questionSource === "local"
 							? "Grill: couldn't build questions from these notes' structure. Add some bold terms, headings, definitions or formulas, or switch questions to AI."
 							: "Grill: couldn't find concepts to quiz in these notes.",

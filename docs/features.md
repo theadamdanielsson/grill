@@ -16,6 +16,15 @@ Your API key, settings, and the arc's own small log of recent study days sit in 
 
 Miss a question and Grill doesn't just mark it wrong and move on. If the note you missed builds on another through your `[[links]]`, and you're shaky on that foundation, Grill pulls it in next, quizzes you on it, and tells you why you were sent there, then carries on where you left off. A wrong answer is a signal about what you're missing underneath, not just a score.
 
+It tunes itself, too, rather than asking you to. Grading double-checks itself only on the
+answers where a model actually tends to be too generous — a partial verdict, or a "correct"
+on an answer visibly thinner than the expected one — so the accuracy costs a fraction of what
+checking everything would. Every fourth question asks how sure you were, enough to tell you in
+the debrief when you're leaning over- or underconfident without taxing every answer. And once
+you've built up enough review history, Grill fits the spaced-repetition weights to how *you*
+actually forget, instead of the population average the algorithm ships with — no button to
+find, it just happens and tells you.
+
 It's also fussy about its own questions. Before one reaches you it's checked for the usual model slop, yes/no questions, hints that give the game away, questions that aren't actually grounded in your note, and quietly dropped if it fails. No extra model call, so it works the same on a local model as on a paid one.
 
 ## Links you haven't made yet
@@ -68,4 +77,4 @@ This is a *learning* graph (what you've proven), which is a different thing from
 
 ## Look and feel
 
-Grill borrows your theme's colours and spacing so it doesn't clash. The settings cover the usual stuff (compact layout, the progress bar, hiding the note name so it doesn't give the answer away). If you want to fiddle further it exposes a few CSS variables and works with the Style Settings plugin.
+Grill borrows your theme's colours and spacing so it doesn't clash. There's nothing to configure: the layout tightens itself when the pane is narrow, and a note's name is hidden during a question only when its own words would give that question's answer away, rather than always or never. If you want to fiddle further it exposes a few CSS variables and works with the Style Settings plugin.

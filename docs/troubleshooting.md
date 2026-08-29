@@ -11,7 +11,7 @@ No-key ("From my notes") mode builds questions only from structure it can find: 
 `==highlights==`, headings with real prose under them, `Term: definition` lines, formulas, and
 any flashcards you've already written (Obsidian Spaced Repetition or Anki cloze syntax). A note
 that's mostly unstructured prose gives it nothing to work with. Either add some structure, or
-switch **Where questions come from** to AI, which can write questions from prose directly.
+switch **Study mode** to one of the AI options, which can write questions from prose directly.
 
 ## A note I aced doesn't turn green
 

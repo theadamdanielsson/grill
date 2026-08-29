@@ -577,15 +577,20 @@ export function trueRetentionLine(concepts: ConceptMap, desiredRetentionPct: num
 	if (Math.abs(gap) <= 5) {
 		return `True retention: ${observedPct}% across your last ${s.n} reviews — tracking your ${targetPct}% target closely.`;
 	}
+	// Both branches point at Study intensity rather than the raw "Review frequency"
+	// slider: that slider now lives in the settings tab's collapsed Tuning block, and
+	// naming a control the reader can't see on the page is worse than naming none. FSRS
+	// personalization isn't suggested at all any more — it fits itself once there's
+	// enough review history, so there's nothing here for the reader to go and do.
 	if (gap < 0) {
 		return (
 			`True retention: ${observedPct}% across your last ${s.n} reviews, under your ${targetPct}% target. ` +
-			`Worth a look: Settings → Personalize FSRS to your own memory, or lowering Review frequency.`
+			`Worth a look: a gentler Study intensity in Settings brings concepts back sooner.`
 		);
 	}
 	return (
 		`True retention: ${observedPct}% across your last ${s.n} reviews, above your ${targetPct}% target — ` +
-		`you could raise Review frequency for fewer, longer-spaced reviews without losing much.`
+		`a harder Study intensity would space reviews further apart without losing much.`
 	);
 }
 

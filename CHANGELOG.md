@@ -1,5 +1,20 @@
 # Changelog
 
+## 6.0.1
+
+- **Fix: two in-session messages pointed at settings that 6.0.0 had moved.** Running
+  out of new material for the day told you to raise "New concepts per day" in Settings,
+  and the debrief's true-retention line suggested "Personalize FSRS to your own memory"
+  or lowering "Review frequency" — the first two now live in the collapsed Tuning block
+  and the third isn't a button any more, so following either sent you scanning a page
+  they weren't on. Both now name Study intensity, which is the control that actually
+  governs them.
+- **Docs: the setup instructions still described the old settings page.** The no-key
+  walkthrough in the README and in models.md told you to set "Where questions come from"
+  and "Grading", two dropdowns 6.0.0 merged into one Study mode; troubleshooting pointed
+  at the same missing dropdown, and the feature tour listed three toggles (compact
+  layout, progress bar, hiding the note name) that Grill now works out for itself.
+
 ## 6.0.0
 
 - **The settings page is a third the size.** It had grown to 40 controls, and about
