@@ -73,6 +73,19 @@ async function encode(bytes: ArrayBuffer, mediaType: string, maxEdge = 1400): Pr
 	}
 }
 
+/** Does this note embed at least one raster image? Metadata-only — resolves link
+ * destinations but never reads or decodes a file, so it's cheap enough to run over a
+ * whole session's notes. Uses the same IMG_EXT gate as `collectNoteImages` below, so
+ * "has an image" here can't drift from "produced an image" there — a note embedding
+ * only a PDF or a canvas answers false. */
+export function hasEmbeddedImage(app: App, file: TFile): boolean {
+	for (const e of app.metadataCache.getFileCache(file)?.embeds ?? []) {
+		const dest = app.metadataCache.getFirstLinkpathDest(e.link, file.path);
+		if (dest && IMG_EXT.has(dest.extension.toLowerCase())) return true;
+	}
+	return false;
+}
+
 /** Raster images a note embeds, resolved to vault files and encoded. Capped by count. */
 export async function collectNoteImages(app: App, file: TFile, cap: number): Promise<ImageInput[]> {
 	if (cap <= 0) return [];

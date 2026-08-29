@@ -1,5 +1,49 @@
 # Changelog
 
+## 6.0.0
+
+- **The settings page is a third the size.** It had grown to 40 controls, and about
+  half of them asked you to have an opinion on things you have no way to form one
+  about: what share of a session new material may claim, how much a graph number should
+  weigh coverage against mastery, whether the grader should run a consensus of calls.
+  Those aren't preferences, they're implementation. What's left is what only you can
+  answer — your key, your folders, how you want to be quizzed — plus a Tuning block at
+  the bottom holding every number the scheduler actually runs on, for anyone who wants
+  it. **Nothing you'd set is lost:** your existing scheduling numbers are read forward
+  exactly as they are, and if they don't match one of the new presets they simply read
+  as Custom and keep working.
+- **New: Study intensity.** One choice — Relaxed, Steady, Intense — instead of four
+  separate sliders for review frequency, new concepts per day, new-material share, and
+  the guarantee toggle. Steady is exactly what the old defaults added up to, so an
+  untouched install schedules identically.
+- **Grill now works out things you used to have to switch on.** Careful grading runs
+  itself, but only on the answers where lenient marking actually happens (a partial
+  verdict, or a "correct" on an answer visibly thinner than the expected one), so it
+  costs a fraction of what the old always-on toggle did and catches the same errors.
+  The note name is hidden per question, exactly when its words would give that
+  question's answer away, instead of all the time or never. Compact layout follows the
+  pane's real width rather than a toggle that described one. The confidence check is on
+  for everyone, sampled on one question in four rather than asked on all of them. FSRS
+  fits your own memory automatically once you've got the review history for it, instead
+  of waiting behind a button most people never pressed. Missing links by meaning turn
+  on wherever your provider has an embeddings API.
+- **The two features that download something now ask where it matters.** Image
+  occlusion (~10MB OCR engine) and meaning-based prompt context (~25MB embedding model)
+  used to be settings toggles nobody could evaluate. They're now offered at the end of a
+  session that showed they'd have helped — "3 notes you just studied have diagrams Grill
+  could quiz you on" — with the download named and a "no thanks" that sticks. Nothing
+  downloads unless you say yes.
+- **Moved: "Clear cached questions" is now a command** (`Grill: Clear cached
+  questions`), alongside `Grill: Rebalance upcoming due dates`, which already was one.
+  One-shot maintenance isn't a setting.
+- **Fix: "Restore recommended settings" re-armed one-time migrations.** It reset the
+  flags that record a migration has already run, so on the next launch those migrations
+  fired again and silently overwrote a deliberate post-Restore choice of 0 new concepts
+  per day or "off" grade numbers — the exact thing the flags exist to prevent.
+- **Fix: "Restore recommended settings" left personalized FSRS weights live.** It
+  cleared them from disk but not from the scheduler, so they kept applying until the
+  next Obsidian restart.
+
 ## 5.9.0
 
 - **New: prompt context can now be picked by meaning, not just wording.** Long notes

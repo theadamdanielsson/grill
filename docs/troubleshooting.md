@@ -41,8 +41,8 @@ themselves to the actual backlog instead of the generic session-length setting.
 This is by design: once the AI (or no-key mode) writes a question for a concept, Grill reuses that
 exact text on every later review of it, indefinitely — never silently reworded. If you want to
 change how a specific question reads, edit it directly (see below); if you want everything to get
-a fresh pass, Settings → **"Clear cached questions"** forces the next review of every concept to
-write a new one.
+a fresh pass, the command palette's **"Grill: Clear cached questions"** forces the next review of
+every concept to write a new one.
 
 This used to work differently, and the difference is worth knowing if you're returning to Grill
 after a while: a due concept older than a day used to always get a freshly *written* variant
@@ -84,11 +84,11 @@ some real prose, so there's actual material to test.
 
 ## A model isn't reading the images in my note
 
-Not every model can. Settings → **"Send images to the model"** only does anything for models that
-actually support vision (Claude, GPT-4o/GPT-5, Gemini, and vision-tagged Ollama models like
-`llava` or `qwen2.5vl`); everything else silently gets text only, even with the toggle on. Grill
-now shows a notice at the start of a session when this happens, naming the model and why. If you
-want images included, switch to one of the vision-capable models above.
+Not every model can. Grill sends a note's images automatically, but only to models that actually
+support vision (Claude, GPT-4o/GPT-5, Gemini, and vision-tagged Ollama models like `llava` or
+`qwen2.5vl`); everything else silently gets text only. Grill shows a notice at the start of a
+session when this happens, naming the model and why. If you want images included, switch to one of
+the vision-capable models above.
 
 ## A PDF I embedded isn't being quizzed on
 

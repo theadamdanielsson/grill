@@ -32,7 +32,49 @@ import { dueFiles, duplicateBasenames } from "./scope";
 import { GrillStore } from "./store";
 import { SessionView, VIEW_TYPE } from "./view";
 import type { ColorMode, NumberMode } from "./mapview";
-import { listLanguages, listVoicesForLang, onVoicesChanged } from "./tts";
+import { listLanguages, listVoices, listVoicesForLang, onVoicesChanged } from "./tts";
+
+/** How hard the schedule pushes, as one choice instead of four numbers. Each preset is a
+ * complete set of the four FSRS/new-material values Grill actually schedules on; picking
+ * one writes all four. "custom" is not offered in the picker — it's what the tab reports
+ * back when the numbers were hand-edited in the Tuning block to something no preset
+ * expresses, so a deliberate hand-tuning is never silently rounded to a preset. */
+export type StudyIntensity = "relaxed" | "steady" | "intense" | "custom";
+
+/** The four scheduling numbers each preset stands for. `desiredRetention` is FSRS's
+ * target recall probability at the due date; the rest are the Anki-modeled new-material
+ * policy (see FreshContentPolicy in mastery.ts). "steady" is the shipped default and is
+ * value-identical to the defaults these four settings had as individual sliders, so an
+ * untouched install maps onto it exactly and nobody's schedule moves. */
+export const INTENSITY_PRESETS: Record<
+	Exclude<StudyIntensity, "custom">,
+	{ desiredRetention: number; newConceptsPerDay: number; freshContentShare: number; freshContentAlwaysGuarantee: boolean }
+> = {
+	relaxed: { desiredRetention: 85, newConceptsPerDay: 10, freshContentShare: 25, freshContentAlwaysGuarantee: false },
+	steady: { desiredRetention: 90, newConceptsPerDay: 20, freshContentShare: 30, freshContentAlwaysGuarantee: false },
+	intense: { desiredRetention: 95, newConceptsPerDay: 40, freshContentShare: 40, freshContentAlwaysGuarantee: true },
+};
+
+/** Which preset (if any) a stored set of the four numbers exactly expresses. Exact match
+ * only, deliberately: a near-miss is a hand-tuning, and rounding it to the nearest preset
+ * would change someone's schedule behind their back on upgrade. */
+function intensityOf(s: {
+	desiredRetention: number;
+	newConceptsPerDay: number;
+	freshContentShare: number;
+	freshContentAlwaysGuarantee: boolean;
+}): StudyIntensity {
+	for (const [name, p] of Object.entries(INTENSITY_PRESETS) as [Exclude<StudyIntensity, "custom">, (typeof INTENSITY_PRESETS)["steady"]][]) {
+		if (
+			s.desiredRetention === p.desiredRetention &&
+			s.newConceptsPerDay === p.newConceptsPerDay &&
+			s.freshContentShare === p.freshContentShare &&
+			s.freshContentAlwaysGuarantee === p.freshContentAlwaysGuarantee
+		)
+			return name;
+	}
+	return "custom";
+}
 
 interface GrillSettings {
 	provider: ProviderId;
@@ -42,12 +84,15 @@ interface GrillSettings {
 	/** Base URL for the custom OpenAI-compatible provider, e.g. https://openrouter.ai/api/v1 */
 	customBaseUrl: string;
 	questionsPerSession: number;
-	/** Vault folder holding mastery.json and session notes. */
+	/** Vault folder holding mastery.json and session notes. Lives in the Tuning block:
+	 * "Grill" is right for essentially everyone, and moving it is a rename, not a
+	 * preference. */
 	folder: string;
-	compact: boolean;
+	/** In-session progress bar. On, and no longer a control — hiding your own progress
+	 * isn't a choice worth a row. Kept as a field so an install that turned it off
+	 * stays off; the same applies to `linkSessions` and `sessionDebrief` below. */
 	showProgress: boolean;
-	hideNoteName: boolean;
-	/** Wiki-link session transcripts to the quizzed notes. */
+	/** Wiki-link session transcripts to the quizzed notes. On; see `showProgress`. */
 	linkSessions: boolean;
 	/** Vault folders to exclude from sessions (relative paths). */
 	excludedFolders: string[];
@@ -56,13 +101,25 @@ interface GrillSettings {
 	includedFolders: string[];
 	/** One-time flag: the first-run "what's Grill's" onboarding has been completed. */
 	onboarded: boolean;
-	/** Send embedded images to the model when it supports vision. Independent of image
-	 * occlusion (`enableOcclusion` below): that runs local OCR, not a model call. */
+	/** Ids of point-of-use offers the user has turned down (see SessionView's
+	 * renderOffers). Two of Grill's features are off until asked for, not because
+	 * they're a matter of taste but because each downloads a model file the first time
+	 * it runs — so the ask happens where the feature would have helped, once, instead of
+	 * as a toggle in a settings page that assumes the reader already knows what image
+	 * occlusion or embedding-ranked context is. Declining is remembered here. */
+	dismissedOffers: string[];
+	/** Send embedded images to the model when it supports vision. No longer a control:
+	 * the capability gate (supportsVision) is the whole decision, and a text-only model
+	 * never receives them either way. Kept as a field so an install that deliberately
+	 * turned it off stays off. Independent of image occlusion (`enableOcclusion` below):
+	 * that runs local OCR, not a model call. */
 	sendImages: boolean;
 	/** Image occlusion: redact a legible region of a note-embedded image (found via
 	 * local OCR, no AI key needed — see ocr.ts) and quiz on what's hidden there. Off
-	 * by default: it's a real (~10MB, one-time, cached) engine download the first time
-	 * it runs, and desktop-only for now (see view.ts's appendOcclusionConcepts). */
+	 * until asked for, because the first run is a real (~10MB, one-time, cached) engine
+	 * download; the asking happens at the end of a session whose own notes had diagrams
+	 * (see view.ts's renderOffers), not as a settings toggle. Desktop-only for now (see
+	 * view.ts's appendOcclusionConcepts). */
 	enableOcclusion: boolean;
 	/** Where questions come from: an LLM, or the note's own structure (no key). */
 	questionSource: "ai" | "local";
@@ -72,12 +129,10 @@ interface GrillSettings {
 	 * multiple-choice and fill-in-the-blank. "Mixed" costs a bit more prompt (AI mode)
 	 * per generation call, so it's a real toggle, not baked in unconditionally. */
 	questionFormats: "write" | "mixed" | "mc";
-	/** End-of-session AI debrief (one extra call per session). Off falls back to
-	 * a deterministic summary. Ignored for no-key sessions (always deterministic). */
+	/** End-of-session AI debrief (one extra call per session). On; see `showProgress`.
+	 * Off falls back to a deterministic summary. Ignored for no-key sessions (always
+	 * deterministic). */
 	sessionDebrief: boolean;
-	/** Ask "how sure are you?" after each answer and track calibration (Brier score).
-	 * Off by default; surfaces an over/underconfidence line in the session debrief. */
-	confidenceCheck: boolean;
 	/** Play short synthesized sound cues on each answer + at session end, with a
 	 * confetti burst on a perfect session. On by default. */
 	sounds: boolean;
@@ -88,29 +143,23 @@ interface GrillSettings {
 	 * resolved language, a specific voiceURI always uses that exact voice. */
 	ttsVoiceURI: string;
 	/** Missing-link finder: surface a "these two notes should be linked" question in
-	 * AI sessions and offer to write the link. On by default. How many actually show
+	 * AI sessions and offer to write the link. On, and no longer a control — it's a
+	 * headline feature, and the semantic half of it now turns itself on wherever the
+	 * configured provider has an embeddings API (see view.ts's appendBridgeTargets).
+	 * Kept as a field so an install that deliberately turned it off stays off. How many show
 	 * up isn't a count the student dials in — it's however many pairs the adjudicator
 	 * confirms are genuinely related this session (see view.ts's appendBridgeTargets
 	 * and BRIDGE_TARGET_CAP), naturally zero on a session with no real connections. */
 	graphInsights: boolean;
-	/** Additive to the lexical missing-link prefilter: also embed notes (via
-	 * whichever provider is configured, when it supports embeddings) and surface
-	 * pairs with strong semantic similarity but too little shared vocabulary to
-	 * pass the lexical gate. Off by default — coverage is uneven across providers
-	 * (see the setting's own description) and it costs an extra call per new/changed
-	 * note. Only consulted when `graphInsights` is also on. */
-	semanticBridges: boolean;
 	/** Rank a long note's content by on-device embedding similarity to its own concepts
 	 * (see generate-local.ts's selectRelevantTextSemantic) instead of exact-substring
 	 * matching, when deciding what survives into the AI prompt. Off by default: the
 	 * lexical ranker it upgrades already works, and this one fetches a small (~25MB)
-	 * model file from Hugging Face on first use — worth asking before doing that
-	 * automatically, even though no note content itself is ever sent anywhere. Falls
+	 * model file from Hugging Face on first use. That download is worth asking about, so
+	 * it is — at the end of a session that actually had to trim something (see view.ts's
+	 * renderOffers), where the reader can see what it would have bought them. Falls
 	 * straight back to the lexical ranker on any failure either way. */
 	localEmbedContext: boolean;
-	/** Careful grading: grade an answer with a small consensus of calls (opt-in,
-	 * higher cost) to reduce leniency error. Off by default. */
-	carefulGrade: boolean;
 	/** One-time flag: the note→concept scheduling reset has run. */
 	conceptsMigrated: boolean;
 	/** One-time flag: legacy installs have had their stored old shipped defaults
@@ -153,6 +202,12 @@ interface GrillSettings {
 		 * vault's own data at fit time — shown so "personalized" isn't a black box. */
 		improvementPct: number;
 	} | null;
+	/** How many trainable reviews existed the last time a fit was ATTEMPTED, successful
+	 * or not. Distinct from `fsrsPersonalization.reviewCount`, which only records a fit
+	 * that produced weights: a run that finds no improvement leaves that null, so without
+	 * this the automatic pass would have no memory of having tried and would re-run a
+	 * heavy optimization after every single session forever. 0 = never attempted. */
+	fsrsLastFitAttemptReviews: number;
 	/** Weekdays (0=Sunday..6=Saturday) fuzzInterval steers reviews AWAY from when an
 	 * equally-uncrowded alternative day exists in its jitter window — "I don't want to
 	 * study much on Sundays" without a hard cap that would just push the backlog
@@ -176,12 +231,18 @@ interface GrillSettings {
 	 * regardless of backlog size — this plugin's old, only, silent behavior, now an
 	 * explicit opt-in instead of the default. */
 	freshContentAlwaysGuarantee: boolean;
-	/** Settings-tab progressive disclosure: reveal the rarely-touched tuning/maintenance
-	 * settings (careful grading, coverage weighting, cache clearing, missing-link
-	 * bridges, etc.) below a single toggle instead of always showing all ~30 settings
-	 * flat. Sticky across reopens — a power user who turns it on shouldn't have to
-	 * re-expand every time. */
-	showAdvancedSettings: boolean;
+	/** Which preset the four scheduling numbers above (`desiredRetention`,
+	 * `newConceptsPerDay`, `freshContentShare`, `freshContentAlwaysGuarantee`) currently
+	 * express. The presets are the only thing the settings tab asks about; the raw
+	 * numbers are still what every scheduling call site reads, so nothing downstream
+	 * changes. "custom" means the numbers were hand-edited in the Tuning block and
+	 * match no preset — it is never offered as a choice, only reflected back. */
+	studyIntensity: StudyIntensity;
+	/** One-time flag: the four raw scheduling numbers above have been mapped onto a
+	 * `studyIntensity` preset (or onto "custom" when they match none). Guards the
+	 * mapping so it fires exactly once — after it, the preset is whatever the user
+	 * last chose, and hand-edited numbers keep reading as "custom". */
+	intensityMigrated: boolean;
 	/** Sorted basenames `warnOnDuplicateBasenames` last actually warned about, so the
 	 * same unresolved duplicate list doesn't re-notify on every single plugin load —
 	 * only a CHANGE in the duplicate set (a new collision, or an old one resolved)
@@ -219,40 +280,38 @@ function defaultSettings(): GrillSettings {
 		customBaseUrl: "",
 		questionsPerSession: 5,
 		folder: "Grill",
-		compact: false,
 		showProgress: true,
-		hideNoteName: false,
 		linkSessions: true,
 		excludedFolders: [],
 		includedFolders: [],
 		onboarded: false,
+		dismissedOffers: [],
 		sendImages: true,
 		enableOcclusion: false,
 		questionSource: "ai",
 		gradingMode: "ai",
 		questionFormats: "mixed",
 		sessionDebrief: true,
-		confidenceCheck: false,
 		sounds: true,
 		ttsLanguage: "",
 		ttsVoiceURI: "",
 		graphInsights: true,
-		semanticBridges: false,
 		localEmbedContext: false,
-		carefulGrade: false,
 		conceptsMigrated: false,
 		graphColorMode: "mastery",
 		graphNumberMode: "percent",
 		graphCoverageWeight: 15,
 		desiredRetention: 90,
 		fsrsPersonalization: null,
+		fsrsLastFitAttemptReviews: 0,
 		easyDays: [],
 		newConceptsPerDay: 20,
 		freshContentShare: 30,
 		freshContentAlwaysGuarantee: false,
 		legacyDefaultsMigrated: false,
 		newConceptsCapMigrated: false,
-		showAdvancedSettings: false,
+		studyIntensity: "steady",
+		intensityMigrated: false,
 		lastWarnedDuplicateBasenames: [],
 		arcBackfilled: false,
 	};
@@ -283,29 +342,26 @@ export default class GrillPlugin extends Plugin {
 		if (typeof s.customBaseUrl === "string") settings.customBaseUrl = s.customBaseUrl.trim();
 		if (typeof s.questionsPerSession === "number") settings.questionsPerSession = s.questionsPerSession;
 		if (typeof s.folder === "string" && s.folder.trim()) settings.folder = s.folder.trim();
-		if (typeof s.compact === "boolean") settings.compact = s.compact;
 		if (typeof s.showProgress === "boolean") settings.showProgress = s.showProgress;
-		if (typeof s.hideNoteName === "boolean") settings.hideNoteName = s.hideNoteName;
 		if (typeof s.linkSessions === "boolean") settings.linkSessions = s.linkSessions;
 		if (Array.isArray(s.excludedFolders))
 			settings.excludedFolders = s.excludedFolders.filter((v): v is string => typeof v === "string");
 		if (Array.isArray(s.includedFolders))
 			settings.includedFolders = s.includedFolders.filter((v): v is string => typeof v === "string");
 		if (typeof s.onboarded === "boolean") settings.onboarded = s.onboarded;
+		if (Array.isArray(s.dismissedOffers))
+			settings.dismissedOffers = s.dismissedOffers.filter((v): v is string => typeof v === "string");
 		if (typeof s.sendImages === "boolean") settings.sendImages = s.sendImages;
 		if (typeof s.enableOcclusion === "boolean") settings.enableOcclusion = s.enableOcclusion;
 		if (s.questionSource === "ai" || s.questionSource === "local") settings.questionSource = s.questionSource;
 		if (s.gradingMode === "ai" || s.gradingMode === "self") settings.gradingMode = s.gradingMode;
 		if (s.questionFormats === "write" || s.questionFormats === "mixed" || s.questionFormats === "mc") settings.questionFormats = s.questionFormats;
 		if (typeof s.sessionDebrief === "boolean") settings.sessionDebrief = s.sessionDebrief;
-		if (typeof s.confidenceCheck === "boolean") settings.confidenceCheck = s.confidenceCheck;
 		if (typeof s.sounds === "boolean") settings.sounds = s.sounds;
 		if (typeof s.ttsLanguage === "string") settings.ttsLanguage = s.ttsLanguage;
 		if (typeof s.ttsVoiceURI === "string") settings.ttsVoiceURI = s.ttsVoiceURI;
 		if (typeof s.graphInsights === "boolean") settings.graphInsights = s.graphInsights;
-		if (typeof s.semanticBridges === "boolean") settings.semanticBridges = s.semanticBridges;
 		if (typeof s.localEmbedContext === "boolean") settings.localEmbedContext = s.localEmbedContext;
-		if (typeof s.carefulGrade === "boolean") settings.carefulGrade = s.carefulGrade;
 		if (typeof s.conceptsMigrated === "boolean") settings.conceptsMigrated = s.conceptsMigrated;
 		if (["mastery", "recency", "dueness", "misconceptions"].includes(s.graphColorMode as string)) {
 			settings.graphColorMode = s.graphColorMode as ColorMode;
@@ -330,6 +386,7 @@ export default class GrillPlugin extends Plugin {
 		) {
 			settings.fsrsPersonalization = s.fsrsPersonalization;
 		}
+		if (typeof s.fsrsLastFitAttemptReviews === "number") settings.fsrsLastFitAttemptReviews = s.fsrsLastFitAttemptReviews;
 		if (Array.isArray(s.easyDays)) {
 			settings.easyDays = s.easyDays.filter((d): d is number => typeof d === "number" && d >= 0 && d <= 6);
 		}
@@ -338,7 +395,9 @@ export default class GrillPlugin extends Plugin {
 		if (typeof s.freshContentAlwaysGuarantee === "boolean") settings.freshContentAlwaysGuarantee = s.freshContentAlwaysGuarantee;
 		if (typeof s.legacyDefaultsMigrated === "boolean") settings.legacyDefaultsMigrated = s.legacyDefaultsMigrated;
 		if (typeof s.newConceptsCapMigrated === "boolean") settings.newConceptsCapMigrated = s.newConceptsCapMigrated;
-		if (typeof s.showAdvancedSettings === "boolean") settings.showAdvancedSettings = s.showAdvancedSettings;
+		if (s.studyIntensity === "relaxed" || s.studyIntensity === "steady" || s.studyIntensity === "intense" || s.studyIntensity === "custom")
+			settings.studyIntensity = s.studyIntensity;
+		if (typeof s.intensityMigrated === "boolean") settings.intensityMigrated = s.intensityMigrated;
 		if (Array.isArray(s.lastWarnedDuplicateBasenames)) {
 			settings.lastWarnedDuplicateBasenames = s.lastWarnedDuplicateBasenames.filter((v): v is string => typeof v === "string");
 		}
@@ -361,9 +420,22 @@ export default class GrillPlugin extends Plugin {
 		// existed, so it won't catch them — this carries an untouched 0 forward to the
 		// shipped default exactly once, same as above, so nobody upgrades straight from
 		// "unlimited" to "none" with no signal. A deliberate 0 chosen after this sticks.
+		// Not redundant with the block above, despite applying the same coercion: installs
+		// that upgraded BEFORE this second change already hold legacyDefaultsMigrated
+		// true, so only a separate flag can still reach them. Both firing on the same
+		// load (a fresh install) is a harmless no-op, not a duplicate.
 		if (!settings.newConceptsCapMigrated) {
 			if (settings.newConceptsPerDay === 0) settings.newConceptsPerDay = 20;
 			settings.newConceptsCapMigrated = true;
+		}
+		// Read the four scheduling numbers (post-migration, so the coercions above are
+		// reflected) back into the preset the settings tab now asks about. Exact match or
+		// "custom" — an install that hand-tuned any of them keeps its exact numbers and
+		// simply reads as Custom, so upgrading to the preset picker never reschedules
+		// anyone. Runs once; after this the preset is whatever was last chosen.
+		if (!settings.intensityMigrated) {
+			settings.studyIntensity = intensityOf(settings);
+			settings.intensityMigrated = true;
 		}
 		const calibration = Array.isArray(stored?.calibration) ? stored.calibration.filter(isCalPoint) : [];
 		const arcLog = Array.isArray(stored?.arcLog) ? stored.arcLog.filter(isArcEntry) : [];
@@ -418,6 +490,11 @@ export default class GrillPlugin extends Plugin {
 			id: "rebalance-due-dates",
 			name: "Rebalance upcoming due dates",
 			callback: () => void this.rebalanceSchedule(),
+		});
+		this.addCommand({
+			id: "clear-question-cache",
+			name: "Clear cached questions",
+			callback: () => void this.clearQuestionCache(),
 		});
 		this.addCommand({
 			id: "export-review-log",
@@ -716,19 +793,57 @@ export default class GrillPlugin extends Plugin {
 	 * anytime, from the command palette or the settings button: too little data
 	 * or a fit that doesn't beat the library defaults on this vault's own data
 	 * both leave settings untouched. */
-	async optimizeFsrsParameters(): Promise<void> {
+	/** Refit ratio for the automatic pass: once this vault has half again as much review
+	 * history as the last fit trained on, the fit is stale enough to be worth redoing. A
+	 * proportional threshold rather than a fixed count, so a vault with 5,000 reviews
+	 * doesn't refit every fortnight for a change it can't feel. */
+	private static readonly FSRS_REFIT_GROWTH = 1.5;
+
+	/** Fit this vault's own FSRS weights once there's enough history to fit against, and
+	 * refit as that history grows. Called at session end.
+	 *
+	 * This used to be an "Optimize now" button in settings, which put the burden on the
+	 * student to know that FSRS ships with population-average weights, that their own
+	 * forgetting differs, and that a button existed to close the gap. None of that is
+	 * theirs to know. The fit is local, deterministic, and reads data Grill already logs,
+	 * so the only thing the button ever added was the asking. The Notice still fires, so
+	 * "personalized" stays visible rather than silent, and Tuning keeps a way back to the
+	 * library defaults. */
+	async maybeAutoOptimizeFsrs(): Promise<void> {
+		const trainable = countTrainableReviews(this.concepts);
+		if (trainable < MIN_REVIEWS_FOR_OPTIMIZATION) return;
+		const s = this.data.settings;
+		// Measured against the last ATTEMPT, not the last successful fit — a run that
+		// finds no improvement still costs the same gradient descent, and gating on the
+		// fit alone would repeat it after every session on a vault it can't improve.
+		const lastTried = Math.max(s.fsrsPersonalization?.reviewCount ?? 0, s.fsrsLastFitAttemptReviews);
+		if (lastTried && trainable < lastTried * GrillPlugin.FSRS_REFIT_GROWTH) return;
+		await this.optimizeFsrsParameters({ silentWhenUnchanged: true });
+	}
+
+	/** `silentWhenUnchanged` suppresses the two Notices that only answer a question the
+	 * user asked by pressing a button ("not enough history yet", "no change made"). The
+	 * automatic pass has no question to answer, and a Notice for "nothing happened" on
+	 * every session end would be noise; the one that reports a real change still fires. */
+	async optimizeFsrsParameters(opts: { silentWhenUnchanged?: boolean } = {}): Promise<void> {
 		const trainable = countTrainableReviews(this.concepts);
 		if (trainable < MIN_REVIEWS_FOR_OPTIMIZATION) {
-			new Notice(
-				`Grill: not enough review history yet to personalize FSRS (${trainable}/${MIN_REVIEWS_FOR_OPTIMIZATION} reviews). ` +
-					"Keep studying — this gets better with more real reviews to fit against.",
-			);
+			if (!opts.silentWhenUnchanged)
+				new Notice(
+					`Grill: not enough review history yet to personalize FSRS (${trainable}/${MIN_REVIEWS_FOR_OPTIMIZATION} reviews). ` +
+						"Keep studying — this gets better with more real reviews to fit against.",
+				);
 			return;
 		}
-		new Notice(`Grill: optimizing FSRS parameters from ${trainable} reviews...`);
+		if (!opts.silentWhenUnchanged) new Notice(`Grill: optimizing FSRS parameters from ${trainable} reviews...`);
+		// Recorded before the result is known, and for the manual path too: what the
+		// automatic pass needs to know is that a fit was tried at this much history.
+		this.data.settings.fsrsLastFitAttemptReviews = trainable;
 		const result = await optimizeFSRSWeights(this.concepts);
 		if (!result.weights) {
-			new Notice("Grill: your current schedule already fits this vault as well as a refit would — no change made.");
+			await this.persist();
+			if (!opts.silentWhenUnchanged)
+				new Notice("Grill: your current schedule already fits this vault as well as a refit would — no change made.");
 			return;
 		}
 		const improvementPct = ((result.baselineLoss - result.finalLoss) / result.baselineLoss) * 100;
@@ -752,6 +867,16 @@ export default class GrillPlugin extends Plugin {
 	 * Safe to call anytime, including mid-session (SessionView's own `concepts` map is
 	 * the same object once a session has loaded one — see the field comment on
 	 * `concepts` above). */
+	/** Drop every cached question so each concept writes a fresh one next time it's due.
+	 * A concept's question is written once and reused verbatim on every later review; this
+	 * is the escape hatch for when a Grill update changes how questions are written and you
+	 * want that to reach concepts you've already studied, not just new ones. Doesn't touch
+	 * scheduling, and doesn't affect a session that's already open. */
+	async clearQuestionCache(): Promise<void> {
+		await this.store.saveQuestionBank({});
+		new Notice("Grill: cleared cached questions. Each concept writes a fresh one next time it's due.");
+	}
+
 	async rebalanceSchedule(): Promise<void> {
 		const easyWeekdays = new Set(this.data.settings.easyDays);
 		const changed = rebalanceDueDates(this.concepts, new Date(), easyWeekdays);
@@ -1256,7 +1381,14 @@ class GrillSettingTab extends PluginSettingTab {
 	}
 
 	/** Reset the behavioural settings to the recommended defaults, keeping the user's
-	 * credentials, provider, and folder choices. */
+	 * credentials, provider, and folder choices.
+	 *
+	 * Every one-time migration flag is carried across too, not just `conceptsMigrated`.
+	 * They aren't preferences — they record that a coercion has already happened — so
+	 * resetting them to false re-armed each migration to fire again on the next plugin
+	 * load, which silently undid a deliberate post-Restore choice of `newConceptsPerDay`
+	 * 0 or `graphNumberMode` "off": exactly what the flags exist to prevent (see their
+	 * doc comments on GrillSettings). */
 	private async restoreDefaults(): Promise<void> {
 		const s = this.plugin.data.settings;
 		this.plugin.data.settings = {
@@ -1270,18 +1402,32 @@ class GrillSettingTab extends PluginSettingTab {
 			includedFolders: s.includedFolders,
 			excludedFolders: s.excludedFolders,
 			onboarded: s.onboarded,
+			dismissedOffers: s.dismissedOffers,
 			conceptsMigrated: s.conceptsMigrated,
+			legacyDefaultsMigrated: s.legacyDefaultsMigrated,
+			newConceptsCapMigrated: s.newConceptsCapMigrated,
+			intensityMigrated: s.intensityMigrated,
+			arcBackfilled: s.arcBackfilled,
+			fsrsLastFitAttemptReviews: s.fsrsLastFitAttemptReviews,
 		};
+		// defaultSettings() nulls fsrsPersonalization, but the fitted weights are also
+		// held in ts-fsrs' own module-level config — without this they stay live for the
+		// rest of the session and only actually reset on the next Obsidian reload. The
+		// dedicated reset button does this; Restore has to as well.
+		configureFSRSWeights(null);
 		await this.plugin.persist();
 		new Notice("Grill: restored the recommended settings.");
 		this.display();
 	}
 
-	/** Language + voice pickers for the read-aloud button. Both default to "auto" —
-	 * best-quality installed voice for whatever language the question text turns out to
-	 * be — so out of the box this always uses the best available voice with no setup;
-	 * pinning either is only for overriding that. */
-	private buildVoiceSettings(containerEl: HTMLElement, s: GrillSettings): void {
+	/** Read-aloud voice: one dropdown where there used to be two (a language picker plus a
+	 * voice picker, 50 lines for a single `speak()` call site). Every state that pair could
+	 * express still exists here — full auto, "always this language, best voice for it", and
+	 * one exact pinned voice — as entries in one grouped list, so it stays a single choice
+	 * instead of a two-step one where the second step is disabled until the first is made.
+	 * Values are prefixed (`lang:` / `voice:`) rather than raw, so a voiceURI can never be
+	 * mistaken for a language code. */
+	private buildVoiceSetting(containerEl: HTMLElement, s: GrillSettings): void {
 		const langs = listLanguages();
 		// getVoices() can be empty on the very first call — the browser loads its voice
 		// list asynchronously. Re-render once it actually arrives, same pattern as
@@ -1291,45 +1437,220 @@ class GrillSettingTab extends PluginSettingTab {
 			onVoicesChanged(() => this.display());
 		}
 
-		new Setting(containerEl)
-			.setName("Read-aloud language")
+		const setting = new Setting(containerEl)
+			.setName("Read-aloud voice")
 			.setDesc(
 				langs.length === 0
 					? "No voices found yet — reopen Settings in a moment."
-					: "Auto-detect (default) matches each question's voice to its language. Pin one to always use it instead.",
+					: "Automatic matches each question to its own language. Pick a language to always use that one, or a specific voice to pin it exactly.",
+			);
+		setting.addDropdown((d) => {
+			d.addOption("", "Automatic");
+			for (const l of langs) {
+				// Obsidian's DropdownComponent has no optgroup API, so the group is added to
+				// its select element directly — options nested in an optgroup are still
+				// found by setValue/value, so the component keeps working normally.
+				const group = d.selectEl.createEl("optgroup", { attr: { label: l.label } });
+				group.createEl("option", { value: `lang:${l.code}`, text: `Best ${l.label} voice` });
+				for (const v of listVoicesForLang(l.code)) {
+					group.createEl("option", { value: `voice:${v.voiceURI}`, text: v.name });
+				}
+			}
+			d.setValue(s.ttsVoiceURI ? `voice:${s.ttsVoiceURI}` : s.ttsLanguage ? `lang:${s.ttsLanguage}` : "");
+			d.onChange(async (v) => {
+				if (v.startsWith("voice:")) {
+					const uri = v.slice("voice:".length);
+					s.ttsVoiceURI = uri;
+					// Keep `lang` in step with the pinned voice so the two fields never
+					// disagree — speak() prefers the URI, but the language is what it falls
+					// back to if that voice is later uninstalled.
+					const voice = listVoices().find((x) => x.voiceURI === uri);
+					s.ttsLanguage = voice ? voice.lang.split(/[-_]/)[0].toLowerCase() : s.ttsLanguage;
+				} else if (v.startsWith("lang:")) {
+					s.ttsLanguage = v.slice("lang:".length);
+					s.ttsVoiceURI = "";
+				} else {
+					s.ttsLanguage = "";
+					s.ttsVoiceURI = "";
+				}
+				await this.plugin.persist();
+			});
+		});
+	}
+
+	/** The escape hatch: every number the engine schedules on, reachable but never asked
+	 * about. A native <details>, deliberately NOT a persisted preference — it collapses
+	 * again on every reopen. The previous round of this used a sticky "Show advanced
+	 * settings" toggle, which is what let the tab re-accrete: once a power user flipped it
+	 * on, adding one more setting behind it was free. A click every time is the friction
+	 * that keeps the default surface honest. */
+	private buildTuning(containerEl: HTMLElement, s: GrillSettings): void {
+		const details = containerEl.createEl("details", { cls: "grill-tuning" });
+		details.createEl("summary", { text: "Tuning — you shouldn't need any of this" });
+		details.createEl("p", {
+			cls: "setting-item-description",
+			text:
+				"Study intensity above already sets the first four. Change one here and it becomes Custom, " +
+				"and stays exactly where you put it.",
+		});
+
+		/** Editing any raw scheduling number means the preset no longer describes them. */
+		const toCustom = async (): Promise<void> => {
+			s.studyIntensity = "custom";
+			await this.plugin.persist();
+		};
+
+		this.sliderSetting(
+			details,
+			"Review frequency",
+			"FSRS's target recall probability at each concept's due date. Lower brings concepts back sooner (more " +
+				"reviews, progress feels faster); higher spaces them further apart (fewer reviews, longer " +
+				"before something you know comes back around).",
+			70,
+			97,
+			Math.min(Math.max(s.desiredRetention, 70), 97),
+			(v) => `${v}%`,
+			async (v) => {
+				s.desiredRetention = v;
+				await toCustom();
+			},
+		);
+
+		this.sliderSetting(
+			details,
+			"New concepts per day",
+			"Caps how many never-before-tested concepts \"Get grilled\" will introduce per calendar day. Once " +
+				"hit, sessions fill remaining slots by reviewing what's already due instead, so a few missed " +
+				"days can't leave the due queue permanently outrunning what you can actually review. 0 = no new " +
+				"concepts at all, ever — pure review. Only governs \"Get grilled\": a deliberately scoped session " +
+				"(\"Grill this note/folder\", a committed Custom Study pick) is never throttled by this.",
+			0,
+			100,
+			Math.min(Math.max(s.newConceptsPerDay, 0), 100),
+			(v) => (v === 0 ? "None" : `${v}/day`),
+			async (v) => {
+				s.newConceptsPerDay = v;
+				await toCustom();
+			},
+		);
+
+		this.sliderSetting(
+			details,
+			"New material share",
+			"The most a single session lets new/untested material claim, whenever it's allowed to claim any " +
+				"room at all (see the toggle below).",
+			0,
+			100,
+			Math.min(Math.max(s.freshContentShare, 0), 100),
+			(v) => `${v}%`,
+			async (v) => {
+				s.freshContentShare = v;
+				await toCustom();
+			},
+		);
+
+		new Setting(details)
+			.setName("Always guarantee new material")
+			.setDesc(
+				"Off: a full due/struggling backlog leaves no room for new material that session, reviews win. " +
+					"On: new material always gets its full share above, no matter how large the backlog is.",
 			)
-			.addDropdown((d) => {
-				d.addOption("", "Auto-detect");
-				for (const l of langs) d.addOption(l.code, l.label);
-				d.setValue(s.ttsLanguage);
-				d.onChange(async (v) => {
-					s.ttsLanguage = v;
-					s.ttsVoiceURI = ""; // a pinned voice belongs to the old language; changing it invalidates that pin
-					await this.plugin.persist();
-					this.display();
-				});
+			.addToggle((t) =>
+				t.setValue(s.freshContentAlwaysGuarantee).onChange(async (v) => {
+					s.freshContentAlwaysGuarantee = v;
+					await toCustom();
+				}),
+			);
+
+		const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+		const easyDaysSetting = new Setting(details)
+			.setName("Light review days")
+			.setDesc(
+				"Toggle on any weekday you'd rather Grill went easier on. Doesn't cap or skip that day outright " +
+					"(the backlog still has to go somewhere); it just steers newly-scheduled reviews off it toward " +
+					"an equally-uncrowded day nearby whenever one's available. Toggle order: " +
+					WEEKDAY_NAMES.join(", ") +
+					".",
+			);
+		WEEKDAY_NAMES.forEach((full, weekday) => {
+			easyDaysSetting.addToggle((t) =>
+				t
+					.setTooltip(full)
+					.setValue(s.easyDays.includes(weekday))
+					.onChange(async (v) => {
+						s.easyDays = v ? [...new Set([...s.easyDays, weekday])] : s.easyDays.filter((d) => d !== weekday);
+						await this.plugin.persist();
+					}),
+			);
+		});
+
+		this.sliderSetting(
+			details,
+			"Grade weighting",
+			"How much a graph node's number weighs coverage (how much of the note you've confirmed, capped so a " +
+				"long note isn't penalised for its length) against mastery (how well you'd recall what you've " +
+				"actually studied right now). Left: pure mastery. Right: pure coverage.",
+			0,
+			100,
+			s.graphCoverageWeight,
+			(v) => `${v}% coverage`,
+			async (v) => {
+				s.graphCoverageWeight = v;
+				await this.plugin.persist();
+				this.plugin.refreshMapDisplay();
+			},
+		);
+
+		// Fitting runs itself once there's enough review history (see
+		// GrillPlugin.maybeAutoOptimizeFsrs) — there's no "Optimize now" button here
+		// because being asked to press it was the setting. What's left is the status, so
+		// "personalized" isn't a black box, and a way back to the shared defaults.
+		const trainable = countTrainableReviews(this.plugin.concepts);
+		const fp = s.fsrsPersonalization;
+		new Setting(details)
+			.setName("Personalized FSRS weights")
+			.setDesc(
+				fp
+					? `Active: fit from ${fp.reviewCount} reviews on ${new Date(fp.fitAt).toLocaleDateString()}, ` +
+						`${fp.improvementPct.toFixed(1)}% tighter fit than the library defaults on this vault's own data at the time. ` +
+						"Refits itself as more review history accumulates."
+					: `Not yet: scheduling runs on FSRS-6's library defaults, fit across a large pooled population, not this vault. ` +
+						`Grill fits your own weights automatically at ${MIN_REVIEWS_FOR_OPTIMIZATION} real reviews (${trainable} so far).`,
+			)
+			.addButton((b) => {
+				b.setButtonText("Reset to library defaults").setDisabled(!fp);
+				if (fp) {
+					b.onClick(async () => {
+						s.fsrsPersonalization = null;
+						configureFSRSWeights(null);
+						await this.plugin.persist();
+						new Notice("Grill: FSRS parameters reset to the library defaults.");
+						this.display();
+					});
+				}
+				return b;
 			});
 
-		new Setting(containerEl)
-			.setName("Read-aloud voice")
+		new Setting(details)
+			.setName("Grill folder")
 			.setDesc(
-				s.ttsLanguage
-					? "Best available (default) uses the top-quality installed voice for that language."
-					: "Pick a language above first.",
+				"Vault folder for mastery.json and session transcripts. These are plain files: " +
+					"read them, edit them, sync them like any note.",
 			)
-			.addDropdown((d) => {
-				d.addOption("", "Best available");
-				if (!s.ttsLanguage) {
-					d.setDisabled(true);
-					return;
-				}
-				for (const v of listVoicesForLang(s.ttsLanguage)) d.addOption(v.voiceURI, v.name);
-				d.setValue(s.ttsVoiceURI);
-				d.onChange(async (v) => {
-					s.ttsVoiceURI = v;
-					await this.plugin.persist();
-				});
-			});
+			.addText((t) =>
+				t
+					.setPlaceholder("Grill")
+					.setValue(s.folder)
+					.onChange(async (v) => {
+						s.folder = v.trim() || "Grill";
+						await this.plugin.persist();
+					}),
+			);
+
+		new Setting(details)
+			.setName("Restore recommended settings")
+			.setDesc("Reset everything back to the defaults. Your API keys, provider, and folder choices are kept.")
+			.addButton((b) => b.setButtonText("Restore").onClick(() => void this.restoreDefaults()));
 	}
 
 	display(): void {
@@ -1340,92 +1661,44 @@ class GrillSettingTab extends PluginSettingTab {
 		const p = s.provider;
 		const info = PROVIDERS[p];
 
-		new Setting(containerEl)
-			.setName("Recommended settings")
-			.setDesc(
-				"Reset everything below to the recommended defaults, in case you've changed too much. Your API " +
-					"keys, provider, and folder choices are kept.",
-			)
-			.addButton((b) => b.setButtonText("Restore").onClick(() => void this.restoreDefaults()));
-
-		new Setting(containerEl)
-			.setName("Show advanced settings")
-			.setDesc(
-				"Reveal rarely-touched tuning and maintenance settings: careful grading, coverage weighting, " +
-					"cache clearing, and similar.",
-			)
-			.addToggle((t) =>
-				t.setValue(s.showAdvancedSettings).onChange(async (v) => {
-					s.showAdvancedSettings = v;
-					await this.plugin.persist();
-					this.display();
-				}),
-			);
-
 		// ------------------------------------------------------------ AI
 		new Setting(containerEl).setName("AI").setHeading();
 
+		// One control where there used to be two independent dropdowns (questionSource +
+		// gradingMode). All four combinations they could express are still here — including
+		// notes-built questions with AI marking, the cheapest way to get graded feedback —
+		// but as four named ways to study rather than a matrix the reader has to multiply
+		// out themselves. Same wording as the onboarding cards, so the choice made there is
+		// recognisable here.
+		const MODES: Record<string, { source: "ai" | "local"; grading: "ai" | "self" }> = {
+			ai: { source: "ai", grading: "ai" },
+			"ai-self": { source: "ai", grading: "self" },
+			"local-ai": { source: "local", grading: "ai" },
+			local: { source: "local", grading: "self" },
+		};
+		const mode =
+			Object.keys(MODES).find((k) => MODES[k].source === s.questionSource && MODES[k].grading === s.gradingMode) ?? "ai";
 		new Setting(containerEl)
-			.setName("Where questions come from")
+			.setName("Study mode")
 			.setDesc(
-				"AI writes questions from your notes (needs a key), or Grill builds them from your notes' own " +
-					"structure: definitions, bold terms, headings and formulas (no key, no cost).",
+				"Where questions come from and who marks them. Anything with AI in it needs a key below; " +
+					"fully offline runs entirely on your machine, nothing is sent anywhere, and there's nothing to pay.",
 			)
 			.addDropdown((d) =>
 				d
-					.addOption("ai", "AI writes them")
-					.addOption("local", "From my notes (no key)")
-					.setValue(s.questionSource)
+					.addOption("ai", "AI writes and grades")
+					.addOption("ai-self", "AI writes, I grade myself")
+					.addOption("local-ai", "From my notes, AI grades")
+					.addOption("local", "Fully offline — no key")
+					.setValue(mode)
 					.onChange(async (v) => {
-						s.questionSource = v === "local" ? "local" : "ai";
+						const picked = MODES[v] ?? MODES.ai;
+						s.questionSource = picked.source;
+						s.gradingMode = picked.grading;
 						await this.plugin.persist();
 						this.display();
 					}),
 			);
-
-		new Setting(containerEl)
-			.setName("Grading")
-			.setDesc(
-				"AI marks your written answer against the note (needs a key), or you reveal the answer and grade " +
-					"yourself Again / Hard / Good / Easy (no key, no cost).",
-			)
-			.addDropdown((d) =>
-				d
-					.addOption("ai", "AI marks me")
-					.addOption("self", "I mark myself (no key)")
-					.setValue(s.gradingMode)
-					.onChange(async (v) => {
-						s.gradingMode = v === "self" ? "self" : "ai";
-						await this.plugin.persist();
-						this.display();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName("Question formats")
-			.setDesc(
-				"Mixed picks whichever format (multiple-choice, fill-in-the-blank, true/false, select-all, matching, " +
-					"or write-in) actually fits each concept. Set here, not in Instructions.md: a free-text preference " +
-					"there won't reliably stick.",
-			)
-			.addDropdown((d) =>
-				d
-					.addOption("mixed", "Mixed (write, multiple-choice, fill-in-the-blank, true/false, and more)")
-					.addOption("mc", "Multiple choice only")
-					.addOption("write", "Write only")
-					.setValue(s.questionFormats)
-					.onChange(async (v) => {
-						s.questionFormats = v === "write" ? "write" : v === "mc" ? "mc" : "mixed";
-						await this.plugin.persist();
-					}),
-			);
-
-		if (s.questionSource === "local" && s.gradingMode === "self") {
-			containerEl.createEl("p", {
-				cls: "setting-item-description grill-nokey-note",
-				text: "No-key mode: Grill runs entirely on your machine, nothing is sent anywhere, and there's nothing to pay. A model key is only needed for AI questions or AI grading.",
-			});
-		}
 
 		new Setting(containerEl)
 			.setName("Provider")
@@ -1574,49 +1847,6 @@ class GrillSettingTab extends PluginSettingTab {
 			);
 		}
 
-		// Only reachable when questions are generated at all — no-key ("From my notes")
-		// sessions never call the model, so this toggle would otherwise sit there doing
-		// nothing with no indication why. Advanced: a one-time "does my note have
-		// diagrams" call, not something most sessions need to reconsider.
-		if (s.questionSource === "ai" && s.showAdvancedSettings) {
-			new Setting(containerEl)
-				.setName("Send images to the model")
-				.setDesc(
-					"When a note embeds images and your model can read them (Claude, GPT, Gemini, and vision Ollama " +
-						"models can), Grill sends the images too, so it can quiz on diagrams and screenshots. Costs " +
-						"extra tokens. Text-only models never receive images.",
-				)
-				.addToggle((t) =>
-					t.setValue(s.sendImages).onChange(async (v) => {
-						s.sendImages = v;
-						await this.plugin.persist();
-					}),
-				);
-		}
-
-		// Independent of questionSource — occlusion needs no AI key, so it's offered
-		// regardless of whether the rest of a session is AI-generated or from-your-notes.
-		if (s.showAdvancedSettings) {
-			new Setting(containerEl)
-				.setName("Image occlusion")
-				.setDesc(
-					"Quiz on note-embedded images (diagrams, charts, screenshots) by redacting a legible " +
-						"label found in them, using OCR that runs entirely on your device — no image or note " +
-						"content is ever sent anywhere, and it works with no AI key. The first time it runs, it " +
-						"downloads a small (~10MB) text-recognition engine, cached locally after that. " +
-						"Desktop only for now.",
-				)
-				.addToggle((t) =>
-					t
-						.setValue(s.enableOcclusion)
-						.setDisabled(Platform.isMobile)
-						.onChange(async (v) => {
-							s.enableOcclusion = v;
-							await this.plugin.persist();
-						}),
-				);
-		}
-
 		new Setting(containerEl)
 			.setName("Persona & instructions")
 			.setDesc(
@@ -1632,8 +1862,8 @@ class GrillSettingTab extends PluginSettingTab {
 					.onClick(() => void this.plugin.openInstructions()),
 			);
 
-		// ------------------------------------------------------------ Sessions
-		new Setting(containerEl).setName("Sessions").setHeading();
+		// ------------------------------------------------------------ Studying
+		new Setting(containerEl).setName("Studying").setHeading();
 
 		this.sliderSetting(
 			containerEl,
@@ -1649,242 +1879,55 @@ class GrillSettingTab extends PluginSettingTab {
 			},
 		);
 
-		this.sliderSetting(
-			containerEl,
-			"Review frequency",
-			"How hard the schedule works to keep things fresh. Lower brings concepts back sooner (more " +
-				"reviews, progress feels faster); higher spaces them further apart (fewer reviews, longer " +
-				"before something you know comes back around).",
-			70,
-			97,
-			Math.min(Math.max(s.desiredRetention, 70), 97),
-			(v) => `${v}%`,
-			async (v) => {
-				s.desiredRetention = v;
-				await this.plugin.persist();
-			},
-		);
-
-		this.sliderSetting(
-			containerEl,
-			"New concepts per day",
-			"Caps how many never-before-tested concepts \"Get grilled\" will introduce per calendar day, on " +
-				"top of the per-session limits above. Once hit, sessions fill remaining slots by reviewing " +
-				"what's already due instead, so a few missed days can't leave the due queue permanently " +
-				"outrunning what you can actually review. 0 = no new concepts at all, ever — pure review. " +
-				"Only governs \"Get grilled\": a deliberately scoped session (\"Grill this note/folder\", a " +
-				"committed Custom Study pick) is never throttled by this, whatever it's set to.",
-			0,
-			100,
-			Math.min(Math.max(s.newConceptsPerDay, 0), 100),
-			(v) => (v === 0 ? "None" : `${v}/day`),
-			async (v) => {
-				s.newConceptsPerDay = v;
-				await this.plugin.persist();
-			},
-		);
-
-		this.sliderSetting(
-			containerEl,
-			"New material share",
-			"The most a single session lets new/untested material claim, whenever it's allowed to claim any " +
-				"room at all (see the toggle below).",
-			0,
-			100,
-			Math.min(Math.max(s.freshContentShare, 0), 100),
-			(v) => `${v}%`,
-			async (v) => {
-				s.freshContentShare = v;
-				await this.plugin.persist();
-			},
-		);
-
+		// One choice standing in for the four FSRS/new-material numbers Grill actually
+		// schedules on. Those numbers still exist and are still what every scheduling call
+		// site reads — they just live in Tuning now, because "what share of one session may
+		// new material claim" is not a question a student should be asked. "Custom" only
+		// appears when the numbers were hand-edited there, so picking it is never a way to
+		// end up somewhere undefined.
 		new Setting(containerEl)
-			.setName("Always guarantee new material")
+			.setName("Study intensity")
 			.setDesc(
-				"Off (default): a full due/struggling backlog leaves no room for new material that session, " +
-					"reviews win. On: new material always gets its full share above, no matter how large the " +
-					"backlog is.",
+				"How hard the schedule pushes: how often things come back, and how much new material a day " +
+					"introduces. Steady is what most people should leave this on.",
 			)
-			.addToggle((t) =>
-				t.setValue(s.freshContentAlwaysGuarantee).onChange(async (v) => {
-					s.freshContentAlwaysGuarantee = v;
+			.addDropdown((d) => {
+				d.addOption("relaxed", "Relaxed — fewer reviews, slower intake");
+				d.addOption("steady", "Steady — recommended");
+				d.addOption("intense", "Intense — exam in a fortnight");
+				if (s.studyIntensity === "custom") d.addOption("custom", "Custom — set in Tuning below");
+				d.setValue(s.studyIntensity);
+				d.onChange(async (v) => {
+					if (v === "custom") return;
+					const preset = INTENSITY_PRESETS[v as Exclude<StudyIntensity, "custom">];
+					s.desiredRetention = preset.desiredRetention;
+					s.newConceptsPerDay = preset.newConceptsPerDay;
+					s.freshContentShare = preset.freshContentShare;
+					s.freshContentAlwaysGuarantee = preset.freshContentAlwaysGuarantee;
+					s.studyIntensity = v as StudyIntensity;
 					await this.plugin.persist();
-				}),
-			);
-
-		new Setting(containerEl)
-			.setName("End-of-session debrief")
-			.setDesc(
-				"When a session uses AI, spend one extra call at the end to summarise how you did, name any " +
-					"recurring confusion, and point you at what to study next. Off: a plain summary, no extra cost. " +
-					"No-key sessions always get the plain summary.",
-			)
-			.addToggle((t) =>
-				t.setValue(s.sessionDebrief).onChange(async (v) => {
-					s.sessionDebrief = v;
-					await this.plugin.persist();
-				}),
-			);
-
-		if (s.showAdvancedSettings) {
-			const trainable = countTrainableReviews(this.plugin.concepts);
-			const fp = s.fsrsPersonalization;
-			const fsrsDesc = fp
-				? `Active: fit from ${fp.reviewCount} reviews on ${new Date(fp.fitAt).toLocaleDateString()}, ` +
-					`${fp.improvementPct.toFixed(1)}% tighter fit than the library defaults on this vault's own data at the time. ` +
-					"Re-run occasionally as more review history accumulates, or reset to the shared library defaults."
-				: `Off: scheduling runs on FSRS-6's library defaults, fit across a large pooled population, not this vault. ` +
-					`Needs ${MIN_REVIEWS_FOR_OPTIMIZATION} real reviews to fit against (${trainable}/${MIN_REVIEWS_FOR_OPTIMIZATION} so far), ` +
-					"keep studying and re-open this panel to check progress.";
-			new Setting(containerEl)
-				.setName("Personalize FSRS to your own memory")
-				.setDesc(
-					"Fits FSRS's ~21 scheduling weights to how YOU actually forget, from your own logged review history, " +
-						"instead of the library's one-size-fits-all defaults. The same idea as Anki's own FSRS optimizer, run " +
-						"locally with no data leaving your machine. " +
-						fsrsDesc,
-				)
-				.addButton((b) =>
-					b.setButtonText("Optimize now").onClick(async () => {
-						await this.plugin.optimizeFsrsParameters();
-						this.display();
-					}),
-				)
-				.addButton((b) => {
-					b.setButtonText("Reset to defaults").setDisabled(!fp);
-					if (fp) {
-						b.onClick(async () => {
-							s.fsrsPersonalization = null;
-							configureFSRSWeights(null);
-							await this.plugin.persist();
-							new Notice("Grill: FSRS parameters reset to the library defaults.");
-							this.display();
-						});
-					}
-					return b;
+					this.display();
 				});
-
-			const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-			const easyDaysSetting = new Setting(containerEl)
-				.setName("Light review days")
-				.setDesc(
-					"Toggle on any weekday you'd rather Grill went easier on. Doesn't cap or skip that day outright " +
-						"(the backlog still has to go somewhere); it just steers newly-scheduled reviews off it toward " +
-						"an equally-uncrowded day nearby whenever one's available. Toggle order: " +
-						WEEKDAY_NAMES.join(", ") +
-						".",
-				);
-			WEEKDAY_NAMES.forEach((full, weekday) => {
-				easyDaysSetting.addToggle((t) =>
-					t
-						.setTooltip(full)
-						.setValue(s.easyDays.includes(weekday))
-						.onChange(async (v) => {
-							s.easyDays = v ? [...new Set([...s.easyDays, weekday])] : s.easyDays.filter((d) => d !== weekday);
-							await this.plugin.persist();
-						}),
-				);
 			});
 
-			new Setting(containerEl)
-				.setName("Confidence check")
-				.setDesc(
-					"After each answer, ask how sure you were (Sure / Think so / Guessing). Grill tracks how well " +
-						"your confidence matches your accuracy and tells you in the debrief when you lean over- or " +
-						"underconfident. Off by default; no extra model cost.",
-				)
-				.addToggle((t) =>
-					t.setValue(s.confidenceCheck).onChange(async (v) => {
-						s.confidenceCheck = v;
+		new Setting(containerEl)
+			.setName("Question formats")
+			.setDesc(
+				"Mixed picks whichever format (multiple-choice, fill-in-the-blank, true/false, select-all, matching, " +
+					"or write-in) actually fits each concept. Set here, not in Instructions.md: a free-text preference " +
+					"there won't reliably stick.",
+			)
+			.addDropdown((d) =>
+				d
+					.addOption("mixed", "Mixed (write, multiple-choice, fill-in-the-blank, true/false, and more)")
+					.addOption("mc", "Multiple choice only")
+					.addOption("write", "Write only")
+					.setValue(s.questionFormats)
+					.onChange(async (v) => {
+						s.questionFormats = v === "write" ? "write" : v === "mc" ? "mc" : "mixed";
 						await this.plugin.persist();
 					}),
-				);
-
-			new Setting(containerEl)
-				.setName("Find missing links")
-				.setDesc(
-					"In AI sessions, look for two of your notes that clearly relate but aren't linked, quiz you on the " +
-						"connection, and offer to add the [[link]] for you. How many show up isn't a count you dial in: " +
-						"it's however many pairs actually turn out to be genuinely related this session, naturally zero " +
-						"some sessions. Needs a key; off for no-key sessions.",
-				)
-				.addToggle((t) =>
-					t.setValue(s.graphInsights).onChange(async (v) => {
-						s.graphInsights = v;
-						await this.plugin.persist();
-						this.display();
-					}),
-				);
-
-			if (s.graphInsights) {
-				new Setting(containerEl)
-					.setName("Find missing links by meaning, not just wording")
-					.setDesc(
-						"Also embed your notes and look for pairs that are conceptually related even when they don't share " +
-							"vocabulary, which the lexical search above can miss. Needs an OpenAI or Gemini key, or a local " +
-							"Ollama server with an embedding model pulled (e.g. `ollama pull nomic-embed-text`); off for " +
-							"Anthropic and DeepSeek, which have no embeddings API to call. Costs one extra request per " +
-							"new or changed note, capped per session.",
-					)
-					.addToggle((t) =>
-						t.setValue(s.semanticBridges).onChange(async (v) => {
-							s.semanticBridges = v;
-							await this.plugin.persist();
-						}),
-					);
-			}
-
-			new Setting(containerEl)
-				.setName("Pick prompt context by meaning, not just wording")
-				.setDesc(
-					"When a long note or reference document gets trimmed to fit the AI prompt, keep the sections that are " +
-						"actually about what's being tested, even when they're worded differently from the concept itself " +
-						"(the default exact-wording match can miss a paraphrase). Runs entirely on-device — no key needed, " +
-						"no note content sent anywhere — but downloads a small (~25MB) embedding model from Hugging Face " +
-						"the first time it runs, so it's off by default: that download only happens if you ask for it. " +
-						"Falls straight back to exact-wording matching on any failure.",
-				)
-				.addToggle((t) =>
-					t.setValue(s.localEmbedContext).onChange(async (v) => {
-						s.localEmbedContext = v;
-						await this.plugin.persist();
-					}),
-				);
-
-			new Setting(containerEl)
-				.setName("Clear cached questions")
-				.setDesc(
-					"A concept's question is written once and reused verbatim on every later review, never silently " +
-						"reworded. Use this to force every concept to write a fresh question next time it's due, e.g. right " +
-						"after a Grill update changes how questions are written (a new format, a prompt fix) so it reaches " +
-						"concepts you've already studied a lot, not just new ones. Doesn't affect a session already open.",
-				)
-				.addButton((b) =>
-					b.setButtonText("Clear").onClick(async () => {
-						await this.plugin.store.saveQuestionBank({});
-						new Notice("Grill: cleared cached questions.");
-					}),
-				);
-
-			// Only reachable under AI grading — self-grade's Again/Hard/Good/Easy is the
-			// student's own verdict, nothing here for a consensus of calls to double-check.
-			if (s.gradingMode === "ai") {
-				new Setting(containerEl)
-					.setName("Careful grading")
-					.setDesc(
-						"When AI grades your answer, run a small consensus of calls and fall back to the stricter verdict on " +
-							"disagreement. Cuts the chance of being marked correct when you weren't, at a higher per-answer cost. " +
-							"Off by default.",
-					)
-					.addToggle((t) =>
-						t.setValue(s.carefulGrade).onChange(async (v) => {
-							s.carefulGrade = v;
-							await this.plugin.persist();
-						}),
-					);
-			}
-		}
+			);
 
 		new Setting(containerEl)
 			.setName("Sound & celebration")
@@ -1899,46 +1942,7 @@ class GrillSettingTab extends PluginSettingTab {
 				}),
 			);
 
-		this.buildVoiceSettings(containerEl, s);
-
-		// ------------------------------------------------------------ Appearance
-		new Setting(containerEl).setName("Appearance").setHeading();
-		containerEl.createEl("p", {
-			cls: "setting-item-description",
-			text: "The start screen and progress dashboard always use the banner's own colours, not your Obsidian " +
-				"theme, so they look the same on any theme. Everything else, sessions, grading, this settings page, " +
-				"still follows your theme. Fine-grained control (colors, width, spacing) is available via the " +
-				"community Style Settings plugin; the essentials are here.",
-		});
-
-		new Setting(containerEl)
-			.setName("Compact layout")
-			.setDesc("Tighter spacing and smaller text, for narrow sidebars.")
-			.addToggle((t) =>
-				t.setValue(s.compact).onChange(async (v) => {
-					s.compact = v;
-					await this.plugin.persist();
-				}),
-			);
-
-		new Setting(containerEl)
-			.setName("Show progress bar")
-			.addToggle((t) =>
-				t.setValue(s.showProgress).onChange(async (v) => {
-					s.showProgress = v;
-					await this.plugin.persist();
-				}),
-			);
-
-		new Setting(containerEl)
-			.setName("Hide note name during questions")
-			.setDesc("The note name can give the answer away. Hide it until after you answer.")
-			.addToggle((t) =>
-				t.setValue(s.hideNoteName).onChange(async (v) => {
-					s.hideNoteName = v;
-					await this.plugin.persist();
-				}),
-			);
+		this.buildVoiceSetting(containerEl, s);
 
 		// ------------------------------------------------------------ Graph
 		new Setting(containerEl).setName("Graph").setHeading();
@@ -1981,76 +1985,11 @@ class GrillSettingTab extends PluginSettingTab {
 						s.graphNumberMode = v as NumberMode;
 						await this.plugin.persist();
 						this.plugin.refreshMapDisplay();
-						this.display();
 					}),
 			);
 
-		if (s.graphNumberMode !== "off" && s.showAdvancedSettings) {
-			this.sliderSetting(
-				containerEl,
-				"Grade weighting",
-				"How much the score weighs coverage (how much of the note you've confirmed, capped so a long " +
-					"note isn't penalised for its length) against mastery (how well you'd recall what you've " +
-					"actually studied right now, from spaced review, not a single lucky answer). Left: pure " +
-					"mastery. Right: pure coverage, so the score stays low until a representative slice of the " +
-					"note is confirmed.",
-				0,
-				100,
-				s.graphCoverageWeight,
-				(v) => `${v}% coverage`,
-				async (v) => {
-					s.graphCoverageWeight = v;
-					await this.plugin.persist();
-					this.plugin.refreshMapDisplay();
-				},
-			);
-		}
-
-		// ------------------------------------------------------------ Storage
-		new Setting(containerEl).setName("Storage").setHeading();
-
-		if (s.showAdvancedSettings) {
-			new Setting(containerEl)
-				.setName("Rebalance upcoming due dates")
-				.setDesc(
-					"Keeps what's due WHEN it's due, but re-smooths the days they land on against a clean slate. " +
-						"Fixes pile-ups a big import or a long study stretch can leave behind, where several concepts " +
-						"scheduled around the same time each landed against a load-balancer that hadn't yet seen all " +
-						"its own siblings. Only touches concepts still comfortably in the future; never pulls in or " +
-						"pushes out anything already due or overdue.",
-				)
-				.addButton((b) => b.setButtonText("Rebalance").onClick(() => void this.plugin.rebalanceSchedule()));
-
-			new Setting(containerEl)
-				.setName("Show quiz history in a note's backlinks")
-				.setDesc(
-					"Each saved session links back to the notes it tested, so opening a note's backlinks shows every " +
-						'time Grill quizzed you on it. Off: sessions are still saved, just not linked. (They appear in ' +
-						'the graph; hide them with -path:"Grill/" in the graph filter.)',
-				)
-				.addToggle((t) =>
-					t.setValue(s.linkSessions).onChange(async (v) => {
-						s.linkSessions = v;
-						await this.plugin.persist();
-					}),
-				);
-
-			new Setting(containerEl)
-				.setName("Grill folder")
-				.setDesc(
-					"Vault folder for mastery.json and session transcripts. These are plain files: " +
-						"read them, edit them, sync them like any note.",
-				)
-				.addText((t) =>
-					t
-						.setPlaceholder("Grill")
-						.setValue(s.folder)
-						.onChange(async (v) => {
-							s.folder = v.trim() || "Grill";
-							await this.plugin.persist();
-						}),
-				);
-		}
+		// ------------------------------------------------------------ Scope
+		new Setting(containerEl).setName("Scope").setHeading();
 
 		new Setting(containerEl)
 			.setName("Grill's folders")
@@ -2071,26 +2010,26 @@ class GrillSettingTab extends PluginSettingTab {
 					}),
 			);
 
-		if (s.showAdvancedSettings) {
-			new Setting(containerEl)
-				.setName("Excluded folders")
-				.setDesc(
-					"Comma-separated folders to leave out of sessions, so notes like templates and attachments " +
-						"aren't quizzed. Relative paths, e.g. Templates, Inbox, Archive.",
-				)
-				.addText((t) =>
-					t
-						.setPlaceholder("Templates, Inbox")
-						.setValue(s.excludedFolders.join(", "))
-						.onChange(async (v) => {
-							s.excludedFolders = v
-								.split(",")
-								.map((x) => x.trim())
-								.filter(Boolean);
-							await this.plugin.persist();
-						}),
-				);
-		}
+		new Setting(containerEl)
+			.setName("Excluded folders")
+			.setDesc(
+				"Comma-separated folders to leave out of sessions, so notes like templates and attachments " +
+					"aren't quizzed. Relative paths, e.g. Templates, Inbox, Archive.",
+			)
+			.addText((t) =>
+				t
+					.setPlaceholder("Templates, Inbox")
+					.setValue(s.excludedFolders.join(", "))
+					.onChange(async (v) => {
+						s.excludedFolders = v
+							.split(",")
+							.map((x) => x.trim())
+							.filter(Boolean);
+						await this.plugin.persist();
+					}),
+			);
+
+		this.buildTuning(containerEl, s);
 
 		// Kick off a background model-list fetch the first time the tab opens.
 		if (!this.modelLists[p] && (s.apiKeys[p] || p === "ollama" || (p === "custom" && s.customBaseUrl)))

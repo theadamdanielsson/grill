@@ -2,7 +2,7 @@
 
 import { ItemView, MarkdownRenderer, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
-import { adjudicateBridges, ConceptTarget, debriefSession, embedTexts, explainQuestion, formatSatisfies, generateQuestions, Grade, gradeAnswer, LLMConfig, Question, supportsEmbeddings, supportsVision, Verdict } from "./llm";
+import { adjudicateBridges, ConceptTarget, contentWords, debriefSession, embedTexts, explainQuestion, formatSatisfies, generateQuestions, Grade, gradeAnswer, LLMConfig, Question, supportsEmbeddings, supportsVision, Verdict } from "./llm";
 import { detectOcclusionRegions } from "./ocr";
 import {
 	Concept,
@@ -35,7 +35,7 @@ import {
 	reconcileConcepts,
 	trueRetentionLine,
 } from "./concepts";
-import { collectNoteImages, ImageInput } from "./images";
+import { collectNoteImages, ImageInput, hasEmbeddedImage } from "./images";
 import { collectNotePdfText, extractPdfTextCached } from "./pdf";
 import { hashStr, mapWithConcurrency, safeSlice } from "./text";
 import {
@@ -387,6 +387,16 @@ export class SessionView extends ItemView {
 	 * time the view is torn down and rebuilt, same as every other screen's local
 	 * UI state here — not worth persisting. */
 	private coverageExpanded = false;
+	/** Whether the pane is currently too narrow for the roomy layout. Observed rather
+	 * than configured: "compact" used to be a settings toggle whose own description said
+	 * "for narrow sidebars", which is a measurement, not a preference — the pane's width
+	 * is right there. The Style Settings plugin still exposes `body.grill-compact` as a
+	 * manual always-on override, so anyone who wants it unconditionally keeps that. */
+	private narrow = false;
+	/** Below this pane width the roomy layout stops fitting and the compact one takes
+	 * over. Sized against Obsidian's own default right-sidebar width (~300px), so a
+	 * default sidebar is compact and a widened one or a main-pane tab is not. */
+	private static readonly COMPACT_WIDTH_PX = 420;
 	/** The live learning-graph canvas controller on the start screen, if any. */
 	private map: LearningMap | null = null;
 	/** Set by renderMap once mounted: rebuilds the map from exactly a given note set (or
@@ -445,9 +455,23 @@ export class SessionView extends ItemView {
 	 * concepts. `questions` is just the delivered queue; it is NOT positionally
 	 * coupled to `targets`. */
 	private planCursor = 0;
-	/** The confidence the user picked for the current question (0..1), or null. Only
-	 * used when the confidence check is on; captured into calibration on grade. */
+	/** Notes in this session that embed images, when image occlusion is off. Feeds the
+	 * end-of-session offer — evidence that the feature would actually have had something
+	 * to work with here, rather than a toggle offered to everyone regardless. */
+	private occlusionMissed = new Set<string>();
+	/** True when a note or reference document in this session was long enough to be
+	 * trimmed for the prompt while embedding-ranked context selection was off. */
+	private trimmedForPrompt = false;
+	/** The confidence the user picked for the current question (0..1), or null — null on
+	 * every question the sampler didn't ask about. Captured into calibration on grade. */
 	private pendingConfidence: number | null = null;
+	/** Ask "how sure are you?" on one question in this many, rather than every one.
+	 * Calibration needs a population, not a census: `calibrationSummary` reads the last
+	 * few dozen points and won't say anything at all below ten of them, so sampling costs
+	 * a handful of sessions before the debrief can speak and buys back three-quarters of
+	 * the taps. Asking on every answer was the reason this had to be opt-in; asking
+	 * occasionally means it can just be on. */
+	private static readonly CONFIDENCE_EVERY = 4;
 	/** Snapshot of the just-graded concept's pre-answer FSRS state, taken right before
 	 * `applyGrade` mutates it, so a wrong verdict can be corrected via "Mark correct"
 	 * without hand-rolling an FSRS "undo": restore this, then replay the exact same
@@ -484,9 +508,29 @@ export class SessionView extends ItemView {
 	}
 
 	async onOpen(): Promise<void> {
+		this.observePaneWidth();
 		if (!this.plugin.data.settings.onboarded) this.renderOnboarding();
 		else this.renderStart();
 		this.registerDomEvent(document, "keydown", (e) => this.handleSessionKeydown(e));
+	}
+
+	/** Keep `narrow` in step with the pane's actual width and push it straight onto the
+	 * live wrapper, so dragging the sidebar reflows immediately instead of on the next
+	 * re-render. Observes `contentEl` (which survives every render) rather than the
+	 * wrapper `root()` recreates. Same ResizeObserver idiom as mapview.ts's canvas sizing,
+	 * including the guard for environments that don't expose it. */
+	private observePaneWidth(): void {
+		const apply = (width: number): void => {
+			const narrow = width > 0 && width < SessionView.COMPACT_WIDTH_PX;
+			if (narrow === this.narrow) return;
+			this.narrow = narrow;
+			this.contentEl.querySelector(".grill-wrap")?.toggleClass("grill-compact", narrow);
+		};
+		apply(this.contentEl.clientWidth);
+		if (typeof ResizeObserver === "undefined") return;
+		const ro = new ResizeObserver((entries) => apply(entries[0]?.contentRect.width ?? 0));
+		ro.observe(this.contentEl);
+		this.register(() => ro.disconnect());
 	}
 
 	/** Enter/Space advances past the feedback screen, matching the "press enter to
@@ -671,7 +715,7 @@ export class SessionView extends ItemView {
 		el.addClass("grill-view");
 		el.toggleClass("grill-arcade-mode", arcade);
 		const wrap = el.createDiv({ cls: "grill-wrap" });
-		wrap.toggleClass("grill-compact", this.plugin.data.settings.compact);
+		wrap.toggleClass("grill-compact", this.narrow);
 		wrap.toggleClass("grill-arcade-mode", arcade);
 		return wrap;
 	}
@@ -2144,6 +2188,41 @@ export class SessionView extends ItemView {
 		await this.finishSession();
 	}
 
+	/** Would showing this question's note name hand over the answer?
+	 *
+	 * This replaces a blunt "hide note name" toggle. That toggle was all-or-nothing for a
+	 * problem that is per-question: on a note called "Krebs cycle" the name IS the answer
+	 * to half its questions and useful orientation on the other half, and a student had to
+	 * pick one behaviour for both. Here the check runs per question: the chip is hidden
+	 * exactly when the name's own words carry the expected answer and the question hasn't
+	 * already said them out loud (if the stem names it, the chip reveals nothing new).
+	 *
+	 * Deliberately word-level, not substring: a substring test both over-fires ("Cell" in
+	 * "excellent") and under-fires on any inflection, and the failure that matters here is
+	 * the one where the answer leaks. */
+	private nameLeaksAnswer(q: Question): boolean {
+		const nameWords = contentWords(q.node);
+		if (!nameWords.size) return false;
+		// Both fields are defensive reads, not decoration: an authored question may ship no
+		// model answer at all, and the question bank is JSON on disk that predates fields.
+		const answer = contentWords(`${q.modelAnswer ?? ""} ${(q.acceptableAnswers ?? []).join(" ")}`);
+		if (!answer.size) return false;
+		const stem = contentWords(q.question);
+		// Only words the answer supplies and the question withholds count as a leak.
+		let leaked = 0;
+		for (const w of nameWords) if (answer.has(w) && !stem.has(w)) leaked++;
+		return leaked / nameWords.size >= 0.5;
+	}
+
+	/** Is this question one of the sampled ones? Self-graded answers are excluded: the
+	 * grade there is the student's own verdict, so comparing their confidence against it
+	 * measures nothing. Replays are excluded because they don't record calibration at all
+	 * (see captureConfidence) — asking would be a tap that goes nowhere. */
+	private askConfidenceNow(selfGrade: boolean): boolean {
+		if (selfGrade || this.replayMode) return false;
+		return this.idx % SessionView.CONFIDENCE_EVERY === 0;
+	}
+
 	private renderQuestion(): void {
 		const wrap = this.root();
 		this.progressBar(wrap);
@@ -2152,7 +2231,8 @@ export class SessionView extends ItemView {
 		const card = wrap.createDiv({ cls: "grill-body" });
 		const meta = card.createDiv({ cls: "grill-meta-row" });
 		meta.createSpan({ cls: "grill-meta", text: `Question ${this.idx + 1} of ${this.targetCount}` });
-		if (!this.plugin.data.settings.hideNoteName) meta.createSpan({ cls: "grill-chip", text: q.node });
+		const hideName = this.nameLeaksAnswer(q);
+		if (!hideName) meta.createSpan({ cls: "grill-chip", text: q.node });
 		// Only the generic case needs this — a bridge/routed/contagion question already
 		// explains itself below in plain language, and stacking a due-reason on top of
 		// that would just repeat the same point in a second voice.
@@ -2166,7 +2246,8 @@ export class SessionView extends ItemView {
 		// but honour "hide note name" so we never leak the answer.
 		if (q.connectTo) {
 			const bridge = card.createDiv({ cls: "grill-bridge" });
-			const hidden = this.plugin.data.settings.hideNoteName;
+			// A bridge names two notes, so it leaks if EITHER end does.
+			const hidden = hideName || this.nameLeaksAnswer({ ...q, node: q.connectTo });
 			if (hidden) {
 				bridge.createSpan({
 					cls: "grill-meta",
@@ -2186,7 +2267,7 @@ export class SessionView extends ItemView {
 		// foundation it builds on"). Honour "hide note name" so we never leak it.
 		if (q.routedFrom) {
 			const routed = card.createDiv({ cls: "grill-routed" });
-			if (this.plugin.data.settings.hideNoteName) {
+			if (hideName) {
 				routed.createSpan({ cls: "grill-meta", text: "Shoring up a foundation of the note you just missed" });
 			} else {
 				this.md(`You missed **${q.routedFrom}** — checking a foundation it builds on`, routed.createDiv({ cls: "grill-meta" }), q.node);
@@ -2194,10 +2275,10 @@ export class SessionView extends ItemView {
 		}
 
 		// Misconception contagion: make the probe legible ("you showed the same mistake
-		// on X, checking if it applies here too"). Honour "hide note name" as above.
+		// on X, checking if it applies here too"). Same leak check as above.
 		if (q.contagionFrom) {
 			const contagion = card.createDiv({ cls: "grill-routed" });
-			if (this.plugin.data.settings.hideNoteName) {
+			if (hideName) {
 				contagion.createSpan({ cls: "grill-meta", text: "Checking whether a mistake from another note shows up here too" });
 			} else {
 				this.md(
@@ -2386,9 +2467,9 @@ export class SessionView extends ItemView {
 				},
 			});
 		}
-		// Confidence check (opt-in, AI grading only): predict how sure you are before
-		// the grade lands, so calibration compares your confidence to an objective mark.
-		if (this.plugin.data.settings.confidenceCheck && !selfGrade) {
+		// Confidence check (AI grading only): predict how sure you are before the grade
+		// lands, so calibration compares your confidence to an objective mark.
+		if (this.askConfidenceNow(selfGrade)) {
 			const conf = card.createDiv({ cls: "grill-confidence" });
 			conf.createSpan({ cls: "grill-meta", text: "How sure are you?" });
 			const btns: HTMLButtonElement[] = [];
@@ -2896,6 +2977,10 @@ export class SessionView extends ItemView {
 		if (s.sounds) playSfx(perfect ? "perfect" : "complete");
 		if (perfect && s.sounds) this.confettiStop = celebrate(this.contentEl.ownerDocument);
 		this.renderSummary(note, debrief);
+		// After the summary is on screen, not before: the fit is pure local computation
+		// over the review log this session just added to, and it's a no-op until the vault
+		// has enough history, so it should never delay showing the student their results.
+		void this.plugin.maybeAutoOptimizeFsrs();
 	}
 
 	private renderDebrief(card: HTMLElement, debrief: SessionDebrief, sourcePath: string): void {
@@ -2932,15 +3017,83 @@ export class SessionView extends ItemView {
 				chip.onclick = () => this.openNote(name);
 			}
 		}
-		// Metacognitive calibration (opt-in): over/underconfidence across recent answers.
-		if (this.plugin.data.settings.confidenceCheck) {
-			const line = calibrationLine(this.plugin.data.calibration);
-			if (line) this.md(line, box.createDiv({ cls: "grill-debrief-calibration grill-meta" }), sourcePath);
-		}
-		// True retention: always on, no opt-in needed — reads reviewLog data that's
-		// already logged regardless of settings, unlike the stated-confidence check above.
+		// Metacognitive calibration: over/underconfidence across recent answers.
+		// calibrationLine returns "" until the buffer holds enough points, which is the
+		// only gate needed — sampling just means it takes a few sessions to get there.
+		const line = calibrationLine(this.plugin.data.calibration);
+		if (line) this.md(line, box.createDiv({ cls: "grill-debrief-calibration grill-meta" }), sourcePath);
+		// True retention: reads reviewLog data that's logged on every answer, so unlike
+		// the stated-confidence check above it needs no sampling to accumulate.
 		const retentionLine = trueRetentionLine(this.concepts, this.plugin.data.settings.desiredRetention);
 		if (retentionLine) this.md(retentionLine, box.createDiv({ cls: "grill-debrief-calibration grill-meta" }), sourcePath);
+	}
+
+	/** Offer the two features that stay off until asked for, at the end of a session that
+	 * showed they'd have had something to do.
+	 *
+	 * Both used to be toggles in settings, and both were off by default for the same
+	 * reason: the first run downloads a model file (~10MB for the OCR engine, ~25MB for
+	 * the embedding model). That's a fair thing to ask about and a terrible thing to ask
+	 * about in a settings page — the reader has no way to tell whether "image occlusion"
+	 * or "pick prompt context by meaning" is worth a download, because nothing in front of
+	 * them says whether their own notes even contain diagrams or long passages. Here the
+	 * evidence is concrete and just happened: these notes, this session. An offer only
+	 * appears when the feature would have applied, and declining is remembered.
+	 *
+	 * Turning one on takes effect from the next session — both are read at session start,
+	 * and retrofitting the one just finished would mean regenerating questions the student
+	 * has already answered. */
+	private renderOffers(card: HTMLElement): void {
+		// A replay re-asks stored questions without scanning any notes, so occlusionMissed
+		// and trimmedForPrompt still describe whatever session last did scan — evidence
+		// this screen didn't earn.
+		if (this.replayMode) return;
+		const s = this.plugin.data.settings;
+		const offer = (id: string, text: string, accept: string, onAccept: () => void): void => {
+			if (s.dismissedOffers.includes(id)) return;
+			const box = card.createDiv({ cls: "grill-offer" });
+			box.createDiv({ cls: "grill-meta", text });
+			const row = box.createDiv({ cls: "grill-btn-row" });
+			const yes = row.createEl("button", { text: accept, cls: "grill-secondary-btn" });
+			yes.onclick = async () => {
+				onAccept();
+				await this.plugin.persist();
+				box.empty();
+				box.createDiv({ cls: "grill-meta", text: "On from your next session." });
+			};
+			const no = row.createEl("button", { text: "No thanks", cls: "grill-menu-btn" });
+			no.onclick = async () => {
+				s.dismissedOffers = [...new Set([...s.dismissedOffers, id])];
+				await this.plugin.persist();
+				box.remove();
+			};
+		};
+
+		if (this.occlusionMissed.size) {
+			const n = this.occlusionMissed.size;
+			offer(
+				"occlusion",
+				`${n} ${n === 1 ? "note" : "notes"} you just studied ${n === 1 ? "has a diagram" : "have diagrams"} Grill could quiz you on, by blanking out a label and asking what was there. ` +
+					"Reads the image on your device — no key, nothing sent anywhere — after a one-time 10MB download.",
+				"Quiz my diagrams too",
+				() => {
+					s.enableOcclusion = true;
+				},
+			);
+		}
+
+		if (this.trimmedForPrompt) {
+			offer(
+				"local-embed-context",
+				"Some of what you studied was too long to send whole, so Grill trimmed it by matching your concepts' exact wording. " +
+					"It can pick those sections by meaning instead, which catches the paraphrases exact matching misses. " +
+					"Runs on your device — no key, no note content sent anywhere — after a one-time 25MB download.",
+				"Pick context by meaning",
+				() => {
+					s.localEmbedContext = true;
+				},
+			);
+		}
 	}
 
 	private renderSummary(note: TFile | null, debrief?: SessionDebrief): void {
@@ -2976,6 +3129,7 @@ export class SessionView extends ItemView {
 			const a = saved.createSpan({ cls: "grill-chip-link", text: "Open session transcript" });
 			a.onclick = () => void this.app.workspace.getLeaf(false).openFile(note);
 		}
+		this.renderOffers(card);
 		const btnRow = card.createDiv({ cls: "grill-btn-row grill-start-btn grill-btn-row-fill" });
 		const again = btnRow.createEl("button", { text: "Study again", cls: "mod-cta grill-primary-cta" });
 		again.setAttr("aria-label", "Start a new adaptive session");
@@ -3401,8 +3555,13 @@ export class SessionView extends ItemView {
 		const max = SessionView.BRIDGE_TARGET_CAP;
 		try {
 			const cands = detectBridgeCandidates(this.app, names, this.byName, this.noteText, this.bridges);
-			const s = this.plugin.data.settings;
-			if (s.semanticBridges && supportsEmbeddings(cfg.provider)) {
+			// Capability gate only. This used to also require an opt-in toggle, which was
+			// asking the wrong question: whether the configured provider HAS an embeddings
+			// API isn't something the student knows, and the lexical prefilter it augments
+			// misses exactly the pairs (related, no shared vocabulary) that make the
+			// missing-link finder worth having. Providers without embeddings (Anthropic,
+			// DeepSeek) still skip it entirely, so nobody pays for a call that can't happen.
+			if (supportsEmbeddings(cfg.provider)) {
 				await this.refreshEmbeddings(cfg, names);
 				const semantic = detectSemanticBridgeCandidates(
 					this.app,
@@ -3650,6 +3809,10 @@ export class SessionView extends ItemView {
 		if (this.plugin.data.settings.localEmbedContext) {
 			const semantic = await selectRelevantTextSemantic(text, concepts, NOTE_CHAR_CAP);
 			if (semantic) return semantic;
+		} else if (text.length > NOTE_CHAR_CAP) {
+			// Only when the text actually didn't fit: on notes short enough to send whole
+			// there is nothing for the better ranker to improve, so nothing to offer.
+			this.trimmedForPrompt = true;
 		}
 		return selectRelevantText(text, concepts, NOTE_CHAR_CAP) ?? safeSlice(text, NOTE_CHAR_CAP) + "\n[truncated]";
 	}
@@ -3755,6 +3918,8 @@ export class SessionView extends ItemView {
 			// mobile's webview, so occlusion silently no-ops there rather than risking a
 			// broken or crawling-slow session on a phone.
 			const occlusionEnabled = s.enableOcclusion && !Platform.isMobile;
+			this.occlusionMissed = new Set();
+			this.trimmedForPrompt = false;
 			this.noteText = {};
 			this.noteImages = {};
 			this.notesWithUnsentImages = new Set();
@@ -3835,6 +4000,9 @@ export class SessionView extends ItemView {
 				// truncation when there's nothing to rank against or rank with — never
 				// worse than today, sometimes much better.
 				this.noteText[n] = text.length > NOTE_CHAR_CAP ? await this.selectPromptContext(text, noteConcepts) : text;
+				// Independent of `vision` and of whether a model is involved at all —
+				// occlusion is local OCR. Recorded, not acted on: see renderOffers.
+				if (!occlusionEnabled && !Platform.isMobile && hasEmbeddedImage(this.app, file)) this.occlusionMissed.add(n);
 				if (vision) {
 					const imgs = await collectNoteImages(this.app, file, IMAGES_PER_NOTE_CAP);
 					if (imgs.length) this.noteImages[n] = imgs;
@@ -4157,9 +4325,20 @@ export class SessionView extends ItemView {
 		this.renderFeedback(r, pendingExtension);
 	}
 
-	/** Grade one answer. With "careful grading" on, run a small consensus and keep the
-	 * strictest verdict, since the measured failure of LLM grading is over-leniency
-	 * (marking a weak answer correct), which would quietly corrupt the FSRS signal. */
+	/** Grade one answer, escalating to a small consensus exactly where it pays for itself.
+	 *
+	 * The measured failure of LLM grading is over-leniency — marking a weak answer correct
+	 * — which quietly corrupts the FSRS signal by telling the scheduler you know something
+	 * you don't. A consensus of calls fixes that, but running it on every answer used to be
+	 * an opt-in toggle ("careful grading") that tripled the cost of a session and that
+	 * nobody could evaluate without already knowing this failure mode existed.
+	 *
+	 * So it escalates itself, on the two shapes where a single verdict is least
+	 * trustworthy: a `partial`, which is the grader saying so outright, and a `correct` on
+	 * an answer visibly thinner than the one expected, which is the exact texture of a
+	 * lenient mark. A confident `correct` on a full answer, or any `incorrect` (leniency
+	 * doesn't produce false negatives), stays one call. Most answers cost exactly what they
+	 * did before; the tail gets checked. The strictest-verdict-wins rule is unchanged. */
 	private async gradeMaybeCareful(cfg: LLMConfig, q: Question, answer: string): Promise<Grade> {
 		const once = (): Promise<Grade> =>
 			gradeAnswer(
@@ -4171,11 +4350,34 @@ export class SessionView extends ItemView {
 				this.sessionInstructions,
 				this.sessionPersona,
 			);
-		if (!this.plugin.data.settings.carefulGrade) return once();
-		const grades = await Promise.all([once(), once(), once()]);
+		const first = await once();
+		if (!this.worthDoubleChecking(first, q, answer)) return first;
+		const grades = [first, ...(await Promise.all([once(), once()]))];
 		const rank: Record<Verdict, number> = { incorrect: 0, partial: 1, correct: 2 };
 		grades.sort((a, b) => rank[a.verdict] - rank[b.verdict]);
 		return grades[0]; // strictest verdict (and its feedback) wins
+	}
+
+	/** An answer whose expected form has this many content words or fewer is too short for
+	 * the thinness test below to mean anything — on a one-word answer, "half the expected
+	 * substance" is noise, not evidence. */
+	private static readonly MIN_ANSWER_WORDS_TO_JUDGE_THINNESS = 4;
+	/** Below this share of the expected answer's content words, a `correct` is suspicious
+	 * enough to spend two more calls confirming. */
+	private static readonly THIN_ANSWER_RATIO = 0.5;
+
+	private worthDoubleChecking(g: Grade, q: Question, answer: string): boolean {
+		if (g.verdict === "incorrect") return false;
+		if (g.verdict === "partial") return true;
+		// Instantly-graded formats (mc/tf/multi/match) are decided by exact match, not by
+		// the model's judgement, so there is no leniency to catch.
+		if (q.type && q.type !== "write" && q.type !== "blank" && q.type !== "occlusion") return false;
+		const expected = contentWords(q.modelAnswer ?? "");
+		if (expected.size < SessionView.MIN_ANSWER_WORDS_TO_JUDGE_THINNESS) return false;
+		const given = contentWords(answer);
+		let shared = 0;
+		for (const w of expected) if (given.has(w)) shared++;
+		return shared / expected.size < SessionView.THIN_ANSWER_RATIO;
 	}
 
 	/** Self-grade path: reveal the answer, then let the user rate their own recall. */
@@ -4494,12 +4696,12 @@ export class SessionView extends ItemView {
 		return prereqs.some((p) => statusOf(this.plugin.mastery[p]) === "known") ? "medium" : base; // a solid foundation: start up
 	}
 
-	/** Record the current question's confidence-vs-outcome point, if the confidence
-	 * check is on and the user picked a level. Persists immediately so it survives a
+	/** Record the current question's confidence-vs-outcome point, if this was a sampled
+	 * question and the user picked a level. Persists immediately so it survives a
 	 * mid-session close. */
 	private captureConfidence(verdict: Verdict): void {
 		if (this.replayMode) return; // practice-only: don't record calibration
-		if (!this.plugin.data.settings.confidenceCheck || this.pendingConfidence === null) return;
+		if (this.pendingConfidence === null) return;
 		const ok = verdict === "correct" ? 1 : verdict === "partial" ? 0.5 : 0;
 		pushCalibration(this.plugin.data.calibration, this.pendingConfidence, ok);
 		this.pendingConfidence = null;

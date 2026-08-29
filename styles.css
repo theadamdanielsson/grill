@@ -675,6 +675,28 @@
   color: var(--grill-flame, #ff7a22);
 }
 
+/* The Tuning escape hatch: every number the scheduler runs on, reachable but never
+   asked about. Deliberately reads as an appendix rather than a fifth section — no
+   ember rule, muted summary — so nothing about it invites a browse. */
+.grill-tuning {
+  margin-top: 2em;
+  border-top: 1px solid var(--background-modifier-border);
+  padding-top: 0.6em;
+}
+.grill-tuning > summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.9em;
+  padding: 0.4em 0;
+  list-style-position: outside;
+}
+.grill-tuning > summary:hover {
+  color: var(--text-normal);
+}
+.grill-tuning > p {
+  margin: 0.2em 0 0.4em;
+}
+
 /* "Redo this quiz" button rendered from a session note's grill-redo code block. */
 .grill-redo-block {
   display: flex;
@@ -1306,6 +1328,20 @@
 .grill-dot.grill-v-incorrect { background: var(--color-red); }
 .grill-dot.grill-v-skipped { background: var(--text-faint); }
 .grill-saved { margin: 0.5em 0; }
+
+/* End-of-session offer for a feature that would have applied to what was just studied
+   (see SessionView.renderOffers). Sits below the results as a quiet aside — it must not
+   compete with "Study again", which is the reason this screen exists. */
+.grill-offer {
+  margin: 0.9em 0 0;
+  padding: 0.7em 0.9em;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-secondary);
+}
+.grill-offer .grill-btn-row {
+  margin-top: 0.6em;
+}
 
 /* ---------------------------------------------------------------- loading */
 /* A framed screen like the cabinet's, not the full pulsing CRT treatment (this is a
