@@ -111,6 +111,19 @@ export async function extractPdfTextCached(app: App, dest: TFile, cache: PdfCach
 	return text;
 }
 
+/** Does this note embed a PDF at all? Metadata-only — resolves link destinations but
+ * never opens or parses a file, so it's cheap enough to run over many notes on a render.
+ * Mirrors `hasEmbeddedImage` in images.ts: it answers "is there material here Grill could
+ * work with", which is a different and much cheaper question than "what is that material",
+ * and is what the home screen needs to decide whether a note is quizzable at all. */
+export function hasEmbeddedPdf(app: App, file: TFile): boolean {
+	for (const e of app.metadataCache.getFileCache(file)?.embeds ?? []) {
+		const dest = app.metadataCache.getFirstLinkpathDest(e.link, file.path);
+		if (dest && dest.extension.toLowerCase() === "pdf") return true;
+	}
+	return false;
+}
+
 /** Text extracted from the PDFs a note embeds, concatenated, or "" if it embeds
  * none (or none could be read). Meant to be appended to the note's own markdown
  * text before that combined text goes through extraction/truncation, so PDF

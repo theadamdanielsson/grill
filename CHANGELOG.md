@@ -1,5 +1,25 @@
 # Changelog
 
+## 6.0.2
+
+- **Fix: the Untested count jumped after a session, as though finishing one had
+  un-learned five notes.** Accepting the new end-of-session offer to quiz your diagrams
+  turned image occlusion on, and the home screen's "Untested" tile silently subtracts
+  notes it thinks are unquizzable — a set that was computed from whether occlusion
+  happened to be enabled. Turning it on reclassified every note holding an embed, so a
+  vault of screenshot-stub notes watched Untested go 1 to 6 straight after a session. No
+  note's study state had changed; only what the tile was counting. Quizzability is now
+  judged the same way whichever features are switched on.
+- **Fix: notes whose content is an embedded PDF were filed as unquizzable.** A
+  `![[worksheet.pdf]]` note is one of the most quizzable things in a vault — Grill reads
+  the PDF's text — but the check only looked at the note's own markdown, so those notes
+  were hidden from the Untested count whenever occlusion was off.
+- **Fix: a PDF-only note was mistaken for something image occlusion could read.** The
+  check counted embeds of any kind; occlusion only reads raster images.
+- **Fix: the four home-screen tiles didn't add up.** Notes counted every note while
+  Untested quietly subtracted the unquizzable ones, so a 167-note vault read as
+  2 + 158 + 6. Both totals are now corrected together.
+
 ## 6.0.1
 
 - **Fix: two in-session messages pointed at settings that 6.0.0 had moved.** Running

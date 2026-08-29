@@ -36,7 +36,7 @@ import {
 	trueRetentionLine,
 } from "./concepts";
 import { collectNoteImages, ImageInput, hasEmbeddedImage } from "./images";
-import { collectNotePdfText, extractPdfTextCached } from "./pdf";
+import { collectNotePdfText, extractPdfTextCached, hasEmbeddedPdf } from "./pdf";
 import { hashStr, mapWithConcurrency, safeSlice } from "./text";
 import {
 	buildDueDateHistogram,
@@ -969,11 +969,26 @@ export class SessionView extends ItemView {
 				// read itself is async) is what makes that distinction, scoped to just this ≤tens
 				// of notes bucket rather than the whole vault so it stays cheap. See scope.ts's
 				// untestedFiles for where the result actually gets applied.
+				//
+				// "Quizzable" here means IN PRINCIPLE, deliberately independent of whether image
+				// occlusion happens to be switched on. It used to read `enableOcclusion`, which
+				// made this number move for a reason that has nothing to do with studying: turning
+				// occlusion on reclassified every note with an embed as quizzable, so a vault of
+				// screenshot-stub notes watched its Untested count jump (1 -> 6 in a real vault)
+				// straight after a session, as though finishing one had un-learned five notes.
+				// A note's material doesn't appear and vanish with a setting; only Grill's current
+				// ability to reach it does, and the end-of-session offer is what addresses that.
 				void (async () => {
-					const occlusionOn = this.plugin.data.settings.enableOcclusion && !Platform.isMobile;
 					const untestable = new Set<string>();
 					for (const f of untested) {
-						if (occlusionOn && (this.app.metadataCache.getFileCache(f)?.embeds?.length ?? 0) > 0) continue;
+						// Both checks are metadata-only (no file read, no PDF parse). An embedded
+						// image is occlusion material; an embedded PDF is text material via pdf.ts,
+						// which the raw-markdown extraction below can't see on its own — a
+						// `![[worksheet.pdf]]` note is one of the most quizzable things in a vault
+						// and used to be filed as unquizzable. Image embeds are checked with
+						// hasEmbeddedImage rather than a bare embeds count so a PDF-only note isn't
+						// mistaken for occlusion material (occlusion reads raster images only).
+						if (hasEmbeddedImage(this.app, f) || hasEmbeddedPdf(this.app, f)) continue;
 						const text = await this.app.vault.cachedRead(f);
 						if (extractConcepts(f.basename, text, this.plugin.data.settings.questionFormats).length === 0) {
 							untestable.add(f.basename);
@@ -981,13 +996,16 @@ export class SessionView extends ItemView {
 					}
 					if (!untestable.size) return;
 					untestableBasenames = untestable;
-					// Keep the top stat tile honest too — same correction, same reasoning —
-					// but only while it's still showing the whole vault: a scoped preview
-					// (`scopedFiles` set) already computed its own count off a different file
-					// list, which this isn't in a position to correct.
+					// Keep the top stat tiles honest too — same correction, same reasoning —
+					// but only while they're still showing the whole vault: a scoped preview
+					// (`scopedFiles` set) already computed its own counts off a different file
+					// list, which this isn't in a position to correct. Notes is corrected
+					// alongside Untested so the four tiles still add up: subtracting a note from
+					// one total and not the other is what made 167 notes read as 2 + 158 + 6.
 					if (scopedFiles === null) {
 						const rawUntested = eligible.filter((f) => statusOf(map[f.basename]) === "untested").length;
 						untestedStat.setText(String(rawUntested - untestable.size));
+						notesStat.setText(String(eligible.length - untestable.size));
 					}
 					const testableCount = untested.length - untestable.size;
 					if (testableCount === 0) {
