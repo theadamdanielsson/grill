@@ -1,6 +1,6 @@
 ![Grill: your notes, quizzed, inside your knowledge graph](docs/hero.svg)
 
-I take a lot of notes to learn new information and needed a system to learn them more deeply. Grill works by creating questions according to the underlying information and your preferences. It then tests you and tracks your knowledge through spaced repition while visualizing your progress in the native knowledge graph. Works using BYOK, fully local, or a mix of both.
+I take a lot of notes to learn new information and needed a system to learn them more deeply. Grill works by creating questions according to the underlying information and your preferences. It then tests you and tracks your knowledge through spaced repetition while showing your progress on a map of your notes. Works using BYOK, fully local, or a mix of both.
 
 ![Grill's home screen: pick a scope and get grilled](docs/screenshot-home.png)
 
@@ -8,7 +8,7 @@ I take a lot of notes to learn new information and needed a system to learn them
 
 ## How to use it
 
-1. **Pick what Grill studies.** On first run, tick which folders it should cover, or leave them blank for your whole vault.
+1. **Set it up.** On first run, pick AI (paste a key, or point it at Ollama) or fully offline, then tick which folders it should cover, or leave them blank for your whole vault.
 2. **Get grilled.** Hit the flame (or **Get grilled**). Grill writes questions from your notes and marks what you type back, with partial credit and specific feedback.
 3. **Watch your map fill in.** Every note you've learned colours in on the graph (green for solid, amber for shaky) so you can see your knowledge light up.
 
@@ -51,7 +51,7 @@ It's only as good as your notes are structured: definition-heavy, well-headed no
 
 ## Worth knowing before you install
 
-- You need an API key, or Ollama installed. There's no free hosted version; I'm not running a server.
+- For AI questions and grading you need your own API key, or Ollama installed. There's no hosted version; I'm not running a server. Without either, the offline mode still works.
 - It's only as good as your notes. Half-written notes make half-baked questions.
 - The grading is a model's opinion, not gospel. It's usually right, but not always, so it always shows you the expected answer. Trust yourself over it.
 - Local models are the weak link. Good for privacy, not for the best questions.

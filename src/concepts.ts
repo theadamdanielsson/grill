@@ -51,6 +51,11 @@ export interface ConceptMastery extends Schedulable {
 	 * calibration.ts's buffer: a personal vault's total review count over years is
 	 * nothing byte-wise. */
 	reviewLog?: ReviewLogEntry[];
+	/** The `dueAt` a concept had when reconcileConcepts orphaned it (its id stopped
+	 * coming back from extraction). Restored if the id returns, so an orphaning that
+	 * turns out to be temporary (a partial extraction, occlusion off for one session,
+	 * a PDF that failed to read) doesn't silently drop the concept from review forever. */
+	orphanedDueAt?: string;
 }
 
 /** Appends one entry to `cm.reviewLog`, using the elapsed time since its OLD `lastSeen`
@@ -153,6 +158,15 @@ export function conceptTested(cm: ConceptMastery | undefined): boolean {
 	return !!cm && cm.correct + cm.partial + cm.incorrect > 0;
 }
 
+/** Days over which reconcileConcepts spreads concepts it brings back overdue. */
+const RESTORE_SPREAD_DAYS = 7;
+
+function stableHash(s: string): number {
+	let h = 0;
+	for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+	return h;
+}
+
 /** Create records for new concepts; existing ones just get their current label/kind/hash
  * refreshed. Editing a note is the student's own call, not a signal to distrust their
  * prior recall of it: a content change does NOT reset or discount stability, difficulty,
@@ -171,7 +185,14 @@ export function conceptTested(cm: ConceptMastery | undefined): boolean {
  * whose id didn't come back this time is a genuine content-based orphan — its heading
  * or definition was edited past recognition. Clear its `dueAt` so it stops counting as
  * due everywhere that gate is checked; stats/streak/review history stay untouched. */
-export function reconcileConcepts(map: ConceptMap, concepts: Concept[]): void {
+export function reconcileConcepts(
+	map: ConceptMap,
+	concepts: Concept[],
+	/** Kinds this caller didn't extract (e.g. occlusion when no OCR pass ran), so their
+	 * absence from `concepts` means "not looked for", not "gone from the note". */
+	keepKinds?: ReadonlySet<ConceptKind>,
+	now = new Date(),
+): void {
 	const freshIds = new Set(concepts.map((c) => c.id));
 	const touchedNotes = new Set(concepts.map((c) => c.note));
 	for (const c of concepts) {
@@ -184,9 +205,29 @@ export function reconcileConcepts(map: ConceptMap, concepts: Concept[]): void {
 		existing.kind = c.kind;
 		existing.note = c.note;
 		existing.sourceHash = c.sourceHash;
+		if (!existing.dueAt) {
+			// Back from an orphaning: reinstate its schedule. Concepts orphaned before
+			// orphanedDueAt existed (6.0.x nulled dueAt outright) fall back to the review
+			// FSRS would have set: last seen + stability days.
+			let restored: number | null = null;
+			if (existing.orphanedDueAt) restored = new Date(existing.orphanedDueAt).getTime();
+			else if (existing.lastSeen && existing.stability)
+				restored = new Date(existing.lastSeen).getTime() + existing.stability * 86400_000;
+			if (restored !== null && !Number.isNaN(restored)) {
+				// Long-orphaned concepts come back already overdue, often dozens at once (every
+				// PDF concept of every note edited under 6.0.x). Spread those over the coming
+				// week instead of dropping them all on today.
+				if (restored < now.getTime()) restored = now.getTime() + (stableHash(c.id) % RESTORE_SPREAD_DAYS) * 86400_000;
+				existing.dueAt = new Date(restored).toISOString();
+			}
+		}
+		delete existing.orphanedDueAt;
 	}
 	for (const [id, cm] of Object.entries(map)) {
-		if (cm.dueAt && touchedNotes.has(cm.note) && !freshIds.has(id)) cm.dueAt = null;
+		if (cm.dueAt && touchedNotes.has(cm.note) && !freshIds.has(id) && !keepKinds?.has(cm.kind)) {
+			cm.orphanedDueAt = cm.dueAt;
+			cm.dueAt = null;
+		}
 	}
 }
 

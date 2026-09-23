@@ -2,7 +2,7 @@
 
 import { ItemView, MarkdownRenderer, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
-import { adjudicateBridges, ConceptTarget, contentWords, debriefSession, embedTexts, explainQuestion, formatSatisfies, generateQuestions, Grade, gradeAnswer, LLMConfig, Question, supportsEmbeddings, supportsVision, Verdict } from "./llm";
+import { adjudicateBridges, ConceptTarget, contentWords, debriefSession, embedTexts, explainQuestion, formatSatisfies, generateQuestions, Grade, gradeAnswer, LLMConfig, PROVIDERS, ProviderId, Question, supportsEmbeddings, supportsVision, testModel, Verdict } from "./llm";
 import { detectOcclusionRegions } from "./ocr";
 import {
 	Concept,
@@ -36,7 +36,7 @@ import {
 	trueRetentionLine,
 } from "./concepts";
 import { collectNoteImages, ImageInput, hasEmbeddedImage } from "./images";
-import { collectNotePdfText, extractPdfTextCached, hasEmbeddedPdf } from "./pdf";
+import { extractPdfTextCached, hasEmbeddedPdf, noteStudyText } from "./pdf";
 import { hashStr, mapWithConcurrency, safeSlice } from "./text";
 import {
 	buildDueDateHistogram,
@@ -188,6 +188,11 @@ const MAX_PROGRESS_SEGMENTS = 30;
 /** Questions generated per model call. Small batches cut the wait before the
  * first question and let the next batch prefetch while the user answers. */
 const BATCH = 2;
+/** A scan still running after this long is treated as hung (an OCR or embedding
+ * model download with no timeout of its own) and no longer blocks a new start. */
+const SCAN_LOCK_MS = 5 * 60_000;
+/** Debounce for the mid-session checkpoint save after a grade. */
+const CHECKPOINT_MS = 3000;
 /** How many questions the background prefetch tries to keep buffered ahead of the one
  * on screen (see prefetchAhead). A single BATCH's worth (2) isn't enough runway: a
  * couple of quick MC/TF answers can outrun one model round-trip, so goToQuestion's own
@@ -416,8 +421,29 @@ export class SessionView extends ItemView {
 	/** Concept targets for the AI generator (one question each, by construction). */
 	private targets: ConceptTarget[] = [];
 	/** Session state changed in memory and needs flushing to disk. Writes are
-	 * batched to session end / pane close to avoid a per-answer sync storm. */
+	 * batched (see flush / scheduleCheckpoint) to avoid a per-answer sync storm. */
 	private dirty = false;
+	/** Serialises flushes so a checkpoint and an explicit flush never overlap. */
+	private flushChain: Promise<void> = Promise.resolve();
+	/** Pending debounced mid-session save, if any. */
+	private checkpointTimer: number | null = null;
+	/** A failed save has already been reported; don't Notice on every retry. */
+	private flushFailNotified = false;
+	/** Bumped whenever session state is reset (new session / replay). An in-flight
+	 * batch from an earlier session compares its captured epoch and discards its
+	 * results, so it can't push stale questions into the new session. */
+	private sessionEpoch = 0;
+	/** this.concepts / this.registry are the real, disk-loaded maps (set once a
+	 * session has loaded them). False before any session and during a redo, where
+	 * they are empty placeholders: saving them then would write {} over the user's
+	 * whole schedule. */
+	private liveState = false;
+	/** Epoch of a session still in its note scan. The scan writes shared session
+	 * fields as it goes and can't be stopped midway, so a second start waits for it. */
+	private scanningEpoch: number | null = null;
+	private scanningSince = 0;
+	/** Why the last flush failed, for the Notice when a new start is refused. */
+	private lastFlushError = "";
 	/** Images per note, resolved once when a vision model is in use. */
 	private noteImages: Record<string, ImageInput[]> = {};
 	/** Whether this session's model can see images at all; per-batch notes text only
@@ -512,6 +538,11 @@ export class SessionView extends ItemView {
 		if (!this.plugin.data.settings.onboarded) this.renderOnboarding();
 		else this.renderStart();
 		this.registerDomEvent(document, "keydown", (e) => this.handleSessionKeydown(e));
+		// Mobile OSes kill a backgrounded app without onClose ever firing: save the
+		// moment the app is hidden rather than trusting the pane to close cleanly.
+		this.registerDomEvent(document, "visibilitychange", () => {
+			if (document.visibilityState === "hidden") void this.flush();
+		});
 	}
 
 	/** Keep `narrow` in step with the pane's actual width and push it straight onto the
@@ -628,7 +659,7 @@ export class SessionView extends ItemView {
 		aiCard.createDiv({ cls: "grill-mode-title", text: "AI-powered" });
 		aiCard.createDiv({
 			cls: "grill-meta",
-			text: "AI writes and grades questions from your notes. Needs an API key — add one in Settings after this.",
+			text: "AI writes and grades questions from your notes. Uses your own API key, or a local model through Ollama.",
 		});
 		const localCard = modeBox.createDiv({ cls: "grill-mode-card" });
 		localCard.createDiv({ cls: "grill-mode-title", text: "Fully offline" });
@@ -636,10 +667,16 @@ export class SessionView extends ItemView {
 			cls: "grill-meta",
 			text: "Questions built from your notes' own structure, graded by you. No key, no cost, nothing leaves your vault.",
 		});
+		// Key setup right here, not "go find Settings later": the old flow's first "Get
+		// grilled" was a Notice instead of a question, the likeliest point for a fresh
+		// install to give up. Writes the same settings fields the settings tab does.
+		const setup = screen.createDiv({ cls: "grill-onboard-setup" });
+		this.renderProviderSetup(setup);
 		const pickMode = (m: "ai" | "local"): void => {
 			mode = m;
 			aiCard.toggleClass("is-active", m === "ai");
 			localCard.toggleClass("is-active", m === "local");
+			setup.toggle(m === "ai");
 		};
 		aiCard.onclick = () => pickMode("ai");
 		localCard.onclick = () => pickMode("local");
@@ -662,9 +699,23 @@ export class SessionView extends ItemView {
 			const controls = screen.createDiv({ cls: "grill-onboard-controls" });
 			const selectAll = controls.createEl("a", { cls: "grill-chip-link", text: "Select all" });
 			const clear = controls.createEl("a", { cls: "grill-chip-link", text: "Clear" });
+			// A big vault has hundreds of folders; a flat list of all of them is a wall.
+			// Filter narrows the rows; Select all then applies to what's visible.
+			const rows: Array<{ path: string; el: HTMLElement }> = [];
+			if (folders.length > 12) {
+				const filter = screen.createEl("input", {
+					cls: "grill-onboard-filter",
+					attr: { type: "search", placeholder: `Filter ${folders.length} folders` },
+				});
+				filter.oninput = () => {
+					const q = filter.value.trim().toLowerCase();
+					for (const r of rows) r.el.toggle(!q || r.path.toLowerCase().includes(q));
+				};
+			}
 			const list = screen.createDiv({ cls: "grill-onboard-folders" });
 			for (const path of folders) {
 				const row = list.createDiv({ cls: "grill-onboard-row" });
+				rows.push({ path, el: row });
 				const cb = row.createEl("input", { attr: { type: "checkbox" } });
 				cb.onchange = () => {
 					if (cb.checked) chosen.add(path);
@@ -675,8 +726,11 @@ export class SessionView extends ItemView {
 				label.onclick = () => cb.click();
 			}
 			selectAll.onclick = () => {
-				for (const p of folders) chosen.add(p);
-				for (const b of boxes) b.checked = true;
+				rows.forEach((r, i) => {
+					if (r.el.style.display === "none") return; // filtered out
+					chosen.add(r.path);
+					boxes[i].checked = true;
+				});
 			};
 			clear.onclick = () => {
 				chosen.clear();
@@ -695,6 +749,84 @@ export class SessionView extends ItemView {
 			await this.plugin.persist();
 			this.plugin.refreshStatusBar();
 			this.renderStart();
+		};
+	}
+
+	/** Provider + key (or server URL) + a Check button, for onboarding. Re-renders itself
+	 * when the provider changes, since each one asks for different fields. */
+	private renderProviderSetup(el: HTMLElement): void {
+		el.empty();
+		const s = this.plugin.data.settings;
+		const p = s.provider;
+		const info = PROVIDERS[p];
+		const save = (): void => void this.plugin.persist();
+
+		const row = (label: string): HTMLElement => {
+			const r = el.createDiv({ cls: "grill-onboard-field" });
+			r.createEl("label", { text: label });
+			return r;
+		};
+
+		const pick = row("Provider").createEl("select", { cls: "dropdown" });
+		for (const [id, pi] of Object.entries(PROVIDERS) as Array<[ProviderId, (typeof PROVIDERS)[ProviderId]]>) {
+			pick.createEl("option", { value: id, text: pi.label });
+		}
+		pick.value = p;
+		pick.onchange = () => {
+			s.provider = pick.value as ProviderId;
+			save();
+			this.renderProviderSetup(el);
+		};
+
+		if (p === "ollama") {
+			const url = row("Ollama server").createEl("input", { attr: { type: "text", placeholder: "http://localhost:11434" } });
+			url.value = s.ollamaUrl;
+			url.onchange = () => {
+				s.ollamaUrl = url.value.trim() || "http://localhost:11434";
+				save();
+			};
+		}
+		if (p === "custom") {
+			const base = row("Base URL").createEl("input", { attr: { type: "text", placeholder: "https://openrouter.ai/api/v1" } });
+			base.value = s.customBaseUrl;
+			base.onchange = () => {
+				s.customBaseUrl = base.value.trim();
+				save();
+			};
+			const model = row("Model").createEl("input", { attr: { type: "text", placeholder: "model id" } });
+			model.value = s.models.custom;
+			model.onchange = () => {
+				s.models.custom = model.value.trim();
+				save();
+			};
+		}
+		if (p !== "ollama") {
+			const keyRow = row(p === "custom" ? "API key (optional)" : "API key");
+			const key = keyRow.createEl("input", { attr: { type: "password", placeholder: info.keyPlaceholder } });
+			key.value = s.apiKeys[p] ?? "";
+			key.onchange = () => {
+				s.apiKeys[p] = key.value.trim();
+				save();
+			};
+			if (info.keyUrl) el.createEl("p", { cls: "grill-meta", text: `Get a key at ${info.keyUrl}.` });
+		}
+
+		const checkRow = el.createDiv({ cls: "grill-onboard-check" });
+		const check = checkRow.createEl("button", { text: "Check it works" });
+		const status = checkRow.createSpan({ cls: "grill-meta" });
+		check.onclick = async () => {
+			// Pick up a value typed but not yet blurred.
+			el.querySelectorAll("input").forEach((i) => i.dispatchEvent(new Event("change")));
+			const cfg = this.plugin.llmConfig();
+			if (!cfg) {
+				status.setText(p === "custom" ? "Add a base URL and model first." : "Add your key first.");
+				return;
+			}
+			check.disabled = true;
+			status.setText(`Asking ${cfg.model}...`);
+			const err = await testModel(cfg);
+			check.disabled = false;
+			status.setText(err ? `Didn't work: ${err}` : `${cfg.model} works. You're set.`);
 		};
 	}
 
@@ -751,6 +883,8 @@ export class SessionView extends ItemView {
 	}
 
 	private renderStart(): void {
+		// Leaving a session for the home screen, by any route, persists it.
+		if (this.dirty || this.bankDirty || this.bridgesDirty) void this.flush();
 		const wrap = this.root(true);
 		const map = this.plugin.mastery;
 		const eligible = this.allEligible();
@@ -1158,7 +1292,7 @@ export class SessionView extends ItemView {
 					masteryRepaired = true;
 				}
 			}
-			if (masteryRepaired) void this.plugin.store.saveMastery(this.plugin.mastery);
+			if (masteryRepaired) void this.plugin.store.saveMastery(this.plugin.mastery).catch(() => undefined);
 			const practiced = new Set<string>();
 			for (const cm of Object.values(concepts)) {
 				if (nameSet.has(cm.note) && cm.correct + cm.partial + cm.incorrect > 0) practiced.add(cm.note);
@@ -1176,7 +1310,7 @@ export class SessionView extends ItemView {
 				const a = f.basename;
 				for (const b of outgoingBasenames(this.app, f)) {
 					if (a === b || !nameSet.has(b)) continue;
-					const key = a < b ? `${a} ${b}` : `${b} ${a}`;
+					const key = a < b ? `${a}\u0000${b}` : `${b}\u0000${a}`;
 					if (linkSeen.has(key)) continue;
 					linkSeen.add(key);
 					allLinks.push([a, b]);
@@ -1512,7 +1646,7 @@ export class SessionView extends ItemView {
 				dismiss.setAttribute("title", "Not a real mistake — stop re-probing this");
 				dismiss.onclick = async () => {
 					dismissMisconception(reg, c.tag);
-					await this.plugin.store.saveRegistry(reg);
+					if (!(await this.saveOrNotice(this.plugin.store.saveRegistry(reg)))) return;
 					void this.renderDashboard();
 				};
 				if (c.notes.length) {
@@ -1921,7 +2055,7 @@ export class SessionView extends ItemView {
 			if (correctChoices) q.correctChoices = correctChoices;
 			if (pairs) q.pairs = pairs;
 
-			await this.plugin.store.saveQuestionBank(this.questionBank);
+			if (!(await this.saveOrNotice(this.plugin.store.saveQuestionBank(this.questionBank)))) return;
 			previewEl.setText(q.question);
 			new Notice("Grill: question saved.", 3000);
 		};
@@ -1933,7 +2067,7 @@ export class SessionView extends ItemView {
 				if (i >= 0) arr.splice(i, 1);
 				if (!arr.length) delete this.questionBank[conceptId];
 			}
-			await this.plugin.store.saveQuestionBank(this.questionBank);
+			if (!(await this.saveOrNotice(this.plugin.store.saveQuestionBank(this.questionBank)))) return;
 			card.remove();
 		};
 	}
@@ -2086,12 +2220,29 @@ export class SessionView extends ItemView {
 		legend.createSpan({ text: "More" });
 	}
 
-	private renderLoading(title: string, detail: string): void {
+	private renderLoading(title: string, detail: string, onCancel?: () => void): void {
 		const wrap = this.root();
 		const box = wrap.createDiv({ cls: "grill-loading" });
 		setIcon(box.createDiv({ cls: "grill-flame-spin" }), "flame");
 		box.createEl("p", { text: title, cls: "grill-loading-title" });
 		box.createEl("p", { text: detail, cls: "grill-meta" });
+		if (onCancel) {
+			const stop = box.createEl("button", { text: "Stop", cls: "grill-loading-cancel" });
+			stop.onclick = () => {
+				stop.disabled = true;
+				onCancel();
+			};
+		}
+	}
+
+	/** Walk away from a session while it's waiting on the model: keep what was already
+	 * answered, drop whatever is still in flight (the epoch bump makes its result land
+	 * nowhere), and go home. */
+	private cancelSession(): void {
+		this.sessionEpoch += 1;
+		this.pending = null;
+		void this.flush();
+		this.renderStart();
 	}
 
 	/** Milliseconds a wait must run before the full loading screen takes over. A call
@@ -2106,8 +2257,13 @@ export class SessionView extends ItemView {
 
 	/** Run `work`, only rendering the loading screen if it's still running after the
 	 * debounce window. */
-	private async withDebouncedLoading<T>(title: string, detail: string, work: () => Promise<T>): Promise<T> {
-		const timer = window.setTimeout(() => this.renderLoading(title, detail), SessionView.LOADING_DEBOUNCE_MS);
+	private async withDebouncedLoading<T>(
+		title: string,
+		detail: string,
+		work: () => Promise<T>,
+		onCancel?: () => void,
+	): Promise<T> {
+		const timer = window.setTimeout(() => this.renderLoading(title, detail, onCancel), SessionView.LOADING_DEBOUNCE_MS);
 		try {
 			return await work();
 		} finally {
@@ -2924,6 +3080,9 @@ export class SessionView extends ItemView {
 		const sessionNodes = [...new Set(this.results.map((r) => r.node))];
 
 		let debrief = deterministicDebrief(this.results);
+		// Grades are on disk before the debrief call, not after it: a slow or failing
+		// debrief model call must never be what stands between the user and their save.
+		await this.flush();
 		if (cfg && usedAI && s.sessionDebrief && sessionNodes.length > 0) {
 			try {
 				const reg = this.registry;
@@ -3199,6 +3358,18 @@ export class SessionView extends ItemView {
 			new Notice("Grill: no questions to redo in this session.");
 			return;
 		}
+		if (this.scanningEpoch !== null && Date.now() - this.scanningSince < SCAN_LOCK_MS) {
+			new Notice("Grill: still preparing the last session. Give it a moment.");
+			return;
+		}
+		// Save whatever session was running before this one wipes the in-memory state.
+		await this.flush();
+		if (this.dirty && !this.discardIfUnsaveable()) {
+			new Notice(`Grill: your last answers haven't saved yet (${this.lastFlushError}), so a redo can't start. They're still kept in memory.`, 10000);
+			return;
+		}
+		this.sessionEpoch += 1;
+		this.liveState = false;
 		this.replayMode = true;
 		this.sessionScope = null;
 		this.dueOnly = false;
@@ -3285,6 +3456,7 @@ export class SessionView extends ItemView {
 		if (this.planCursor >= this.targets.length) return Promise.resolve();
 		const cfg = this.plugin.llmConfig();
 		if (!cfg) return Promise.resolve();
+		const epoch = this.sessionEpoch;
 		const run = async (): Promise<void> => {
 			// Pull plan targets from the cursor until at least one question is delivered
 			// (a generated batch can be fully dropped by the validator) or the plan is
@@ -3339,6 +3511,10 @@ export class SessionView extends ItemView {
 						formatCounts,
 					);
 					console.debug(`Grill: generateQuestions (${batch.length} target(s)) took ${Date.now() - genStart}ms`);
+					// The session this batch was generated for has since been replaced (a new
+					// session or a redo started while it was in flight): its questions and its
+					// targetCount bookkeeping belong to state that no longer exists.
+					if (epoch !== this.sessionEpoch) return;
 					// The cursor already advanced past this whole batch (targets consumed,
 					// not questions produced — see above), so any target the validator
 					// dropped, partially or entirely, is never coming back. Shrink the
@@ -3768,14 +3944,23 @@ export class SessionView extends ItemView {
 			// against fresh content (no prompt-cache hit yet — see generateQuestions'
 			// cacheable/rest split in llm.ts, which only pays off on a note's 2nd+ touch).
 			const next = this.targets[this.planCursor];
+			const epoch = this.sessionEpoch;
 			try {
 				await this.withDebouncedLoading(
 					"Writing your next question",
 					next ? `On ${next.note}: ${next.label}` : "Just a moment.",
 					() => this.loadNextBatch(),
+					() => this.cancelSession(),
 				);
+				if (epoch !== this.sessionEpoch) return; // stopped while waiting
 			} catch (e) {
-				new Notice(`Grill: ${(e as Error).message}`, 8000);
+				if (epoch !== this.sessionEpoch) return;
+				// Keep what was already answered: this path used to drop straight to the
+				// home screen with the session's grades still only in memory, so the next
+				// "Get grilled" reloaded from disk and a single 429 cost the whole session.
+				await this.flush();
+				const kept = this.results.length ? ` Your ${this.results.length} answer(s) so far are saved.` : "";
+				new Notice(`Grill: ${(e as Error).message}${kept}`, 8000);
 				this.renderStart();
 				return;
 			}
@@ -3824,10 +4009,12 @@ export class SessionView extends ItemView {
 	 * one before it couldn't produce anything (see selectRelevantTextSemantic and
 	 * selectRelevantText's own doc comments for why each can come back null). */
 	private async selectPromptContext(text: string, concepts: Concept[]): Promise<string> {
-		if (this.plugin.data.settings.localEmbedContext) {
+		// Never on mobile: the setting syncs from desktop, and it would start a 25MB
+		// model download mid-scan on a phone. Same rule as occlusion's OCR.
+		if (this.plugin.data.settings.localEmbedContext && !Platform.isMobile) {
 			const semantic = await selectRelevantTextSemantic(text, concepts, NOTE_CHAR_CAP);
 			if (semantic) return semantic;
-		} else if (text.length > NOTE_CHAR_CAP) {
+		} else if (text.length > NOTE_CHAR_CAP && !Platform.isMobile) {
 			// Only when the text actually didn't fit: on notes short enough to send whole
 			// there is nothing for the better ranker to improve, so nothing to offer.
 			this.trimmedForPrompt = true;
@@ -3836,7 +4023,19 @@ export class SessionView extends ItemView {
 	}
 
 	private async startSession(): Promise<void> {
-		this.replayMode = false;
+		// Save whatever session was running before this one reloads state from disk:
+		// starting a session mid-session (status bar, "Review due", "Grill this note")
+		// used to throw away every grade from the one in progress.
+		if (this.scanningEpoch !== null && Date.now() - this.scanningSince < SCAN_LOCK_MS) {
+			new Notice("Grill: still preparing the last session. Give it a moment.");
+			return;
+		}
+		await this.flush();
+		if (this.dirty && !this.discardIfUnsaveable()) {
+			// A real write failure: don't reload over grades that aren't on disk yet.
+			new Notice(`Grill: your last answers haven't saved yet (${this.lastFlushError}), so a new session can't start. They're still kept in memory.`, 10000);
+			return;
+		}
 		const s = this.plugin.data.settings;
 		const needsKey = this.plugin.usesAI();
 		const cfg = this.plugin.llmConfig();
@@ -3848,7 +4047,13 @@ export class SessionView extends ItemView {
 			// version), and just wants to keep going right now.
 			new Notice(
 				createFragment((frag) => {
-					frag.appendText("Grill: set an API key in settings, or ");
+					frag.appendText("Grill: ");
+					const open = frag.createEl("a", { text: "add an API key" });
+					open.onclick = (e) => {
+						e.preventDefault();
+						this.plugin.openSettings();
+					};
+					frag.appendText(", or ");
 					const link = frag.createEl("a", { text: "switch to no-key mode" });
 					link.onclick = async (e) => {
 						e.preventDefault();
@@ -3881,7 +4086,16 @@ export class SessionView extends ItemView {
 			return;
 		}
 		this.sessionStart = new Date();
+		// Only now, past every early return above, does the old session actually end:
+		// those returns leave its question on screen and still answerable, so its
+		// state must stay live (and saveable) until this point.
+		this.sessionEpoch += 1;
+		const epoch = this.sessionEpoch;
+		this.liveState = false;
+		this.replayMode = false;
 		this.renderLoading("Preparing your session", "Choosing which notes to quiz you on.");
+		this.scanningEpoch = epoch;
+		this.scanningSince = Date.now();
 		try {
 			this.plugin.mastery = await this.plugin.store.loadMastery();
 			this.registry = await this.plugin.store.loadRegistry();
@@ -3907,6 +4121,7 @@ export class SessionView extends ItemView {
 			// Loaded here, ahead of pickCandidates below, so it can prioritize off live
 			// concept data (see priorityNotes) instead of the note-level mastery cache.
 			this.concepts = this.plugin.concepts = await this.plugin.store.loadConcepts();
+			this.liveState = true;
 			// Interleave by folder before priority-bucketing: pickCandidates's untested
 			// bucket preserves input order, so a scope spanning multiple folders would
 			// otherwise collapse onto whichever folder sorts first (see interleaveByFolder).
@@ -4000,13 +4215,11 @@ export class SessionView extends ItemView {
 			await mapWithConcurrency(names, SESSION_SCAN_CONCURRENCY, async (n) => {
 				const file = byName.get(n);
 				if (!file) return;
-				const raw = await this.app.vault.cachedRead(file);
 				// A note that only embeds a PDF (`![[worksheet.pdf]]`) has real content, just
 				// none of it in the note's own markdown text — pull the PDF's text in as if
 				// it were typed there, so it's not invisible to both the structural parser and
 				// the AI prompt below (see pdf.ts; a no-op for notes with no PDF embeds).
-				const pdfText = await collectNotePdfText(this.app, file, pdfCache);
-				const text = pdfText ? `${raw}\n\n${pdfText}` : raw;
+				const text = await noteStudyText(this.app, file, pdfCache);
 				// Extract concepts from the FULL note; only the prompt context is truncated.
 				const noteConcepts = extractConceptsCached(n, text, formatMode, conceptCache);
 				this.conceptsByNote.set(n, noteConcepts);
@@ -4075,6 +4288,9 @@ export class SessionView extends ItemView {
 			// use it too — not reloaded here.)
 			const allConcepts: Concept[] = [];
 			for (const cs of this.conceptsByNote.values()) allConcepts.push(...cs);
+			// A session without an OCR pass (occlusion off, or mobile) orphans occlusion
+			// concepts so due counts match what it can serve; orphaning keeps their due
+			// date (orphanedDueAt) and restores it on the next desktop session.
 			reconcileConcepts(this.concepts, allConcepts);
 			this.conceptById = new Map(allConcepts.map((c) => [c.id, c]));
 			// Snapshot of the whole vault's due-date distribution, not just this
@@ -4189,13 +4405,16 @@ export class SessionView extends ItemView {
 			// nothing is being read or written, and the screen is just a misleading flash
 			// before a session that's about to resolve instantly from cache (see
 			// loadNextBatch: a fully-prebuilt run resolves synchronously).
+			this.scanningEpoch = null; // shared state is set up; Stop and new starts are safe from here
 			if (this.targets.some((t) => !this.isPrebuilt(t))) {
 				this.renderLoading(
 					"Writing your questions",
 					`${cfg!.model} is reading ${names.length} notes. This usually takes a few seconds.`,
+					() => this.cancelSession(),
 				);
 			}
 			await this.loadNextBatch();
+			if (epoch !== this.sessionEpoch) return; // stopped while generating
 			if (this.questions.length === 0) {
 				new Notice("Grill: the model returned no usable questions.", 8000);
 				this.renderStart();
@@ -4205,8 +4424,12 @@ export class SessionView extends ItemView {
 			this.renderQuestion();
 			if (this.questions.length < this.targetCount) void this.prefetchAhead().catch(() => undefined);
 		} catch (e) {
+			if (epoch !== this.sessionEpoch) return;
+			await this.flush();
 			new Notice(`Grill: ${(e as Error).message}`, 8000);
 			this.renderStart();
+		} finally {
+			if (this.scanningEpoch === epoch) this.scanningEpoch = null;
 		}
 	}
 
@@ -4287,16 +4510,21 @@ export class SessionView extends ItemView {
 		} else {
 			const cfg = this.plugin.llmConfig();
 			if (!cfg) return;
+			const epoch = this.sessionEpoch;
 			try {
 				const g = await this.withDebouncedLoading(
 					"Grading your answer",
 					"Checking it against your note and the rubric.",
 					() => this.gradeMaybeCareful(cfg, q, answer),
 				);
+				// Another session started while this grade was in flight: it belongs to
+				// state that no longer exists and must not be applied to the new one.
+				if (epoch !== this.sessionEpoch) return;
 				verdict = g.verdict;
 				feedback = g.feedback;
 				misconceptionTag = g.misconceptionTag;
 			} catch (e) {
+				if (epoch !== this.sessionEpoch) return;
 				new Notice(`Grill: ${(e as Error).message}`, 8000);
 				this.renderQuestion();
 				return;
@@ -4452,7 +4680,12 @@ export class SessionView extends ItemView {
 		for (const b of buttons) {
 			const el = rateRow.createEl("button", { text: b.label, cls: `grill-rate-btn ${b.cls}` });
 			if (gaveUp && b.rating === 1) el.addClass("mod-cta");
-			el.onclick = () => void this.recordSelfGrade(b.rating, answer, gaveUp, hintsUsed);
+			el.onclick = () => {
+				// One grade per question: the next question can take a moment to load, and a
+				// second tap on these still-live buttons used to grade that unseen question.
+				rateRow.querySelectorAll("button").forEach((btn) => (btn.disabled = true));
+				void this.recordSelfGrade(b.rating, answer, gaveUp, hintsUsed);
+			};
 		}
 
 		if (q.missingLink && q.connectTo) this.offerLink(card, q.node, q.connectTo);
@@ -4519,7 +4752,8 @@ export class SessionView extends ItemView {
 		}
 		recordNoteStats(this.plugin.mastery, q.node, verdict, misconceptionTag);
 		this.recomputeAggregate(q.node);
-		this.dirty = true; // flushed at session end / pane close
+		this.dirty = true;
+		this.scheduleCheckpoint();
 	}
 
 	/** "Mark correct": the deterministic/AI grader got this one wrong. Restores the
@@ -4624,26 +4858,124 @@ export class SessionView extends ItemView {
 	}
 
 	/** Persist all session state at once (concepts, mastery, registry). Called at
-	 * session end and on pane close, not per answer, to avoid sync churn. */
-	private async flush(): Promise<void> {
+	 * session end, on pane close, before anything that resets session state, and a
+	 * few seconds after each grade (`scheduleCheckpoint`) so a killed mobile app or
+	 * a crash mid-session loses at most the last answer or two. Flushes are chained
+	 * so a checkpoint and an explicit flush never write the same file concurrently,
+	 * and a dirty flag is only cleared once its write actually succeeded: a failed
+	 * save stays dirty and is retried by the next flush instead of being forgotten. */
+	private flush(): Promise<void> {
+		const run = this.flushChain.then(() => this.flushNow());
+		this.flushChain = run.catch(() => undefined);
+		return run.catch((e) => {
+			this.lastFlushError = (e as Error).message;
+			if (!this.flushFailNotified) {
+				this.flushFailNotified = true;
+				new Notice(`Grill: couldn't save your progress (${(e as Error).message}). It'll retry on the next answer.`, 10000);
+			}
+		});
+	}
+
+	private async flushNow(): Promise<void> {
+		if (this.checkpointTimer !== null) {
+			window.clearTimeout(this.checkpointTimer);
+			this.checkpointTimer = null;
+		}
 		if (this.dirty) {
 			this.dirty = false;
-			await this.plugin.store.saveConcepts(this.concepts);
-			await this.plugin.store.saveMastery(this.plugin.mastery);
-			await this.plugin.store.saveRegistry(this.registry);
+			try {
+				// Mastery first: one unwritable file mustn't hold the others back.
+				await this.plugin.store.saveMastery(this.plugin.mastery);
+				if (this.liveState && !this.replayMode) {
+					await this.plugin.store.saveConcepts(this.concepts);
+					await this.plugin.store.saveRegistry(this.registry);
+				}
+			} catch (e) {
+				this.dirty = true;
+				throw e;
+			}
 		}
 		if (this.bankDirty) {
 			this.bankDirty = false;
-			await this.plugin.store.saveQuestionBank(this.questionBank);
+			try {
+				await this.plugin.store.saveQuestionBank(this.questionBank);
+			} catch (e) {
+				this.bankDirty = true;
+				throw e;
+			}
 		}
 		if (this.bridgesDirty) {
 			this.bridgesDirty = false;
-			await this.plugin.store.saveBridges(this.bridges);
+			try {
+				await this.plugin.store.saveBridges(this.bridges);
+			} catch (e) {
+				this.bridgesDirty = true;
+				throw e;
+			}
 		}
 		if (this.embeddingsDirty) {
 			this.embeddingsDirty = false;
-			await this.plugin.store.saveEmbeddings(this.embeddings);
+			try {
+				await this.plugin.store.saveEmbeddings(this.embeddings);
+			} catch (e) {
+				this.embeddingsDirty = true;
+				throw e;
+			}
 		}
+		this.flushFailNotified = false;
+	}
+
+	/** The unsaved state can't be saved because a store file couldn't be READ (see
+	 * GrillStore.loadJSON): that state was built on an empty stand-in for the real
+	 * file, so it isn't worth keeping, and refusing to start would wedge the user,
+	 * since only a fresh session's reload can pick the real file back up. Drop it and
+	 * let the start go ahead. A plain write failure (disk full) returns false instead,
+	 * so real grades are kept and retried. */
+	private discardIfUnsaveable(): boolean {
+		if (!this.plugin.store.hasReadProtected()) return false;
+		new Notice(`Grill: couldn't save the last session (${this.lastFlushError}). Starting fresh from what's on disk.`, 10000);
+		this.dirty = this.bankDirty = this.bridgesDirty = this.embeddingsDirty = false;
+		return true;
+	}
+
+	/** For saves behind a single click (Dismiss, the question editor): report a failed
+	 * write instead of letting it vanish as an unhandled rejection. */
+	private async saveOrNotice(save: Promise<void>): Promise<boolean> {
+		try {
+			await save;
+			return true;
+		} catch (e) {
+			new Notice(`Grill: couldn't save that (${(e as Error).message}).`, 8000);
+			return false;
+		}
+	}
+
+	/** The plugin is about to rewrite the question bank / bridges / registry on disk
+	 * (a note rename or delete): persist this view's pending changes first, so the
+	 * rewrite starts from them. */
+	async flushForExternalEdit(): Promise<boolean> {
+		await this.flush();
+		return !this.dirty && !this.bankDirty && !this.bridgesDirty;
+	}
+
+	/** ...and afterwards pick the rewritten copies back up, so a later flush can't
+	 * write this view's stale pre-rename copies back over them. */
+	async reloadSharedStores(): Promise<void> {
+		this.questionBank = await this.plugin.store.loadQuestionBank();
+		this.bridges = await this.plugin.store.loadBridges();
+		if (!this.replayMode) this.registry = await this.plugin.store.loadRegistry();
+	}
+
+	/** Debounced mid-session save: CHECKPOINT_MS after the last grade, so a burst
+	 * of answers is one write (no per-answer sync storm) but an interrupted session
+	 * still keeps its work. */
+	private scheduleCheckpoint(): void {
+		if (this.replayMode) return;
+		if (this.checkpointTimer !== null) window.clearTimeout(this.checkpointTimer);
+		this.checkpointTimer = window.setTimeout(() => {
+			this.checkpointTimer = null;
+			void this.flush();
+		}, CHECKPOINT_MS);
 	}
 
 	async onClose(): Promise<void> {

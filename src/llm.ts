@@ -5,7 +5,7 @@
  * responseSchema); DeepSeek gets json_object mode + the schema in the prompt.
  */
 
-import { requestUrl } from "obsidian";
+import { requestUrl, RequestUrlParam, RequestUrlResponse } from "obsidian";
 import type { ImageInput } from "./images";
 import { safeSlice } from "./text";
 import type { Arc, CanonMisconception, SessionDebrief, TagAssignment } from "./debrief";
@@ -43,28 +43,27 @@ export const PROVIDERS: Record<ProviderId, ProviderInfo> = {
 		keyPlaceholder: "sk-...",
 		keyUrl: "platform.openai.com",
 		needsKey: true,
-		fallbackModels: ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna"],
+		fallbackModels: ["gpt-5.6-terra", "gpt-6-sol", "gpt-6-luna"],
 	},
 	gemini: {
 		label: "Google (Gemini)",
-		// gemini-2.5-flash is several generations behind (3.5/3.6/3.7 shipped since) and
-		// on Google's retirement path (~2026-10-16). 3.7 Flash is current stable.
-		defaultModel: "gemini-3.7-flash",
+		// 3.8 Flash went GA 2026-09-02 and replaces 3.7 Flash as the current stable
+		// fast model. gemini-2.5-flash is on Google's retirement path.
+		defaultModel: "gemini-3.8-flash",
 		keyPlaceholder: "AIza...",
 		keyUrl: "aistudio.google.com",
 		needsKey: true,
-		fallbackModels: ["gemini-3.7-flash", "gemini-2.5-pro"],
+		fallbackModels: ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-2.5-pro"],
 	},
 	deepseek: {
 		label: "DeepSeek",
-		// deepseek-chat/deepseek-reasoner were repurposed as legacy aliases onto the V4
-		// line rather than deleted, but the explicit V4 ids are the documented current
-		// path — flash is the direct deepseek-chat successor (fast/cheap default).
-		defaultModel: "deepseek-v4-flash",
+		// deepseek-flash is V4.1 Flash (2026-09-10). deepseek-v4-flash and deepseek-chat
+		// are legacy names DeepSeek only "temporarily" routes to it.
+		defaultModel: "deepseek-flash",
 		keyPlaceholder: "sk-...",
 		keyUrl: "platform.deepseek.com",
 		needsKey: true,
-		fallbackModels: ["deepseek-v4-flash", "deepseek-v4-pro"],
+		fallbackModels: ["deepseek-flash", "deepseek-v4-pro"],
 	},
 	ollama: {
 		label: "Ollama (local)",
@@ -85,6 +84,30 @@ export const PROVIDERS: Record<ProviderId, ProviderInfo> = {
 		fallbackModels: [],
 	},
 };
+
+/** Every model a provider's default has ever been, before the current one. Settings
+ * store the whole models map, so an install keeps whatever was the default when it
+ * was set up. migrateLegacyModels moves exactly these onto the current default once;
+ * any model the user picked themselves is left alone. Append on every default change. */
+export const LEGACY_DEFAULTS: Partial<Record<ProviderId, string[]>> = {
+	openai: ["gpt-5-mini"],
+	gemini: ["gemini-2.5-flash", "gemini-3.7-flash"],
+	deepseek: ["deepseek-chat", "deepseek-v4-flash"],
+};
+
+/** Move any provider still on a former shipped default to the current one. Returns
+ * whether anything changed. Pure, so it's tested directly. */
+export function migrateLegacyModels(models: Partial<Record<ProviderId, string>>): boolean {
+	let changed = false;
+	for (const [p, old] of Object.entries(LEGACY_DEFAULTS) as Array<[ProviderId, string[]]>) {
+		const current = models[p];
+		if (current && old.includes(current)) {
+			models[p] = PROVIDERS[p].defaultModel;
+			changed = true;
+		}
+	}
+	return changed;
+}
 
 export interface LLMConfig {
 	provider: ProviderId;
@@ -261,7 +284,7 @@ export async function embedTexts(cfg: LLMConfig, texts: string[]): Promise<numbe
 	try {
 		switch (cfg.provider) {
 			case "openai": {
-				const r = await requestUrl({
+				const r = await timedRequest({
 					url: "https://api.openai.com/v1/embeddings",
 					method: "POST",
 					headers: { "content-type": "application/json", authorization: `Bearer ${cfg.apiKey}` },
@@ -273,7 +296,7 @@ export async function embedTexts(cfg: LLMConfig, texts: string[]): Promise<numbe
 				return data ? data.map((d) => d.embedding) : null;
 			}
 			case "gemini": {
-				const r = await requestUrl({
+				const r = await timedRequest({
 					url: "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:batchEmbedContents",
 					method: "POST",
 					headers: { "content-type": "application/json", "x-goog-api-key": cfg.apiKey },
@@ -290,7 +313,7 @@ export async function embedTexts(cfg: LLMConfig, texts: string[]): Promise<numbe
 				return embeddings ? embeddings.map((e) => e.values) : null;
 			}
 			case "ollama": {
-				const r = await requestUrl({
+				const r = await timedRequest({
 					url: `${(cfg.baseUrl ?? "http://localhost:11434").replace(/\/$/, "")}/api/embed`,
 					method: "POST",
 					headers: { "content-type": "application/json" },
@@ -306,7 +329,7 @@ export async function embedTexts(cfg: LLMConfig, texts: string[]): Promise<numbe
 				// the endpoint actually has an /embeddings route at all depends entirely
 				// on what the user pointed the base URL at — a 4xx here just means no
 				// semantic candidates this session, not a broken setup.
-				const r = await requestUrl({
+				const r = await timedRequest({
 					url: `${(cfg.baseUrl ?? "").replace(/\/$/, "")}/embeddings`,
 					method: "POST",
 					headers: { "content-type": "application/json", authorization: `Bearer ${cfg.apiKey}` },
@@ -332,6 +355,9 @@ interface HttpCall {
 	headers: Record<string, string>;
 	body: Record<string, unknown>;
 	extract: (json: unknown) => string | undefined;
+	/** True when the provider stopped because it ran out of output tokens: the JSON is
+	 * cut off (or empty, when a thinking model spent the whole budget reasoning). */
+	truncated: (json: unknown) => boolean;
 }
 
 interface ApiErrorBody {
@@ -365,13 +391,23 @@ interface AnthropicMessageResponse {
 	content?: Array<{ type: string; text?: string }>;
 }
 interface ChatCompletionResponse {
-	choices?: Array<{ message?: { content?: string } }>;
+	choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
 }
 interface GeminiGenerateResponse {
-	candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+	candidates?: Array<{ content?: { parts?: Array<{ text?: string }> }; finishReason?: string }>;
 }
 interface OllamaChatResponse {
 	message?: { content?: string };
+	done_reason?: string;
+}
+
+const chatTruncated = (json: unknown): boolean =>
+	(json as ChatCompletionResponse | null)?.choices?.[0]?.finish_reason === "length";
+
+/** Anthropic models that take `output_config.effort` (Claude 4.5+ Opus/Sonnet 5/Fable).
+ * Haiku 4.5 and older Sonnets reject it, so it's only sent where it's accepted. */
+function anthropicTakesEffort(model: string): boolean {
+	return /^claude-(opus-(4-[5-9]|5)|sonnet-5|fable)/.test(model);
 }
 
 /** A user prompt split into a large, repeat-across-calls prefix (e.g. a note's full
@@ -439,13 +475,19 @@ function buildCall(
 					max_tokens: maxTokens,
 					system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
 					messages: [{ role: "user", content }],
-					output_config: { format: { type: "json_schema", schema } },
+					// Sonnet 5 / Opus 5 think adaptively by default, and that thinking spends
+					// max_tokens. Passing the call's effort keeps it proportionate instead of
+					// letting a 2000-token grade run out mid-JSON.
+					output_config: anthropicTakesEffort(cfg.model)
+						? { format: { type: "json_schema", schema }, effort }
+						: { format: { type: "json_schema", schema } },
 				},
 				extract: (json) => {
 					const j = json as AnthropicMessageResponse;
 					if (j.stop_reason === "refusal") throw new Error("The model declined this request (safety refusal).");
 					return j.content?.find((b) => b.type === "text")?.text;
 				},
+				truncated: (json) => (json as AnthropicMessageResponse | null)?.stop_reason === "max_tokens",
 			};
 		}
 		case "openai": {
@@ -480,6 +522,7 @@ function buildCall(
 				headers: { "content-type": "application/json", authorization: `Bearer ${cfg.apiKey}` },
 				body,
 				extract: (json) => (json as ChatCompletionResponse).choices?.[0]?.message?.content,
+				truncated: chatTruncated,
 			};
 		}
 		case "gemini":
@@ -504,6 +547,7 @@ function buildCall(
 					},
 				},
 				extract: (json) => (json as GeminiGenerateResponse).candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join(""),
+				truncated: (json) => (json as GeminiGenerateResponse | null)?.candidates?.[0]?.finishReason === "MAX_TOKENS",
 			};
 		case "ollama": {
 			const userMessage: Record<string, unknown> = { role: "user", content: flatUser };
@@ -530,6 +574,7 @@ function buildCall(
 					const c = (json as OllamaChatResponse).message?.content;
 					return c ? c.replace(/<think>[\s\S]*?<\/think>/gi, "").trim() : c;
 				},
+				truncated: (json) => (json as OllamaChatResponse | null)?.done_reason === "length",
 			};
 		}
 		case "deepseek":
@@ -552,6 +597,7 @@ function buildCall(
 					response_format: { type: "json_object" },
 				},
 				extract: (json) => (json as ChatCompletionResponse).choices?.[0]?.message?.content,
+				truncated: chatTruncated,
 			};
 		case "custom":
 			// Any OpenAI-compatible endpoint. Use the widest-compatibility shape:
@@ -578,6 +624,7 @@ function buildCall(
 					response_format: { type: "json_object" },
 				},
 				extract: (json) => (json as ChatCompletionResponse).choices?.[0]?.message?.content,
+				truncated: chatTruncated,
 			};
 	}
 }
@@ -592,13 +639,16 @@ async function callJSONOnce(
 	effort: "low" | "medium" = "medium",
 ): Promise<unknown> {
 	const call = buildCall(cfg, system, user, schema, maxTokens, images, effort);
-	const resp = await requestUrl({
-		url: call.url,
-		method: "POST",
-		throw: false,
-		headers: call.headers,
-		body: JSON.stringify(call.body),
-	});
+	const resp = await withTimeout(
+		requestUrl({
+			url: call.url,
+			method: "POST",
+			throw: false,
+			headers: call.headers,
+			body: JSON.stringify(call.body),
+		}),
+		requestTimeoutMs(cfg),
+	);
 	let json: unknown = null;
 	try {
 		json = resp.json as unknown;
@@ -614,6 +664,13 @@ async function callJSONOnce(
 	// retry-then-friendly-error path. Normalize any extraction failure (null body or an
 	// unexpected response shape) into that same path instead of letting it escape as an
 	// unrelated exception type.
+	let truncated = false;
+	try {
+		truncated = call.truncated(json);
+	} catch {
+		/* unexpected shape — let the extraction path below handle it */
+	}
+	if (truncated) throw new Error(TRUNCATED);
 	let text: string | null | undefined;
 	try {
 		text = call.extract(json);
@@ -650,14 +707,63 @@ async function callJSON(
 		return await callJSONOnce(cfg, system, user, schema, maxTokens, images, effort);
 	} catch (e) {
 		const msg = (e as Error).message;
+		// Ran out of output tokens: the same budget would fail the same way, so the one
+		// retry gets double the room.
+		if (msg === TRUNCATED) {
+			try {
+				return await callJSONOnce(cfg, system, user, schema, Math.min(maxTokens * 2, 32000), images, effort);
+			} catch (e2) {
+				if ((e2 as Error).message === TRUNCATED)
+					throw new Error("The model ran out of room before finishing its answer. Try again, or pick a faster model.");
+				throw e2;
+			}
+		}
 		if (msg !== "Empty model response" && msg !== "Model returned unparseable output") throw e;
 		return await callJSONOnce(cfg, system, user, schema, maxTokens, images, effort);
 	}
 }
 
+const TRUNCATED = "Model response truncated";
+
+/** requestUrl with a timeout, for the short calls (model lists, embeddings). */
+function timedRequest(req: RequestUrlParam, ms = 60_000): Promise<RequestUrlResponse> {
+	return withTimeout(requestUrl(req), ms);
+}
+
+/** How long one model call may take before Grill gives up on it. Local servers (and
+ * custom endpoints, which are often local or a proxy) get far longer: a CPU-bound
+ * model can legitimately take minutes. */
+function requestTimeoutMs(cfg: LLMConfig): number {
+	return cfg.provider === "ollama" || cfg.provider === "custom" ? 300_000 : 180_000;
+}
+
+/** requestUrl has no timeout of its own, so a hung server used to leave the pane on
+ * the loading screen forever. The underlying request isn't cancelled (requestUrl
+ * can't be), but Grill stops waiting and the session moves on. */
+export function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		const timer = window.setTimeout(
+			() => reject(new Error(`The model didn't answer within ${Math.round(ms / 1000)}s. Check that it's running, or try again.`)),
+			ms,
+		);
+		p.then(
+			(v) => {
+				window.clearTimeout(timer);
+				resolve(v);
+			},
+			(e) => {
+				window.clearTimeout(timer);
+				reject(e);
+			},
+		);
+	});
+}
+
 /** Belt-and-suspenders: strip em/en dashes from model output regardless of prompt compliance. */
-function cleanText(t: string): string {
-	return t.replace(/\s*[—–]\s*/g, ", ");
+export function cleanText(t: string): string {
+	// Em dashes always go. An en dash only goes when spaced ("this – that"): an unspaced
+	// one is a range ("1914–1918", "pp. 3–7") and turning it into ", " changed facts.
+	return t.replace(/\s*—\s*/g, ", ").replace(/\s+–\s+/g, ", ");
 }
 
 interface AnthropicModelListResponse {
@@ -679,7 +785,7 @@ export async function listModels(provider: ProviderId, apiKey: string, baseUrl?:
 	try {
 		switch (provider) {
 			case "anthropic": {
-				const r = await requestUrl({
+				const r = await timedRequest({
 					url: "https://api.anthropic.com/v1/models?limit=100",
 					throw: false,
 					headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
@@ -691,7 +797,7 @@ export async function listModels(provider: ProviderId, apiKey: string, baseUrl?:
 					.filter(Boolean);
 			}
 			case "openai": {
-				const r = await requestUrl({
+				const r = await timedRequest({
 					url: "https://api.openai.com/v1/models",
 					throw: false,
 					headers: { authorization: `Bearer ${apiKey}` },
@@ -705,7 +811,7 @@ export async function listModels(provider: ProviderId, apiKey: string, baseUrl?:
 					.reverse();
 			}
 			case "gemini": {
-				const r = await requestUrl({
+				const r = await timedRequest({
 					url: "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",
 					throw: false,
 					headers: { "x-goog-api-key": apiKey },
@@ -717,7 +823,7 @@ export async function listModels(provider: ProviderId, apiKey: string, baseUrl?:
 					.filter((n) => n.startsWith("gemini") && !/(image|tts|live|audio|embedding|aqa|learnlm|thinking-exp)/.test(n));
 			}
 			case "deepseek": {
-				const r = await requestUrl({
+				const r = await timedRequest({
 					url: "https://api.deepseek.com/models",
 					throw: false,
 					headers: { authorization: `Bearer ${apiKey}` },
@@ -726,7 +832,7 @@ export async function listModels(provider: ProviderId, apiKey: string, baseUrl?:
 				return deepseekModels.map((m) => m.id).filter(Boolean);
 			}
 			case "ollama": {
-				const r = await requestUrl({
+				const r = await timedRequest({
 					url: `${(baseUrl ?? "http://localhost:11434").replace(/\/$/, "")}/api/tags`,
 					throw: false,
 				});
@@ -735,7 +841,7 @@ export async function listModels(provider: ProviderId, apiKey: string, baseUrl?:
 			}
 			case "custom": {
 				if (!baseUrl) return [];
-				const r = await requestUrl({
+				const r = await timedRequest({
 					url: `${baseUrl.replace(/\/$/, "")}/models`,
 					throw: false,
 					headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},

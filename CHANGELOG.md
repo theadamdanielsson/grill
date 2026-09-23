@@ -1,5 +1,46 @@
 # Changelog
 
+## 6.1.0
+
+- **Fix: starting a new session in the middle of one threw away its answers.** Grill kept
+  your grades in memory until the session ended. Clicking the due count in the status
+  bar, "Review due", "Grill this note" or "Redo" mid-session reloaded from disk and lost
+  them. It now saves first.
+- **Fix: one failed model call cost the whole session.** A rate limit or dropped
+  connection sent you back to the home screen without saving. Your answers are now kept,
+  and the message says so.
+- **Progress is saved as you go.** A few seconds after each answer, and whenever Obsidian
+  goes to the background. On a phone the app can be killed without warning, and a session
+  used to vanish with it.
+- **Fix: double-tapping a self-grade button graded the next question too.** The buttons
+  now lock after one tap.
+- **Fix: editing a note with an embedded PDF stopped its PDF questions coming due.** The
+  edit check only read the note's own text. It now reads the PDF too, and questions this
+  already hit get their review dates back, spread over the next week rather than all at once.
+- **Fix: a sync hiccup could wipe your history.** If a Grill data file existed but couldn't
+  be read (iCloud still downloading it, a sync lock), Grill treated it as empty and saved
+  over it. It now refuses to write to that file until it can read it again, and tells you.
+  A save that fails is also kept and retried, instead of being quietly dropped.
+- **Fix: deleting a note wiped the history of a different note with the same name.** Only
+  when no other note still has that name now.
+- **No more waiting forever.** Model calls give up after three minutes (five for local
+  models), and there's a Stop button while a question is being written.
+- **Fix: answers cut off mid-way read as "Empty model response".** When a model runs out of
+  room, Grill now retries once with twice the space.
+- **Fix: date ranges were rewritten.** "1914–1918" came out as "1914, 1918" in questions and
+  answers.
+- **Exam papers: the rules at the top aren't quizzed any more.** Time limits, laptop and
+  calculator rules and how to correct an answer used to become questions.
+- **Updated default models.** Gemini 3.8 Flash and DeepSeek's `deepseek-flash`. If you were
+  still on a model that used to be Grill's default (like `gpt-5-mini`, which OpenAI shuts
+  down on 11 December), you've been moved to the current one. Models you picked yourself
+  are left alone.
+- **Setup asks for your key up front.** Choose AI on the welcome screen and you can pick a
+  provider, paste a key and check it works, without a trip to Settings. Big vaults also
+  get a filter on the folder list.
+- **Phones no longer download the 25MB meaning-search model** just because it was switched
+  on at your desktop.
+
 ## 6.0.2
 
 - **Fix: the Untested count jumped after a session, as though finishing one had

@@ -657,6 +657,40 @@
 .grill-mode-card .grill-meta {
   line-height: 1.4;
 }
+/* Key setup inside onboarding, shown while "AI-powered" is picked. */
+.grill-onboard-setup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+  margin: -0.4em 0 1.2em;
+  padding: 0.7em 0.8em;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--grill-radius-s);
+}
+.grill-onboard-field {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+}
+.grill-onboard-field label {
+  flex: 0 0 8em;
+  font-size: var(--font-ui-small);
+}
+.grill-onboard-field input,
+.grill-onboard-field select {
+  flex: 1;
+  min-width: 0;
+}
+.grill-onboard-check {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  flex-wrap: wrap;
+}
+.grill-onboard-filter {
+  width: 100%;
+  margin-top: 0.4em;
+}
 
 /* Brand, light touch: settings stays a normal native Obsidian page (no CRT texture, no
  * pixel type — you're configuring the plugin, not looking at the banner), but the
@@ -1372,6 +1406,18 @@
 }
 .grill-loading .grill-meta {
   color: var(--grill-dim, #c9a875);
+}
+.grill-loading-cancel {
+  margin-top: 1em;
+  font-size: var(--font-ui-small);
+  background: transparent;
+  border: 1px solid var(--grill-ember-dark, #5c1400);
+  color: var(--grill-dim, #c9a875);
+  box-shadow: none;
+}
+.grill-loading-cancel:hover {
+  color: var(--grill-gold-lit, #ffe98a);
+  border-color: var(--grill-accent);
 }
 .grill-flame-spin {
   display: flex;

@@ -16,6 +16,7 @@ jobs:
         with:
           node-version: "22"
       - run: npm ci
+      - run: npm test
       - run: npm run build
       # Build provenance is best-effort: don't let a Sigstore/attestation
       # service outage block a release.

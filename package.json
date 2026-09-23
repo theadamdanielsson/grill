@@ -1,11 +1,12 @@
 {
   "name": "grill",
-  "version": "6.0.2",
+  "version": "6.1.0",
   "description": "Learn what's in your Obsidian notes: Grill quizzes you on your own notes, marks your answers, and colours in a live map of them as you prove what you know. For Obsidian.",
   "main": "main.js",
   "scripts": {
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-    "dev": "node esbuild.config.mjs"
+    "dev": "node esbuild.config.mjs",
+    "test": "node test/run.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

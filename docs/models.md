@@ -23,14 +23,14 @@ ordered roughly cheap → sharp within each provider.
 | Provider | Cheap & fine | Best grading | Notes |
 |---|---|---|---|
 | **Anthropic** | `claude-haiku-4-5` | `claude-sonnet-5` | Sonnet 5 is the sharpest grader of the lot. Haiku is plenty for generation. |
-| **OpenAI** | `gpt-5-mini` | `gpt-5` | Reasoning models are set to low effort so they stay fast and cheap. |
-| **Google** | `gemini-2.5-flash` | `gemini-2.5-pro` | Flash is very cheap and good enough for most study. |
-| **DeepSeek** | `deepseek-chat` | `deepseek-reasoner` | Roughly a twentieth of Sonnet's price. A strong value pick. |
+| **OpenAI** | `gpt-6-luna` | `gpt-6-sol` | Grill's default, `gpt-5.6-terra`, sits between the two. |
+| **Google** | `gemini-3.8-flash` | `gemini-3.8-flash` | Flash is cheap and good enough for most study. |
+| **DeepSeek** | `deepseek-flash` | `deepseek-v4-pro` | A fraction of Sonnet's price, and half that again off-peak. A strong value pick. |
 
 **Cheapest sensible setup:** let the cheap model write the questions and grade, or mix modes,
 AI writes questions and you grade yourself, to roughly halve a session's cost.
 
-**Best-for-money:** `deepseek-chat` if you want a hosted key that barely costs anything;
+**Best-for-money:** `deepseek-flash` if you want a hosted key that barely costs anything;
 `claude-sonnet-5` if you want the grading to be as good as it gets.
 
 ---

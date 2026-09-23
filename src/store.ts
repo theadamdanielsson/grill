@@ -385,7 +385,7 @@ export class GrillStore {
 
 	async savePdfCache(map: PdfCacheMap): Promise<void> {
 		await this.ensureFolder(this.folder());
-		await this.saveJSON(this.pdfCachePath(), JSON.stringify(map));
+		await this.saveCacheJSON(this.pdfCachePath(), JSON.stringify(map));
 	}
 
 	/** Cache of extractConcepts() output, keyed by note/reference-doc name, so the
@@ -399,7 +399,7 @@ export class GrillStore {
 
 	async saveConceptExtractionCache(map: ConceptExtractionCacheMap): Promise<void> {
 		await this.ensureFolder(this.folder());
-		await this.saveJSON(this.conceptExtractionCachePath(), JSON.stringify(map));
+		await this.saveCacheJSON(this.conceptExtractionCachePath(), JSON.stringify(map));
 	}
 
 	/** Copy a picked file's bytes into the Grill Attachments folder — deduplicating
@@ -507,61 +507,88 @@ export class GrillStore {
 		}
 	}
 
-	/** Shared JSON load for every store below. A parse failure (a truncated write from
-	 * an interrupted save, a sync conflict, disk corruption) used to just silently
-	 * return an empty object, indistinguishable from "this store has always been
-	 * empty" — the student's entire mastery/concept/question history could vanish
-	 * with no notice at all. Instead: back up the unreadable bytes next to the
-	 * original (so there's at least a chance of manual recovery) and warn once via
-	 * Notice, before falling back to `fallback` the same way every caller already
-	 * expects. Best-effort: if even the backup write fails, still degrade to
-	 * `fallback` rather than throwing and breaking plugin load entirely. */
+	/** Shared JSON load for every store below. A missing file is the first-run
+	 * `fallback`. A file that exists but can't be parsed is backed up alongside itself
+	 * as `.corrupt-<ts>.json` (warned once via Notice) and read as `fallback`. A file
+	 * that exists but can't be READ (iCloud hasn't downloaded it yet, a sync lock) is
+	 * different: its real content is still there, so the path is marked read-only for
+	 * this plugin session and every save to it is refused, until a later read of it
+	 * succeeds. Reading it as empty and
+	 * then saving used to overwrite a user's whole history with near-empty data. */
 	private async loadJSON<T>(path: string, fallback: T): Promise<T> {
-		if (!(await this.app.vault.adapter.exists(path))) return fallback;
+		const adapter = this.app.vault.adapter;
+		if (!(await adapter.exists(path))) return fallback;
 		let raw: string;
 		try {
-			raw = await this.app.vault.adapter.read(path);
-		} catch {
-			return fallback; // unreadable (permissions, sync lock) — nothing to back up
+			raw = await adapter.read(path);
+			// Readable again (the sync finished). Every caller replaces its in-memory
+			// copy with what this returns, so saving over the file is safe once more.
+			this.readOnlyPaths.delete(path);
+		} catch (e) {
+			this.readOnlyPaths.add(path);
+			const name = path.split("/").pop() ?? path;
+			new Notice(
+				`Grill: couldn't read ${name} (${(e as Error).message}). To protect it, Grill won't save over it until it can read it again.`,
+				12000,
+			);
+			return fallback;
 		}
 		try {
 			return JSON.parse(raw) as T;
 		} catch {
 			const name = path.split("/").pop() ?? path;
 			try {
-				await this.app.vault.adapter.write(`${path}.corrupt-${Date.now()}.json`, raw);
+				await adapter.write(`${path}.corrupt-${Date.now()}.json`, raw);
 				new Notice(
 					`Grill: ${name} couldn't be read (corrupted JSON) and has been reset. ` +
 						`The unreadable file was kept alongside it as a .corrupt backup in case it's recoverable.`,
 					12000,
 				);
 			} catch {
-				/* best-effort backup — see doc comment above */
+				/* best-effort backup */
 			}
 			return fallback;
 		}
 	}
 
-	/** Shared JSON save for every store below: write to a sibling `.tmp` path, then
-	 * rename it over the real one — POSIX rename() (what desktop's FileSystemAdapter
-	 * uses under the hood) atomically replaces an existing destination file with no
-	 * window where neither the old nor new content is on disk, so a crash, disk-full,
-	 * or sync conflict mid-write hits the `.tmp` file, never the live one, and the
-	 * store a user already has stays intact instead of getting truncated in place.
-	 * Deliberately does NOT remove() the destination first: doing so would open
-	 * exactly the gap this is meant to close (old file gone, new one not yet renamed
-	 * into place). Falls back to a direct write (today's prior behavior, no worse
-	 * than before) if the platform's adapter doesn't cooperate with rename-over-
-	 * existing-file for any reason (e.g. some mobile filesystem backends). */
+	/** Paths whose read failed this plugin session; see loadJSON. */
+	private readOnlyPaths = new Set<string>();
+
+	/** Is any store currently refusing saves because it couldn't be read? */
+	hasReadProtected(): boolean {
+		return this.readOnlyPaths.size > 0;
+	}
+
+	/** Shared JSON save for every store below: write a sibling `.tmp` and rename it
+	 * into place; where the adapter refuses to rename over an existing file, write the
+	 * real file directly (never delete-then-rename: a sync tool could ship the delete
+	 * to another device before the new file). Throws if the data couldn't be written,
+	 * or if the path is read-protected (see loadJSON), so callers (the session's
+	 * flush) keep their state dirty and say so instead of believing it was saved. */
 	private async saveJSON(path: string, data: string): Promise<void> {
+		if (this.readOnlyPaths.has(path)) {
+			// Refuse loudly, not silently: a quiet skip let the session's flush think it
+			// had saved. Throwing keeps it dirty and makes its "couldn't save" Notice fire.
+			const name = path.split("/").pop() ?? path;
+			throw new Error(`${name} couldn't be read at startup, so Grill won't save over it until it can read it again. Start a new session once your sync has finished`);
+		}
+		const adapter = this.app.vault.adapter;
 		const tmp = `${path}.tmp`;
 		try {
-			await this.app.vault.adapter.write(tmp, data);
-			await this.app.vault.adapter.rename(tmp, path);
+			await adapter.write(tmp, data);
+			await adapter.rename(tmp, path);
+			return;
 		} catch {
-			await this.app.vault.adapter.write(path, data).catch(() => undefined);
-			await this.app.vault.adapter.remove(tmp).catch(() => undefined);
+			/* rename over an existing file is refused on most adapters: write directly */
 		}
+		await adapter.write(path, data);
+		await adapter.remove(tmp).catch(() => undefined);
+	}
+
+	/** saveJSON for derived caches that can always be rebuilt: never throws, so a
+	 * cache that couldn't be written never aborts a session. */
+	private async saveCacheJSON(path: string, data: string): Promise<void> {
+		await this.saveJSON(path, data).catch((e) => console.error(`Grill: couldn't write cache ${path}`, e));
 	}
 
 	async loadMastery(): Promise<MasteryMap> {
@@ -584,7 +611,7 @@ export class GrillStore {
 
 	async saveEmbeddings(map: EmbeddingMap): Promise<void> {
 		await this.ensureFolder(this.folder());
-		await this.saveJSON(this.embeddingsPath(), JSON.stringify(map));
+		await this.saveCacheJSON(this.embeddingsPath(), JSON.stringify(map));
 	}
 
 	/** The canonical misconception registry (recomputable projection over raw tags). */
@@ -624,7 +651,7 @@ export class GrillStore {
 
 	async saveGraphLayout(pos: Record<string, { x: number; y: number }>): Promise<void> {
 		await this.ensureFolder(this.folder());
-		await this.saveJSON(normalizePath(`${this.folder()}/graph-layout.json`), JSON.stringify(pos, null, 0));
+		await this.saveCacheJSON(normalizePath(`${this.folder()}/graph-layout.json`), JSON.stringify(pos, null, 0));
 	}
 
 	/** Per-concept question bank, reused across reviews so a due concept isn't

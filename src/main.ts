@@ -11,7 +11,7 @@ import {
 } from "obsidian";
 import { configureFSRSWeights, MasteryMap } from "./mastery";
 import { CalPoint, isCalPoint } from "./calibration";
-import { LLMConfig, PROVIDERS, ProviderId, Question, listModels, synthesizeArc, testModel } from "./llm";
+import { LLMConfig, PROVIDERS, ProviderId, Question, listModels, migrateLegacyModels, synthesizeArc, testModel } from "./llm";
 import { ConceptMap, dueConceptCount, migrateResetScheduling, rebalanceDueDates, reconcileConcepts } from "./concepts";
 import { pairKey } from "./bridges";
 import {
@@ -26,6 +26,7 @@ import {
 	topMisconceptions,
 } from "./debrief";
 import { extractConcepts } from "./generate-local";
+import { noteStudyText } from "./pdf";
 import { terminateOcrWorker } from "./ocr";
 import { countTrainableReviews, MIN_REVIEWS_FOR_OPTIMIZATION, optimizeFSRSWeights } from "./optimizer";
 import { dueFiles, duplicateBasenames } from "./scope";
@@ -243,6 +244,9 @@ interface GrillSettings {
 	 * mapping so it fires exactly once — after it, the preset is whatever the user
 	 * last chose, and hand-edited numbers keep reading as "custom". */
 	intensityMigrated: boolean;
+	/** One-time flag (6.1.0): stored models that are former shipped defaults were
+	 * moved to the current defaults (see migrateLegacyModels). */
+	modelsMigrated61: boolean;
 	/** Sorted basenames `warnOnDuplicateBasenames` last actually warned about, so the
 	 * same unresolved duplicate list doesn't re-notify on every single plugin load —
 	 * only a CHANGE in the duplicate set (a new collision, or an old one resolved)
@@ -312,6 +316,7 @@ function defaultSettings(): GrillSettings {
 		newConceptsCapMigrated: false,
 		studyIntensity: "steady",
 		intensityMigrated: false,
+		modelsMigrated61: false,
 		lastWarnedDuplicateBasenames: [],
 		arcBackfilled: false,
 	};
@@ -398,6 +403,7 @@ export default class GrillPlugin extends Plugin {
 		if (s.studyIntensity === "relaxed" || s.studyIntensity === "steady" || s.studyIntensity === "intense" || s.studyIntensity === "custom")
 			settings.studyIntensity = s.studyIntensity;
 		if (typeof s.intensityMigrated === "boolean") settings.intensityMigrated = s.intensityMigrated;
+		if (typeof s.modelsMigrated61 === "boolean") settings.modelsMigrated61 = s.modelsMigrated61;
 		if (Array.isArray(s.lastWarnedDuplicateBasenames)) {
 			settings.lastWarnedDuplicateBasenames = s.lastWarnedDuplicateBasenames.filter((v): v is string => typeof v === "string");
 		}
@@ -436,6 +442,13 @@ export default class GrillPlugin extends Plugin {
 		if (!settings.intensityMigrated) {
 			settings.studyIntensity = intensityOf(settings);
 			settings.intensityMigrated = true;
+		}
+		// persist() writes the whole models map, so every install still holds the model
+		// that was the default when it was set up (gpt-5-mini shuts down 2026-12-11).
+		// Move former defaults to the current ones once; a hand-picked model is kept.
+		if (!settings.modelsMigrated61) {
+			migrateLegacyModels(settings.models);
+			settings.modelsMigrated61 = true;
 		}
 		const calibration = Array.isArray(stored?.calibration) ? stored.calibration.filter(isCalPoint) : [];
 		const arcLog = Array.isArray(stored?.arcLog) ? stored.arcLog.filter(isArcEntry) : [];
@@ -576,7 +589,10 @@ export default class GrillPlugin extends Plugin {
 				if (!(file instanceof TFile) || file.extension !== "md") return;
 				const oldName = oldPath.slice(oldPath.lastIndexOf("/") + 1).replace(/\.md$/, "");
 				if (oldName === file.basename) return;
-				void this.renameTrackedNote(oldName, file.basename);
+				// Grill keys history by basename: if another note still carries the old
+				// name, that history is (at least partly) its, so leave it where it is.
+				if (this.basenameInUse(oldName)) return;
+				void this.withViewsSynced(() => this.renameTrackedNote(oldName, file.basename));
 			}),
 		);
 		// A genuine delete (not a rename): every store's records for this basename
@@ -587,7 +603,10 @@ export default class GrillPlugin extends Plugin {
 		this.registerEvent(
 			this.app.vault.on("delete", (file) => {
 				if (!(file instanceof TFile) || file.extension !== "md") return;
-				void this.removeTrackedNote(file.basename);
+				// Deleting "Archive/Krebs cycle" must not wipe the live "Krebs cycle" note's
+				// history, which shares the same basename key.
+				if (this.basenameInUse(file.basename)) return;
+				void this.withViewsSynced(() => this.removeTrackedNote(file.basename));
 			}),
 		);
 		if (!Platform.isMobile) {
@@ -737,9 +756,13 @@ export default class GrillPlugin extends Plugin {
 				// One-time move to concept-level scheduling: keep stats, reset scheduling.
 				if (!this.data.settings.conceptsMigrated) {
 					migrateResetScheduling(this.mastery);
-					await this.store.saveMastery(this.mastery);
-					this.data.settings.conceptsMigrated = true;
-					await this.persist();
+					try {
+						await this.store.saveMastery(this.mastery);
+						this.data.settings.conceptsMigrated = true;
+						await this.persist();
+					} catch (e) {
+						console.error("Grill: couldn't save the scheduling migration; will retry next launch", e);
+					}
 				}
 				this.refreshStatusBar();
 				this.warnOnDuplicateBasenames();
@@ -767,6 +790,15 @@ export default class GrillPlugin extends Plugin {
 	statusBar: HTMLElement | null = null;
 
 	/** Create Grill/Instructions.md if needed and open it for editing. */
+	/** Open Obsidian's settings straight to Grill's tab. `app.setting` isn't in the
+	 * public typings, hence the narrow cast. */
+	openSettings(): void {
+		const setting = (this.app as unknown as { setting?: { open(): void; openTabById(id: string): void } }).setting;
+		if (!setting) return;
+		setting.open();
+		setting.openTabById(this.manifest.id);
+	}
+
 	async openInstructions(): Promise<void> {
 		const file = await this.store.createInstructions();
 		if (!file) {
@@ -873,14 +905,26 @@ export default class GrillPlugin extends Plugin {
 	 * want that to reach concepts you've already studied, not just new ones. Doesn't touch
 	 * scheduling, and doesn't affect a session that's already open. */
 	async clearQuestionCache(): Promise<void> {
-		await this.store.saveQuestionBank({});
+		try {
+			await this.store.saveQuestionBank({});
+		} catch (e) {
+			new Notice(`Grill: couldn't clear cached questions (${(e as Error).message}).`, 8000);
+			return;
+		}
 		new Notice("Grill: cleared cached questions. Each concept writes a fresh one next time it's due.");
 	}
 
 	async rebalanceSchedule(): Promise<void> {
 		const easyWeekdays = new Set(this.data.settings.easyDays);
 		const changed = rebalanceDueDates(this.concepts, new Date(), easyWeekdays);
-		if (changed > 0) await this.store.saveConcepts(this.concepts);
+		if (changed > 0) {
+			try {
+				await this.store.saveConcepts(this.concepts);
+			} catch (e) {
+				new Notice(`Grill: couldn't save the rebalanced dates (${(e as Error).message}).`, 8000);
+				return;
+			}
+		}
 		new Notice(
 			changed > 0
 				? `Grill: rebalanced ${changed} upcoming due date${changed === 1 ? "" : "s"}.`
@@ -980,6 +1024,37 @@ export default class GrillPlugin extends Plugin {
 			}, 2000),
 		);
 		this.modifyTimers.set(file.path, id);
+	}
+
+	/** Run a disk rewrite of the shared stores with every open Grill pane flushed
+	 * before it and reloaded after it. Without this, a pane mid-session held its own
+	 * pre-rename copies of the question bank/bridges/registry and its next save put
+	 * them straight back, undoing the rename or delete. */
+	private async withViewsSynced(edit: () => Promise<void>): Promise<void> {
+		const views = this.app.workspace
+			.getLeavesOfType(VIEW_TYPE)
+			.map((l) => l.view)
+			.filter((v): v is SessionView => v instanceof SessionView);
+		let edited = false;
+		try {
+			for (const v of views) {
+				if (!(await v.flushForExternalEdit())) {
+					// Rewriting the stores now would either lose that pane's unsaved changes
+					// (on reload) or be undone by them (on its next save). Leave the old
+					// records in place; history stays attached to the old name until then.
+					new Notice("Grill: couldn't update its records for that rename/delete while a save is failing.", 8000);
+					return;
+				}
+			}
+			edited = true;
+			await edit();
+		} catch (e) {
+			new Notice(`Grill: couldn't update its records for that rename/delete (${(e as Error).message}).`, 8000);
+		} finally {
+			// Once the edit has started, re-sync even after a partial failure, so no pane
+			// keeps copies that disagree with what's on disk.
+			if (edited) for (const v of views) await v.reloadSharedStores().catch(() => undefined);
+		}
 	}
 
 	/** Migrate every store's records from an old basename to the new one after an
@@ -1089,6 +1164,11 @@ export default class GrillPlugin extends Plugin {
 		if (bridgesTouched) await this.store.saveBridges(bridges);
 	}
 
+	/** Does any markdown file in the vault still have this basename? */
+	private basenameInUse(name: string): boolean {
+		return this.app.vault.getMarkdownFiles().some((f) => f.basename === name);
+	}
+
 	/** Prune every store's records for a genuinely deleted note, by basename. Unlike a
 	 * rename (where real history should carry over — see renameTrackedNote above), a
 	 * delete means the note is gone for good: leaving its records in place would let an
@@ -1164,9 +1244,14 @@ export default class GrillPlugin extends Plugin {
 	 * as it always would. */
 	private async refreshConceptsForFile(file: TFile): Promise<void> {
 		try {
-			const text = await this.app.vault.cachedRead(file);
+			// Same text a session extracts from (markdown + embedded PDFs). Reading the
+			// markdown alone orphaned every PDF-derived concept on each edit. Occlusion
+			// concepts come from an OCR pass this refresh doesn't run, so they're kept.
+			const pdfCache = await this.store.loadPdfCache();
+			const text = await noteStudyText(this.app, file, pdfCache);
+			await this.store.savePdfCache(pdfCache);
 			const extracted = extractConcepts(file.basename, text, this.data.settings.questionFormats);
-			reconcileConcepts(this.concepts, extracted);
+			reconcileConcepts(this.concepts, extracted, new Set(["occlusion"]));
 			await this.store.saveConcepts(this.concepts);
 			this.refreshStatusBar();
 		} catch {
@@ -1407,6 +1492,7 @@ class GrillSettingTab extends PluginSettingTab {
 			legacyDefaultsMigrated: s.legacyDefaultsMigrated,
 			newConceptsCapMigrated: s.newConceptsCapMigrated,
 			intensityMigrated: s.intensityMigrated,
+			modelsMigrated61: s.modelsMigrated61,
 			arcBackfilled: s.arcBackfilled,
 			fsrsLastFitAttemptReviews: s.fsrsLastFitAttemptReviews,
 		};

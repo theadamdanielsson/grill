@@ -55,6 +55,89 @@ export interface PdfCacheEntry {
 	mtime: number;
 	size: number;
 	text: string;
+	/** Extraction pipeline version the text was produced by. An entry from an older
+	 * pipeline (or with no version at all) is a miss, so a change to extraction —
+	 * like stripPdfBoilerplate — reaches PDFs that were already cached. */
+	v?: number;
+}
+
+/** Bump whenever extractPdfText's output changes for the same bytes. */
+const PDF_EXTRACT_VERSION = 2;
+
+/** Exam-paper administration, not course content: time limits, what's allowed in the
+ * room, misconduct rules, how to fill in the answer sheet. Each pattern is one signal.
+ * STRONG signals only appear on an exam's front page; the rest also turn up in normal
+ * course material ("phones", "minutes"), so they only count alongside a strong one. */
+const STRONG_SIGNALS: RegExp[] = [
+	// A time allowance for the paper itself: "Time allowed: 2 hours", "the time limit
+	// is: 25 minutes". Seconds never count (a programming problem's "time limit").
+	/\btime (allowed|limit)\b(\s+(is|of))?\s*:?\s*\d+\s*(minutes|mins|hours|hrs)\b|\byou (will )?have \d+\s*(minutes|mins|hours) to (complete|answer|finish)\b/i,
+	/\binstructions (to|for) (candidates|students)\b/i,
+	/\b(airplane|aeroplane|flight) mode\b/i,
+	/\bdo not (turn|open) (over |this |the )?(page|paper|booklet)\b/i,
+	/\b(answer all( the)? questions|attempt all questions)\b/i,
+];
+const WEAK_SIGNALS: RegExp[] = [
+	/\b(calculators?|laptops?|mobile phones?|phones?|smart ?watch(es)?|electronic devices?|wi-?fi)\b/i,
+	/\b(not )?(allowed|permitted) to (use|bring|have)\b|\bclosed[- ]book\b|\bopen[- ]book\b/i,
+	/\b(misconduct|disciplinary|cheating|academic (integrity|dishonesty)|fail the exam)\b/i,
+	/\bcross(ed)? (it )?out\b|\bchange your mind\b|\bmarked as (an )?(erroneous|incorrect|wrong)\b/i,
+	/\b(fill in|transfer) (the |your )?(correct )?answers?\b|\banswer (sheet|box|grid)\b/i,
+	/\bwrite your (full )?(name|student (number|id))\b/i,
+	/\b(exam|test|paper) contains\b|\beach question (carries|is worth)\b|\b\d+ points\b.*\b(distributed|exercises|questions)\b/i,
+];
+
+/** Where the actual questions start: "Question 1", "Problem 2", "Exercise 1.3", "Task 1". */
+const CONTENT_START = /^\s*(question|problem|exercise|task)\s*\d+/im;
+
+/** Drop an exam paper's administrative front matter (time limit, laptop rules, how to
+ * correct an answer) so it isn't quizzed as study material. Conservative by design:
+ * only page 1, only the part before a "Question 1"-style marker, only when that part
+ * carries a strong exam signal plus at least two other distinct signals — and even
+ * then it drops only the SENTENCES carrying a signal, so a case study or data table
+ * printed before the questions stays. Pure, so it's tested directly. */
+export function stripPdfBoilerplate(pages: string[]): string[] {
+	if (!pages.length) return pages;
+	const page = pages[0];
+	const m = CONTENT_START.exec(page);
+	const head = m ? page.slice(0, m.index) : page;
+	const tail = m ? page.slice(m.index) : "";
+	// Units: each line on its own (titles, table rows), except that a lowercase line
+	// continuing an unfinished sentence joins the one before it (a wrapped rule stays
+	// whole); then each unit is split at sentence ends.
+	const units: string[] = [];
+	for (const line of head.split("\n")) {
+		const prev = units[units.length - 1];
+		if (prev !== undefined && !/[.!?:]\s*$/.test(prev) && /^\s*[a-z(]/.test(line)) units[units.length - 1] = `${prev}\n${line}`;
+		else units.push(line);
+	}
+	const sentences = units.flatMap((u) => u.split(/(?<=[.!?])[ \t]+/));
+	const kinds = new Set<string>();
+	let strong = false;
+	const flagged = sentences.map((sentence) => {
+		let hit = false;
+		STRONG_SIGNALS.forEach((re, k) => {
+			if (re.test(sentence)) {
+				kinds.add(`s${k}`);
+				strong = hit = true;
+			}
+		});
+		WEAK_SIGNALS.forEach((re, k) => {
+			if (re.test(sentence)) {
+				kinds.add(`w${k}`);
+				hit = true;
+			}
+		});
+		return hit;
+	});
+	if (!strong || kinds.size < 3) return pages;
+	const kept = sentences
+		.filter((_, i) => !flagged[i])
+		.join("\n")
+		.replace(/\n{2,}/g, "\n")
+		.trim();
+	const first = [kept, tail].filter((x) => x.trim()).join("\n");
+	return first ? [first, ...pages.slice(1)] : pages.slice(1);
 }
 
 /** Keyed by vault path. Persisted by the caller (see GrillStore.loadPdfCache /
@@ -84,11 +167,12 @@ async function extractPdfText(bytes: ArrayBuffer, label: string): Promise<string
 				.trim();
 			if (text) pages.push(text);
 		}
+		const content = stripPdfBoilerplate(pages);
 		// An HTML comment, not a plain line: extractConcepts already strips comments
 		// before parsing (same convention itemsForNote uses), so this attribution stays
 		// readable in the raw text but can never get picked up as a chunk's label the
 		// way a plain leading line would.
-		return pages.length ? `<!-- From the PDF "${label}" -->\n\n${pages.join("\n\n")}` : "";
+		return content.length ? `<!-- From the PDF "${label}" -->\n\n${content.join("\n\n")}` : "";
 	} catch (e) {
 		console.error(`Grill: couldn't extract text from PDF "${label}"`, e);
 		return ""; // corrupt, encrypted, or unparseable; the note falls back to its own text
@@ -104,10 +188,11 @@ async function extractPdfText(bytes: ArrayBuffer, label: string): Promise<string
  * session-start scan writes to disk once, not once per file. */
 export async function extractPdfTextCached(app: App, dest: TFile, cache: PdfCacheMap): Promise<string> {
 	const hit = cache[dest.path];
-	if (hit && hit.mtime === dest.stat.mtime && hit.size === dest.stat.size) return hit.text;
+	if (hit && hit.v === PDF_EXTRACT_VERSION && hit.mtime === dest.stat.mtime && hit.size === dest.stat.size)
+		return hit.text;
 	const bytes = await app.vault.readBinary(dest);
 	const text = await extractPdfText(bytes, dest.basename);
-	cache[dest.path] = { mtime: dest.stat.mtime, size: dest.stat.size, text };
+	cache[dest.path] = { mtime: dest.stat.mtime, size: dest.stat.size, text, v: PDF_EXTRACT_VERSION };
 	return text;
 }
 
@@ -149,4 +234,14 @@ export async function collectNotePdfText(app: App, file: TFile, cache: PdfCacheM
 		}
 	}
 	return out.join("\n\n");
+}
+
+/** A note's full study text: its own markdown plus the text of any PDFs it embeds.
+ * The one definition both a session start and the on-edit concept refresh use, so the
+ * two can never disagree about which concepts a note has (they did: the refresh read
+ * markdown only and orphaned every PDF-derived concept on each edit). */
+export async function noteStudyText(app: App, file: TFile, cache: PdfCacheMap): Promise<string> {
+	const raw = await app.vault.cachedRead(file);
+	const pdfText = await collectNotePdfText(app, file, cache);
+	return pdfText ? `${raw}\n\n${pdfText}` : raw;
 }
