@@ -1,5 +1,14 @@
 # Changelog
 
+## 6.1.1
+
+- **Fix: Grill could fail to load on iPhones and iPads older than iOS 16.4.** 6.1.0 added
+  a regex those versions can't read. It's gone, and PDFs are split into sentences the
+  same way as before.
+- Small clean-ups flagged by Obsidian's plugin scan: model errors are always real
+  errors, diagrams render through Obsidian's own helpers, and two unused leftovers
+  are removed.
+
 ## 6.1.0
 
 - **Fix: starting a new session in the middle of one threw away its answers.** Grill kept

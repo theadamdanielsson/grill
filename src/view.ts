@@ -6,7 +6,6 @@ import { adjudicateBridges, ConceptTarget, contentWords, debriefSession, embedTe
 import { detectOcclusionRegions } from "./ocr";
 import {
 	Concept,
-	ConceptExtractionCacheMap,
 	ConceptKind,
 	extractConcepts,
 	extractConceptsCached,
@@ -1340,14 +1339,11 @@ export class SessionView extends ItemView {
 			// Restore saved positions (the live sim starts calm when it has them all, or
 			// settles organically when there are new nodes).
 			const saved = await this.plugin.store.loadGraphLayout();
-			let settled = graph.nodes.length > 0;
 			for (const n of graph.nodes) {
 				const p = saved[n.id];
 				if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) {
 					n.x = p.x;
 					n.y = p.y;
-				} else {
-					settled = false;
 				}
 			}
 
@@ -2961,9 +2957,7 @@ export class SessionView extends ItemView {
 	 * appeared, silently dropping the block otherwise instead of showing broken output. */
 	private async renderDiagramBlock(parent: HTMLElement, diagram: string): Promise<void> {
 		if (!diagram) return;
-		const scratch = document.createElement("div");
-		scratch.addClass("grill-diagram-scratch");
-		document.body.appendChild(scratch);
+		const scratch = document.body.createDiv({ cls: "grill-diagram-scratch" });
 		try {
 			await MarkdownRenderer.render(this.app, "```mermaid\n" + diagram + "\n```", scratch, "", this);
 			let svg: Element | null = null;

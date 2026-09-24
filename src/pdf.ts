@@ -111,7 +111,9 @@ export function stripPdfBoilerplate(pages: string[]): string[] {
 		if (prev !== undefined && !/[.!?:]\s*$/.test(prev) && /^\s*[a-z(]/.test(line)) units[units.length - 1] = `${prev}\n${line}`;
 		else units.push(line);
 	}
-	const sentences = units.flatMap((u) => u.split(/(?<=[.!?])[ \t]+/));
+	// No lookbehind (unsupported on iOS < 16.4, where it fails the whole plugin at load):
+	// mark each sentence end with a NUL, then split on it. Same split as `(?<=[.!?])[ \t]+`.
+	const sentences = units.flatMap((u) => u.replace(/([.!?])[ \t]+/g, "$1\u0000").split("\u0000"));
 	const kinds = new Set<string>();
 	let strong = false;
 	const flagged = sentences.map((sentence) => {
