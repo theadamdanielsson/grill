@@ -26,13 +26,13 @@ test("migrateLegacyModels moves former defaults and nothing else", () => {
 	assert.equal(models.openai, PROVIDERS.openai.defaultModel);
 	assert.equal(models.gemini, PROVIDERS.gemini.defaultModel);
 	assert.equal(models.deepseek, PROVIDERS.deepseek.defaultModel);
-	assert.equal(models.anthropic, "claude-sonnet-5");
+	assert.equal(models.anthropic, PROVIDERS.anthropic.defaultModel);
 	assert.equal(models.ollama, "llama3.1:8b");
 	// Idempotent, and a hand-picked model is never touched.
 	assert.equal(migrateLegacyModels(models), false);
-	const picked = { openai: "gpt-6-sol", gemini: "gemini-2.5-pro" };
+	const picked = { anthropic: "claude-opus-5", openai: "gpt-6-sol", gemini: "gemini-2.5-pro" };
 	assert.equal(migrateLegacyModels(picked), false);
-	assert.deepEqual(picked, { openai: "gpt-6-sol", gemini: "gemini-2.5-pro" });
+	assert.deepEqual(picked, { anthropic: "claude-opus-5", openai: "gpt-6-sol", gemini: "gemini-2.5-pro" });
 });
 
 test("no current default is listed as a legacy default", () => {

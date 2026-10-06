@@ -1,6 +1,7 @@
 /** Vault storage: state is content, secrets are config.
  *
- * - API keys and settings stay in the plugin's data.json (never in synced markdown).
+ * - Settings stay in the plugin's data.json, API keys in Obsidian's keychain (see
+ *   secrets.ts); neither is ever in synced markdown.
  * - Mastery state lives at `<folder>/mastery.json` in the vault: user-visible,
  *   versionable, survives plugin reinstalls, syncs with the vault.
  * - Each session is written as a markdown note under `<folder>/Sessions/`,

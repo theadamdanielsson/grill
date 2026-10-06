@@ -1,5 +1,22 @@
 # Changelog
 
+## 6.2.0
+
+- **Your API key moves to Obsidian's keychain.** It used to sit in the plugin's data
+  file as plain text, which travels with whatever syncs or backs up your vault. Grill
+  copies it across on first launch and removes the old copy on the next one, once the
+  keychain has shown it kept it. The keychain belongs to one device and doesn't sync,
+  so update Grill on every device, and expect each one to ask for the key once. Obsidian
+  older than 1.11.4 has no keychain; there the key stays where it was.
+- **Grill's settings show up in Obsidian's settings search.** Obsidian 1.13 and later.
+  Tuning is now its own page instead of a fold-out.
+- **Claude Sonnet 5.5 is the default Anthropic model.** Installs still on the old
+  default, Sonnet 5, move to it once. A model you picked yourself is left alone.
+- **Fix: GPT-6 models couldn't see images.** Grill didn't recognise them as able to, so
+  questions about a diagram went out without it.
+- The model lists shown before your key is checked are current again (Opus 5.5,
+  GPT-6.1 Sol).
+
 ## 6.1.1
 
 - **Fix: Grill could fail to load on iPhones and iPads older than iOS 16.4.** 6.1.0 added

@@ -1,10 +1,13 @@
 import {
 	App,
+	Events,
 	Notice,
 	Platform,
 	Plugin,
 	PluginSettingTab,
 	Setting,
+	SettingDefinition,
+	SettingDefinitionItem,
 	TFile,
 	TFolder,
 	WorkspaceLeaf,
@@ -30,6 +33,7 @@ import { noteStudyText } from "./pdf";
 import { terminateOcrWorker } from "./ocr";
 import { countTrainableReviews, MIN_REVIEWS_FOR_OPTIMIZATION, optimizeFSRSWeights } from "./optimizer";
 import { dueFiles, duplicateBasenames } from "./scope";
+import { KeyStash, secretStore, vaultId } from "./secrets";
 import { GrillStore } from "./store";
 import { SessionView, VIEW_TYPE } from "./view";
 import type { ColorMode, NumberMode } from "./mapview";
@@ -247,6 +251,7 @@ interface GrillSettings {
 	/** One-time flag (6.1.0): stored models that are former shipped defaults were
 	 * moved to the current defaults (see migrateLegacyModels). */
 	modelsMigrated61: boolean;
+	modelsMigrated62: boolean;
 	/** Sorted basenames `warnOnDuplicateBasenames` last actually warned about, so the
 	 * same unresolved duplicate list doesn't re-notify on every single plugin load —
 	 * only a CHANGE in the duplicate set (a new collision, or an old one resolved)
@@ -317,6 +322,7 @@ function defaultSettings(): GrillSettings {
 		studyIntensity: "steady",
 		intensityMigrated: false,
 		modelsMigrated61: false,
+		modelsMigrated62: false,
 		lastWarnedDuplicateBasenames: [],
 		arcBackfilled: false,
 	};
@@ -336,12 +342,21 @@ export default class GrillPlugin extends Plugin {
 	 * re-extraction after editing actually pauses, not one per event. */
 	private modifyTimers = new Map<string, number>();
 
+	/** Moves API keys between memory, Obsidian's keychain and data.json. */
+	keys = new KeyStash(null, "");
+
 	async onload(): Promise<void> {
 		const stored = (await this.loadData()) as Partial<PluginData> | null;
 		const settings = defaultSettings();
 		const s: Partial<GrillSettings> = stored?.settings ?? {};
 		if (s.provider && s.provider in PROVIDERS) settings.provider = s.provider;
 		if (s.apiKeys) settings.apiKeys = { ...settings.apiKeys, ...s.apiKeys };
+		// Keys still sitting in data.json (every install from before 6.2) move to
+		// Obsidian's keychain on the persist() further down; from then on they're
+		// read back from there. See secrets.ts.
+		const keysInData = Object.values(settings.apiKeys).some(Boolean);
+		this.keys = new KeyStash(secretStore(this.app), vaultId(this.app));
+		settings.apiKeys = this.keys.load(settings.apiKeys);
 		if (s.models) settings.models = { ...settings.models, ...s.models };
 		if (typeof s.ollamaUrl === "string" && s.ollamaUrl.trim()) settings.ollamaUrl = s.ollamaUrl.trim();
 		if (typeof s.customBaseUrl === "string") settings.customBaseUrl = s.customBaseUrl.trim();
@@ -404,6 +419,7 @@ export default class GrillPlugin extends Plugin {
 			settings.studyIntensity = s.studyIntensity;
 		if (typeof s.intensityMigrated === "boolean") settings.intensityMigrated = s.intensityMigrated;
 		if (typeof s.modelsMigrated61 === "boolean") settings.modelsMigrated61 = s.modelsMigrated61;
+		if (typeof s.modelsMigrated62 === "boolean") settings.modelsMigrated62 = s.modelsMigrated62;
 		if (Array.isArray(s.lastWarnedDuplicateBasenames)) {
 			settings.lastWarnedDuplicateBasenames = s.lastWarnedDuplicateBasenames.filter((v): v is string => typeof v === "string");
 		}
@@ -450,6 +466,12 @@ export default class GrillPlugin extends Plugin {
 			migrateLegacyModels(settings.models);
 			settings.modelsMigrated61 = true;
 		}
+		// Same move for the default that changed in 6.2 (claude-sonnet-5). A separate
+		// flag because modelsMigrated61 is already true on every install that ran 6.1.
+		if (!settings.modelsMigrated62) {
+			migrateLegacyModels(settings.models);
+			settings.modelsMigrated62 = true;
+		}
 		const calibration = Array.isArray(stored?.calibration) ? stored.calibration.filter(isCalPoint) : [];
 		const arcLog = Array.isArray(stored?.arcLog) ? stored.arcLog.filter(isArcEntry) : [];
 		const storedArc = stored?.arc;
@@ -458,6 +480,24 @@ export default class GrillPlugin extends Plugin {
 				? storedArc
 				: null;
 		this.data = { settings, calibration, arcLog, arc };
+		// Moving a key is not worth failing to load over: it's retried on every save.
+		if (keysInData && this.keys.available) {
+			try {
+				await this.persist();
+			} catch (e) {
+				console.error("Grill: couldn't save settings while moving the API key", e);
+			}
+		}
+		// A key edited or deleted on Obsidian's own Keychain page takes effect without
+		// a reload.
+		const keychain = secretStore(this.app) as (Partial<Events> & object) | null;
+		if (keychain && typeof keychain.on === "function") {
+			this.registerEvent(
+				keychain.on("changed", () => {
+					if (this.keys.adopt(this.data.settings.apiKeys)) void this.persist();
+				}),
+			);
+		}
 		configureFSRSWeights(settings.fsrsPersonalization?.weights ?? null);
 
 		this.store = new GrillStore(this.app, () => this.data.settings.folder);
@@ -1384,8 +1424,12 @@ export default class GrillPlugin extends Plugin {
 		};
 	}
 
+	/** The settings in memory always hold the live API keys; what's written to
+	 * data.json has them blanked wherever the keychain holds them (see secrets.ts). */
 	async persist(): Promise<void> {
-		await this.saveData(this.data);
+		const s = this.data.settings;
+		const apiKeys = this.keys.stash(s.apiKeys);
+		await this.saveData({ ...this.data, settings: { ...s, apiKeys } });
 	}
 
 	async activateView(): Promise<void> {
@@ -1403,7 +1447,30 @@ export default class GrillPlugin extends Plugin {
 
 const CUSTOM = "__custom__";
 
-class GrillSettingTab extends PluginSettingTab {
+const TUNING_NAME = "Tuning";
+const TUNING_DESC =
+	"Study intensity above already sets the first four. Change one here and it becomes Custom, " +
+	"and stays exactly where you put it.";
+
+/** One settings row, described once. display() (Obsidian before 1.13) and
+ * getSettingDefinitions() (1.13+, which is what makes the rows searchable) both render
+ * from the same list, so the two can't drift apart. `build` receives a row that already
+ * has its name and description set. */
+interface Row {
+	name: string;
+	desc?: string;
+	/** Extra words the settings search should find this row by. */
+	aliases?: string[];
+	/** Returns whatever the builder chain returns; it's ignored. */
+	build: (setting: Setting) => unknown;
+}
+
+interface Section {
+	heading: string;
+	rows: Row[];
+}
+
+export class GrillSettingTab extends PluginSettingTab {
 	plugin: GrillPlugin;
 	/** Live model lists, cached per provider for the lifetime of the tab. */
 	private modelLists: Partial<Record<ProviderId, string[]>> = {};
@@ -1415,11 +1482,20 @@ class GrillSettingTab extends PluginSettingTab {
 	constructor(app: App, plugin: GrillPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
+		this.containerEl.addClass("grill-settings");
+	}
+
+	/** Re-render after a change that adds, removes or rewords rows. Obsidian 1.13+
+	 * renders from getSettingDefinitions() and never calls display(), so there the
+	 * definitions are rebuilt instead. */
+	private rerender(): void {
+		const update = (this as unknown as { update?: () => void }).update;
+		if (typeof update === "function") update.call(this);
+		else this.display();
 	}
 
 	/** A slider whose current value is shown inline next to it. */
-	private sliderSetting(
-		containerEl: HTMLElement,
+	private sliderRow(
 		name: string,
 		desc: string,
 		min: number,
@@ -1427,30 +1503,35 @@ class GrillSettingTab extends PluginSettingTab {
 		value: number,
 		format: (v: number) => string,
 		onChange: (v: number) => Promise<void>,
-	): void {
-		const setting = new Setting(containerEl).setName(name);
-		if (desc) setting.setDesc(desc);
-		// Obsidian 1.13 always shows the slider's value inline itself (setDynamicTooltip is
-		// deprecated because of it) and added setDisplayFormat to customize that display —
-		// so on 1.13+, adding our own value span next to it just prints the number twice.
-		// Feature-detected (not a minAppVersion bump) so this still renders correctly, just
-		// without the friendly formatting, on the older Obsidian versions Grill supports.
-		let valueEl: HTMLSpanElement | null = null;
-		setting.addSlider((sl) => {
-			const hasDisplayFormat = typeof (sl as unknown as { setDisplayFormat?: unknown }).setDisplayFormat === "function";
-			if (hasDisplayFormat) {
-				(sl as unknown as { setDisplayFormat: (f: (v: number) => string) => void }).setDisplayFormat(format);
-			} else {
-				valueEl = setting.controlEl.createSpan({ cls: "grill-slider-value", text: format(value) });
-			}
-			return sl
-				.setLimits(min, max, 1)
-				.setValue(value)
-				.onChange(async (v) => {
-					valueEl?.setText(format(v));
-					await onChange(v);
+	): Row {
+		return {
+			name,
+			desc: desc || undefined,
+			build: (setting) => {
+				// Obsidian 1.13 always shows the slider's value inline itself (setDynamicTooltip is
+				// deprecated because of it) and added setDisplayFormat to customize that display —
+				// so on 1.13+, adding our own value span next to it just prints the number twice.
+				// Feature-detected (not a minAppVersion bump) so this still renders correctly, just
+				// without the friendly formatting, on the older Obsidian versions Grill supports.
+				let valueEl: HTMLSpanElement | null = null;
+				setting.addSlider((sl) => {
+					const hasDisplayFormat =
+						typeof (sl as unknown as { setDisplayFormat?: unknown }).setDisplayFormat === "function";
+					if (hasDisplayFormat) {
+						(sl as unknown as { setDisplayFormat: (f: (v: number) => string) => void }).setDisplayFormat(format);
+					} else {
+						valueEl = setting.controlEl.createSpan({ cls: "grill-slider-value", text: format(value) });
+					}
+					return sl
+						.setLimits(min, max, 1)
+						.setValue(value)
+						.onChange(async (v) => {
+							valueEl?.setText(format(v));
+							await onChange(v);
+						});
 				});
-		});
+			},
+		};
 	}
 
 	private async refreshModels(p: ProviderId): Promise<void> {
@@ -1461,7 +1542,7 @@ class GrillSettingTab extends PluginSettingTab {
 		this.fetching[p] = false;
 		if (models.length) {
 			this.modelLists[p] = models;
-			this.display();
+			this.rerender();
 		}
 	}
 
@@ -1493,6 +1574,7 @@ class GrillSettingTab extends PluginSettingTab {
 			newConceptsCapMigrated: s.newConceptsCapMigrated,
 			intensityMigrated: s.intensityMigrated,
 			modelsMigrated61: s.modelsMigrated61,
+			modelsMigrated62: s.modelsMigrated62,
 			arcBackfilled: s.arcBackfilled,
 			fsrsLastFitAttemptReviews: s.fsrsLastFitAttemptReviews,
 		};
@@ -1503,7 +1585,7 @@ class GrillSettingTab extends PluginSettingTab {
 		configureFSRSWeights(null);
 		await this.plugin.persist();
 		new Notice("Grill: restored the recommended settings.");
-		this.display();
+		this.rerender();
 	}
 
 	/** Read-aloud voice: one dropdown where there used to be two (a language picker plus a
@@ -1513,72 +1595,68 @@ class GrillSettingTab extends PluginSettingTab {
 	 * instead of a two-step one where the second step is disabled until the first is made.
 	 * Values are prefixed (`lang:` / `voice:`) rather than raw, so a voiceURI can never be
 	 * mistaken for a language code. */
-	private buildVoiceSetting(containerEl: HTMLElement, s: GrillSettings): void {
-		const langs = listLanguages();
-		// getVoices() can be empty on the very first call — the browser loads its voice
-		// list asynchronously. Re-render once it actually arrives, same pattern as
-		// refreshModels' `this.display()` on late data.
-		if (langs.length === 0 && !this.voicesListenerAttached) {
-			this.voicesListenerAttached = true;
-			onVoicesChanged(() => this.display());
-		}
-
-		const setting = new Setting(containerEl)
-			.setName("Read-aloud voice")
-			.setDesc(
-				langs.length === 0
-					? "No voices found yet — reopen Settings in a moment."
-					: "Automatic matches each question to its own language. Pick a language to always use that one, or a specific voice to pin it exactly.",
-			);
-		setting.addDropdown((d) => {
-			d.addOption("", "Automatic");
-			for (const l of langs) {
-				// Obsidian's DropdownComponent has no optgroup API, so the group is added to
-				// its select element directly — options nested in an optgroup are still
-				// found by setValue/value, so the component keeps working normally.
-				const group = d.selectEl.createEl("optgroup", { attr: { label: l.label } });
-				group.createEl("option", { value: `lang:${l.code}`, text: `Best ${l.label} voice` });
-				for (const v of listVoicesForLang(l.code)) {
-					group.createEl("option", { value: `voice:${v.voiceURI}`, text: v.name });
+	private voiceRow(s: GrillSettings): Row {
+		return {
+			name: "Read-aloud voice",
+			desc: "Automatic matches each question to its own language. Pick a language to always use that one, or a specific voice to pin it exactly.",
+			aliases: ["text to speech", "tts", "language"],
+			build: (setting) => {
+				const langs = listLanguages();
+				// getVoices() can be empty on the very first call — the browser loads its voice
+				// list asynchronously. Re-render once it actually arrives, same pattern as
+				// refreshModels' re-render on late data.
+				if (langs.length === 0) {
+					setting.setDesc("No voices found yet — reopen Settings in a moment.");
+					if (!this.voicesListenerAttached) {
+						this.voicesListenerAttached = true;
+						onVoicesChanged(() => this.rerender());
+					}
 				}
-			}
-			d.setValue(s.ttsVoiceURI ? `voice:${s.ttsVoiceURI}` : s.ttsLanguage ? `lang:${s.ttsLanguage}` : "");
-			d.onChange(async (v) => {
-				if (v.startsWith("voice:")) {
-					const uri = v.slice("voice:".length);
-					s.ttsVoiceURI = uri;
-					// Keep `lang` in step with the pinned voice so the two fields never
-					// disagree — speak() prefers the URI, but the language is what it falls
-					// back to if that voice is later uninstalled.
-					const voice = listVoices().find((x) => x.voiceURI === uri);
-					s.ttsLanguage = voice ? voice.lang.split(/[-_]/)[0].toLowerCase() : s.ttsLanguage;
-				} else if (v.startsWith("lang:")) {
-					s.ttsLanguage = v.slice("lang:".length);
-					s.ttsVoiceURI = "";
-				} else {
-					s.ttsLanguage = "";
-					s.ttsVoiceURI = "";
-				}
-				await this.plugin.persist();
-			});
-		});
+				setting.addDropdown((d) => {
+					d.addOption("", "Automatic");
+					for (const l of langs) {
+						// Obsidian's DropdownComponent has no optgroup API, so the group is added to
+						// its select element directly — options nested in an optgroup are still
+						// found by setValue/value, so the component keeps working normally.
+						const group = d.selectEl.createEl("optgroup", { attr: { label: l.label } });
+						group.createEl("option", { value: `lang:${l.code}`, text: `Best ${l.label} voice` });
+						for (const v of listVoicesForLang(l.code)) {
+							group.createEl("option", { value: `voice:${v.voiceURI}`, text: v.name });
+						}
+					}
+					d.setValue(s.ttsVoiceURI ? `voice:${s.ttsVoiceURI}` : s.ttsLanguage ? `lang:${s.ttsLanguage}` : "");
+					d.onChange(async (v) => {
+						if (v.startsWith("voice:")) {
+							const uri = v.slice("voice:".length);
+							s.ttsVoiceURI = uri;
+							// Keep `lang` in step with the pinned voice so the two fields never
+							// disagree — speak() prefers the URI, but the language is what it falls
+							// back to if that voice is later uninstalled.
+							const voice = listVoices().find((x) => x.voiceURI === uri);
+							s.ttsLanguage = voice ? voice.lang.split(/[-_]/)[0].toLowerCase() : s.ttsLanguage;
+						} else if (v.startsWith("lang:")) {
+							s.ttsLanguage = v.slice("lang:".length);
+							s.ttsVoiceURI = "";
+						} else {
+							s.ttsLanguage = "";
+							s.ttsVoiceURI = "";
+						}
+						await this.plugin.persist();
+					});
+				});
+			},
+		};
 	}
 
 	/** The escape hatch: every number the engine schedules on, reachable but never asked
-	 * about. A native <details>, deliberately NOT a persisted preference — it collapses
-	 * again on every reopen. The previous round of this used a sticky "Show advanced
-	 * settings" toggle, which is what let the tab re-accrete: once a power user flipped it
-	 * on, adding one more setting behind it was free. A click every time is the friction
-	 * that keeps the default surface honest. */
-	private buildTuning(containerEl: HTMLElement, s: GrillSettings): void {
-		const details = containerEl.createEl("details", { cls: "grill-tuning" });
-		details.createEl("summary", { text: "Tuning — you shouldn't need any of this" });
-		details.createEl("p", {
-			cls: "setting-item-description",
-			text:
-				"Study intensity above already sets the first four. Change one here and it becomes Custom, " +
-				"and stays exactly where you put it.",
-		});
+	 * about. Deliberately NOT a persisted preference — before Obsidian 1.13 it's a native
+	 * <details> that collapses again on every reopen, on 1.13+ a sub-page you have to walk
+	 * into. The previous round of this used a sticky "Show advanced settings" toggle, which
+	 * is what let the tab re-accrete: once a power user flipped it on, adding one more
+	 * setting behind it was free. A click every time is the friction that keeps the default
+	 * surface honest. */
+	private tuningRows(): Row[] {
+		const s = this.plugin.data.settings;
 
 		/** Editing any raw scheduling number means the preset no longer describes them. */
 		const toCustom = async (): Promise<void> => {
@@ -1586,170 +1664,173 @@ class GrillSettingTab extends PluginSettingTab {
 			await this.plugin.persist();
 		};
 
-		this.sliderSetting(
-			details,
-			"Review frequency",
-			"FSRS's target recall probability at each concept's due date. Lower brings concepts back sooner (more " +
-				"reviews, progress feels faster); higher spaces them further apart (fewer reviews, longer " +
-				"before something you know comes back around).",
-			70,
-			97,
-			Math.min(Math.max(s.desiredRetention, 70), 97),
-			(v) => `${v}%`,
-			async (v) => {
-				s.desiredRetention = v;
-				await toCustom();
-			},
-		);
-
-		this.sliderSetting(
-			details,
-			"New concepts per day",
-			"Caps how many never-before-tested concepts \"Get grilled\" will introduce per calendar day. Once " +
-				"hit, sessions fill remaining slots by reviewing what's already due instead, so a few missed " +
-				"days can't leave the due queue permanently outrunning what you can actually review. 0 = no new " +
-				"concepts at all, ever — pure review. Only governs \"Get grilled\": a deliberately scoped session " +
-				"(\"Grill this note/folder\", a committed Custom Study pick) is never throttled by this.",
-			0,
-			100,
-			Math.min(Math.max(s.newConceptsPerDay, 0), 100),
-			(v) => (v === 0 ? "None" : `${v}/day`),
-			async (v) => {
-				s.newConceptsPerDay = v;
-				await toCustom();
-			},
-		);
-
-		this.sliderSetting(
-			details,
-			"New material share",
-			"The most a single session lets new/untested material claim, whenever it's allowed to claim any " +
-				"room at all (see the toggle below).",
-			0,
-			100,
-			Math.min(Math.max(s.freshContentShare, 0), 100),
-			(v) => `${v}%`,
-			async (v) => {
-				s.freshContentShare = v;
-				await toCustom();
-			},
-		);
-
-		new Setting(details)
-			.setName("Always guarantee new material")
-			.setDesc(
-				"Off: a full due/struggling backlog leaves no room for new material that session, reviews win. " +
-					"On: new material always gets its full share above, no matter how large the backlog is.",
-			)
-			.addToggle((t) =>
-				t.setValue(s.freshContentAlwaysGuarantee).onChange(async (v) => {
-					s.freshContentAlwaysGuarantee = v;
-					await toCustom();
-				}),
-			);
-
 		const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-		const easyDaysSetting = new Setting(details)
-			.setName("Light review days")
-			.setDesc(
-				"Toggle on any weekday you'd rather Grill went easier on. Doesn't cap or skip that day outright " +
+
+		return [
+			this.sliderRow(
+				"Review frequency",
+				"FSRS's target recall probability at each concept's due date. Lower brings concepts back sooner (more " +
+					"reviews, progress feels faster); higher spaces them further apart (fewer reviews, longer " +
+					"before something you know comes back around).",
+				70,
+				97,
+				Math.min(Math.max(s.desiredRetention, 70), 97),
+				(v) => `${v}%`,
+				async (v) => {
+					s.desiredRetention = v;
+					await toCustom();
+				},
+			),
+			this.sliderRow(
+				"New concepts per day",
+				"Caps how many never-before-tested concepts \"Get grilled\" will introduce per calendar day. Once " +
+					"hit, sessions fill remaining slots by reviewing what's already due instead, so a few missed " +
+					"days can't leave the due queue permanently outrunning what you can actually review. 0 = no new " +
+					"concepts at all, ever — pure review. Only governs \"Get grilled\": a deliberately scoped session " +
+					"(\"Grill this note/folder\", a committed Custom Study pick) is never throttled by this.",
+				0,
+				100,
+				Math.min(Math.max(s.newConceptsPerDay, 0), 100),
+				(v) => (v === 0 ? "None" : `${v}/day`),
+				async (v) => {
+					s.newConceptsPerDay = v;
+					await toCustom();
+				},
+			),
+			this.sliderRow(
+				"New material share",
+				"The most a single session lets new/untested material claim, whenever it's allowed to claim any " +
+					"room at all (see the toggle below).",
+				0,
+				100,
+				Math.min(Math.max(s.freshContentShare, 0), 100),
+				(v) => `${v}%`,
+				async (v) => {
+					s.freshContentShare = v;
+					await toCustom();
+				},
+			),
+			{
+				name: "Always guarantee new material",
+				desc:
+					"Off: a full due/struggling backlog leaves no room for new material that session, reviews win. " +
+					"On: new material always gets its full share above, no matter how large the backlog is.",
+				build: (setting) =>
+					setting.addToggle((t) =>
+						t.setValue(s.freshContentAlwaysGuarantee).onChange(async (v) => {
+							s.freshContentAlwaysGuarantee = v;
+							await toCustom();
+						}),
+					),
+			},
+			{
+				name: "Light review days",
+				desc:
+					"Toggle on any weekday you'd rather Grill went easier on. Doesn't cap or skip that day outright " +
 					"(the backlog still has to go somewhere); it just steers newly-scheduled reviews off it toward " +
 					"an equally-uncrowded day nearby whenever one's available. Toggle order: " +
 					WEEKDAY_NAMES.join(", ") +
 					".",
-			);
-		WEEKDAY_NAMES.forEach((full, weekday) => {
-			easyDaysSetting.addToggle((t) =>
-				t
-					.setTooltip(full)
-					.setValue(s.easyDays.includes(weekday))
-					.onChange(async (v) => {
-						s.easyDays = v ? [...new Set([...s.easyDays, weekday])] : s.easyDays.filter((d) => d !== weekday);
-						await this.plugin.persist();
-					}),
-			);
-		});
-
-		this.sliderSetting(
-			details,
-			"Grade weighting",
-			"How much a graph node's number weighs coverage (how much of the note you've confirmed, capped so a " +
-				"long note isn't penalised for its length) against mastery (how well you'd recall what you've " +
-				"actually studied right now). Left: pure mastery. Right: pure coverage.",
-			0,
-			100,
-			s.graphCoverageWeight,
-			(v) => `${v}% coverage`,
-			async (v) => {
-				s.graphCoverageWeight = v;
-				await this.plugin.persist();
-				this.plugin.refreshMapDisplay();
-			},
-		);
-
-		// Fitting runs itself once there's enough review history (see
-		// GrillPlugin.maybeAutoOptimizeFsrs) — there's no "Optimize now" button here
-		// because being asked to press it was the setting. What's left is the status, so
-		// "personalized" isn't a black box, and a way back to the shared defaults.
-		const trainable = countTrainableReviews(this.plugin.concepts);
-		const fp = s.fsrsPersonalization;
-		new Setting(details)
-			.setName("Personalized FSRS weights")
-			.setDesc(
-				fp
-					? `Active: fit from ${fp.reviewCount} reviews on ${new Date(fp.fitAt).toLocaleDateString()}, ` +
-						`${fp.improvementPct.toFixed(1)}% tighter fit than the library defaults on this vault's own data at the time. ` +
-						"Refits itself as more review history accumulates."
-					: `Not yet: scheduling runs on FSRS-6's library defaults, fit across a large pooled population, not this vault. ` +
-						`Grill fits your own weights automatically at ${MIN_REVIEWS_FOR_OPTIMIZATION} real reviews (${trainable} so far).`,
-			)
-			.addButton((b) => {
-				b.setButtonText("Reset to library defaults").setDisabled(!fp);
-				if (fp) {
-					b.onClick(async () => {
-						s.fsrsPersonalization = null;
-						configureFSRSWeights(null);
-						await this.plugin.persist();
-						new Notice("Grill: FSRS parameters reset to the library defaults.");
-						this.display();
+				aliases: ["easy days", "weekend"],
+				build: (setting) => {
+					WEEKDAY_NAMES.forEach((full, weekday) => {
+						setting.addToggle((t) =>
+							t
+								.setTooltip(full)
+								.setValue(s.easyDays.includes(weekday))
+								.onChange(async (v) => {
+									s.easyDays = v ? [...new Set([...s.easyDays, weekday])] : s.easyDays.filter((d) => d !== weekday);
+									await this.plugin.persist();
+								}),
+						);
 					});
-				}
-				return b;
-			});
-
-		new Setting(details)
-			.setName("Grill folder")
-			.setDesc(
-				"Vault folder for mastery.json and session transcripts. These are plain files: " +
+				},
+			},
+			this.sliderRow(
+				"Grade weighting",
+				"How much a graph node's number weighs coverage (how much of the note you've confirmed, capped so a " +
+					"long note isn't penalised for its length) against mastery (how well you'd recall what you've " +
+					"actually studied right now). Left: pure mastery. Right: pure coverage.",
+				0,
+				100,
+				s.graphCoverageWeight,
+				(v) => `${v}% coverage`,
+				async (v) => {
+					s.graphCoverageWeight = v;
+					await this.plugin.persist();
+					this.plugin.refreshMapDisplay();
+				},
+			),
+			// Fitting runs itself once there's enough review history (see
+			// GrillPlugin.maybeAutoOptimizeFsrs) — there's no "Optimize now" button here
+			// because being asked to press it was the setting. What's left is the status, so
+			// "personalized" isn't a black box, and a way back to the shared defaults.
+			{
+				name: "Personalized FSRS weights",
+				desc: "Whether scheduling runs on weights fit to this vault's own review history, and a way back to the library defaults.",
+				build: (setting) => {
+					// Read here, not when the rows are listed: the definitions are first built
+					// while the plugin is still loading, before the concept store exists.
+					const trainable = countTrainableReviews(this.plugin.concepts);
+					const fp = s.fsrsPersonalization;
+					setting.setDesc(
+						fp
+							? `Active: fit from ${fp.reviewCount} reviews on ${new Date(fp.fitAt).toLocaleDateString()}, ` +
+									`${fp.improvementPct.toFixed(1)}% tighter fit than the library defaults on this vault's own data at the time. ` +
+									"Refits itself as more review history accumulates."
+							: `Not yet: scheduling runs on FSRS-6's library defaults, fit across a large pooled population, not this vault. ` +
+									`Grill fits your own weights automatically at ${MIN_REVIEWS_FOR_OPTIMIZATION} real reviews (${trainable} so far).`,
+					);
+					setting.addButton((b) => {
+						b.setButtonText("Reset to library defaults").setDisabled(!fp);
+						if (fp) {
+							b.onClick(async () => {
+								s.fsrsPersonalization = null;
+								configureFSRSWeights(null);
+								await this.plugin.persist();
+								new Notice("Grill: FSRS parameters reset to the library defaults.");
+								this.rerender();
+							});
+						}
+						return b;
+					});
+				},
+			},
+			{
+				name: "Grill folder",
+				desc:
+					"Vault folder for mastery.json and session transcripts. These are plain files: " +
 					"read them, edit them, sync them like any note.",
-			)
-			.addText((t) =>
-				t
-					.setPlaceholder("Grill")
-					.setValue(s.folder)
-					.onChange(async (v) => {
-						s.folder = v.trim() || "Grill";
-						await this.plugin.persist();
-					}),
-			);
-
-		new Setting(details)
-			.setName("Restore recommended settings")
-			.setDesc("Reset everything back to the defaults. Your API keys, provider, and folder choices are kept.")
-			.addButton((b) => b.setButtonText("Restore").onClick(() => void this.restoreDefaults()));
+				build: (setting) =>
+					setting.addText((t) =>
+						t
+							.setPlaceholder("Grill")
+							.setValue(s.folder)
+							.onChange(async (v) => {
+								s.folder = v.trim() || "Grill";
+								await this.plugin.persist();
+							}),
+					),
+			},
+			{
+				name: "Restore recommended settings",
+				desc: "Reset everything back to the defaults. Your API keys, provider, and folder choices are kept.",
+				aliases: ["reset"],
+				build: (setting) => setting.addButton((b) => b.setButtonText("Restore").onClick(() => void this.restoreDefaults())),
+			},
+		];
 	}
 
-	display(): void {
-		const { containerEl } = this;
-		containerEl.empty();
-		containerEl.addClass("grill-settings");
+	/** Every row outside Tuning, in the order the page shows them. `all` also lists
+	 * the rows the current state hides (another provider's fields, the custom model
+	 * box): the 1.13+ definitions are built once and need every row that could appear. */
+	private sections(all = false): Section[] {
 		const s = this.plugin.data.settings;
 		const p = s.provider;
 		const info = PROVIDERS[p];
+		const inKeychain = this.plugin.keys.available;
 
 		// ------------------------------------------------------------ AI
-		new Setting(containerEl).setName("AI").setHeading();
-
 		// One control where there used to be two independent dropdowns (questionSource +
 		// gradingMode). All four combinations they could express are still here — including
 		// notes-built questions with AI marking, the cheapest way to get graded feedback —
@@ -1764,53 +1845,74 @@ class GrillSettingTab extends PluginSettingTab {
 		};
 		const mode =
 			Object.keys(MODES).find((k) => MODES[k].source === s.questionSource && MODES[k].grading === s.gradingMode) ?? "ai";
-		new Setting(containerEl)
-			.setName("Study mode")
-			.setDesc(
-				"Where questions come from and who marks them. Anything with AI in it needs a key below; " +
+
+		const ai: Row[] = [
+			{
+				name: "Study mode",
+				desc:
+					"Where questions come from and who marks them. Anything with AI in it needs a key below; " +
 					"fully offline runs entirely on your machine, nothing is sent anywhere, and there's nothing to pay.",
-			)
-			.addDropdown((d) =>
-				d
-					.addOption("ai", "AI writes and grades")
-					.addOption("ai-self", "AI writes, I grade myself")
-					.addOption("local-ai", "From my notes, AI grades")
-					.addOption("local", "Fully offline — no key")
-					.setValue(mode)
-					.onChange(async (v) => {
-						const picked = MODES[v] ?? MODES.ai;
-						s.questionSource = picked.source;
-						s.gradingMode = picked.grading;
-						await this.plugin.persist();
-						this.display();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName("Provider")
-			.setDesc(
-				"Cloud providers send the quizzed notes to that provider using your key. " +
+				aliases: ["offline", "grading", "no key", "self grade"],
+				build: (setting) =>
+					setting.addDropdown((d) =>
+						d
+							.addOption("ai", "AI writes and grades")
+							.addOption("ai-self", "AI writes, I grade myself")
+							.addOption("local-ai", "From my notes, AI grades")
+							.addOption("local", "Fully offline — no key")
+							.setValue(mode)
+							.onChange(async (v) => {
+								const picked = MODES[v] ?? MODES.ai;
+								s.questionSource = picked.source;
+								s.gradingMode = picked.grading;
+								await this.plugin.persist();
+								this.rerender();
+							}),
+					),
+			},
+			{
+				name: "Provider",
+				desc:
+					"Cloud providers send the quizzed notes to that provider using your key. " +
 					"Ollama runs fully on your machine: private, but local models write noticeably weaker questions.",
-			)
-			.addDropdown((d) => {
-				for (const [id, pi] of Object.entries(PROVIDERS)) d.addOption(id, pi.label);
-				d.setValue(p).onChange(async (v) => {
-					s.provider = v as ProviderId;
-					this.showCustomModel = false;
-					await this.plugin.persist();
-					this.display();
-					void this.refreshModels(v as ProviderId);
-				});
-			});
+				aliases: ["anthropic", "claude", "openai", "chatgpt", "gemini", "deepseek", "ollama", "openrouter", "local"],
+				build: (setting) =>
+					setting.addDropdown((d) => {
+						for (const [id, pi] of Object.entries(PROVIDERS)) d.addOption(id, pi.label);
+						d.setValue(p).onChange(async (v) => {
+							s.provider = v as ProviderId;
+							this.showCustomModel = false;
+							await this.plugin.persist();
+							this.rerender();
+							void this.refreshModels(v as ProviderId);
+						});
+					}),
+			},
+		];
 
-		if (p === "custom") {
-			new Setting(containerEl)
-				.setName("Base URL")
-				.setDesc(
-					"Any OpenAI-compatible endpoint, for example https://openrouter.ai/api/v1, " +
-						"https://api.groq.com/openai/v1, or http://localhost:1234/v1 for LM Studio.",
-				)
-				.addText((t) =>
+		const keyField = (setting: Setting): void => {
+			setting.addText((t) => {
+				t.setPlaceholder(info.keyPlaceholder)
+					.setValue(s.apiKeys[p])
+					.onChange(async (v) => {
+						s.apiKeys[p] = v.trim();
+						delete this.modelLists[p];
+						await this.plugin.persist();
+					});
+				t.inputEl.type = "password";
+			});
+		};
+		const keyHome = inKeychain
+			? "Kept in Obsidian's keychain on this device. It doesn't sync, so each device needs it once."
+			: "Stored locally in this vault's plugin data, never in your notes.";
+
+		const baseUrlRow: Row = {
+			name: "Base URL",
+			desc:
+				"Any OpenAI-compatible endpoint, for example https://openrouter.ai/api/v1, " +
+				"https://api.groq.com/openai/v1, or http://localhost:1234/v1 for LM Studio.",
+			build: (setting) =>
+				setting.addText((t) =>
 					t
 						.setPlaceholder("https://openrouter.ai/api/v1")
 						.setValue(s.customBaseUrl)
@@ -1819,42 +1921,24 @@ class GrillSettingTab extends PluginSettingTab {
 							delete this.modelLists.custom;
 							await this.plugin.persist();
 						}),
-				);
-			new Setting(containerEl)
-				.setName("API key")
-				.setDesc("Sent as a Bearer token. Leave blank for local servers that don't require one.")
-				.addText((t) => {
-					t.setPlaceholder(info.keyPlaceholder)
-						.setValue(s.apiKeys.custom)
-						.onChange(async (v) => {
-							s.apiKeys.custom = v.trim();
-							delete this.modelLists.custom;
-							await this.plugin.persist();
-						});
-					t.inputEl.type = "password";
-				});
-		} else if (info.needsKey) {
-			new Setting(containerEl)
-				.setName("API key")
-				.setDesc(`Stored locally in this vault's plugin data, never in your notes. Get one at ${info.keyUrl}.`)
-				.addText((t) => {
-					t.setPlaceholder(info.keyPlaceholder)
-						.setValue(s.apiKeys[p])
-						.onChange(async (v) => {
-							s.apiKeys[p] = v.trim();
-							delete this.modelLists[p];
-							await this.plugin.persist();
-						});
-					t.inputEl.type = "password";
-				});
-		} else {
-			new Setting(containerEl)
-				.setName("Ollama server")
-				.setDesc(
-					"Requires Ollama running locally (ollama.com). Nothing leaves your machine. " +
-						"Expect slower sessions and simpler questions than cloud models; 8B+ models recommended.",
-				)
-				.addText((t) =>
+				),
+		};
+		const keyRow: Row = {
+			name: "API key",
+			desc:
+				p === "custom"
+					? `Sent as a Bearer token. Leave blank for local servers that don't require one. ${keyHome}`
+					: `${keyHome} Get one at ${info.keyUrl}.`,
+			aliases: ["token", "secret"],
+			build: keyField,
+		};
+		const ollamaRow: Row = {
+			name: "Ollama server",
+			desc:
+				"Requires Ollama running locally (ollama.com). Nothing leaves your machine. " +
+				"Expect slower sessions and simpler questions than cloud models; 8B+ models recommended.",
+			build: (setting) =>
+				setting.addText((t) =>
 					t
 						.setPlaceholder("http://localhost:11434")
 						.setValue(s.ollamaUrl)
@@ -1863,262 +1947,354 @@ class GrillSettingTab extends PluginSettingTab {
 							delete this.modelLists.ollama;
 							await this.plugin.persist();
 						}),
-				);
-		}
+				),
+		};
+		if (all || p === "custom") ai.push(baseUrlRow);
+		if (all || p === "custom" || info.needsKey) ai.push(keyRow);
+		if (all || (p !== "custom" && !info.needsKey)) ai.push(ollamaRow);
 
 		const list = this.modelLists[p] ?? [];
 		const options = list.length ? list : info.fallbackModels;
 		const current = s.models[p] || info.defaultModel;
 		const staleCurrent = list.length > 0 && !list.includes(current);
-		const modelSetting = new Setting(containerEl)
-			.setName("Model")
-			.setDesc(
-				staleCurrent
-					? `'${current}' was not found on your account and will fail. Pick a model from the list.`
-					: list.length
-						? `${list.length} models available on your account, verified against your key.`
-						: p === "ollama"
-							? "Click refresh to list installed models from your Ollama server."
-							: "Showing common models. Click refresh to list what your key can access.",
-			);
-		if (staleCurrent) modelSetting.descEl.addClass("mod-warning");
-		modelSetting.addDropdown((d) => {
-			for (const m of options) d.addOption(m, m);
-			if (current && !options.includes(current) && !this.showCustomModel)
-				d.addOption(current, `${current} (not found)`);
-			d.addOption(CUSTOM, "Custom model ID...");
-			d.setValue(this.showCustomModel ? CUSTOM : current);
-			d.onChange(async (v) => {
-				if (v === CUSTOM) {
-					this.showCustomModel = true;
-					this.display();
-					return;
-				}
-				this.showCustomModel = false;
-				s.models[p] = v;
-				await this.plugin.persist();
-			});
-		});
-		modelSetting.addExtraButton((b) =>
-			b
-				.setIcon("refresh-cw")
-				.setTooltip("Fetch model list")
-				.onClick(() => void this.refreshModels(p)),
-		);
-		modelSetting.addExtraButton((b) =>
-			b
-				.setIcon("zap")
-				.setTooltip("Test this model with a tiny request")
-				.onClick(async () => {
-					const cfg = this.plugin.llmConfig();
-					if (!cfg) {
-						new Notice("Grill: set an API key first.");
-						return;
-					}
-					new Notice(`Grill: testing ${cfg.model}...`);
-					const err = await testModel(cfg);
-					new Notice(err ? `Grill: ${cfg.model} failed. ${err}` : `Grill: ${cfg.model} works.`, 8000);
-				}),
-		);
-
-		if (this.showCustomModel) {
-			new Setting(containerEl).setName("Custom model ID").addText((t) =>
-				t
-					.setPlaceholder(info.defaultModel)
-					.setValue(s.models[p])
-					.onChange(async (v) => {
-						s.models[p] = v.trim() || info.defaultModel;
+		ai.push({
+			name: "Model",
+			desc: staleCurrent
+				? `'${current}' was not found on your account and will fail. Pick a model from the list.`
+				: list.length
+					? `${list.length} models available on your account, verified against your key.`
+					: p === "ollama"
+						? "Click refresh to list installed models from your Ollama server."
+						: "Showing common models. Click refresh to list what your key can access.",
+			build: (setting) => {
+				setting.descEl.toggleClass("mod-warning", staleCurrent);
+				setting.addDropdown((d) => {
+					for (const m of options) d.addOption(m, m);
+					if (current && !options.includes(current) && !this.showCustomModel)
+						d.addOption(current, `${current} (not found)`);
+					d.addOption(CUSTOM, "Custom model ID...");
+					d.setValue(this.showCustomModel ? CUSTOM : current);
+					d.onChange(async (v) => {
+						if (v === CUSTOM) {
+							this.showCustomModel = true;
+							this.rerender();
+							return;
+						}
+						this.showCustomModel = false;
+						s.models[p] = v;
 						await this.plugin.persist();
-					}),
-			);
+					});
+				});
+				setting.addExtraButton((b) =>
+					b
+						.setIcon("refresh-cw")
+						.setTooltip("Fetch model list")
+						.onClick(() => void this.refreshModels(p)),
+				);
+				setting.addExtraButton((b) =>
+					b
+						.setIcon("zap")
+						.setTooltip("Test this model with a tiny request")
+						.onClick(async () => {
+							const cfg = this.plugin.llmConfig();
+							if (!cfg) {
+								new Notice("Grill: set an API key first.");
+								return;
+							}
+							new Notice(`Grill: testing ${cfg.model}...`);
+							const err = await testModel(cfg);
+							new Notice(err ? `Grill: ${cfg.model} failed. ${err}` : `Grill: ${cfg.model} works.`, 8000);
+						}),
+				);
+				// Kick off a background model-list fetch the first time the row is shown.
+				if (!this.modelLists[p] && (s.apiKeys[p] || p === "ollama" || (p === "custom" && s.customBaseUrl)))
+					void this.refreshModels(p);
+			},
+		});
+
+		if (all || this.showCustomModel) {
+			ai.push({
+				name: "Custom model ID",
+				build: (setting) =>
+					setting.addText((t) =>
+						t
+							.setPlaceholder(info.defaultModel)
+							.setValue(s.models[p])
+							.onChange(async (v) => {
+								s.models[p] = v.trim() || info.defaultModel;
+								await this.plugin.persist();
+							}),
+					),
+			});
 		}
 
-		new Setting(containerEl)
-			.setName("Persona & instructions")
-			.setDesc(
+		ai.push({
+			name: "Persona & instructions",
+			desc:
 				"A file in your Grill folder with two parts. Persona: Grill's default character is shown " +
-					"there, editable, so you can make it a strict examiner, a gentle guide, whatever you like. " +
-					"Instructions: how you want to be quizzed and graded. Scoring itself is fixed by the engine, " +
-					"so grades stay consistent whatever you write. Leave it blank for the defaults.",
-			)
-			.addButton((b) =>
-				b
-					.setButtonText("Open")
-					.setTooltip("Create Grill/Instructions.md if needed and open it")
-					.onClick(() => void this.plugin.openInstructions()),
-			);
+				"there, editable, so you can make it a strict examiner, a gentle guide, whatever you like. " +
+				"Instructions: how you want to be quizzed and graded. Scoring itself is fixed by the engine, " +
+				"so grades stay consistent whatever you write. Leave it blank for the defaults.",
+			aliases: ["prompt", "tone"],
+			build: (setting) =>
+				setting.addButton((b) =>
+					b
+						.setButtonText("Open")
+						.setTooltip("Create Grill/Instructions.md if needed and open it")
+						.onClick(() => void this.plugin.openInstructions()),
+				),
+		});
 
 		// ------------------------------------------------------------ Studying
-		new Setting(containerEl).setName("Studying").setHeading();
-
-		this.sliderSetting(
-			containerEl,
-			"Questions per session",
-			"",
-			1,
-			50,
-			Math.min(Math.max(s.questionsPerSession, 1), 50),
-			(v) => String(v),
-			async (v) => {
-				s.questionsPerSession = v;
-				await this.plugin.persist();
-			},
-		);
-
-		// One choice standing in for the four FSRS/new-material numbers Grill actually
-		// schedules on. Those numbers still exist and are still what every scheduling call
-		// site reads — they just live in Tuning now, because "what share of one session may
-		// new material claim" is not a question a student should be asked. "Custom" only
-		// appears when the numbers were hand-edited there, so picking it is never a way to
-		// end up somewhere undefined.
-		new Setting(containerEl)
-			.setName("Study intensity")
-			.setDesc(
-				"How hard the schedule pushes: how often things come back, and how much new material a day " +
-					"introduces. Steady is what most people should leave this on.",
-			)
-			.addDropdown((d) => {
-				d.addOption("relaxed", "Relaxed — fewer reviews, slower intake");
-				d.addOption("steady", "Steady — recommended");
-				d.addOption("intense", "Intense — exam in a fortnight");
-				if (s.studyIntensity === "custom") d.addOption("custom", "Custom — set in Tuning below");
-				d.setValue(s.studyIntensity);
-				d.onChange(async (v) => {
-					if (v === "custom") return;
-					const preset = INTENSITY_PRESETS[v as Exclude<StudyIntensity, "custom">];
-					s.desiredRetention = preset.desiredRetention;
-					s.newConceptsPerDay = preset.newConceptsPerDay;
-					s.freshContentShare = preset.freshContentShare;
-					s.freshContentAlwaysGuarantee = preset.freshContentAlwaysGuarantee;
-					s.studyIntensity = v as StudyIntensity;
+		const studying: Row[] = [
+			this.sliderRow(
+				"Questions per session",
+				"",
+				1,
+				50,
+				Math.min(Math.max(s.questionsPerSession, 1), 50),
+				(v) => String(v),
+				async (v) => {
+					s.questionsPerSession = v;
 					await this.plugin.persist();
-					this.display();
-				});
-			});
-
-		new Setting(containerEl)
-			.setName("Question formats")
-			.setDesc(
-				"Mixed picks whichever format (multiple-choice, fill-in-the-blank, true/false, select-all, matching, " +
+				},
+			),
+			// One choice standing in for the four FSRS/new-material numbers Grill actually
+			// schedules on. Those numbers still exist and are still what every scheduling call
+			// site reads — they just live in Tuning now, because "what share of one session may
+			// new material claim" is not a question a student should be asked. "Custom" only
+			// appears when the numbers were hand-edited there, so picking it is never a way to
+			// end up somewhere undefined.
+			{
+				name: "Study intensity",
+				desc:
+					"How hard the schedule pushes: how often things come back, and how much new material a day " +
+					"introduces. Steady is what most people should leave this on.",
+				aliases: ["retention", "spaced repetition", "fsrs", "schedule"],
+				build: (setting) =>
+					setting.addDropdown((d) => {
+						d.addOption("relaxed", "Relaxed — fewer reviews, slower intake");
+						d.addOption("steady", "Steady — recommended");
+						d.addOption("intense", "Intense — exam in a fortnight");
+						if (s.studyIntensity === "custom") d.addOption("custom", "Custom — set in Tuning below");
+						d.setValue(s.studyIntensity);
+						d.onChange(async (v) => {
+							if (v === "custom") return;
+							const preset = INTENSITY_PRESETS[v as Exclude<StudyIntensity, "custom">];
+							s.desiredRetention = preset.desiredRetention;
+							s.newConceptsPerDay = preset.newConceptsPerDay;
+							s.freshContentShare = preset.freshContentShare;
+							s.freshContentAlwaysGuarantee = preset.freshContentAlwaysGuarantee;
+							s.studyIntensity = v as StudyIntensity;
+							await this.plugin.persist();
+							this.rerender();
+						});
+					}),
+			},
+			{
+				name: "Question formats",
+				desc:
+					"Mixed picks whichever format (multiple-choice, fill-in-the-blank, true/false, select-all, matching, " +
 					"or write-in) actually fits each concept. Set here, not in Instructions.md: a free-text preference " +
 					"there won't reliably stick.",
-			)
-			.addDropdown((d) =>
-				d
-					.addOption("mixed", "Mixed (write, multiple-choice, fill-in-the-blank, true/false, and more)")
-					.addOption("mc", "Multiple choice only")
-					.addOption("write", "Write only")
-					.setValue(s.questionFormats)
-					.onChange(async (v) => {
-						s.questionFormats = v === "write" ? "write" : v === "mc" ? "mc" : "mixed";
-						await this.plugin.persist();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName("Sound & celebration")
-			.setDesc(
-				"Short sound cues on each answer and at the end of a session, plus a confetti burst when " +
+				build: (setting) =>
+					setting.addDropdown((d) =>
+						d
+							.addOption("mixed", "Mixed (write, multiple-choice, fill-in-the-blank, true/false, and more)")
+							.addOption("mc", "Multiple choice only")
+							.addOption("write", "Write only")
+							.setValue(s.questionFormats)
+							.onChange(async (v) => {
+								s.questionFormats = v === "write" ? "write" : v === "mc" ? "mc" : "mixed";
+								await this.plugin.persist();
+							}),
+					),
+			},
+			{
+				name: "Sound & celebration",
+				desc:
+					"Short sound cues on each answer and at the end of a session, plus a confetti burst when " +
 					"you get a whole session right. Synthesized on the fly (no files), gentle, and silent when off.",
-			)
-			.addToggle((t) =>
-				t.setValue(s.sounds).onChange(async (v) => {
-					s.sounds = v;
-					await this.plugin.persist();
-				}),
-			);
-
-		this.buildVoiceSetting(containerEl, s);
+				aliases: ["audio", "confetti", "mute"],
+				build: (setting) =>
+					setting.addToggle((t) =>
+						t.setValue(s.sounds).onChange(async (v) => {
+							s.sounds = v;
+							await this.plugin.persist();
+						}),
+					),
+			},
+			this.voiceRow(s),
+		];
 
 		// ------------------------------------------------------------ Graph
-		new Setting(containerEl).setName("Graph").setHeading();
-
-		new Setting(containerEl)
-			.setName("Colour by")
-			.setDesc(
-				"Mastery is the default: grey untested, red learning, green known. The " +
+		const graph: Row[] = [
+			{
+				name: "Colour by",
+				desc:
+					"Mastery is the default: grey untested, red learning, green known. The " +
 					"others colour every practised note on a green-to-red scale by a different signal, so you can " +
 					"spot what needs attention at a glance instead of reading it note by note.",
-			)
-			.addDropdown((d) =>
-				d
-					.addOption("mastery", "Mastery (default)")
-					.addOption("recency", "Recency: stale notes read red")
-					.addOption("dueness", "Due-ness: overdue notes read red")
-					.addOption("misconceptions", "Misconceptions: notes you keep getting wrong read red")
-					.setValue(s.graphColorMode)
-					.onChange(async (v) => {
-						s.graphColorMode = v as ColorMode;
-						await this.plugin.persist();
-						this.plugin.refreshMapDisplay();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName("Grade numbers on the graph")
-			.setDesc(
-				"Show a number on every practised node: your current coverage and mastery on that note folded " +
+				aliases: ["color", "map"],
+				build: (setting) =>
+					setting.addDropdown((d) =>
+						d
+							.addOption("mastery", "Mastery (default)")
+							.addOption("recency", "Recency: stale notes read red")
+							.addOption("dueness", "Due-ness: overdue notes read red")
+							.addOption("misconceptions", "Misconceptions: notes you keep getting wrong read red")
+							.setValue(s.graphColorMode)
+							.onChange(async (v) => {
+								s.graphColorMode = v as ColorMode;
+								await this.plugin.persist();
+								this.plugin.refreshMapDisplay();
+							}),
+					),
+			},
+			{
+				name: "Grade numbers on the graph",
+				desc:
+					"Show a number on every practised node: your current coverage and mastery on that note folded " +
 					"into one score, so you can read \"what would I score on this right now\" at a glance instead of " +
 					"just a colour. Untested notes show nothing.",
-			)
-			.addDropdown((d) =>
-				d
-					.addOption("off", "Off")
-					.addOption("percent", "Percent (78%)")
-					.addOption("letter", "Letter grade (B+)")
-					.setValue(s.graphNumberMode)
-					.onChange(async (v) => {
-						s.graphNumberMode = v as NumberMode;
-						await this.plugin.persist();
-						this.plugin.refreshMapDisplay();
-					}),
-			);
+				build: (setting) =>
+					setting.addDropdown((d) =>
+						d
+							.addOption("off", "Off")
+							.addOption("percent", "Percent (78%)")
+							.addOption("letter", "Letter grade (B+)")
+							.setValue(s.graphNumberMode)
+							.onChange(async (v) => {
+								s.graphNumberMode = v as NumberMode;
+								await this.plugin.persist();
+								this.plugin.refreshMapDisplay();
+							}),
+					),
+			},
+		];
 
 		// ------------------------------------------------------------ Scope
-		new Setting(containerEl).setName("Scope").setHeading();
-
-		new Setting(containerEl)
-			.setName("Grill's folders")
-			.setDesc(
-				"Comma-separated folders that ARE Grill's study material and knowledge graph. Relative paths, " +
+		const folderList = (v: string): string[] =>
+			v
+				.split(",")
+				.map((x) => x.trim())
+				.filter(Boolean);
+		const scope: Row[] = [
+			{
+				name: "Grill's folders",
+				desc:
+					"Comma-separated folders that ARE Grill's study material and knowledge graph. Relative paths, " +
 					"e.g. Courses, Zettelkasten. Leave blank to use your whole vault.",
-			)
-			.addText((t) =>
-				t
-					.setPlaceholder("Whole vault")
-					.setValue(s.includedFolders.join(", "))
-					.onChange(async (v) => {
-						s.includedFolders = v
-							.split(",")
-							.map((x) => x.trim())
-							.filter(Boolean);
-						await this.plugin.persist();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName("Excluded folders")
-			.setDesc(
-				"Comma-separated folders to leave out of sessions, so notes like templates and attachments " +
+				aliases: ["include", "scope"],
+				build: (setting) =>
+					setting.addText((t) =>
+						t
+							.setPlaceholder("Whole vault")
+							.setValue(s.includedFolders.join(", "))
+							.onChange(async (v) => {
+								s.includedFolders = folderList(v);
+								await this.plugin.persist();
+							}),
+					),
+			},
+			{
+				name: "Excluded folders",
+				desc:
+					"Comma-separated folders to leave out of sessions, so notes like templates and attachments " +
 					"aren't quizzed. Relative paths, e.g. Templates, Inbox, Archive.",
-			)
-			.addText((t) =>
-				t
-					.setPlaceholder("Templates, Inbox")
-					.setValue(s.excludedFolders.join(", "))
-					.onChange(async (v) => {
-						s.excludedFolders = v
-							.split(",")
-							.map((x) => x.trim())
-							.filter(Boolean);
-						await this.plugin.persist();
+				aliases: ["ignore", "skip"],
+				build: (setting) =>
+					setting.addText((t) =>
+						t
+							.setPlaceholder("Templates, Inbox")
+							.setValue(s.excludedFolders.join(", "))
+							.onChange(async (v) => {
+								s.excludedFolders = folderList(v);
+								await this.plugin.persist();
+							}),
+					),
+			},
+		];
+
+		return [
+			{ heading: "AI", rows: ai },
+			{ heading: "Studying", rows: studying },
+			{ heading: "Graph", rows: graph },
+			{ heading: "Scope", rows: scope },
+		];
+	}
+
+	/** The row called `name` as it stands right now, or undefined if the current
+	 * state doesn't show it. */
+	private liveRow(name: string): Row | undefined {
+		try {
+			return [...this.sections().flatMap((sec) => sec.rows), ...this.tuningRows()].find((r) => r.name === name);
+		} catch (e) {
+			console.error("Grill: settings row failed", e);
+			return undefined;
+		}
+	}
+
+	/** Obsidian 1.13+: the same rows as display(), handed over as definitions so the
+	 * settings search can find them. Tuning becomes a sub-page.
+	 *
+	 * Obsidian asks for these once, when the plugin loads, and again only on update();
+	 * opening the tab just re-renders what it already has. So a definition carries no
+	 * state: it names a row, and each render looks that row up fresh, which is also
+	 * what decides whether it shows. Anything going wrong here returns no definitions,
+	 * which makes Obsidian fall back to display(). */
+	getSettingDefinitions(): SettingDefinitionItem[] {
+		try {
+			const toDef = (r: Row): SettingDefinition => ({
+				name: r.name,
+				desc: r.desc,
+				aliases: r.aliases,
+				visible: () => this.liveRow(r.name) !== undefined,
+				render: (setting) => {
+					const live = this.liveRow(r.name);
+					if (!live) return;
+					setting.setDesc(live.desc ?? "");
+					live.build(setting);
+				},
+			});
+			return [
+				...this.sections(true).map(
+					(sec): SettingDefinitionItem => ({
+						type: "group",
+						heading: sec.heading,
+						items: sec.rows.map(toDef),
 					}),
-			);
+				),
+				{
+					type: "page",
+					name: TUNING_NAME,
+					desc: TUNING_DESC,
+					items: this.tuningRows().map(toDef),
+				},
+			];
+		} catch (e) {
+			console.error("Grill: settings definitions failed, using the classic settings page", e);
+			return [];
+		}
+	}
 
-		this.buildTuning(containerEl, s);
-
-		// Kick off a background model-list fetch the first time the tab opens.
-		if (!this.modelLists[p] && (s.apiKeys[p] || p === "ollama" || (p === "custom" && s.customBaseUrl)))
-			void this.refreshModels(p);
+	/** Obsidian before 1.13 (and the fallback above). */
+	display(): void {
+		const { containerEl } = this;
+		containerEl.empty();
+		containerEl.addClass("grill-settings");
+		const renderRow = (parent: HTMLElement, r: Row): void => {
+			const setting = new Setting(parent).setName(r.name);
+			if (r.desc) setting.setDesc(r.desc);
+			r.build(setting);
+		};
+		for (const sec of this.sections()) {
+			new Setting(containerEl).setName(sec.heading).setHeading();
+			for (const r of sec.rows) renderRow(containerEl, r);
+		}
+		const details = containerEl.createEl("details", { cls: "grill-tuning" });
+		details.createEl("summary", { text: `${TUNING_NAME} — you shouldn't need any of this` });
+		details.createEl("p", { cls: "setting-item-description", text: TUNING_DESC });
+		for (const r of this.tuningRows()) renderRow(details, r);
 	}
 }

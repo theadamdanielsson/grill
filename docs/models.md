@@ -22,8 +22,8 @@ ordered roughly cheap → sharp within each provider.
 
 | Provider | Cheap & fine | Best grading | Notes |
 |---|---|---|---|
-| **Anthropic** | `claude-haiku-4-5` | `claude-sonnet-5` | Sonnet 5 is the sharpest grader of the lot. Haiku is plenty for generation. |
-| **OpenAI** | `gpt-6-luna` | `gpt-6-sol` | Grill's default, `gpt-5.6-terra`, sits between the two. |
+| **Anthropic** | `claude-haiku-4-5` | `claude-sonnet-5-5` | Sonnet 5.5 is the sharpest grader of the lot, and Grill's default. Haiku is plenty for generation. |
+| **OpenAI** | `gpt-6-luna` | `gpt-6.1-sol` | Grill's default, `gpt-5.6-terra`, sits between the two. |
 | **Google** | `gemini-3.8-flash` | `gemini-3.8-flash` | Flash is cheap and good enough for most study. |
 | **DeepSeek** | `deepseek-flash` | `deepseek-v4-pro` | A fraction of Sonnet's price, and half that again off-peak. A strong value pick. |
 
@@ -31,7 +31,7 @@ ordered roughly cheap → sharp within each provider.
 AI writes questions and you grade yourself, to roughly halve a session's cost.
 
 **Best-for-money:** `deepseek-flash` if you want a hosted key that barely costs anything;
-`claude-sonnet-5` if you want the grading to be as good as it gets.
+`claude-sonnet-5-5` if you want the grading to be as good as it gets.
 
 ---
 
@@ -78,7 +78,7 @@ and you still see your own answer judged against the expected one.
 
 ## Quick answer
 
-- **Want the best, don't mind paying:** `claude-sonnet-5`.
-- **Want cheap and hosted:** `deepseek-chat` or `gemini-2.5-flash`.
+- **Want the best, don't mind paying:** `claude-sonnet-5-5`.
+- **Want cheap and hosted:** `deepseek-flash` or `gemini-3.8-flash`.
 - **Want no key, have a normal laptop:** Ollama + `qwen3:8b`.
 - **Want nothing to install or pay:** self-grade mode with local question generation.

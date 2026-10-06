@@ -6,7 +6,7 @@ import { GrillStore } from "../src/store";
 
 // ---------------------------------------------------------------- model calls
 
-const anthropic = { provider: "anthropic" as const, apiKey: "k", model: "claude-sonnet-5" };
+const anthropic = { provider: "anthropic" as const, apiKey: "k", model: "claude-sonnet-5-5" };
 
 test("a truncated response is retried once with double the token budget", async () => {
 	const budgets: number[] = [];
@@ -31,7 +31,7 @@ test("a response still truncated after the retry says so plainly", async () => {
 	assert.match((await testModel(anthropic)) ?? "", /ran out of room/);
 });
 
-test("Sonnet 5 requests carry an effort level; Haiku 4.5 requests don't", async () => {
+test("Sonnet 5.5 requests carry an effort level; Haiku 4.5 requests don't", async () => {
 	const seen: Array<Record<string, unknown>> = [];
 	net.handler = async (req) => {
 		seen.push(JSON.parse(req.body ?? "{}").output_config);

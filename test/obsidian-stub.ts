@@ -93,9 +93,45 @@ export class PluginSettingTab {
 		this.app = app;
 	}
 }
+/** Like fakeEl, but properties are fakes too (el.descEl.toggleClass(...) works), and
+ * explicit fields win. Stands in for components, rows, or the whole app. */
+export function deepFake(fields: Record<string, unknown> = {}): any {
+	return new Proxy(function () {}, {
+		get(_t, prop) {
+			if (prop in fields) return fields[prop as string];
+			if (prop === "then" || typeof prop === "symbol") return undefined;
+			return (fields[prop as string] = deepFake());
+		},
+		set(_t, prop, value) {
+			fields[prop as string] = value;
+			return true;
+		},
+		has: (_t, prop) => prop in fields,
+		apply: () => deepFake(),
+	});
+}
+
+/** Name of every Setting row built, newest last. Tests read and reset this. */
+export const settingNames: string[] = [];
+/** A row that records its name and really runs the add* callbacks, so the code
+ * inside them is exercised. */
+export function fakeSetting(): any {
+	const row: any = deepFake();
+	row.setName = (n: unknown) => {
+		if (typeof n === "string") settingNames.push(n);
+		return row;
+	};
+	for (const m of ["setDesc", "setHeading", "setClass", "setTooltip", "setDisabled"]) row[m] = () => row;
+	for (const m of ["addDropdown", "addText", "addToggle", "addSlider", "addButton", "addExtraButton", "addTextArea"])
+		row[m] = (cb: (c: unknown) => unknown) => {
+			cb(deepFake());
+			return row;
+		};
+	return row;
+}
 export class Setting {
 	constructor() {
-		return fakeEl();
+		return fakeSetting();
 	}
 }
 export class Modal {

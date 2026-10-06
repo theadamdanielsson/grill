@@ -26,11 +26,12 @@ export interface ProviderInfo {
 export const PROVIDERS: Record<ProviderId, ProviderInfo> = {
 	anthropic: {
 		label: "Anthropic (Claude)",
-		defaultModel: "claude-sonnet-5",
+		// Sonnet 5.5 (2026-09-28) replaces Sonnet 5 as the current Sonnet, same slot.
+		defaultModel: "claude-sonnet-5-5",
 		keyPlaceholder: "sk-ant-...",
 		keyUrl: "console.anthropic.com",
 		needsKey: true,
-		fallbackModels: ["claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5"],
+		fallbackModels: ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-4-5"],
 	},
 	openai: {
 		label: "OpenAI (ChatGPT)",
@@ -43,7 +44,7 @@ export const PROVIDERS: Record<ProviderId, ProviderInfo> = {
 		keyPlaceholder: "sk-...",
 		keyUrl: "platform.openai.com",
 		needsKey: true,
-		fallbackModels: ["gpt-5.6-terra", "gpt-6-sol", "gpt-6-luna"],
+		fallbackModels: ["gpt-5.6-terra", "gpt-6.1-sol", "gpt-6-luna"],
 	},
 	gemini: {
 		label: "Google (Gemini)",
@@ -90,6 +91,7 @@ export const PROVIDERS: Record<ProviderId, ProviderInfo> = {
  * was set up. migrateLegacyModels moves exactly these onto the current default once;
  * any model the user picked themselves is left alone. Append on every default change. */
 export const LEGACY_DEFAULTS: Partial<Record<ProviderId, string[]>> = {
+	anthropic: ["claude-sonnet-5"],
 	openai: ["gpt-5-mini"],
 	gemini: ["gemini-2.5-flash", "gemini-3.7-flash"],
 	deepseek: ["deepseek-chat", "deepseek-v4-flash"],
@@ -248,7 +250,7 @@ export function supportsVision(provider: ProviderId, model: string): boolean {
 		case "gemini":
 			return true;
 		case "openai":
-			return /^(gpt-4o|gpt-4\.1|gpt-5|chatgpt|o[0-9])/i.test(model);
+			return /^(gpt-4o|gpt-4\.1|gpt-[5-9]|chatgpt|o[0-9])/i.test(model);
 		case "ollama":
 			return /(llava|vision|-vl\b|moondream|bakllava|minicpm-v|gemma3|llama3\.2-vision|qwen2(\.5)?-?vl)/i.test(model);
 		case "deepseek":
@@ -516,7 +518,7 @@ function buildCall(
 			// grading and explanations are exactly the output quality users judge Grill by,
 			// and "low" was cutting corners there. A caller with a genuine latency reason
 			// (none currently) can still pass "low" explicitly.
-			if (/^(gpt-5|o\d)/.test(cfg.model)) body.reasoning_effort = effort;
+			if (/^(gpt-[5-9]|o\d)/.test(cfg.model)) body.reasoning_effort = effort;
 			return {
 				url: "https://api.openai.com/v1/chat/completions",
 				headers: { "content-type": "application/json", authorization: `Bearer ${cfg.apiKey}` },
