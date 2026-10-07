@@ -31,10 +31,10 @@ export function creditsInWords(credits: number): string {
 }
 
 /** What sessions cost, said from what this vault's own sessions have cost (credits
- * per session, oldest first), or as a range when there are none yet. A receipt, not
- * a promise. */
+ * per session, oldest first), or what it depends on when there are none yet: no
+ * figure, because sessions vary too much for one. A receipt, not a promise. */
 export function usageInWords(history: number[]): string {
-	if (!history.length) return "A session usually uses 5 to 40 credits, depending on how long your notes are and how much you ask for explanations or the natural voice.";
+	if (!history.length) return "How many credits a session uses depends on how long your notes are and how much you ask for explanations or the natural voice.";
 	const last = history[history.length - 1];
 	return `Your last session used ${last} ${last === 1 ? "credit" : "credits"}.`;
 }

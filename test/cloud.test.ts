@@ -150,7 +150,7 @@ test("a cloud key is 256 random bits, and only its hash ever goes in a link", as
 	assert.equal(creditsInWords(1316), "1,316 credits left");
 	assert.equal(creditsInWords(1), "1 credit left");
 	assert.equal(creditsInWords(0), "No credits left");
-	assert.match(usageInWords([]), /usually uses 5 to 40 credits, depending on how long your notes are/);
+	assert.match(usageInWords([]), /^How many credits a session uses depends on how long your notes are/);
 	assert.equal(usageInWords([11]), "Your last session used 11 credits.");
 	assert.equal(usageInWords([9, 14, 11]), "Your last session used 11 credits.");
 	assert.deepEqual([lowBalance([]), lowBalance([9, 31, 11])], [12, 31]);
@@ -401,7 +401,7 @@ test("settings: Grill Cloud has the first section, says what it is before it sta
 	// The card: the name, that it's in use, the balance, and what a session costs said
 	// as a range, since this vault has no sessions of its own to go by yet.
 	assert.ok(["GRILL CLOUD", "In use", "42", "credits"].every((x) => on.said.includes(x)), on.said.join(" | "));
-	assert.ok(on.said.some((x) => /usually uses 5 to 40 credits/.test(x)));
+	assert.ok(on.said.some((x) => /How many credits a session uses depends on/.test(x)));
 	assert.ok(!on.said.concat(on.desc()).some((x) => /about \d+ sessions/.test(x)), "no number of sessions is promised");
 	// Once it has, they are said back instead.
 	plugin.cloudSessionSpent = 11;
