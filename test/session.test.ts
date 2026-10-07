@@ -32,6 +32,8 @@ function makeView(opts: { failSaves?: number; readProtected?: boolean } = {}) {
 		},
 		usesAI: () => true,
 		llmConfig: () => null,
+		noteCloudSession: async () => 0,
+		takeCloudSpend: () => 0,
 		isExcluded: () => false,
 		refreshStatusBar: () => undefined,
 		persist: async () => undefined,

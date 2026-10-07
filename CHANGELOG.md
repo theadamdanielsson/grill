@@ -1,5 +1,45 @@
 # Changelog
 
+## 7.0.0
+
+![Grill 7.0](https://raw.githubusercontent.com/theadamdanielsson/grill/7.0.0/docs/release-7.svg)
+
+**Grill 7.0 is Grill Cloud.** Press Start free and you're studying. No API key. No sign-up.
+
+Getting an API key was the hardest part of Grill. Now it's optional.
+
+- **Grill Cloud.** Grill writes your questions, grades your answers and explains them,
+  with nothing to set up. You get free credits to try it while each day's last. After
+  that, credit packs from $3.99 + tax. You pay once per pack, credits don't expire, and
+  Grill tells you what each finished session used. It runs on Claude Sonnet 5.5. Your notes go
+  through my server to Anthropic and aren't stored on mine. The
+  [privacy policy](https://grill.onbridger.com/privacy) says exactly what is.
+- **Explain this, then keep asking.** One button explains an answer, with a diagram or
+  the image from your note when it helps. Underneath is a box for follow-ups, and the
+  conversation carries on down the page. It's written into the session note when you
+  finish the session.
+- **A natural voice.** Questions, feedback and explanations can be read aloud in a
+  natural AI voice, on Grill Cloud or with an OpenAI key. Press the speaker and it reads.
+  If you use your own OpenAI key, that's now what the speaker uses, billed to your key.
+  You can switch back to your device's voice in settings, which works everywhere.
+- **A calmer question screen.** One line of buttons: Submit, how sure you are, a hint,
+  I don't know. After the answer: Next question and Explain this. Bad question is a
+  small flag.
+- **No key to look after.** Grill Cloud's balance is shared by every vault on a device
+  and follows a synced vault to your other devices. Nothing to copy, nothing to paste.
+- **Setup in three steps.** What Grill is, how your questions get written, which notes.
+  "Show setup again" in the command palette brings it back.
+- **Your own key still works.** So does Ollama, and so does studying with no AI at
+  all. Nothing of yours goes through my server unless you choose Grill Cloud.
+
+Smaller things:
+
+- Image questions only come from labelled diagrams now, not from slides or pages of
+  text, and a note gives at most one per session.
+- The home screen shows your Grill Cloud credits in the corner, like an arcade machine.
+- The dashboard's arc is worked out at the end of a session on Grill Cloud, so nothing
+  is spent in the background.
+
 ## 6.2.0
 
 - **Your API key moves to Obsidian's keychain.** It used to sit in the plugin's data

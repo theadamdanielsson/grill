@@ -37,6 +37,12 @@ export function vaultId(app: App): string {
 	return typeof id === "string" ? id.toLowerCase().replace(/[^a-z0-9]/g, "") : "";
 }
 
+/** Keys that stay in data.json on purpose. A Grill Cloud key is the only handle on a
+ * prepaid balance and is worth at most that balance, so losing it is worse than
+ * exposing it: it has to survive a wiped keychain and follow the vault to another
+ * device, which the keychain never does. */
+const NOT_IN_KEYCHAIN: readonly ProviderId[] = ["grillcloud"];
+
 export class KeyStash {
 	/** What the keychain held when this session started. */
 	private atStartup: Partial<ApiKeys> = {};
@@ -44,6 +50,34 @@ export class KeyStash {
 	private seen: Partial<ApiKeys> = {};
 	/** True while stash() is writing, so its own "changed" events are ignored. */
 	stashing = false;
+	/** Whether the keychain holds a key that must not live there (see load()). */
+	rescued = false;
+	/** The key found there, so it can be kept even if it isn't the one in use. */
+	rescuedKey = "";
+
+	/** Remove from the keychain the keys that never belong in it. Called once the
+	 * rescued key is safely saved elsewhere, and whenever such a key is let go of, so
+	 * a stale copy can't come back on the next launch. */
+	dropUnkept(): void {
+		const store = this.store;
+		if (!store || !this.vault) return;
+		this.stashing = true;
+		try {
+			for (const p of NOT_IN_KEYCHAIN) {
+				const id = this.id(p);
+				try {
+					if (!store.getSecret(id)) continue;
+					if (typeof store.deleteSecret === "function") store.deleteSecret(id);
+					else store.setSecret(id, "");
+				} catch {
+					// Left for the next time.
+				}
+			}
+			this.rescued = false;
+		} finally {
+			this.stashing = false;
+		}
+	}
 
 	constructor(
 		private store: SecretStore | null,
@@ -62,7 +96,8 @@ export class KeyStash {
 
 	private held(provider: ProviderId): string {
 		try {
-			return this.store?.getSecret(this.id(provider)) ?? "";
+			const v = this.store?.getSecret(this.id(provider));
+			return typeof v === "string" ? v : "";
 		} catch {
 			return "";
 		}
@@ -74,6 +109,18 @@ export class KeyStash {
 	load(fromData: ApiKeys): ApiKeys {
 		const keys = { ...fromData };
 		for (const p of Object.keys(keys) as ProviderId[]) {
+			if (NOT_IN_KEYCHAIN.includes(p)) {
+				// A rescue: Grill 6.2.0 moved every key it found into its keychain and
+				// blanked the shared file. If this device did that, take the key back.
+				// Not without a vault id: that keychain name is shared by every vault.
+				const moved = this.vault ? this.held(p) : "";
+				if (moved) {
+					this.rescued = true;
+					this.rescuedKey = moved;
+				}
+				if (!keys[p]) keys[p] = moved;
+				continue;
+			}
 			const held = this.held(p);
 			if (held) this.atStartup[p] = this.seen[p] = held;
 			if (!keys[p]) keys[p] = held;
@@ -90,6 +137,7 @@ export class KeyStash {
 		this.stashing = true;
 		try {
 			for (const p of Object.keys(forData) as ProviderId[]) {
+				if (NOT_IN_KEYCHAIN.includes(p)) continue;
 				const id = this.id(p);
 				const key = forData[p];
 				try {
@@ -127,6 +175,7 @@ export class KeyStash {
 		if (!this.store || this.stashing) return false;
 		let dropped = false;
 		for (const p of Object.keys(live) as ProviderId[]) {
+			if (NOT_IN_KEYCHAIN.includes(p)) continue;
 			const held = this.held(p);
 			if (held) {
 				live[p] = this.seen[p] = held;

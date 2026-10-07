@@ -165,3 +165,32 @@ test("reconcile keepKinds protects occlusion concepts from a text-only pass", ()
 	reconcileConcepts(map, [concept("N::a")]);
 	assert.equal(map["N::img"].dueAt, null);
 });
+
+test("image questions: only labelled diagrams qualify, never a slide of text or a stock heading", async () => {
+	const { pickOcclusionLabels } = await import("../src/ocr");
+	const line = (text: string, confidence = 92) => ({ text, confidence });
+	// A real diagram: a handful of short labels.
+	assert.deepEqual(
+		pickOcclusionLabels([line("Demand", 95), line("IS curve", 90), line("Output, Y", 88), line("45°", 99)]).map((l) => l.text),
+		["Demand", "IS curve", "Output, Y"],
+	);
+	// A lecture slide: sentences. Hiding its most legible line used to hide the title.
+	assert.deepEqual(
+		pickOcclusionLabels([
+			line("Example (continued)"),
+			line("Nominal GDP = GDP deflator x Real GDP"),
+			line("GDP deflator = Nominal GDP / Real GDP"),
+			line("It is an Index number: set equal to 1 in the base year"),
+		]),
+		[],
+	);
+	// A slide that is all headings: nothing in it names a part of anything.
+	assert.deepEqual(pickOcclusionLabels([line("Example (continued)"), line("Summary")]), []);
+	// A stock heading among real labels is skipped, the labels kept.
+	assert.deepEqual(pickOcclusionLabels([line("Figure 3"), line("Aorta"), line("Left ventricle")]).map((l) => l.text), ["Aorta", "Left ventricle"]);
+	// One label alone is a caption, not a diagram; unsure readings don't count.
+	assert.deepEqual(pickOcclusionLabels([line("Mitochondrion")]), []);
+	assert.deepEqual(pickOcclusionLabels([line("Aorta", 60), line("Left ventricle", 55)]), []);
+	// A page of text, however short each line.
+	assert.deepEqual(pickOcclusionLabels(Array.from({ length: 30 }, (_, i) => line(`term ${i} here`))), []);
+});

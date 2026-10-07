@@ -221,8 +221,100 @@ export function speak(text: string, pref: VoicePref = AUTO_VOICE_PREF): void {
 	}
 }
 
+// ------------------------------------------------------------------ a natural voice
+// Audio made by a speech model, fetched by the caller (from Grill Cloud, or with the
+// user's own key) and played here. What has been fetched is kept for the life of the
+// window, so hearing a question again costs nothing.
+
+const heard = new Map<string, string>();
+const HEARD_KEPT = 40;
+let playing: HTMLAudioElement | null = null;
+/** The text now playing, or being fetched to play. */
+let current = "";
+/** Goes up with every request and every stop, so a fetch that comes back after the
+ * listener has moved on plays nothing. */
+let turn = 0;
+/** Fetches under way, by text: pressing the button again while one is running waits
+ * for it instead of paying for the same audio twice. */
+const fetching = new Map<string, Promise<string>>();
+
+/** The most text one read-aloud request takes. */
+export const NATURAL_MAX_CHARS = 2000;
+
+/** Play `text` in a natural voice. `fetchAudio` is asked for the MP3 only the first
+ * time this text is heard. Rejects with the fetcher's error, for the caller to fall
+ * back to the system voice and say why. */
+export async function speakNatural(text: string, fetchAudio: (text: string) => Promise<ArrayBuffer>): Promise<void> {
+	const clean = text.trim().slice(0, NATURAL_MAX_CHARS);
+	if (!clean) return;
+	// The same button pressed while its text is playing, or on its way: that is "stop".
+	if (current === clean) {
+		stopSpeaking();
+		return;
+	}
+	stopSpeaking();
+	current = clean;
+	const mine = ++turn;
+	let url = heard.get(clean);
+	if (!url) {
+		let wait = fetching.get(clean);
+		if (!wait) {
+			wait = fetchAudio(clean)
+				.then((audio) => {
+					const made = URL.createObjectURL(new Blob([audio], { type: "audio/mpeg" }));
+					heard.set(clean, made);
+					// Oldest out, and its audio released.
+					if (heard.size > HEARD_KEPT) {
+						const [first, old] = heard.entries().next().value as [string, string];
+						heard.delete(first);
+						URL.revokeObjectURL(old);
+					}
+					return made;
+				})
+				.finally(() => fetching.delete(clean));
+			fetching.set(clean, wait);
+		}
+		try {
+			url = await wait;
+		} catch (e) {
+			if (mine === turn) current = "";
+			throw e;
+		}
+	}
+	// Stopped, or something else asked for, while this was being fetched: it is kept
+	// for next time, and not played over whatever is playing now.
+	if (mine !== turn) return;
+	const el = new Audio(url);
+	playing = el;
+	el.onended = () => {
+		if (playing === el) {
+			playing = null;
+			current = "";
+		}
+	};
+	try {
+		await el.play();
+	} catch (e) {
+		// Stopped before it began (play() rejects when paused straight away): that was
+		// asked for, not a failure.
+		if (mine !== turn) return;
+		// It couldn't be played at all: forget it, so the next press fetches it afresh.
+		if (playing === el) playing = null;
+		current = "";
+		heard.delete(clean);
+		URL.revokeObjectURL(url);
+		throw e;
+	}
+}
+
 export function stopSpeaking(): void {
 	synth()?.cancel();
+	turn++;
+	current = "";
+	if (playing) {
+		playing.pause();
+		playing = null;
+	}
 }
 
 /** Strip the subset of markdown Grill's question text actually uses down to plain

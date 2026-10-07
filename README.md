@@ -8,7 +8,7 @@ I take a lot of notes to learn new information and needed a system to learn them
 
 ## How to use it
 
-1. **Set it up.** On first run, pick AI (paste a key, or point it at Ollama) or fully offline, then tick which folders it should cover, or leave them blank for your whole vault.
+1. **Start free.** On first run, press Start free. That's Grill Cloud: no API key, no sign-up, a few free credits to try it. You can use your own API key or Ollama instead, or study fully offline. Then tick which folders Grill should cover, or leave them blank for your whole vault.
 2. **Get grilled.** Hit the flame (or **Get grilled**). Grill writes questions from your notes and marks what you type back, with partial credit and specific feedback.
 3. **Watch your map fill in.** Every note you've learned colours in on the graph (green for solid, amber for shaky) so you can see your knowledge light up.
 
@@ -18,10 +18,13 @@ Focus a session on a folder or tag from the **Study** dropdown; Grill weights it
 
 ## What you get
 
-- **Your key, or fully offline:** Claude, GPT, Gemini, DeepSeek, any OpenAI-compatible endpoint (OpenRouter, Groq, LM Studio), local Ollama, or a no-key deterministic mode. Same engine either way — your model, your cost, your data staying on whichever machine you point it at. No account with Grill, no server of mine in the middle, ever.
+- **Nothing to set up:** [Grill Cloud](#grill-cloud) writes and grades your questions with no API key and no account. Free to try.
+- **Or your own key, or fully offline:** Claude, GPT, Gemini, DeepSeek, any OpenAI-compatible endpoint (OpenRouter, Groq, LM Studio), local Ollama, or a no-key deterministic mode. Same engine either way — your model, your cost, your data staying on whichever machine you point it at. No account with Grill, and no server of mine in the middle unless you pick [Grill Cloud](#grill-cloud).
 - **Questions from your own notes:** the AI writes recall questions from what you actually wrote (or, with no key, straight from your notes' structure).
 - **A live map of what you know:** your notes as a graph, coloured and grown by how well you know each. A *learning* graph (what you've proven), distinct from Obsidian's link graph.
 - **Fair grading:** answers are marked against a rubric written with the question: partial credit, three hints, and no confidently-wrong nitpicks.
+- **Explain this, then keep asking:** one button explains an answer, with a diagram or the image from your note when it helps, and you can ask follow-ups underneath like a chat. It's written into the session note when you finish the session.
+- **A natural voice:** questions, feedback and explanations read aloud in a natural AI voice on Grill Cloud or an OpenAI key, or in your device's voice anywhere.
 - **Finds links you're missing:** spots notes that belong together but aren't linked, and adds the `[[link]]` for you.
 - **Your own questions:** drop a `> [!grill]` callout into any note and Grill asks it verbatim — true/false, multiple-choice, and select-all too, not just free text.
 - **Edit a bad question instead of just deleting it:** the pencil on the home screen opens every cached question, grouped by note and searchable, for fixing in place.
@@ -34,13 +37,30 @@ Full detail on how each of these actually works — scheduling, the knowledge gr
 
 ![Got it right, and the concept still gets explained back to you, with a worked example](docs/screenshot-explanation.png)
 
-## Without an API key
+## Grill Cloud
 
-You don't need a key to use Grill. In settings, set "Study mode" to "Fully offline — no key", and Grill runs entirely on your machine: it builds questions straight from your notes' own structure (bold terms and highlights become fill-in-the-blanks, headings become recall prompts, "Term: definition" lines and formulas become their own questions), you answer, reveal, and grade yourself Again / Hard / Good / Easy. That rating feeds the same spaced-repetition schedule the AI mode uses. Nothing gets sent anywhere, and there's nothing to pay.
+The easiest way to use Grill. Press Start free and you're studying: Grill Cloud writes the questions, grades your answers and explains them, with no API key and no sign-up. Grill makes a key on your device and, while each day's free credits last, you get some to try it.
 
-If you've already got flashcards written in your notes, Grill uses them as-is: Spaced Repetition's `==cloze==` and `::`/`?` question separators, and Anki's `{{c1::…}}` clozes (hints and grouped deletions included) all become questions directly.
+After that you buy credits when you want them: 400 for $3.99 or 1,100 for $9.99, plus tax where it applies. You pay once per pack. A session usually uses 5 to 40 credits depending on how long your notes are and how much you ask for explanations, and Grill tells you what each finished one used. Credits show up in Grill by themselves a few seconds after you pay, and they don't expire. The checkout is run by Stripe, so the page says "Sold through Link" and your card statement shows Link, not Grill. Buying happens in Grill's settings and nowhere else.
 
-It's only as good as your notes are structured: definition-heavy, well-headed notes make sharp questions; a wall of prose makes weak ones. When you want questions written about your notes rather than pulled from them, or you want your actual writing marked, point Grill at a model. You can also mix the two, e.g. AI writes the questions and you grade yourself, to halve what a session costs.
+It runs on Claude Sonnet 5.5, the same model Grill recommends for grading.
+
+One thing is different from every other mode, so I'll say it plainly. With Grill Cloud, the notes in a session, the images in them, your answers and your custom instructions go through my server to Anthropic. In the other modes they go straight from your machine to your own provider, or nowhere. My server doesn't keep them. It doesn't store or log your notes, the questions, or your answers. Anthropic keeps them for up to 30 days to watch for abuse and doesn't train on them. If you turn on the natural voice, the text being read aloud goes to OpenAI the same way. What my server does store is a short list, and it's all in the privacy policy.
+
+- [Privacy policy](https://grill.onbridger.com/privacy)
+- [Terms](https://grill.onbridger.com/terms)
+
+There's nothing to look after. Grill makes a key on your device when you press Start free, and that key is your balance. Every vault on the same device shares it, and it follows a synced vault to your other devices. If you ever lose them all, email inquiries@onbridger.com from the address you paid with and I'll move your purchased credits to your new install. Settings has the rest under Account, including a Delete account button that erases your balance and usage from my server.
+
+Used credits can't be refunded. Unused ones can if you ask within 14 days. Grill Cloud is for people 18 and over.
+
+## With your own key
+
+Prefer to pay a model provider directly? Pick "use my own API key or Ollama" on first run, or choose a provider in settings. Grill works the same on Claude, GPT, Gemini, DeepSeek or any OpenAI-compatible endpoint, and on a local model through Ollama, where nothing leaves your machine. Your notes go straight from your machine to the provider you chose; my server isn't involved. Which model to pick is in [docs/models.md](docs/models.md).
+
+## With no AI at all
+
+Questions you've already written work without any model. A `> [!grill]` callout is asked exactly as you wrote it, and flashcards in your notes are used as they are: Spaced Repetition's `==cloze==` and `::`/`?` separators, and Anki's `{{c1::…}}` clozes. Grill can also pull simple questions straight from a note's structure (bold terms, headings, "Term: definition" lines). You grade yourself, the same spaced-repetition schedule applies, and nothing is sent anywhere. Set "Study mode" to "Fully offline" in settings. It's a fallback, not the main event: the questions are only as good as your notes are structured, and nothing marks your writing.
 
 ## Documentation
 
@@ -51,7 +71,7 @@ It's only as good as your notes are structured: definition-heavy, well-headed no
 
 ## Worth knowing before you install
 
-- For AI questions and grading you need your own API key, or Ollama installed. There's no hosted version; I'm not running a server. Without either, the offline mode still works.
+- For AI questions and grading you need [Grill Cloud](#grill-cloud), your own API key, or Ollama installed. Without any of them, the offline mode still works.
 - It's only as good as your notes. Half-written notes make half-baked questions.
 - The grading is a model's opinion, not gospel. It's usually right, but not always, so it always shows you the expected answer. Trust yourself over it.
 - Local models are the weak link. Good for privacy, not for the best questions.
@@ -61,9 +81,10 @@ It's only as good as your notes are structured: definition-heavy, well-headed no
 - **Obsidian 1.8.0 or newer.** Grill checks this on load and won't run on an older build.
 - **Desktop or mobile** — it's not desktop-only, though writing long answers is obviously easier with a keyboard.
 - **One of, depending on how you want to study:**
+  - [Grill Cloud](#grill-cloud): nothing to install or sign up for. Press Start free.
   - An API key from Anthropic, OpenAI, Google, DeepSeek, or any OpenAI-compatible endpoint (OpenRouter, Groq, LM Studio, ...), for AI-written questions and AI grading.
   - [Ollama](https://ollama.com) installed locally, for the same but fully offline, no key, no cost.
-  - Neither: "From my notes" question mode plus self-grading needs no key, no install, no internet, and works entirely from your notes' own structure. See [Without an API key](#without-an-api-key) above.
+  - None of those: your own questions and flashcards still work with no AI. See [With no AI at all](#with-no-ai-at-all) above.
 - No account with Grill itself, ever — there's nothing to sign up for.
 
 ## Installation
@@ -96,7 +117,7 @@ Short version of the common ones below; the full list, with what's actually happ
 
 ## Privacy and cost
 
-Grill only talks to the model provider you configure, with your own key — no server of mine in the middle, no analytics, no account. Full breakdown of what leaves your machine and what Grill stores locally: **[docs/privacy.md](docs/privacy.md)**.
+Grill only talks to the model provider you configure, with your own key. No analytics, no account, and no server of mine in the middle. The one exception is [Grill Cloud](#grill-cloud), if you turn it on: then the session goes through my server to Anthropic. Full breakdown of what leaves your machine and what Grill stores locally: **[docs/privacy.md](docs/privacy.md)**.
 
 ## License
 

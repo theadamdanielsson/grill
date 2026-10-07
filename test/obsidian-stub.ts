@@ -89,6 +89,7 @@ export class Plugin {
 export class PluginSettingTab {
 	app: any;
 	containerEl: any = fakeEl();
+	hide(): void {}
 	constructor(app: any) {
 		this.app = app;
 	}

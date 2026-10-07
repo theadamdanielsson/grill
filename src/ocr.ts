@@ -68,6 +68,29 @@ function isRealLabel(text: string): boolean {
 	return (t.match(/[A-Za-z]/g)?.length ?? 0) >= 2;
 }
 
+/** Headings a slide carries that name nothing in it: hiding one tests nothing. */
+const GENERIC_LABEL = /^(examples?|example \(.*\)|\(?continued\)?|cont\.?|figure \d+.*|fig\.? ?\d+.*|table \d+.*|source:?.*|notes?:?|summary|overview|outline|agenda|introduction|conclusions?|questions\??|recap|key takeaways?|slide \d+)$/i;
+
+const wordCount = (text: string): number => text.trim().split(/\s+/).filter(Boolean).length;
+
+/** Which of an image's readable lines are worth hiding, best first: none at all unless
+ * the image is a labelled diagram. Image occlusion tests the names of the parts of a
+ * picture (a curve, an organ, a component). A screenshot of a slide or a page is
+ * mostly sentences, and hiding its most legible line just hides the title, which was
+ * the bulk of what this used to produce on lecture notes. So: an image that reads as
+ * text (a lot of words, or more than a line or two of full sentences) is left alone,
+ * and on a diagram only short labels count, never a sentence or a stock heading. */
+export function pickOcclusionLabels<T extends { text: string; confidence: number }>(lines: T[]): T[] {
+	const legible = lines.filter((l) => l.confidence >= MIN_LINE_CONFIDENCE && isRealLabel(l.text));
+	const words = legible.reduce((n, l) => n + wordCount(l.text), 0);
+	const sentences = legible.filter((l) => wordCount(l.text) >= 6).length;
+	if (words > 45 || sentences >= 2) return [];
+	const labels = legible.filter((l) => wordCount(l.text) <= 4 && !GENERIC_LABEL.test(l.text.trim().replace(/[:.]+$/, "")));
+	// One label on its own is usually a caption or a watermark, not a diagram's parts.
+	if (labels.length < 2) return [];
+	return labels.sort((a, b) => b.confidence - a.confidence);
+}
+
 /** Detect the most legible text regions in a note-embedded image, for use as image
  * occlusion targets. Returns normalized (0-1) boxes so the caller doesn't need to know
  * the resolution `img` was captured/downscaled at — see renderOcclusionImage, which
@@ -89,9 +112,7 @@ export async function detectOcclusionRegions(img: ImageInput): Promise<Occlusion
 		}
 	}
 
-	return lines
-		.filter((l) => l.confidence >= MIN_LINE_CONFIDENCE && isRealLabel(l.text))
-		.sort((a, b) => b.confidence - a.confidence)
+	return pickOcclusionLabels(lines)
 		.slice(0, MAX_REGIONS_PER_IMAGE)
 		.map((l) => ({
 			x: l.bbox.x0 / width,

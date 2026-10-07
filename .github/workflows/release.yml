@@ -27,6 +27,14 @@ jobs:
             main.js
             manifest.json
             styles.css
-      - run: gh release create "$GITHUB_REF_NAME" main.js manifest.json styles.css --title "$GITHUB_REF_NAME" --generate-notes
+      # The release notes are this version's section of CHANGELOG.md, written by hand.
+      # If there isn't one, fall back to notes generated from the commits.
+      - run: |
+          awk -v v="## $GITHUB_REF_NAME" '$0 == v {on=1; next} /^## / {on=0} on' CHANGELOG.md > notes.md
+          if [ -s notes.md ]; then
+            gh release create "$GITHUB_REF_NAME" main.js manifest.json styles.css --title "Grill $GITHUB_REF_NAME" --notes-file notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" main.js manifest.json styles.css --title "$GITHUB_REF_NAME" --generate-notes
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

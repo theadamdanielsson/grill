@@ -60,6 +60,11 @@ export interface SessionEntry {
 	gaveUp: boolean;
 	feedback: string;
 	modelAnswer: string;
+	/** Follow-ups asked under this question and the tutor's replies, in order. */
+	discussion?: Array<{ role: "student" | "tutor"; text: string; diagram?: string; imagePath?: string }>;
+	/** What "Explain this" wrote, when it was asked for: kept so it is in the session
+	 * note, not paid for and then lost. */
+	explanation?: { whatWentWrong: string; keyConcept: string; example: string; diagram: string; relevantImagePath?: string };
 }
 
 export interface SessionMeta {
@@ -746,6 +751,25 @@ export class GrillStore {
 			lines.push(`**${label}.** ${e.feedback}`, "");
 			if (e.verdict !== "correct" && e.modelAnswer) {
 				lines.push(`**Expected answer:** ${e.modelAnswer}`, "");
+			}
+			// What was asked afterwards, and what the tutor said: often the part worth rereading.
+			const x = e.explanation;
+			if (x) {
+				lines.push("> [!info] Explanation");
+				for (const [label, text] of [["What went wrong", x.whatWentWrong], ["Key concept", x.keyConcept], ["Example", x.example]] as const) {
+					if (text) lines.push(`> **${label}.** ${text.split("\n").join("\n> ")}`, ">");
+				}
+				if (x.relevantImagePath) lines.push(`> ![[${x.relevantImagePath}]]`, ">");
+				if (lines[lines.length - 1] === ">") lines.pop();
+				lines.push("");
+				if (x.diagram) lines.push("```mermaid", x.diagram, "```", "");
+			}
+			for (const turn of e.discussion ?? []) {
+				const quoted = turn.text.split("\n").map((l) => `> ${l}`);
+				lines.push(turn.role === "student" ? "> [!question] You asked" : "> [!note] Grill", ...quoted);
+				if (turn.imagePath) lines.push(">", `> ![[${turn.imagePath}]]`);
+				lines.push("");
+				if (turn.diagram) lines.push("```mermaid", turn.diagram, "```", "");
 			}
 		}
 

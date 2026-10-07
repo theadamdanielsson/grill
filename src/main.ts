@@ -11,10 +11,12 @@ import {
 	TFile,
 	TFolder,
 	WorkspaceLeaf,
+	requestUrl,
 } from "obsidian";
 import { configureFSRSWeights, MasteryMap } from "./mastery";
 import { CalPoint, isCalPoint } from "./calibration";
-import { LLMConfig, PROVIDERS, ProviderId, Question, listModels, migrateLegacyModels, synthesizeArc, testModel } from "./llm";
+import { LLMConfig, offeredProviders, PROVIDERS, ProviderId, Question, listModels, migrateLegacyModels, synthesizeArc, testModel } from "./llm";
+import { cloud, CLOUD_FACTS, CLOUD_PITCH, CloudPack, cloudAccount, cloudBalance, cloudSpeech, cloudCheckoutUrl, cloudDelete, cloudEnabled, cloudStart, creditsInWords, isCloudKey, newCloudKey, packLabel, usageInWords } from "./cloud";
 import { ConceptMap, dueConceptCount, migrateResetScheduling, rebalanceDueDates, reconcileConcepts } from "./concepts";
 import { pairKey } from "./bridges";
 import {
@@ -37,7 +39,7 @@ import { KeyStash, secretStore, vaultId } from "./secrets";
 import { GrillStore } from "./store";
 import { SessionView, VIEW_TYPE } from "./view";
 import type { ColorMode, NumberMode } from "./mapview";
-import { listLanguages, listVoices, listVoicesForLang, onVoicesChanged } from "./tts";
+import { listLanguages, listVoices, listVoicesForLang, onVoicesChanged, speak, speakNatural } from "./tts";
 
 /** How hard the schedule pushes, as one choice instead of four numbers. Each preset is a
  * complete set of the four FSRS/new-material values Grill actually schedules on; picking
@@ -113,6 +115,15 @@ interface GrillSettings {
 	 * as a toggle in a settings page that assumes the reader already knows what image
 	 * occlusion or embedding-ranked context is. Declining is remembered here. */
 	dismissedOffers: string[];
+	/** Grill Cloud keys this vault used before the current one, newest first. A key is
+	 * a balance, so replacing one never throws the old one away. */
+	retiredCloudKeys: string[];
+	/** What this vault's last few Grill Cloud sessions cost, in credits, oldest first.
+	 * Shown back as a receipt ("your last session used 11"), never sent anywhere. */
+	cloudUsage: number[];
+	/** Account ids (hashes, never keys) of Grill Cloud keys deleted from this vault, so a
+	 * stale copy on another device can't bring one back. */
+	cloudGone: string[];
 	/** Send embedded images to the model when it supports vision. No longer a control:
 	 * the capability gate (supportsVision) is the whole decision, and a text-only model
 	 * never receives them either way. Kept as a field so an install that deliberately
@@ -147,6 +158,11 @@ interface GrillSettings {
 	/** Read-aloud voice: "" auto-picks the best-quality installed voice for the
 	 * resolved language, a specific voiceURI always uses that exact voice. */
 	ttsVoiceURI: string;
+	/** Read aloud in a natural AI voice where one is to be had (Grill Cloud, or an
+	 * OpenAI key), instead of the device's own. On unless switched off. Nothing is sent
+	 * until a speaker button is pressed; then the text being read goes to the speech
+	 * provider, which the privacy policy and the Start free panel both say. */
+	naturalVoice: boolean;
 	/** Missing-link finder: surface a "these two notes should be linked" question in
 	 * AI sessions and offer to write the link. On, and no longer a control — it's a
 	 * headline feature, and the semantic half of it now turns itself on wherever the
@@ -281,7 +297,7 @@ interface PluginData {
 function defaultSettings(): GrillSettings {
 	return {
 		provider: "anthropic",
-		apiKeys: { anthropic: "", openai: "", gemini: "", deepseek: "", ollama: "", custom: "" },
+		apiKeys: { anthropic: "", openai: "", gemini: "", deepseek: "", ollama: "", custom: "", grillcloud: "" },
 		models: Object.fromEntries(
 			(Object.keys(PROVIDERS) as ProviderId[]).map((p) => [p, PROVIDERS[p].defaultModel]),
 		) as Record<ProviderId, string>,
@@ -295,6 +311,9 @@ function defaultSettings(): GrillSettings {
 		includedFolders: [],
 		onboarded: false,
 		dismissedOffers: [],
+		retiredCloudKeys: [],
+		cloudUsage: [],
+		cloudGone: [],
 		sendImages: true,
 		enableOcclusion: false,
 		questionSource: "ai",
@@ -304,6 +323,7 @@ function defaultSettings(): GrillSettings {
 		sounds: true,
 		ttsLanguage: "",
 		ttsVoiceURI: "",
+		naturalVoice: true,
 		graphInsights: true,
 		localEmbedContext: false,
 		conceptsMigrated: false,
@@ -354,7 +374,18 @@ export default class GrillPlugin extends Plugin {
 		// Keys still sitting in data.json (every install from before 6.2) move to
 		// Obsidian's keychain on the persist() further down; from then on they're
 		// read back from there. See secrets.ts.
-		const keysInData = Object.values(settings.apiKeys).some(Boolean);
+		const keysInData = (Object.keys(settings.apiKeys) as ProviderId[]).some((p) => p !== "grillcloud" && settings.apiKeys[p]);
+		cloud.onCredits = (credits) => {
+			this.cloudCredits = credits;
+			// Credits spent while a purchase is being waited for lower the number the
+			// purchase is measured from, so "1000 added" stays 1000.
+			if (this.cloudWaitingFrom !== null && credits < this.cloudWaitingFrom) this.cloudWaitingFrom = credits;
+		};
+		// What the session under way has used: the server says what each reply cost. (The
+		// balance can't tell: other requests in flight are held against it.)
+		cloud.onCost = (cost) => {
+			this.cloudSessionSpent += cost;
+		};
 		this.keys = new KeyStash(secretStore(this.app), vaultId(this.app));
 		settings.apiKeys = this.keys.load(settings.apiKeys);
 		if (s.models) settings.models = { ...settings.models, ...s.models };
@@ -369,6 +400,9 @@ export default class GrillPlugin extends Plugin {
 		if (Array.isArray(s.includedFolders))
 			settings.includedFolders = s.includedFolders.filter((v): v is string => typeof v === "string");
 		if (typeof s.onboarded === "boolean") settings.onboarded = s.onboarded;
+		if (Array.isArray(s.cloudGone)) settings.cloudGone = s.cloudGone.filter(isAccountId).slice(-GONE_KEYS_KEPT);
+		if (Array.isArray(s.cloudUsage)) settings.cloudUsage = s.cloudUsage.filter((n) => typeof n === "number" && n > 0 && n < 100_000).slice(-10);
+		if (Array.isArray(s.retiredCloudKeys)) settings.retiredCloudKeys = s.retiredCloudKeys.filter((k) => typeof k === "string" && isCloudKey(k)).slice(0, RETIRED_KEYS_KEPT);
 		if (Array.isArray(s.dismissedOffers))
 			settings.dismissedOffers = s.dismissedOffers.filter((v): v is string => typeof v === "string");
 		if (typeof s.sendImages === "boolean") settings.sendImages = s.sendImages;
@@ -380,6 +414,7 @@ export default class GrillPlugin extends Plugin {
 		if (typeof s.sounds === "boolean") settings.sounds = s.sounds;
 		if (typeof s.ttsLanguage === "string") settings.ttsLanguage = s.ttsLanguage;
 		if (typeof s.ttsVoiceURI === "string") settings.ttsVoiceURI = s.ttsVoiceURI;
+		if (s.naturalVoice === false) settings.naturalVoice = false;
 		if (typeof s.graphInsights === "boolean") settings.graphInsights = s.graphInsights;
 		if (typeof s.localEmbedContext === "boolean") settings.localEmbedContext = s.localEmbedContext;
 		if (typeof s.conceptsMigrated === "boolean") settings.conceptsMigrated = s.conceptsMigrated;
@@ -480,6 +515,16 @@ export default class GrillPlugin extends Plugin {
 				? storedArc
 				: null;
 		this.data = { settings, calibration, arcLog, arc };
+		// A Grill Cloud key this device kept but the settings file lost (see
+		// restoreCloudKey), or one Grill 6.2.0 moved into the keychain: write it back.
+		if ((await this.restoreCloudKey()) || this.keys.rescued) {
+			try {
+				await this.persist();
+				this.keys.dropUnkept();
+			} catch (e) {
+				console.error("Grill: couldn't save settings while restoring the Grill Cloud key", e);
+			}
+		}
 		// Moving a key is not worth failing to load over: it's retried on every save.
 		if (keysInData && this.keys.available) {
 			try {
@@ -527,6 +572,17 @@ export default class GrillPlugin extends Plugin {
 				if (!f || f.extension !== "md") return false;
 				if (!checking) void this.startScoped([f]);
 				return true;
+			},
+		});
+		this.addCommand({
+			id: "show-setup",
+			name: "Show setup again",
+			callback: async () => {
+				// The same three steps as first run: the way to change how questions get
+				// written (Grill Cloud, a key of your own, offline) without hunting in settings.
+				await this.activateView();
+				const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view;
+				if (view instanceof SessionView) view.showOnboarding();
 			},
 		});
 		this.addCommand({
@@ -806,7 +862,9 @@ export default class GrillPlugin extends Plugin {
 				}
 				this.refreshStatusBar();
 				this.warnOnDuplicateBasenames();
-				void this.maybeSynthesizeArc();
+				// On Grill Cloud this waits for the end of a session (see the summary screen):
+				// nothing is spent in the background that a receipt doesn't show.
+				if (this.data.settings.provider !== "grillcloud") void this.maybeSynthesizeArc();
 				// A pane already open at this point rendered its start screen from the
 				// empty mastery placeholder (see refreshIfOnStartScreen) — bring it up to
 				// date now that the real data has loaded.
@@ -824,6 +882,7 @@ export default class GrillPlugin extends Plugin {
 	}
 
 	onunload(): void {
+		this.stopCloudWatch();
 		void terminateOcrWorker();
 	}
 
@@ -1414,22 +1473,611 @@ export default class GrillPlugin extends Plugin {
 		const info = PROVIDERS[s.provider];
 		const apiKey = s.apiKeys[s.provider];
 		if (info.needsKey && !apiKey) return null;
+		if (s.provider === "grillcloud" && !cloudEnabled()) return null;
 		// Custom provider needs both an endpoint and a model to be usable.
 		if (s.provider === "custom" && (!s.customBaseUrl || !s.models.custom)) return null;
 		return {
 			provider: s.provider,
 			apiKey,
-			model: s.models[s.provider] || info.defaultModel,
+			// Grill Cloud's server picks the model; the name is only what the screen calls
+			// it, whatever an earlier build may have saved.
+			model: s.provider === "grillcloud" ? info.defaultModel : s.models[s.provider] || info.defaultModel,
 			baseUrl: s.provider === "ollama" ? s.ollamaUrl : s.provider === "custom" ? s.customBaseUrl : undefined,
 		};
+	}
+
+	/** Grill Cloud credits left as last heard from the server; null until known. */
+	cloudCredits: number | null = null;
+	/** Whether Grill Cloud can read aloud in a natural voice, as it last said. */
+	cloudSpeech = false;
+
+	/** Where a natural voice would come from right now, if anywhere. */
+	naturalVoiceSource(): "cloud" | "openai" | null {
+		const s = this.data.settings;
+		if (cloudEnabled() && s.provider === "grillcloud" && isCloudKey(s.apiKeys.grillcloud) && this.cloudSpeech) return "cloud";
+		if (s.provider === "openai" && s.apiKeys.openai) return "openai";
+		return null;
+	}
+
+	/** Read text aloud: in a natural voice when the user has asked for one and one is
+	 * to be had, in the device's own voice otherwise, or if the natural one fails. */
+	async readAloud(text: string): Promise<void> {
+		const s = this.data.settings;
+		const source = s.naturalVoice ? this.naturalVoiceSource() : null;
+		if (source) {
+			try {
+				await speakNatural(text, async (clean) => {
+					if (source === "cloud") {
+						const r = await cloudSpeech(s.apiKeys.grillcloud, clean);
+						if (!r.ok) throw new Error(r.message);
+						return r.data;
+					}
+					const r = await Promise.race([
+						requestUrl({
+							url: "https://api.openai.com/v1/audio/speech",
+							method: "POST",
+							headers: { authorization: `Bearer ${s.apiKeys.openai}`, "content-type": "application/json" },
+							body: JSON.stringify({ model: "gpt-4o-mini-tts", voice: "sage", input: clean, response_format: "mp3" }),
+							throw: false,
+						}),
+						new Promise<never>((_, no) => window.setTimeout(() => no(new Error("The voice took too long.")), 45_000)),
+					]);
+					if (r.status !== 200) throw new Error(`The voice had a problem (${r.status}).`);
+					return r.arrayBuffer;
+				});
+				return;
+			} catch (e) {
+				new Notice(`Grill: ${(e as Error).message} Using your device's voice instead.`, 8000);
+			}
+		}
+		speak(text, { lang: s.ttsLanguage, voiceURI: s.ttsVoiceURI });
+	}
+
+	/** Credits the session under way has used. The view zeroes it when one starts. */
+	cloudSessionSpent = 0;
+
+	/** What has been spent since this was last asked, and start counting again. */
+	takeCloudSpend(): number {
+		const spent = this.cloudSessionSpent;
+		this.cloudSessionSpent = 0;
+		return spent;
+	}
+
+	/** A session has ended: keep what it cost, to say back later. Returns the cost, or
+	 * 0 if it used nothing (not on Grill Cloud, or nothing was asked of it). */
+	async noteCloudSession(extra = 0): Promise<number> {
+		return this.recordCloudSession(this.takeCloudSpend() + extra);
+	}
+
+	/** Keep `used` as what a session cost, without touching the running count. */
+	async recordCloudSession(used: number): Promise<number> {
+		// Whole credits, and never "0" for a session that did use something.
+		const spent = used > 0 ? Math.max(1, Math.round(used)) : 0;
+		if (spent <= 0 || this.data.settings.provider !== "grillcloud") return 0;
+		this.data.settings.cloudUsage = [...this.data.settings.cloudUsage, spent].slice(-10);
+		await this.persist();
+		return spent;
+	}
+	/** What the last look at the server found:
+	 *  unknown  not asked yet            offline  couldn't be reached
+	 *  ok       there is an account      refused  it answered with an error (see cloudNote)
+	 *  none     it has no account for this key yet: no starter was given and nothing
+	 *           has been bought. Buying credits is what opens it. */
+	cloudState: "unknown" | "ok" | "offline" | "refused" | "none" = "unknown";
+	/** The server's own words, when it refused. */
+	cloudNote = "";
+	/** Whether credits can be bought right now, as the server last said. */
+	cloudSales = true;
+	/** How many purchases the server has credited to this key. */
+	cloudPurchases: number | null = null;
+	/** The packs on sale with their checkout links for the key in use, ready so a click
+	 * can open one at once. Emptied the moment the key changes, so a click can never
+	 * pay into a key no longer held. */
+	cloudPacks: Array<CloudPack & { link: string }> = [];
+	/** Keys this session deleted from the server: never taken back from a stale copy. */
+	private cloudGone = new Set<string>();
+	/** Told whenever the balance, the key or a wait changes, so every open Grill view
+	 * can redraw. (The settings tab has cloudArrived, which also carries the numbers.) */
+	cloudListeners = new Set<() => void>();
+	private tellCloud(): void {
+		for (const heard of [...this.cloudListeners]) {
+			try {
+				heard();
+			} catch (e) {
+				console.error("Grill: a screen failed to redraw", e);
+			}
+		}
+	}
+
+	/** Whether buying credits would work right now. With no account yet ("none") it
+	 * does: a purchase is what opens one. Not while the server can't be reached or is
+	 * refusing: what it last said about sales may no longer hold. */
+	get cloudCanBuy(): boolean {
+		return this.cloudPacks.length > 0 && this.cloudSales && this.cloudState !== "offline" && this.cloudState !== "refused";
+	}
+
+	private async linkCloudCheckout(key: string): Promise<void> {
+		this.cloudPacks = [];
+		if (!isCloudKey(key)) return;
+		const packs: Array<CloudPack & { link: string }> = [];
+		for (const pack of cloud.packs) {
+			if (pack.url) packs.push({ ...pack, link: await cloudCheckoutUrl(key, pack.url) });
+		}
+		const id = await cloudAccount(key);
+		if (this.data.settings.apiKeys.grillcloud === key) {
+			this.cloudPacks = packs;
+			this.cloudAccountId = id;
+		}
+	}
+	/** The account id of the key in use (its hash; never the key): what to quote when
+	 * asking for credits to be moved here from a lost key. */
+	cloudAccountId = "";
+
+	// A Grill Cloud key is the only handle on money already paid, and it lives in
+	// data.json, a file that other devices rewrite whole: one still on Grill 6.2.0
+	// blanks keys it finds there, and any device saves over what another just wrote.
+	// So the key and the keys before it are also kept on this device, outside the
+	// synced file, and what is on disk is read again before every save.
+
+	private cloudBackup(): { key: string; retired: string[]; gone: string[] } {
+		try {
+			const raw = (this.app as unknown as { loadLocalStorage?: (k: string) => unknown }).loadLocalStorage?.("grill-cloud");
+			const kept = (typeof raw === "string" ? JSON.parse(raw) : raw) as { key?: unknown; retired?: unknown; gone?: unknown } | null;
+			return {
+				key: typeof kept?.key === "string" && isCloudKey(kept.key) ? kept.key : "",
+				retired: Array.isArray(kept?.retired) ? kept.retired.filter((k): k is string => typeof k === "string" && isCloudKey(k)) : [],
+				gone: Array.isArray(kept?.gone) ? kept.gone.filter(isAccountId) : [],
+			};
+		} catch {
+			return { key: "", retired: [], gone: [] };
+		}
+	}
+
+	// One balance for every vault on a device. A vault's settings and Obsidian's own
+	// storage are both per vault, so each vault would otherwise make its own key and
+	// its own balance, and the only way to share one was to copy the key across by
+	// hand. The window's storage is shared by all vaults on the device, so the key in
+	// use is also noted there, and Start free in another vault picks it up.
+
+	/** The Grill Cloud key last used on this device, in any vault, if there is one. */
+	/** Whether Start free here would join a balance already on this device. */
+	sharesDeviceCloud(): boolean {
+		const shared = this.deviceCloudKey();
+		const s = this.data.settings;
+		return !!shared && !s.apiKeys.grillcloud && !s.retiredCloudKeys.includes(shared) && !this.cloudGone.has(shared);
+	}
+
+	deviceCloudKey(): string {
+		try {
+			const key = window.localStorage.getItem(DEVICE_CLOUD_KEY) ?? "";
+			return isCloudKey(key) ? key : "";
+		} catch {
+			return "";
+		}
+	}
+
+	private setDeviceCloudKey(key: string): void {
+		try {
+			if (key) window.localStorage.setItem(DEVICE_CLOUD_KEY, key);
+			else window.localStorage.removeItem(DEVICE_CLOUD_KEY);
+		} catch {
+			// No shared storage here: each vault keeps its own key, as before.
+		}
+	}
+
+	/** Account ids of keys deleted in any vault on this device. A vault's own record of
+	 * a deletion is per vault; without this, another vault still holding the key would
+	 * carry on with a dead account, and hand it to the next vault that starts. */
+	private deviceCloudGone(): string[] {
+		try {
+			const kept = JSON.parse(window.localStorage.getItem(DEVICE_CLOUD_GONE) ?? "[]") as unknown;
+			return Array.isArray(kept) ? kept.filter(isAccountId) : [];
+		} catch {
+			return [];
+		}
+	}
+
+	private addDeviceCloudGone(id: string): void {
+		try {
+			window.localStorage.setItem(DEVICE_CLOUD_GONE, JSON.stringify([...new Set([...this.deviceCloudGone(), id])].slice(-GONE_KEYS_KEPT)));
+		} catch {
+			// This vault's own record still holds.
+		}
+	}
+
+	private saveCloudBackup(): void {
+		const s = this.data.settings;
+		if (isCloudKey(s.apiKeys.grillcloud)) this.setDeviceCloudKey(s.apiKeys.grillcloud);
+		try {
+			(this.app as unknown as { saveLocalStorage?: (k: string, v: unknown) => void }).saveLocalStorage?.("grill-cloud", {
+				key: isCloudKey(s.apiKeys.grillcloud) ? s.apiKeys.grillcloud : "",
+				retired: s.retiredCloudKeys,
+				gone: s.cloudGone,
+			});
+		} catch {
+			// The copy in data.json is still there.
+		}
+	}
+
+	private keepRetired(...more: string[][]): void {
+		const s = this.data.settings;
+		const all = [...s.retiredCloudKeys, ...more.flat()].filter((k) => isCloudKey(k) && k !== s.apiKeys.grillcloud && !this.cloudGone.has(k));
+		s.retiredCloudKeys = [...new Set(all)].slice(0, RETIRED_KEYS_KEPT);
+	}
+
+	private clearCloudState(): void {
+		this.cloudPacks = [];
+		this.cloudCredits = null;
+		this.cloudPurchases = null;
+		this.cloudState = "unknown";
+		this.cloudNote = "";
+	}
+
+	/** Take in what was found somewhere other than memory (this device's own copy, or
+	 * the settings file as another device left it): a key, earlier keys, and the ids of
+	 * deleted keys. The rules, which every device applies the same way so they agree:
+	 *  - a deleted key is never used again, here or anywhere it turns up;
+	 *  - a blank never replaces a key;
+	 *  - a key found there replaces the one here if the other side had let ours go,
+	 *    or, when two devices each made a key before hearing of the other's, if it is
+	 *    the smaller of the two: both sides then settle on the same one;
+	 *  - whichever key loses is kept among the earlier keys, never thrown away.
+	 * Returns whether the key in use changed. */
+	private takeCloudKey(found: string, retired: string[], gone: string[]): Promise<boolean> {
+		// One at a time: a merge reads the key, waits (hashing), then writes, and two
+		// running at once from different copies of the file could each undo the other.
+		const run = this.cloudMerging.then(() => this.mergeCloudKey(found, retired, gone));
+		this.cloudMerging = run.catch(() => false);
+		return run;
+	}
+	private cloudMerging: Promise<boolean> = Promise.resolve(false);
+
+	private async mergeCloudKey(found: string, retired: string[], gone: string[]): Promise<boolean> {
+		const s = this.data.settings;
+		s.cloudGone = [...new Set([...s.cloudGone, ...gone.filter(isAccountId)])].slice(-GONE_KEYS_KEPT);
+		const deleted = async (k: string): Promise<boolean> => isCloudKey(k) && (this.cloudGone.has(k) || s.cloudGone.includes(await cloudAccount(k)));
+		let changed = false;
+		if (await deleted(s.apiKeys.grillcloud)) {
+			this.stopCloudWatch();
+			s.apiKeys.grillcloud = "";
+			this.clearCloudState();
+			changed = true;
+		}
+		const mine = s.apiKeys.grillcloud;
+		let theirs = retired;
+		if (isCloudKey(found) && found !== mine && !s.retiredCloudKeys.includes(found) && !(await deleted(found))) {
+			if (!isCloudKey(mine) || retired.includes(mine) || found < mine) {
+				this.stopCloudWatch();
+				s.apiKeys.grillcloud = found;
+				if (isCloudKey(mine)) s.retiredCloudKeys = [mine, ...s.retiredCloudKeys];
+				this.clearCloudState();
+				changed = true;
+			} else {
+				theirs = [...retired, found];
+			}
+		}
+		this.keepRetired(theirs);
+		const kept: string[] = [];
+		for (const k of s.retiredCloudKeys) if (!(await deleted(k))) kept.push(k);
+		s.retiredCloudKeys = kept;
+		return changed;
+	}
+
+	/** Called once at load, after the settings are read. */
+	private async restoreCloudKey(): Promise<boolean> {
+		if (!cloudEnabled()) return false;
+		const kept = this.cloudBackup();
+		const s = this.data.settings;
+		const before = JSON.stringify([s.retiredCloudKeys, s.cloudGone, s.apiKeys.grillcloud]);
+		// A key Grill 6.2.0 left in the keychain that isn't the one in use is kept too.
+		const rescued = this.keys.rescuedKey && this.keys.rescuedKey !== s.apiKeys.grillcloud ? [this.keys.rescuedKey] : [];
+		// The key this device kept is always handed over: used if the file has none, and
+		// otherwise kept among the earlier keys. (Left out, a different key in the file
+		// would simply replace this device's record of it, and the only copy of a key
+		// that may hold paid credits would be gone.)
+		const mine = isCloudKey(kept.key) ? [kept.key] : [];
+		await this.takeCloudKey(isCloudKey(s.apiKeys.grillcloud) ? "" : kept.key, [...kept.retired, ...rescued, ...mine], [...kept.gone, ...this.deviceCloudGone()]);
+		this.saveCloudBackup();
+		return JSON.stringify([s.retiredCloudKeys, s.cloudGone, s.apiKeys.grillcloud]) !== before;
+	}
+
+	/** Read the key as the settings file holds it right now. */
+	private async mergeCloudFromDisk(): Promise<boolean> {
+		if (!cloudEnabled()) return false;
+		let onDisk: Partial<GrillSettings> | undefined;
+		try {
+			onDisk = ((await this.loadData()) as Partial<PluginData> | null)?.settings;
+		} catch {
+			return false;
+		}
+		const key = onDisk?.apiKeys?.grillcloud;
+		const retired = Array.isArray(onDisk?.retiredCloudKeys) ? onDisk.retiredCloudKeys.filter((k) => typeof k === "string") : [];
+		// Deletions made in another vault on this device count here too.
+		const gone = [...(Array.isArray(onDisk?.cloudGone) ? onDisk.cloudGone : []), ...this.deviceCloudGone()];
+		return this.takeCloudKey(typeof key === "string" ? key : "", retired, gone);
+	}
+
+	/** Obsidian calls this when data.json was changed by something else (sync). Only
+	 * the Grill Cloud key is taken from it: a key made on another device arrives here. */
+	async onExternalSettingsChange(): Promise<void> {
+		if (!(await this.mergeCloudFromDisk())) return;
+		this.saveCloudBackup();
+		await this.refreshCloud();
+		this.tellCloud();
+	}
+
+	/** Look at the balance. Asks nothing of the server but to look. */
+	async refreshCloud(): Promise<void> {
+		const key = this.data.settings.apiKeys.grillcloud;
+		if (!cloudEnabled() || !isCloudKey(key)) return;
+		if (!this.cloudPacks.length) await this.linkCloudCheckout(key);
+		const r = await cloudBalance(key);
+		// The key was replaced or deleted while the server was answering.
+		if (this.data.settings.apiKeys.grillcloud !== key) return;
+		if (!r.ok) {
+			this.cloudState = r.offline ? "offline" : "refused";
+			this.cloudNote = r.message;
+			return;
+		}
+		this.cloudCredits = r.data.credits;
+		this.cloudPurchases = r.data.purchases;
+		this.cloudSales = r.data.sales;
+		this.cloudSpeech = r.data.speech === true;
+		this.cloudState = r.data.account ? "ok" : "none";
+		this.cloudNote = "";
+	}
+
+	/** Turn Grill Cloud on for this vault: make a key, switch to it, open its account.
+	 * The key is saved before the server is asked, so a lost reply can't leave a
+	 * starter spent on a key nobody kept. Returns a line to show the user. */
+	async startCloud(): Promise<string> {
+		if (!cloudEnabled()) return "Grill Cloud isn't available in this version of Grill.";
+		const s = this.data.settings;
+		// Another device may have made this vault's key a moment ago.
+		await this.mergeCloudFromDisk();
+		if (!isCloudKey(s.apiKeys.grillcloud)) {
+			// Another vault on this device may already have a key: use that one, so there
+			// is one balance on the device and nothing to copy across. Not a key this
+			// vault deliberately let go of or deleted.
+			const shared = this.deviceCloudKey();
+			const sharedId = shared ? await cloudAccount(shared) : "";
+			const usable = shared && !s.retiredCloudKeys.includes(shared) && !this.cloudGone.has(shared) && !s.cloudGone.includes(sharedId) && !this.deviceCloudGone().includes(sharedId);
+			s.apiKeys.grillcloud = usable ? shared : newCloudKey();
+		}
+		const was = { provider: s.provider, questionSource: s.questionSource, gradingMode: s.gradingMode };
+		s.provider = "grillcloud";
+		// Grill Cloud is for AI questions and AI grading: turning it on turns those on.
+		s.questionSource = "ai";
+		s.gradingMode = "ai";
+		await this.persist();
+		// That save reads the file first, and may have found another device's key there.
+		const key = s.apiKeys.grillcloud;
+		await this.linkCloudCheckout(key);
+		const r = await cloudStart(key);
+		if (!r.ok) {
+			// Not reached: the key is kept (asking again uses it), but how Grill studies
+			// goes back to what it was, so nobody is left on a mode that can't work.
+			Object.assign(s, was);
+			await this.persist();
+			this.cloudState = r.offline ? "offline" : "refused";
+			this.cloudNote = r.message;
+			this.tellCloud();
+			return r.message;
+		}
+		await this.refreshCloud();
+		this.tellCloud();
+		const credits = r.data.credits;
+		if (r.data.granted) return `Grill Cloud is on. You have ${credits} free credits to start.`;
+		if (credits > 0) return `Grill Cloud is on. ${creditsInWords(credits)}.`;
+		return "Grill Cloud is on, with no free credits this time. Add credits in settings to begin.";
+	}
+
+	/** Put the key in use aside (never thrown away: it may still hold a balance). */
+	private retireCloudKey(): void {
+		const s = this.data.settings;
+		const old = s.apiKeys.grillcloud;
+		s.apiKeys.grillcloud = "";
+		if (isCloudKey(old)) s.retiredCloudKeys = [old, ...s.retiredCloudKeys.filter((k) => k !== old)];
+		this.keepRetired();
+		// A copy Grill 6.2.0 left in the keychain must not bring it back.
+		this.keys.dropUnkept();
+		this.cloudPacks = [];
+		this.cloudCredits = null;
+		this.cloudPurchases = null;
+		this.cloudState = "unknown";
+		this.cloudNote = "";
+	}
+
+	/** Switch this vault to a key made elsewhere, to share that balance. Only a key the
+	 * server already has an account for: a mistyped one would otherwise quietly become
+	 * a new, empty account. Returns what went wrong, or null. */
+	async useCloudKey(key: string): Promise<string | null> {
+		if (this.cloudGone.has(key) || this.data.settings.cloudGone.includes(await cloudAccount(key))) {
+			return "That key's account was deleted from this vault, so it can't be used again. Start free makes a new one.";
+		}
+		const r = await cloudBalance(key);
+		if (!r.ok) return r.message;
+		if (!r.data.account) return "No Grill Cloud account has that key. Check it was copied whole.";
+		this.stopCloudWatch();
+		this.retireCloudKey();
+		const s = this.data.settings;
+		s.apiKeys.grillcloud = key;
+		// A key being brought back is in use again, not an earlier one.
+		s.retiredCloudKeys = s.retiredCloudKeys.filter((k) => k !== key);
+		this.cloudGone.delete(key);
+		await this.persist();
+		this.cloudCredits = r.data.credits;
+		this.cloudPurchases = r.data.purchases;
+		this.cloudSales = r.data.sales;
+		this.cloudSpeech = r.data.speech === true;
+		this.cloudState = "ok";
+		await this.linkCloudCheckout(key);
+		this.tellCloud();
+		return null;
+	}
+
+	/** Erase this vault's Grill Cloud account on the server and forget its key. Any
+	 * credits left on it are gone. The key is only dropped once the server confirms
+	 * (or says there is no such account). Returns what went wrong, or null. */
+	async deleteCloud(): Promise<string | null> {
+		const s = this.data.settings;
+		const key = s.apiKeys.grillcloud;
+		if (!isCloudKey(key)) return "There's no Grill Cloud key in this vault.";
+		const r = await cloudDelete(key);
+		if (!r.ok) return r.message;
+		this.stopCloudWatch();
+		// Deleted for good, so it isn't kept among the earlier keys either, and a stale
+		// copy of it elsewhere is never taken back.
+		this.cloudGone.add(key);
+		if (this.deviceCloudKey() === key) this.setDeviceCloudKey("");
+		const goneId = await cloudAccount(key);
+		this.addDeviceCloudGone(goneId);
+		s.cloudGone = [...new Set([...s.cloudGone, goneId])].slice(-GONE_KEYS_KEPT);
+		s.apiKeys.grillcloud = "";
+		this.keepRetired();
+		this.keys.dropUnkept();
+		this.clearCloudState();
+		// This device's own record first: it holds even if the shared file can't be saved.
+		this.saveCloudBackup();
+		try {
+			await this.persist();
+		} catch (e) {
+			console.error("Grill: couldn't save settings after deleting the Grill Cloud account", e);
+		}
+		this.tellCloud();
+		return null;
+	}
+
+	/** Stop using the key in this vault without touching the server. It is kept among
+	 * the earlier keys. */
+	async forgetCloudKey(): Promise<void> {
+		this.stopCloudWatch();
+		this.retireCloudKey();
+		await this.persist();
+		this.tellCloud();
+	}
+
+	/** Open the checkout page for one pack (the largest, if none is named) for this
+	 * vault's Grill Cloud account, then keep an eye on the server so the credits show
+	 * up by themselves when the payment lands. */
+	openCloudCheckout(link?: string): void {
+		if (!this.cloudCanBuy) return;
+		// A link from a screen drawn before the key changed opens nothing.
+		const pack = link === undefined ? this.cloudPacks[this.cloudPacks.length - 1] : this.cloudPacks.find((p) => p.link === link);
+		if (!pack) return;
+		window.open(pack.link);
+		this.watchCloudTopUp();
+		this.tellCloud();
+	}
+
+	/** Set while a purchase is being waited for: the balance when the wait began. */
+	cloudWaitingFrom: number | null = null;
+	/** The purchase count when the wait began (null until the server has said). A
+	 * purchase arriving is this count going up; nothing else moves it. */
+	private cloudWaitingPurchases: number | null = null;
+	/** Whether the balance the wait is measured from was a real one. */
+	private cloudWaitingKnown = false;
+	/** Told when a waited-for purchase arrives (or the wait ends), so the settings tab
+	 * can redraw and count the number up. */
+	cloudArrived: ((from: number, to: number) => void) | null = null;
+	private cloudWatchTimer: number | null = null;
+	private cloudChecking = false;
+
+	/** One look during a wait. True once a purchase has been credited: the wait is
+	 * over, the user is told, and whoever is listening gets the old and new balance. */
+	async checkCloudTopUp(): Promise<boolean> {
+		// The timer and a return to the window can both ask at once; one look at a time.
+		if (this.cloudWaitingFrom === null || this.cloudChecking) return false;
+		this.cloudChecking = true;
+		try {
+			await this.refreshCloud();
+		} finally {
+			this.cloudChecking = false;
+		}
+		// Read after the answer: the wait may have ended, or its starting point moved.
+		const from = this.cloudWaitingFrom;
+		const to = this.cloudCredits;
+		const purchases = this.cloudPurchases;
+		if (from === null || to === null || purchases === null) return false;
+		// The wait began before the server had said how many purchases there were. This
+		// first answer is the starting point, unless the balance has already jumped by
+		// a pack's worth: then the purchase beat the first look, and that is an arrival.
+		if (this.cloudWaitingPurchases === null) {
+			const smallest = Math.min(...cloud.packs.map((p) => p.credits));
+			if (!(this.cloudWaitingKnown && purchases > 0 && to - from >= smallest)) {
+				this.cloudWaitingPurchases = purchases;
+				if (!this.cloudWaitingKnown || to < from) this.cloudWaitingFrom = to;
+				this.cloudWaitingKnown = true;
+				return false;
+			}
+		} else if (purchases <= this.cloudWaitingPurchases) return false;
+		this.stopCloudWatch(true);
+		const added = to - from;
+		new Notice(
+			added > 0 ? `Grill: ${added.toLocaleString("en-US")} credits added. You have ${to.toLocaleString("en-US")}.` : `Grill: your purchase arrived. You have ${to.toLocaleString("en-US")} credits.`,
+			6000,
+		);
+		try {
+			this.cloudArrived?.(Math.min(from, to), to);
+		} catch (e) {
+			console.error("Grill: settings failed to redraw", e);
+		}
+		this.tellCloud();
+		return true;
+	}
+
+	/** End the wait, whether or not anything arrived. */
+	stopCloudWatch(quiet = false): void {
+		const waiting = this.cloudWaitingFrom !== null;
+		this.cloudWaitingFrom = null;
+		this.cloudWaitingPurchases = null;
+		if (this.cloudWatchTimer !== null) window.clearInterval(this.cloudWatchTimer);
+		this.cloudWatchTimer = null;
+		window.removeEventListener("focus", this.cloudOnFocus);
+		if (waiting && !quiet) {
+			try {
+				this.cloudArrived?.(this.cloudCredits ?? 0, this.cloudCredits ?? 0);
+			} catch (e) {
+				console.error("Grill: settings failed to redraw", e);
+			}
+			this.tellCloud();
+		}
+	}
+
+	/** Coming back from the browser is the likeliest moment the payment has landed. */
+	private cloudOnFocus = (): void => void this.checkCloudTopUp();
+
+	/** Check every few seconds, and whenever Obsidian regains focus, for ten minutes. */
+	private watchCloudTopUp(): void {
+		this.stopCloudWatch(true);
+		this.cloudWaitingFrom = this.cloudCredits ?? 0;
+		this.cloudWaitingKnown = this.cloudCredits !== null;
+		this.cloudWaitingPurchases = this.cloudState === "ok" || this.cloudState === "none" ? this.cloudPurchases : null;
+		let checks = 0;
+		this.cloudWatchTimer = window.setInterval(() => {
+			if (++checks > 150) {
+				this.stopCloudWatch();
+				return;
+			}
+			void this.checkCloudTopUp();
+		}, 4000);
+		this.registerInterval(this.cloudWatchTimer);
+		window.addEventListener("focus", this.cloudOnFocus);
 	}
 
 	/** The settings in memory always hold the live API keys; what's written to
 	 * data.json has them blanked wherever the keychain holds them (see secrets.ts). */
 	async persist(): Promise<void> {
+		// Another device may have put a Grill Cloud key in the file since it was read:
+		// this save must not blank it.
+		const took = await this.mergeCloudFromDisk();
 		const s = this.data.settings;
 		const apiKeys = this.keys.stash(s.apiKeys);
 		await this.saveData({ ...this.data, settings: { ...s, apiKeys } });
+		this.saveCloudBackup();
+		if (took) {
+			void this.refreshCloud().then(() => this.tellCloud());
+		}
 	}
 
 	async activateView(): Promise<void> {
@@ -1445,12 +2093,39 @@ export default class GrillPlugin extends Plugin {
 	}
 }
 
+/** How many replaced Grill Cloud keys a vault keeps, in case one still has credits. */
+const RETIRED_KEYS_KEPT = 20;
+/** Where the key in use is noted for the other vaults on this device. */
+const DEVICE_CLOUD_KEY = "grill-cloud-device-key";
+const DEVICE_CLOUD_GONE = "grill-cloud-device-gone";
+/** How many deleted keys' ids are remembered. */
+const GONE_KEYS_KEPT = 50;
+const isAccountId = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{64}$/.test(v);
+
 const CUSTOM = "__custom__";
 
 const TUNING_NAME = "Tuning";
 const TUNING_DESC =
-	"Study intensity above already sets the first four. Change one here and it becomes Custom, " +
-	"and stays exactly where you put it.";
+	"Changing one sets Study intensity to Custom.";
+
+/** Run a number up from `from` to `to` in an element's text, over about a second,
+ * easing out. Skipped (the final text is simply set) for people who ask for reduced
+ * motion, and wherever animation frames aren't available. */
+function countUp(el: HTMLElement, from: number, to: number, text: (n: number) => string): void {
+	const still = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+	if (still || typeof window.requestAnimationFrame !== "function") {
+		el.setText(text(to));
+		return;
+	}
+	const started = performance.now();
+	const step = (now: number): void => {
+		const t = Math.min(1, (now - started) / 1100);
+		const eased = 1 - Math.pow(1 - t, 3);
+		el.setText(text(Math.round(from + (to - from) * eased)));
+		if (t < 1) window.requestAnimationFrame(step);
+	};
+	window.requestAnimationFrame(step);
+}
 
 /** One settings row, described once. display() (Obsidian before 1.13) and
  * getSettingDefinitions() (1.13+, which is what makes the rows searchable) both render
@@ -1476,6 +2151,20 @@ export class GrillSettingTab extends PluginSettingTab {
 	private modelLists: Partial<Record<ProviderId, string[]>> = {};
 	private fetching: Partial<Record<ProviderId, boolean>> = {};
 	private showCustomModel = false;
+	/** Whether Grill Cloud has been asked for the balance since the tab was opened. */
+	private cloudAsked = false;
+	private showCloudKey = false;
+	private showRetiredKeys = false;
+	/** Whether the key row is opened up to its controls. */
+	private manageKey = false;
+	/** A key being typed in from another vault; applied only by its button. */
+	private cloudKeyDraft = "";
+	/** Set by the first press on a replacement, so the second one does it. */
+	private cloudKeyConfirm = false;
+	/** The same, for deleting the account. */
+	private cloudDeleteConfirm = false;
+	/** Set when a purchase has just landed: the balance to count up from on the next draw. */
+	private cloudCountFrom: number | null = null;
 	/** Guards against attaching a duplicate voiceschanged listener on every display(). */
 	private voicesListenerAttached = false;
 
@@ -1483,6 +2172,22 @@ export class GrillSettingTab extends PluginSettingTab {
 		super(app, plugin);
 		this.plugin = plugin;
 		this.containerEl.addClass("grill-settings");
+	}
+
+	/** Closing the tab forgets everything about the Grill Cloud key rows: the key goes
+	 * back to hidden, a half-typed replacement is dropped, the balance is asked for
+	 * again next time. */
+	hide(): void {
+		this.cloudAsked = false;
+		this.showCloudKey = false;
+		this.showRetiredKeys = false;
+		this.manageKey = false;
+		this.cloudKeyDraft = "";
+		this.cloudKeyConfirm = false;
+		this.cloudDeleteConfirm = false;
+		this.cloudCountFrom = null;
+		this.plugin.cloudArrived = null;
+		super.hide();
 	}
 
 	/** Re-render after a change that adds, removes or rewords rows. Obsidian 1.13+
@@ -1569,6 +2274,9 @@ export class GrillSettingTab extends PluginSettingTab {
 			excludedFolders: s.excludedFolders,
 			onboarded: s.onboarded,
 			dismissedOffers: s.dismissedOffers,
+			retiredCloudKeys: s.retiredCloudKeys,
+			cloudUsage: s.cloudUsage,
+			cloudGone: s.cloudGone,
 			conceptsMigrated: s.conceptsMigrated,
 			legacyDefaultsMigrated: s.legacyDefaultsMigrated,
 			newConceptsCapMigrated: s.newConceptsCapMigrated,
@@ -1595,10 +2303,36 @@ export class GrillSettingTab extends PluginSettingTab {
 	 * instead of a two-step one where the second step is disabled until the first is made.
 	 * Values are prefixed (`lang:` / `voice:`) rather than raw, so a voiceURI can never be
 	 * mistaken for a language code. */
+	/** The switch for a natural read-aloud voice, saying plainly where the text goes
+	 * and what it costs, and why it is unavailable when it is. */
+	private naturalVoiceRow(s: GrillSettings): Row {
+		const source = this.plugin.naturalVoiceSource();
+		return {
+			name: "Natural voice",
+			desc:
+				source === "cloud"
+					? "A natural AI voice for read-aloud. About 5 credits per 1,000 characters. The text read is sent to OpenAI. Off uses your device's voice, free."
+					: source === "openai"
+						? "A natural AI voice for read-aloud, on your OpenAI key."
+						: `Needs ${cloudEnabled() ? "Grill Cloud or " : ""}an OpenAI key.`,
+			aliases: ["text to speech", "tts", "read aloud", "speech", "audio"],
+			build: (setting) =>
+				setting.addToggle((t) =>
+					t
+						.setValue(source !== null && s.naturalVoice)
+						.setDisabled(source === null)
+						.onChange(async (v) => {
+							s.naturalVoice = v;
+							await this.plugin.persist();
+						}),
+				),
+		};
+	}
+
 	private voiceRow(s: GrillSettings): Row {
 		return {
 			name: "Read-aloud voice",
-			desc: "Automatic matches each question to its own language. Pick a language to always use that one, or a specific voice to pin it exactly.",
+			desc: "Your device's voice. Automatic picks by language.",
 			aliases: ["text to speech", "tts", "language"],
 			build: (setting) => {
 				const langs = listLanguages();
@@ -1712,9 +2446,7 @@ export class GrillSettingTab extends PluginSettingTab {
 			),
 			{
 				name: "Always guarantee new material",
-				desc:
-					"Off: a full due/struggling backlog leaves no room for new material that session, reviews win. " +
-					"On: new material always gets its full share above, no matter how large the backlog is.",
+				desc: "Keep room for new material even when reviews are piling up.",
 				build: (setting) =>
 					setting.addToggle((t) =>
 						t.setValue(s.freshContentAlwaysGuarantee).onChange(async (v) => {
@@ -1725,12 +2457,7 @@ export class GrillSettingTab extends PluginSettingTab {
 			},
 			{
 				name: "Light review days",
-				desc:
-					"Toggle on any weekday you'd rather Grill went easier on. Doesn't cap or skip that day outright " +
-					"(the backlog still has to go somewhere); it just steers newly-scheduled reviews off it toward " +
-					"an equally-uncrowded day nearby whenever one's available. Toggle order: " +
-					WEEKDAY_NAMES.join(", ") +
-					".",
+				desc: `Weekdays to steer new reviews away from. Order: ${WEEKDAY_NAMES.join(", ")}.`,
 				aliases: ["easy days", "weekend"],
 				build: (setting) => {
 					WEEKDAY_NAMES.forEach((full, weekday) => {
@@ -1767,7 +2494,7 @@ export class GrillSettingTab extends PluginSettingTab {
 			// "personalized" isn't a black box, and a way back to the shared defaults.
 			{
 				name: "Personalized FSRS weights",
-				desc: "Whether scheduling runs on weights fit to this vault's own review history, and a way back to the library defaults.",
+				desc: "Scheduling fitted to your own review history.",
 				build: (setting) => {
 					// Read here, not when the rows are listed: the definitions are first built
 					// while the plugin is still loading, before the concept store exists.
@@ -1798,9 +2525,7 @@ export class GrillSettingTab extends PluginSettingTab {
 			},
 			{
 				name: "Grill folder",
-				desc:
-					"Vault folder for mastery.json and session transcripts. These are plain files: " +
-					"read them, edit them, sync them like any note.",
+				desc: "Where Grill keeps its data and session notes.",
 				build: (setting) =>
 					setting.addText((t) =>
 						t
@@ -1814,7 +2539,7 @@ export class GrillSettingTab extends PluginSettingTab {
 			},
 			{
 				name: "Restore recommended settings",
-				desc: "Reset everything back to the defaults. Your API keys, provider, and folder choices are kept.",
+				desc: "Reset to defaults. Keys, provider and folders are kept.",
 				aliases: ["reset"],
 				build: (setting) => setting.addButton((b) => b.setButtonText("Restore").onClick(() => void this.restoreDefaults())),
 			},
@@ -1849,9 +2574,7 @@ export class GrillSettingTab extends PluginSettingTab {
 		const ai: Row[] = [
 			{
 				name: "Study mode",
-				desc:
-					"Where questions come from and who marks them. Anything with AI in it needs a key below; " +
-					"fully offline runs entirely on your machine, nothing is sent anywhere, and there's nothing to pay.",
+				desc: "Where questions come from and who marks them.",
 				aliases: ["offline", "grading", "no key", "self grade"],
 				build: (setting) =>
 					setting.addDropdown((d) =>
@@ -1872,16 +2595,16 @@ export class GrillSettingTab extends PluginSettingTab {
 			},
 			{
 				name: "Provider",
-				desc:
-					"Cloud providers send the quizzed notes to that provider using your key. " +
-					"Ollama runs fully on your machine: private, but local models write noticeably weaker questions.",
-				aliases: ["anthropic", "claude", "openai", "chatgpt", "gemini", "deepseek", "ollama", "openrouter", "local"],
+				desc: (cloudEnabled() && p === "grillcloud" ? "Grill Cloud is in use. " : "") + "Whose model to use with your own key. Ollama runs on your machine.",
+				aliases: ["anthropic", "claude", "openai", "chatgpt", "gemini", "deepseek", "ollama", "openrouter", "local", ...(cloudEnabled() ? ["grill cloud", "credits"] : [])],
 				build: (setting) =>
 					setting.addDropdown((d) => {
-						for (const [id, pi] of Object.entries(PROVIDERS)) d.addOption(id, pi.label);
+						for (const [id, pi] of offeredProviders()) d.addOption(id, pi.label);
 						d.setValue(p).onChange(async (v) => {
 							s.provider = v as ProviderId;
 							this.showCustomModel = false;
+							this.cloudKeyConfirm = false;
+							this.cloudDeleteConfirm = false;
 							await this.plugin.persist();
 							this.rerender();
 							void this.refreshModels(v as ProviderId);
@@ -1903,14 +2626,12 @@ export class GrillSettingTab extends PluginSettingTab {
 			});
 		};
 		const keyHome = inKeychain
-			? "Kept in Obsidian's keychain on this device. It doesn't sync, so each device needs it once."
-			: "Stored locally in this vault's plugin data, never in your notes.";
+			? "Kept in Obsidian's keychain. Each device needs it once."
+			: "Stored in this vault's plugin data.";
 
 		const baseUrlRow: Row = {
 			name: "Base URL",
-			desc:
-				"Any OpenAI-compatible endpoint, for example https://openrouter.ai/api/v1, " +
-				"https://api.groq.com/openai/v1, or http://localhost:1234/v1 for LM Studio.",
+			desc: "Any OpenAI-compatible endpoint, e.g. https://openrouter.ai/api/v1.",
 			build: (setting) =>
 				setting.addText((t) =>
 					t
@@ -1923,20 +2644,357 @@ export class GrillSettingTab extends PluginSettingTab {
 						}),
 				),
 		};
+		const cloudKey = s.apiKeys.grillcloud;
+		const credits = this.plugin.cloudCredits;
+		const state = this.plugin.cloudState;
+		const waiting = this.plugin.cloudWaitingFrom !== null;
+		const usingCloud = p === "grillcloud";
+		const creditsLine = (n: number): string => `${usingCloud ? "In use" : "Not in use"}. ${creditsInWords(n)}.`;
+		const start = (setting: Setting, label: string, cta: boolean): void => {
+			setting.addButton((b) => {
+				b.setButtonText(label).onClick(async () => {
+					b.setDisabled(true);
+					try {
+						new Notice(`Grill: ${await this.plugin.startCloud()}`, 8000);
+					} finally {
+						this.rerender();
+					}
+				});
+				if (cta) b.setCta();
+				return b;
+			});
+		};
+		// Grill Cloud has the first section of the page to itself, whichever provider is
+		// in use, drawn as one card in Grill's own colours (themes restyle settings rows,
+		// and a plain row doesn't sell anything): what it is, or the balance and what
+		// sessions have cost, then the packs. The row's name and description are still
+		// set, for the settings search; the card says the same in its own way.
+		const usage = usageInWords(s.cloudUsage);
+		const cloudRow: Row = {
+			name: "Grill Cloud",
+			desc: !cloudKey
+				? "AI questions and grading, with nothing to set up."
+				: state === "offline"
+					? "Couldn't reach Grill Cloud."
+					: state === "refused"
+						? this.plugin.cloudNote
+						: state === "none"
+							? "No credits yet."
+							: credits === null
+								? "Checking your balance..."
+								: waiting
+									? `${creditsInWords(credits)}. Checkout is open in your browser. Credits show up here a few seconds after you pay.`
+									: creditsLine(credits) + (usingCloud ? "" : " Another provider is selected below."),
+			aliases: ["credits", "hosted", "no key", "no api key", "balance", "cloud", "free", "trial", "top up", "buy", "pay", "price"],
+			build: (setting) => {
+				setting.settingEl.addClass("grill-cloud-hero");
+				const card = setting.settingEl.createDiv({ cls: "grill-view" }).createDiv({ cls: "grill-arcade-screen grill-cloud-card" });
+				const head = card.createDiv({ cls: "grill-cloud-card-head" });
+				head.createSpan({ cls: "grill-arcade-mark", text: "GRILL CLOUD" });
+				// Top right: check balance, then whether it's in use.
+				const corner = head.createDiv({ cls: "grill-cloud-card-corner" });
+				const body = card.createDiv({ cls: "grill-cloud-card-body" });
+				// The buttons are Obsidian's own, moved into the card.
+				const controls = card.createDiv({ cls: "grill-cloud-buy" });
+				controls.appendChild(setting.controlEl);
+				// Obsidian redraws a row in place, so the card from the last draw is still
+				// here: take it away now that the buttons have moved into the new one.
+				setting.settingEl.querySelectorAll(":scope > .grill-view").forEach((old) => {
+					if (!old.contains(card)) old.remove();
+				});
+				if (!cloudKey) {
+					// Said before anything is sent: what it costs, what it needs, where notes go.
+					body.createDiv({ cls: "grill-cloud-panel-lead", text: "AI writes and grades questions from your notes. Nothing to set up." });
+					if (this.plugin.sharesDeviceCloud()) body.createDiv({ cls: "grill-meta", text: "You already use Grill Cloud in another vault on this device. Starting here uses the same balance." });
+					const facts = body.createDiv({ cls: "grill-cloud-facts" });
+					for (const fact of CLOUD_FACTS) facts.createDiv({ cls: "grill-cloud-fact", text: fact });
+					const more = body.createEl("details", { cls: "grill-cloud-more" });
+					more.createEl("summary", { text: "What exactly is sent?" });
+					more.createEl("p", { text: CLOUD_PITCH });
+					if (cloud.privacyUrl || cloud.termsUrl) {
+						const legal = card.createDiv({ cls: "grill-cloud-agree grill-meta" });
+						legal.appendText("For ages 18 and over. By starting you agree to the ");
+						if (cloud.termsUrl) legal.createEl("a", { text: "terms", href: cloud.termsUrl });
+						if (cloud.privacyUrl && cloud.termsUrl) legal.appendText(" and the ");
+						if (cloud.privacyUrl) legal.createEl("a", { text: "privacy policy", href: cloud.privacyUrl });
+						legal.appendText(".");
+					}
+					start(setting, "Start free", true);
+					return;
+				}
+				const known = (state === "ok" || state === "none") && credits !== null;
+				// No number until the server has said one: a placeholder reads as a balance.
+				const figure = body.createDiv({ cls: "grill-cloud-balance" });
+				const number = figure.createSpan({ cls: "grill-cloud-balance-number", text: known ? (credits ?? 0).toLocaleString("en-US") : "" });
+				if (known) figure.createSpan({ cls: "grill-cloud-balance-unit", text: "credits" });
+				body.createDiv({
+					cls: "grill-meta",
+					text:
+						state === "offline" || state === "refused"
+							? this.plugin.cloudNote || "Couldn't reach Grill Cloud."
+							: state === "none"
+								? "No credits yet."
+								: !known
+									? "Checking your balance..."
+									: waiting
+										? "Checkout is open in your browser. Credits show up here a few seconds after you pay."
+										: usage,
+				});
+				card.toggleClass("grill-cloud-waiting", waiting);
+				if (!usingCloud) {
+					setting.addButton((b) =>
+						b
+							.setButtonText("Use Grill Cloud")
+							.setCta()
+							.onClick(async () => {
+								s.provider = "grillcloud";
+								s.questionSource = "ai";
+								s.gradingMode = "ai";
+								await this.plugin.persist();
+								this.rerender();
+							}),
+					);
+				}
+				if (waiting) {
+					setting.addButton((b) =>
+						b.setButtonText("Stop checking").onClick(() => {
+							this.plugin.stopCloudWatch();
+							this.rerender();
+						}),
+					);
+				} else {
+					if (state === "none") start(setting, "Try free credits", false);
+					if (this.plugin.cloudCanBuy) {
+						const packs = this.plugin.cloudPacks;
+						for (const pack of packs) {
+							setting.addButton((b) => {
+								b.setButtonText(packLabel(pack)).onClick(() => {
+									this.plugin.openCloudCheckout(pack.link);
+									this.rerender();
+								});
+								if (usingCloud && pack === packs[packs.length - 1]) b.setCta();
+								return b;
+							});
+						}
+						card.createDiv({ cls: "grill-cloud-card-foot", text: "Checkout by Stripe. Credits arrive here in a few seconds." });
+					}
+				}
+				// The policies: there when wanted, as a line of small print, not a row of their own.
+				if (cloud.privacyUrl || cloud.termsUrl) {
+					const legal = card.createDiv({ cls: "grill-cloud-card-foot grill-cloud-legal" });
+					if (cloud.privacyUrl) legal.createEl("a", { text: "Privacy", href: cloud.privacyUrl });
+					if (cloud.termsUrl) legal.createEl("a", { text: "Terms", href: cloud.termsUrl });
+				}
+				setting.addExtraButton((b) => {
+					b.setIcon("refresh-cw")
+						.setTooltip("Check balance")
+						.onClick(async () => {
+							await this.plugin.refreshCloud();
+							this.rerender();
+						});
+					// Up in the corner, out of the row of pack buttons, which needs its width.
+					if (b.extraSettingsEl) corner.appendChild(b.extraSettingsEl);
+					return b;
+				});
+				corner.createSpan({ cls: usingCloud ? "grill-cloud-chip is-on" : "grill-cloud-chip", text: usingCloud ? "In use" : "Not in use" });
+				// When a purchase lands (or the wait ends) while this tab is open: redraw,
+				// and count the balance up from the old number to the new one.
+				this.plugin.cloudArrived = (from, to) => {
+					this.cloudCountFrom = to > from ? from : null;
+					this.rerender();
+				};
+				if (this.cloudCountFrom !== null && credits !== null) {
+					const from = this.cloudCountFrom;
+					this.cloudCountFrom = null;
+					countUp(number, from, credits, (n) => n.toLocaleString("en-US"));
+					card.addClass("grill-cloud-arrived");
+				}
+				// Ask once each time the tab is opened; a server that can't be reached
+				// isn't asked again on every re-render.
+				if (!this.cloudAsked) {
+					this.cloudAsked = true;
+					void this.plugin.refreshCloud().then(() => this.rerender());
+				}
+			},
+		};
+		// The key is the balance, so it is never an editable field: one stray keystroke
+		// in a password box would otherwise replace it. It can be shown, to save it or
+		// carry it to another vault, and replaced only by a key the server knows, on a
+		// second press. A replaced key is kept, not thrown away.
+		const retired = s.retiredCloudKeys.length;
+		const cloudKeyRow: Row = {
+			name: "Account",
+			desc: !this.manageKey
+				? "One balance for every vault on this device."
+				: "Enter this key on another device to use the same balance there. Keep it private." +
+					(retired ? ` ${retired} earlier ${retired === 1 ? "key" : "keys"} kept.` : ""),
+			aliases: ["credits", "another device", "sync", "cloud", "delete account", "key", "grill cloud key", "backup"],
+			build: (setting) => {
+				setting.settingEl.addClass("grill-cloud-row");
+				// One line until asked for: these controls are rarely needed and one of
+				// them deletes the account.
+				if (!this.manageKey) {
+					setting.addButton((b) =>
+						b.setButtonText("Manage").onClick(() => {
+							this.manageKey = true;
+							this.rerender();
+						}),
+					);
+					return;
+				}
+				setting.settingEl.addClass("grill-cloud-key");
+				setting.addButton((b) =>
+					b.setButtonText("Done").onClick(() => {
+						this.manageKey = false;
+						this.showCloudKey = false;
+						this.showRetiredKeys = false;
+						this.cloudKeyConfirm = false;
+						this.cloudDeleteConfirm = false;
+						this.rerender();
+					}),
+				);
+				const busy = (): boolean => {
+					if (this.plugin.cloudWaitingFrom === null) return false;
+					new Notice("Grill: a purchase is still on its way to this key. Wait for it, or press Stop checking first.", 8000);
+					return true;
+				};
+				if (cloudKey && this.plugin.cloudAccountId) {
+					setting.addText((t) => {
+						t.setValue(this.plugin.cloudAccountId);
+						t.inputEl.readOnly = true;
+						t.inputEl.ariaLabel = "Your account ID, to quote to support. It is not your key.";
+						t.inputEl.title = "Account ID (not your key)";
+						t.inputEl.onfocus = () => t.inputEl.select();
+					});
+				}
+				if (cloudKey) {
+					if (this.showCloudKey) {
+						setting.addText((t) => {
+							t.setValue(cloudKey);
+							t.inputEl.readOnly = true;
+							t.inputEl.ariaLabel = "Your Grill Cloud key";
+							// Select it all on focus, so one click and a copy shortcut is enough.
+							t.inputEl.onfocus = () => t.inputEl.select();
+						});
+					}
+					setting.addButton((b) =>
+						b.setButtonText(this.showCloudKey ? "Hide" : "Show").onClick(() => {
+							this.showCloudKey = !this.showCloudKey;
+							this.rerender();
+						}),
+					);
+				}
+				setting.addText((t) => {
+					t.setPlaceholder("Key from another vault")
+						.setValue(this.cloudKeyDraft)
+						.onChange((v) => {
+							this.cloudKeyDraft = v.trim();
+							this.cloudKeyConfirm = false;
+						});
+					t.inputEl.ariaLabel = "A Grill Cloud key from another vault";
+				});
+				setting.addButton((b) =>
+					b.setButtonText(this.cloudKeyConfirm ? "Replace key" : "Use this key").onClick(async () => {
+						const draft = this.cloudKeyDraft;
+						if (busy()) return;
+						if (!isCloudKey(draft)) {
+							new Notice("Grill: that isn't a Grill Cloud key.");
+							return;
+						}
+						if (draft === cloudKey) return;
+						if (cloudKey && !this.cloudKeyConfirm) {
+							this.cloudKeyConfirm = true;
+							new Notice(
+								"Grill: this replaces the key in use" +
+									(credits ? `, which has ${credits} credits on it` : "") +
+									". The old key is kept under Earlier keys, but save it yourself if it matters. Press Replace key to go ahead.",
+								10000,
+							);
+							this.rerender();
+							return;
+						}
+						const problem = await this.plugin.useCloudKey(draft);
+						this.cloudKeyConfirm = false;
+						this.cloudDeleteConfirm = false;
+						if (problem) {
+							new Notice(`Grill: ${problem}`, 8000);
+						} else {
+							this.cloudKeyDraft = "";
+							this.showCloudKey = false;
+						}
+						this.rerender();
+					}),
+				);
+				if (retired) {
+					if (this.showRetiredKeys) {
+						setting.addText((t) => {
+							t.setValue(s.retiredCloudKeys.join(" "));
+							t.inputEl.readOnly = true;
+							t.inputEl.ariaLabel = "Earlier Grill Cloud keys";
+							t.inputEl.onfocus = () => t.inputEl.select();
+						});
+					}
+					setting.addButton((b) =>
+						b.setButtonText(this.showRetiredKeys ? "Hide earlier keys" : "Earlier keys").onClick(() => {
+							this.showRetiredKeys = !this.showRetiredKeys;
+							this.rerender();
+						}),
+					);
+				}
+				if (cloudKey && state === "none") {
+					// Nothing on the server to delete: the key can only be let go of here.
+					setting.addButton((b) =>
+						b.setButtonText("Forget this key").onClick(async () => {
+							if (busy()) return;
+							await this.plugin.forgetCloudKey();
+							this.rerender();
+						}),
+					);
+				}
+				if (cloudKey && state !== "none") {
+					// Erasing is permanent and forfeits the balance, so it takes two presses.
+					setting.addButton((b) => {
+						b.setButtonText(this.cloudDeleteConfirm ? "Really delete" : "Delete account").onClick(async () => {
+							if (busy()) return;
+							if (!this.cloudDeleteConfirm) {
+								this.cloudDeleteConfirm = true;
+								new Notice(
+									"Grill: this deletes your Grill Cloud balance and usage from the server" +
+										(credits ? `, including the ${credits} credits on it` : "") +
+										". It can't be undone. Press Really delete to go ahead.",
+									10000,
+								);
+								this.rerender();
+								return;
+							}
+							this.cloudDeleteConfirm = false;
+							const problem = await this.plugin.deleteCloud();
+							new Notice(problem ? `Grill: ${problem} Nothing was deleted.` : "Grill: your Grill Cloud account is deleted.", 8000);
+							this.rerender();
+						});
+						if (this.cloudDeleteConfirm) {
+							// setDestructive is Obsidian 1.13+; setWarning is its older spelling.
+							const styled = b as unknown as { setDestructive?: () => unknown; setWarning?: () => unknown };
+							if (typeof styled.setDestructive === "function") styled.setDestructive();
+							else styled.setWarning?.();
+						}
+						return b;
+					});
+				}
+			},
+		};
 		const keyRow: Row = {
 			name: "API key",
 			desc:
 				p === "custom"
-					? `Sent as a Bearer token. Leave blank for local servers that don't require one. ${keyHome}`
+					? `Optional for local servers. ${keyHome}`
 					: `${keyHome} Get one at ${info.keyUrl}.`,
 			aliases: ["token", "secret"],
 			build: keyField,
 		};
 		const ollamaRow: Row = {
 			name: "Ollama server",
-			desc:
-				"Requires Ollama running locally (ollama.com). Nothing leaves your machine. " +
-				"Expect slower sessions and simpler questions than cloud models; 8B+ models recommended.",
+			desc: "Needs Ollama running locally. 8B+ models recommended.",
 			build: (setting) =>
 				setting.addText((t) =>
 					t
@@ -1949,8 +3007,21 @@ export class GrillSettingTab extends PluginSettingTab {
 						}),
 				),
 		};
+		// Not there at all, even for the settings search, in a build without Grill Cloud.
+		const cloudRows: Row[] = [];
+		if (cloudEnabled()) {
+			cloudRows.push(cloudRow);
+			if (all || cloudKey || s.retiredCloudKeys.length) cloudRows.push(cloudKeyRow);
+
+		} else if (p === "grillcloud") {
+			ai.push({
+				name: "Grill Cloud",
+				desc: "Grill Cloud isn't available in this version of Grill. Pick another provider above.",
+				build: () => undefined,
+			});
+		}
 		if (all || p === "custom") ai.push(baseUrlRow);
-		if (all || p === "custom" || info.needsKey) ai.push(keyRow);
+		if (all || p === "custom" || (info.needsKey && p !== "grillcloud")) ai.push(keyRow);
 		if (all || (p !== "custom" && !info.needsKey)) ai.push(ollamaRow);
 
 		const list = this.modelLists[p] ?? [];
@@ -1960,12 +3031,12 @@ export class GrillSettingTab extends PluginSettingTab {
 		ai.push({
 			name: "Model",
 			desc: staleCurrent
-				? `'${current}' was not found on your account and will fail. Pick a model from the list.`
+				? `'${current}' isn't on your account. Pick another.`
 				: list.length
-					? `${list.length} models available on your account, verified against your key.`
+					? `${list.length} models on your account.`
 					: p === "ollama"
-						? "Click refresh to list installed models from your Ollama server."
-						: "Showing common models. Click refresh to list what your key can access.",
+						? "Refresh to list your installed models."
+						: "Common models. Refresh to list yours.",
 			build: (setting) => {
 				setting.descEl.toggleClass("mod-warning", staleCurrent);
 				setting.addDropdown((d) => {
@@ -2030,16 +3101,12 @@ export class GrillSettingTab extends PluginSettingTab {
 
 		ai.push({
 			name: "Persona & instructions",
-			desc:
-				"A file in your Grill folder with two parts. Persona: Grill's default character is shown " +
-				"there, editable, so you can make it a strict examiner, a gentle guide, whatever you like. " +
-				"Instructions: how you want to be quizzed and graded. Scoring itself is fixed by the engine, " +
-				"so grades stay consistent whatever you write. Leave it blank for the defaults.",
+			desc: "Grill's character and how you want to be quizzed, in a note you can edit.",
 			aliases: ["prompt", "tone"],
 			build: (setting) =>
 				setting.addButton((b) =>
 					b
-						.setButtonText("Open")
+						.setButtonText("Manage")
 						.setTooltip("Create Grill/Instructions.md if needed and open it")
 						.onClick(() => void this.plugin.openInstructions()),
 				),
@@ -2067,9 +3134,7 @@ export class GrillSettingTab extends PluginSettingTab {
 			// end up somewhere undefined.
 			{
 				name: "Study intensity",
-				desc:
-					"How hard the schedule pushes: how often things come back, and how much new material a day " +
-					"introduces. Steady is what most people should leave this on.",
+				desc: "How often things come back and how much is new each day.",
 				aliases: ["retention", "spaced repetition", "fsrs", "schedule"],
 				build: (setting) =>
 					setting.addDropdown((d) => {
@@ -2093,10 +3158,7 @@ export class GrillSettingTab extends PluginSettingTab {
 			},
 			{
 				name: "Question formats",
-				desc:
-					"Mixed picks whichever format (multiple-choice, fill-in-the-blank, true/false, select-all, matching, " +
-					"or write-in) actually fits each concept. Set here, not in Instructions.md: a free-text preference " +
-					"there won't reliably stick.",
+				desc: "Mixed picks the format that fits each concept.",
 				build: (setting) =>
 					setting.addDropdown((d) =>
 						d
@@ -2112,9 +3174,7 @@ export class GrillSettingTab extends PluginSettingTab {
 			},
 			{
 				name: "Sound & celebration",
-				desc:
-					"Short sound cues on each answer and at the end of a session, plus a confetti burst when " +
-					"you get a whole session right. Synthesized on the fly (no files), gentle, and silent when off.",
+				desc: "Sound cues on answers, and confetti for a perfect session.",
 				aliases: ["audio", "confetti", "mute"],
 				build: (setting) =>
 					setting.addToggle((t) =>
@@ -2124,6 +3184,7 @@ export class GrillSettingTab extends PluginSettingTab {
 						}),
 					),
 			},
+			this.naturalVoiceRow(s),
 			this.voiceRow(s),
 		];
 
@@ -2131,10 +3192,7 @@ export class GrillSettingTab extends PluginSettingTab {
 		const graph: Row[] = [
 			{
 				name: "Colour by",
-				desc:
-					"Mastery is the default: grey untested, red learning, green known. The " +
-					"others colour every practised note on a green-to-red scale by a different signal, so you can " +
-					"spot what needs attention at a glance instead of reading it note by note.",
+				desc: "What the graph's colours show.",
 				aliases: ["color", "map"],
 				build: (setting) =>
 					setting.addDropdown((d) =>
@@ -2153,10 +3211,7 @@ export class GrillSettingTab extends PluginSettingTab {
 			},
 			{
 				name: "Grade numbers on the graph",
-				desc:
-					"Show a number on every practised node: your current coverage and mastery on that note folded " +
-					"into one score, so you can read \"what would I score on this right now\" at a glance instead of " +
-					"just a colour. Untested notes show nothing.",
+				desc: "Show a score on each practised note.",
 				build: (setting) =>
 					setting.addDropdown((d) =>
 						d
@@ -2182,9 +3237,7 @@ export class GrillSettingTab extends PluginSettingTab {
 		const scope: Row[] = [
 			{
 				name: "Grill's folders",
-				desc:
-					"Comma-separated folders that ARE Grill's study material and knowledge graph. Relative paths, " +
-					"e.g. Courses, Zettelkasten. Leave blank to use your whole vault.",
+				desc: "Folders to study, comma-separated. Blank for the whole vault.",
 				aliases: ["include", "scope"],
 				build: (setting) =>
 					setting.addText((t) =>
@@ -2199,9 +3252,7 @@ export class GrillSettingTab extends PluginSettingTab {
 			},
 			{
 				name: "Excluded folders",
-				desc:
-					"Comma-separated folders to leave out of sessions, so notes like templates and attachments " +
-					"aren't quizzed. Relative paths, e.g. Templates, Inbox, Archive.",
+				desc: "Folders to leave out, comma-separated.",
 				aliases: ["ignore", "skip"],
 				build: (setting) =>
 					setting.addText((t) =>
@@ -2216,9 +3267,16 @@ export class GrillSettingTab extends PluginSettingTab {
 			},
 		];
 
+		// Study mode is about how you study, not which model runs it.
+		const studyMode = ai.splice(ai.findIndex((r) => r.name === "Study mode"), 1);
 		return [
-			{ heading: "AI", rows: ai },
-			{ heading: "Studying", rows: studying },
+			...(cloudRows.length ? [{ heading: "Grill Cloud", rows: cloudRows }] : []),
+			// Grill Cloud picks the model itself.
+			{
+				heading: cloudEnabled() ? "Your own key or Ollama" : "AI",
+				rows: all || p !== "grillcloud" ? ai : ai.filter((r) => r.name !== "Model" && r.name !== "Custom model ID"),
+			},
+			{ heading: "Studying", rows: [...studyMode, ...studying] },
 			{ heading: "Graph", rows: graph },
 			{ heading: "Scope", rows: scope },
 		];

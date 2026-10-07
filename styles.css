@@ -2023,3 +2023,550 @@ textarea.grill-mgmt-field {
 .grill-mgmt-empty .grill-meta {
   max-width: 32em;
 }
+
+/* The Grill Cloud key row: its controls go under the description, not beside it,
+   so the text keeps its width. */
+.setting-item.grill-cloud-key {
+  flex-wrap: wrap;
+}
+.setting-item.grill-cloud-key > .setting-item-info {
+  flex: 1 1 100%;
+}
+.setting-item.grill-cloud-key > .setting-item-control {
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  margin-top: 0.6em;
+}
+
+/* A slow pulse on text while a purchase is being waited for. */
+@keyframes grill-cloud-wait {
+  50% { opacity: 0.45; }
+}
+
+/* Grill Cloud's balance on the home screen: one quiet line above the start button. */
+.grill-cloud-line {
+	margin-bottom: var(--size-4-2);
+}
+
+/* ---------------------------------------------------------------- Grill Cloud
+   Everything here is built from Obsidian's own variables and Grill's own elements.
+   Nothing restyles .setting-item itself: themes own that, and override it. */
+
+/* First run: the step indicator and Back. */
+.grill-onboard-steps {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1em;
+  margin-bottom: 0.8em;
+}
+.grill-onboard-steps > .grill-meta:only-child {
+  margin-left: auto;
+}
+.grill-onboard-setup {
+  flex-direction: column;
+}
+.grill-mode-choice {
+  flex-wrap: wrap;
+}
+.grill-mode-card {
+  flex: 1 1 11em;
+}
+.grill-onboard-others {
+  margin: 0.9em 0 0.2em;
+  text-align: center;
+  line-height: 1.7;
+}
+.grill-onboard-others a {
+  cursor: pointer;
+}
+
+/* The Grill Cloud panel: onboarding's recommended choice, and the one-time offer. */
+.grill-cloud-panel {
+  text-align: left;
+  padding: 1em 1.1em;
+  margin: 0.4em 0 0.2em;
+  border: 1px solid var(--interactive-accent);
+  border-radius: var(--radius-m, 8px);
+  background: var(--background-primary-alt, var(--background-secondary));
+}
+.grill-cloud-offer .grill-cloud-panel {
+  /* The offer is the box: the panel inside it is drawn without its own. */
+  border: 0;
+  padding: 0;
+  margin: 0;
+  background: none;
+}
+.grill-cloud-panel-title {
+  font-size: var(--font-ui-large, 1.15em);
+  font-weight: var(--font-semibold, 600);
+  color: var(--text-normal);
+}
+.grill-cloud-panel-lead {
+  margin: 0.25em 0 0.6em;
+  color: var(--text-normal);
+}
+.grill-mode-tag {
+  margin-left: 0.6em;
+  padding: 0.1em 0.55em;
+  border-radius: 999px;
+  font-size: var(--font-ui-smaller, 0.8em);
+  font-weight: var(--font-normal, 400);
+  color: var(--text-on-accent);
+  background: var(--interactive-accent);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+/* Plain blocks with a drawn tick, not a list: themes restyle list items and markers. */
+.grill-cloud-facts {
+  margin: 0.5em 0;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.grill-cloud-fact {
+  position: relative;
+  padding-left: 1.5em;
+  margin: 0.2em 0;
+}
+.grill-cloud-fact::before {
+  content: "\2713";
+  position: absolute;
+  left: 0.1em;
+  color: var(--interactive-accent);
+  font-weight: var(--font-semibold, 600);
+}
+.grill-cloud-more {
+  margin: 0.2em 0 0.6em;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small, 0.9em);
+}
+.grill-cloud-more summary {
+  cursor: pointer;
+  color: var(--text-accent);
+}
+.grill-cloud-more p {
+  margin: 0.4em 0 0;
+  line-height: 1.5;
+}
+.grill-cloud-go {
+  display: block;
+  width: 100%;
+  margin-top: 0.7em;
+}
+
+/* Buttons that buy credits, wherever they appear. */
+.grill-cloud-buy {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+  margin-top: 0.5em;
+}
+.grill-cloud-buy:empty {
+  display: none;
+}
+
+/* The one-time note on the home screen that Grill Cloud exists. */
+.grill-cloud-offer {
+  margin-bottom: var(--size-4-3, 12px);
+  padding: 0.9em 1em;
+  border: 1px solid var(--interactive-accent);
+  border-radius: var(--radius-m, 8px);
+  background: var(--background-primary-alt, var(--background-secondary));
+  text-align: left;
+}
+.grill-cloud-offer-title {
+  font-size: var(--font-ui-smaller, 0.8em);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-accent);
+  margin-bottom: 0.4em;
+}
+.grill-cloud-offer > .grill-chip-link {
+  display: inline-block;
+  margin-top: 0.6em;
+  cursor: pointer;
+}
+
+/* Settings: Grill Cloud is one card in Grill's own colours. The row around it is
+   only a holder: its own text is hidden (it is still there for the settings search),
+   and whatever a theme does to the row, the card inside stays itself. */
+.setting-item.grill-cloud-hero {
+  display: block;
+  padding: 0.6em 0;
+  border: 0;
+  background: none;
+}
+.setting-item.grill-cloud-hero > .setting-item-info {
+  display: none;
+}
+.grill-cloud-card.grill-arcade-screen {
+  text-align: left;
+  padding: 1.1em 1.3em 1.2em;
+}
+.grill-cloud-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1em;
+  margin-bottom: 0.7em;
+}
+.grill-cloud-card-head .grill-arcade-mark {
+  margin: 0;
+  font-size: 0.72em;
+}
+.grill-cloud-chip {
+  padding: 0.1em 0.6em;
+  border-radius: 999px;
+  font-size: var(--font-ui-smaller, 0.8em);
+  color: var(--grill-dim, #c9a875);
+  border: 1px solid var(--grill-ember-dark, #5c1400);
+  white-space: nowrap;
+}
+.grill-cloud-chip.is-on {
+  color: var(--grill-screen-deep, #0f0904);
+  background: var(--grill-gold, #ffd23f);
+  border-color: var(--grill-gold, #ffd23f);
+  font-weight: var(--font-semibold, 600);
+}
+.grill-cloud-balance {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5em;
+  margin: 0.1em 0 0.3em;
+}
+.grill-cloud-balance-number {
+  font-family: "Grill Pixel", var(--font-monospace);
+  font-size: 1.9em;
+  line-height: 1.1;
+  color: var(--grill-gold-lit, #ffe98a);
+  text-shadow: 0 0 8px var(--grill-flame, #ff7a22);
+}
+.grill-cloud-balance-unit {
+  color: var(--grill-dim, #c9a875);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: var(--font-ui-smaller, 0.8em);
+}
+.grill-cloud-card .grill-cloud-buy {
+  margin-top: 0.9em;
+}
+.grill-cloud-card .grill-cloud-buy > .setting-item-control {
+  display: flex;
+  flex-wrap: wrap;
+  flex: 1;
+  gap: 0.5em;
+  justify-content: flex-start;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+}
+.grill-cloud-card-corner {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+}
+.grill-cloud-card-corner .extra-setting-button {
+  color: var(--grill-dim, #c9a875);
+}
+.grill-cloud-card-foot {
+  margin-top: 0.8em;
+  font-size: var(--font-ui-smaller, 0.8em);
+  color: var(--grill-dim, #c9a875);
+  opacity: 0.85;
+}
+.grill-cloud-card.grill-cloud-waiting .grill-cloud-card-body .grill-meta {
+  animation: grill-cloud-wait 1.6s ease-in-out infinite;
+}
+.grill-cloud-card.grill-cloud-arrived .grill-cloud-balance-number {
+  animation: grill-cloud-pop 1.4s ease-out 1;
+}
+@keyframes grill-cloud-pop {
+  0% { transform: scale(1.18); transform-origin: left center; color: var(--grill-gold-white, #fff2b0); }
+  100% { transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .grill-cloud-card.grill-cloud-waiting .grill-cloud-card-body .grill-meta,
+  .grill-cloud-card.grill-cloud-arrived .grill-cloud-balance-number {
+    animation: none;
+  }
+}
+/* The key and links rows stay ordinary rows; their controls wrap on a narrow window. */
+.setting-item.grill-cloud-row {
+  flex-wrap: wrap;
+  row-gap: 0.6em;
+  align-items: center;
+}
+.setting-item.grill-cloud-row > .setting-item-info {
+  min-width: min(16em, 100%);
+}
+.setting-item.grill-cloud-row > .setting-item-control {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* Inside the arcade screens the ground is always dark, whatever the theme, so Grill
+   Cloud's pieces there take the cabinet's colours, not the theme's. */
+.grill-arcade-screen .grill-cloud-panel,
+.grill-arcade-screen .grill-cloud-offer {
+  background: var(--grill-screen-deep, #0f0904);
+  border-color: var(--grill-gold, #ffd23f);
+}
+.grill-arcade-screen .grill-cloud-offer .grill-cloud-panel {
+  background: none;
+}
+.grill-arcade-screen .grill-cloud-panel-title {
+  color: var(--grill-gold-lit, #ffe98a);
+}
+.grill-arcade-screen .grill-cloud-panel-lead {
+  color: var(--grill-gold-lit, #ffe98a);
+}
+.grill-arcade-screen .grill-cloud-facts,
+.grill-arcade-screen .grill-cloud-more {
+  color: var(--grill-dim, #c9a875);
+}
+.grill-arcade-screen .grill-cloud-fact::before,
+.grill-arcade-screen .grill-cloud-offer-title {
+  color: var(--grill-flame, #ff7a22);
+}
+.grill-arcade-screen .grill-cloud-more summary,
+.grill-arcade-screen .grill-onboard-others a {
+  color: var(--grill-gold, #ffd23f);
+}
+.grill-arcade-screen .grill-mode-tag {
+  background: var(--grill-ember, #b91c00);
+  color: var(--grill-gold-lit, #ffe98a);
+}
+.grill-arcade-screen .grill-cloud-buy button.mod-cta {
+  background-image: none;
+  background: var(--grill-flame, #ff7a22);
+  color: var(--grill-screen-deep, #0f0904);
+  font-weight: var(--font-semibold, 600);
+  border: 0;
+  box-shadow: none;
+}
+.grill-arcade-screen .grill-cloud-buy button:not(.mod-cta) {
+  background: transparent;
+  color: var(--grill-gold, #ffd23f);
+  border: 1px solid var(--grill-ember, #b91c00);
+  box-shadow: none;
+}
+.grill-arcade-screen .grill-cloud-buy button:hover {
+  filter: brightness(1.12);
+}
+
+/* The home screen's credit counter: on the GRILL mark's own line, at its right end,
+   like the credits on an arcade machine. It is a child of the mark, so it shares its
+   lettering, size and baseline. A link to settings, where more can be added. */
+.grill-arcade-mark {
+  position: relative;
+}
+.grill-arcade-mark > .grill-cloud-counter {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.6em;
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+.grill-cloud-counter:empty {
+  display: none;
+}
+.grill-cloud-counter-label {
+  color: var(--grill-dim, #c9a875);
+  text-shadow: none;
+  text-transform: uppercase;
+}
+.grill-cloud-counter-number {
+  color: var(--grill-gold-lit, #ffe98a);
+}
+.grill-cloud-counter:hover .grill-cloud-counter-number {
+  color: var(--grill-gold-white, #fff2b0);
+}
+.grill-cloud-counter.is-low .grill-cloud-counter-number {
+  color: var(--grill-flame-hot, #ff5a1f);
+  animation: grill-cloud-wait 1.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .grill-cloud-counter.is-low .grill-cloud-counter-number {
+    animation: none;
+  }
+}
+
+/* ---------------------------------------------------------------- the question bar
+   One line, read left to right as what to do: answer (and say how sure), then, for
+   when you're stuck, a hint or "I don't know", and a flag at the far end that throws
+   out a bad question. On a narrow pane it wraps as whole groups, never button by button. */
+.grill-answer-bar {
+  flex-wrap: wrap;
+  row-gap: 0.6em;
+  column-gap: 0.7em;
+  margin-top: 0.8em;
+}
+.grill-answer-main,
+.grill-answer-stuck {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 0.4em;
+}
+.grill-answer-main .grill-confidence {
+  margin: 0 0 0 0.3em;
+  gap: 0.25em;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+.grill-answer-main .grill-conf-btn {
+  padding: 0.2em 0.5em;
+}
+.grill-answer-stuck {
+  margin-left: auto;
+}
+.grill-answer-stuck .grill-quiet-btn {
+  margin-left: 0;
+  padding-left: 0.5em;
+  padding-right: 0.5em;
+}
+.grill-bad-question-btn.clickable-icon {
+  color: var(--text-faint);
+}
+.grill-bad-question-btn.clickable-icon:hover {
+  color: var(--text-error, var(--text-normal));
+}
+
+/* After the answer: what next, on one line, with the rare overrides at its end. */
+.grill-next-bar {
+  flex-wrap: wrap;
+  margin-top: var(--grill-space-md, 1em);
+}
+.grill-next-quiet {
+  display: flex;
+  align-items: center;
+  gap: 0.3em;
+  margin-left: auto;
+}
+.grill-next-quiet .grill-quiet-btn {
+  margin-left: 0;
+}
+
+/* Ask about this: the conversation that flows down from the question. */
+.grill-thread {
+  margin: var(--grill-space-md, 1em) 0 0;
+  padding-left: 0.9em;
+  border-left: 2px solid var(--interactive-accent);
+}
+.grill-thread-turn {
+  margin-bottom: 0.8em;
+}
+.grill-thread-who {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  font-size: var(--font-ui-smaller, 0.8em);
+  font-weight: var(--font-semibold, 600);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 0.1em;
+}
+.grill-thread-turn.is-tutor .grill-thread-who {
+  color: var(--text-accent);
+}
+.grill-thread-text > :first-child {
+  margin-top: 0;
+}
+.grill-thread-text > :last-child {
+  margin-bottom: 0;
+}
+.grill-thread-turn.is-waiting .grill-thread-text {
+  animation: grill-cloud-wait 1.4s ease-in-out infinite;
+}
+.grill-thread-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5em;
+}
+.grill-thread-input {
+  flex: 1;
+  min-height: 2.6em;
+  resize: vertical;
+}
+@media (prefers-reduced-motion: reduce) {
+  .grill-thread-turn.is-waiting .grill-thread-text {
+    animation: none;
+  }
+}
+
+/* Read the feedback aloud: at the far end of the verdict row. */
+.grill-verdict-row .grill-tts-feedback {
+  margin-left: auto;
+}
+
+/* The explanation as the tutor's first turn, and anything it drew. */
+.grill-thread-text.grill-explanation {
+  margin: 0;
+}
+/* The speaker on a tutor's turn sits at the far right, in line with the one on the
+   verdict card above it. */
+.grill-thread {
+  padding-right: var(--grill-space-md, 1em);
+}
+.grill-thread-who .grill-tts-btn {
+  margin: 0 0 0 auto;
+  text-transform: none;
+}
+/* Pressed, and the voice is on its way. */
+.grill-tts-btn.is-loading {
+  animation: grill-cloud-wait 0.9s ease-in-out infinite;
+  color: var(--text-accent);
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .grill-tts-btn.is-loading {
+    animation: none;
+  }
+}
+
+/* "New in Grill 7.0", once, on the home screen. */
+.grill-whats-new .grill-cloud-facts {
+  margin: 0.2em 0 0.6em;
+}
+.grill-whats-new .grill-cloud-fact strong {
+  color: var(--grill-gold-lit, #ffe98a);
+}
+.grill-whats-new .grill-cloud-panel-title,
+.grill-whats-new .grill-cloud-panel-lead {
+  display: none;
+}
+
+/* What Start free agrees to, in plain sight under the button. */
+.grill-cloud-agree {
+  margin-top: 0.6em;
+  font-size: var(--font-ui-smaller, 0.85em);
+}
+.grill-arcade-screen .grill-cloud-agree a {
+  color: var(--grill-gold, #ffd23f);
+}
+.grill-mark-alone {
+  margin: 0.4em 0 0 auto;
+  display: block;
+}
+
+/* Privacy and terms: small print at the foot of the Grill Cloud card. */
+.grill-cloud-legal {
+  margin-top: 0.4em;
+  display: flex;
+  gap: 1em;
+}
+.grill-arcade-screen .grill-cloud-legal a {
+  color: var(--grill-dim, #c9a875);
+  text-decoration: underline;
+}
+.grill-arcade-screen .grill-cloud-legal a:hover {
+  color: var(--grill-gold, #ffd23f);
+}

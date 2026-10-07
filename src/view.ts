@@ -2,7 +2,8 @@
 
 import { ItemView, MarkdownRenderer, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
-import { adjudicateBridges, ConceptTarget, contentWords, debriefSession, embedTexts, explainQuestion, formatSatisfies, generateQuestions, Grade, gradeAnswer, LLMConfig, PROVIDERS, ProviderId, Question, supportsEmbeddings, supportsVision, testModel, Verdict } from "./llm";
+import { cloud, CLOUD_FACTS, CLOUD_PITCH, cloudEnabled, creditsInWords, lowBalance, usageInWords } from "./cloud";
+import { adjudicateBridges, ConceptTarget, contentWords, debriefSession, discussQuestion, embedTexts, explainQuestion, formatSatisfies, generateQuestions, Grade, CloudError, gradeAnswer, LLMConfig, offeredProviders, PROVIDERS, ProviderId, Question, supportsEmbeddings, supportsVision, testModel, ThreadTurn, Verdict } from "./llm";
 import { detectOcclusionRegions } from "./ocr";
 import {
 	Concept,
@@ -71,10 +72,14 @@ import {
 import { dueFiles, filesForScope, listFolders, listTags, Scope, untestedFiles } from "./scope";
 import { CONFIDENCE_LEVELS, calibrationLine, pushCalibration } from "./calibration";
 import { celebrate, playSfx } from "./sfx";
-import { speak, stopSpeaking, toSpeechText, ttsAvailable } from "./tts";
+import { stopSpeaking, toSpeechText, ttsAvailable } from "./tts";
 import { SessionEntry } from "./store";
 
 export const VIEW_TYPE = "grill-session";
+/** Follow-ups one question's thread takes before it suggests moving on. */
+const THREAD_LIMIT = 12;
+/** The id under which the one-time "New in 7.0" box is remembered as seen. */
+const NEW_IN_7 = "new-7.0";
 
 /** Uniform (Fisher-Yates) shuffle for MC/multi choice order and match-pair pool order.
  * `.sort(() => Math.random() - 0.5)` is a well-known anti-pattern here: a sort
@@ -533,6 +538,7 @@ export class SessionView extends ItemView {
 	}
 
 	async onOpen(): Promise<void> {
+		this.plugin.cloudListeners.add(this.onCloud);
 		this.observePaneWidth();
 		if (!this.plugin.data.settings.onboarded) this.renderOnboarding();
 		else this.renderStart();
@@ -614,6 +620,9 @@ export class SessionView extends ItemView {
 
 	/** Public entry so the plugin can force the first-run screen on install. */
 	showOnboarding(): void {
+		// Run again by someone already set up: start from the folders they have, so
+		// clicking through doesn't widen what Grill studies (and, on Grill Cloud, sends).
+		this.onboardFolders = new Set(this.plugin.data.settings.includedFolders);
 		this.renderOnboarding();
 	}
 
@@ -629,56 +638,136 @@ export class SessionView extends ItemView {
 	}
 
 	/** First-run: choose which folders are Grill's study material + graph. */
-	private renderOnboarding(): void {
+	/** Folders ticked in onboarding, kept while moving between its steps. */
+	private onboardFolders = new Set<string>();
+
+	/** First run, as three short steps with one decision each: what Grill is, how the
+	 * questions get written, which notes. With Grill Cloud available the second step
+	 * leads with it: it is the only way to AI questions that needs nothing set up, and
+	 * getting an API key was where new installs gave up. The other two ways are one
+	 * click away on the same screen. */
+	private renderOnboarding(step: 1 | 2 | 3 = 1, own = false): void {
 		const wrap = this.root(true);
-		// First impression, one-time, non-interactive-heavy — the same full cabinet as
-		// the start screen, not the subtle touch reserved for the actual study flow.
-		const screen = wrap.createDiv({ cls: "grill-arcade-screen" });
+		this.cloudRedraw = null;
+		const s = this.plugin.data.settings;
+		const screen = wrap.createDiv({ cls: "grill-arcade-screen grill-onboard" });
 		screen.createDiv({ cls: "grill-arcade-mark", text: "GRILL" });
-		screen.createDiv({ cls: "grill-score", text: "Welcome to Grill" });
+		const steps = screen.createDiv({ cls: "grill-onboard-steps" });
+		if (step > 1) {
+			const back = steps.createEl("a", { cls: "grill-chip-link", text: "Back" });
+			back.onclick = () => this.renderOnboarding(own ? 2 : ((step - 1) as 1 | 2));
+		}
+		steps.createSpan({ cls: "grill-meta", text: `Step ${step} of 3` });
+		// Someone already set up who opened this from the command can leave it as it was.
+		if (s.onboarded) {
+			const cancel = steps.createEl("a", { cls: "grill-chip-link", text: "Cancel" });
+			cancel.onclick = () => this.renderStart();
+		}
 
-		const how = screen.createEl("ul", { cls: "grill-onboard-how" });
-		const point = (lead: string, rest: string): void => {
-			const li = how.createEl("li");
-			li.createEl("strong", { text: lead });
-			li.appendText(` ${rest}`);
-		};
-		point("Quiz yourself", "on your own notes. Grill writes the questions.");
-		point("Watch your map fill in", "as you prove what you know.");
-		point("Study anything", "in one folder, a tag, or the whole vault.");
+		if (step === 1) {
+			screen.createDiv({ cls: "grill-score", text: "Welcome to Grill" });
+			const how = screen.createEl("ul", { cls: "grill-onboard-how" });
+			const point = (lead: string, rest: string): void => {
+				const li = how.createEl("li");
+				li.createEl("strong", { text: lead });
+				li.appendText(` ${rest}`);
+			};
+			point("Quiz yourself", "on your own notes. Grill writes the questions.");
+			point("Watch your map fill in", "as you prove what you know.");
+			point("Study anything", "in one folder, a tag, or the whole vault.");
+			const next = screen.createEl("button", { text: "Set it up", cls: "mod-cta grill-start-btn grill-primary-cta" });
+			next.onclick = () => this.renderOnboarding(2);
+			return;
+		}
 
-		// The default (AI questions + AI grading) needs a key, and onboarding used to
-		// never ask — a fresh install with no key clicked "Get grilled" and hit a dead
-		// Notice on its very first try. Asking here means the no-key path is a conscious
-		// pick, not a discovery made by failing.
-		screen.createDiv({ cls: "grill-section-label", text: "How do you want to study?" });
-		let mode: "ai" | "local" = "ai";
-		const modeBox = screen.createDiv({ cls: "grill-mode-choice" });
-		const aiCard = modeBox.createDiv({ cls: "grill-mode-card is-active" });
-		aiCard.createDiv({ cls: "grill-mode-title", text: "AI-powered" });
-		aiCard.createDiv({
-			cls: "grill-meta",
-			text: "AI writes and grades questions from your notes. Uses your own API key, or a local model through Ollama.",
-		});
-		const localCard = modeBox.createDiv({ cls: "grill-mode-card" });
-		localCard.createDiv({ cls: "grill-mode-title", text: "Fully offline" });
-		localCard.createDiv({
-			cls: "grill-meta",
-			text: "Questions built from your notes' own structure, graded by you. No key, no cost, nothing leaves your vault.",
-		});
-		// Key setup right here, not "go find Settings later": the old flow's first "Get
-		// grilled" was a Notice instead of a question, the likeliest point for a fresh
-		// install to give up. Writes the same settings fields the settings tab does.
-		const setup = screen.createDiv({ cls: "grill-onboard-setup" });
-		this.renderProviderSetup(setup);
-		const pickMode = (m: "ai" | "local"): void => {
-			mode = m;
-			aiCard.toggleClass("is-active", m === "ai");
-			localCard.toggleClass("is-active", m === "local");
-			setup.toggle(m === "ai");
-		};
-		aiCard.onclick = () => pickMode("ai");
-		localCard.onclick = () => pickMode("local");
+		if (step === 2) {
+			const useAI = (): void => {
+				s.questionSource = "ai";
+				s.gradingMode = "ai";
+			};
+			const offline = async (): Promise<void> => {
+				s.questionSource = "local";
+				s.gradingMode = "self";
+				await this.plugin.persist();
+				this.renderOnboarding(3);
+			};
+			if (own) {
+				// A key of one's own: the same fields the settings tab writes.
+				screen.createDiv({ cls: "grill-section-label", text: "Your own key or Ollama" });
+				screen.createEl("p", { cls: "grill-meta", text: "AI writes and grades questions from your notes, on a model you pay for or run yourself." });
+				this.renderProviderSetup(screen.createDiv({ cls: "grill-onboard-setup" }));
+				const next = screen.createEl("button", { text: "Continue", cls: "mod-cta grill-start-btn grill-primary-cta" });
+				next.onclick = async () => {
+					// Pick up a value typed but not yet blurred.
+					screen.querySelectorAll("input").forEach((i) => i.dispatchEvent(new Event("change")));
+					if (s.provider === "grillcloud") s.provider = "anthropic";
+					useAI();
+					await this.plugin.persist();
+					this.renderOnboarding(3);
+				};
+				return;
+			}
+			screen.createDiv({ cls: "grill-section-label", text: "How should Grill write your questions?" });
+			if (!cloudEnabled()) {
+				const box = screen.createDiv({ cls: "grill-mode-choice" });
+				const card = (title: string, text: string): HTMLElement => {
+					const el = box.createDiv({ cls: "grill-mode-card" });
+					el.createDiv({ cls: "grill-mode-title", text: title });
+					el.createDiv({ cls: "grill-meta", text });
+					return el;
+				};
+				card("AI-powered", "AI writes and grades questions from your notes. Uses your own API key, or a local model through Ollama.").onclick = () =>
+					this.renderOnboarding(2, true);
+				card("Fully offline", "Questions built from your notes' own structure, graded by you. No key, no cost, nothing leaves your vault.").onclick = () =>
+					void offline();
+				return;
+			}
+			const panel = screen.createDiv({ cls: "grill-cloud-panel" });
+			const go = this.renderCloudPanel(panel, true);
+			// With a key already here (set up before, or arrived by sync): show what's on
+			// it, and redraw this step when that changes.
+			const again = (): void => {
+				if (panel.isConnected) this.renderOnboarding(2);
+			};
+			this.cloudRedraw = again;
+			if (s.apiKeys.grillcloud && this.plugin.cloudState === "unknown") {
+				void this.plugin.refreshCloud().then(() => {
+					if (this.plugin.cloudState !== "unknown") again();
+				});
+			}
+			go.onclick = async () => {
+				// A key whose account is open just carries on. Anything else asks the server
+				// (again): a first try that didn't get through must not cost the free credits.
+				if (s.apiKeys.grillcloud && this.plugin.cloudState === "ok") {
+					s.provider = "grillcloud";
+					useAI();
+					await this.plugin.persist();
+					this.renderOnboarding(3);
+					return;
+				}
+				go.disabled = true;
+				go.setText("Setting up...");
+				let message = "Something went wrong. Try again.";
+				try {
+					message = await this.plugin.startCloud();
+				} finally {
+					go.disabled = false;
+				}
+				new Notice(`Grill: ${message}`, 8000);
+				// Not reached, or refused: stay here, where another way can be picked.
+				const reached = this.plugin.cloudState === "ok" || this.plugin.cloudState === "none";
+				this.renderOnboarding(reached ? 3 : 2);
+			};
+			// The other two ways, plainly there, one click each.
+			const others = screen.createDiv({ cls: "grill-onboard-others" });
+			others.createSpan({ cls: "grill-meta", text: "Or " });
+			const mine = others.createEl("a", { text: "use my own API key or Ollama" });
+			mine.onclick = () => this.renderOnboarding(2, true);
+			others.createSpan({ cls: "grill-meta", text: ", or " });
+			const none = others.createEl("a", { text: "study offline with no AI" });
+			none.onclick = () => void offline();
+			return;
+		}
 
 		screen.createDiv({ cls: "grill-section-label", text: "Which folders should Grill study?" });
 		screen.createEl("p", {
@@ -689,7 +778,7 @@ export class SessionView extends ItemView {
 		const folderRoot = `${this.plugin.data.settings.folder}/`;
 		const eligible = this.app.vault.getMarkdownFiles().filter((f) => !f.path.startsWith(folderRoot));
 		const folders = listFolders(eligible);
-		const chosen = new Set<string>();
+		const chosen = this.onboardFolders;
 
 		if (!folders.length) {
 			screen.createEl("p", { cls: "grill-meta", text: "No folders found — Grill will use your whole vault." });
@@ -716,6 +805,7 @@ export class SessionView extends ItemView {
 				const row = list.createDiv({ cls: "grill-onboard-row" });
 				rows.push({ path, el: row });
 				const cb = row.createEl("input", { attr: { type: "checkbox" } });
+				cb.checked = chosen.has(path);
 				cb.onchange = () => {
 					if (cb.checked) chosen.add(path);
 					else chosen.delete(path);
@@ -737,18 +827,100 @@ export class SessionView extends ItemView {
 			};
 		}
 
-		const btn = screen.createEl("button", { text: "Get started", cls: "mod-cta grill-start-btn grill-primary-cta" });
+		const btn = screen.createEl("button", { text: "Get grilled", cls: "mod-cta grill-start-btn grill-primary-cta" });
 		btn.onclick = async () => {
-			this.plugin.data.settings.includedFolders = [...chosen];
-			if (mode === "local") {
-				this.plugin.data.settings.questionSource = "local";
-				this.plugin.data.settings.gradingMode = "self";
-			}
-			this.plugin.data.settings.onboarded = true;
+			s.includedFolders = [...chosen];
+			s.dismissedOffers = [...new Set([...s.dismissedOffers, NEW_IN_7])];
+			s.onboarded = true;
 			await this.plugin.persist();
 			this.plugin.refreshStatusBar();
+			// The home screen first, so there is somewhere to land if a session can't
+			// start (no key yet, no notes in scope); then straight into the first one.
 			this.renderStart();
+			void this.startSession();
 		};
+	}
+
+	/** A typed answer whose marking failed, put back into the box when it is redrawn. */
+	private keptAnswer: { idx: number; text: string } | null = null;
+
+	/** Show what went wrong with a model call. Grill Cloud's errors are plain sentences
+	 * already; when buying credits would fix it, the notice has a Top up button. */
+	private tellError(e: unknown, tail = ""): void {
+		const message = (e as Error)?.message ?? "Something went wrong.";
+		if (!(e instanceof CloudError && e.needsCredits)) {
+			new Notice(`Grill: ${message}${tail}`, e instanceof CloudError ? 10000 : 8000);
+			return;
+		}
+		// Credits are bought in settings, never here: this is where studying happens.
+		const notice = new Notice(
+			createFragment((f) => {
+				f.createSpan({ text: `Grill: ${message}${tail} ` });
+				const open = f.createEl("a", { text: "Open settings" });
+				open.onclick = (ev) => {
+					ev.preventDefault();
+					this.plugin.openSettings();
+					notice.hide();
+				};
+			}),
+			15000,
+		);
+	}
+
+	/** What the Grill Cloud parts of whichever screen is up should do when the balance,
+	 * the key or a wait for a purchase changes. One slot: only one screen is up. */
+	private cloudRedraw: (() => void) | null = null;
+	private onCloud = (): void => this.cloudRedraw?.();
+
+	/** Grill Cloud, offered: what it is, what it costs, where notes go, before anything
+	 * is sent; or, once it's on, the balance and how to add to it. Used by onboarding
+	 * and by the one-time offer on the home screen. Returns the main button, for the
+	 * caller to wire: "Start free" with no key yet, `Continue` with one. */
+	private renderCloudPanel(el: HTMLElement, recommended = false): HTMLButtonElement {
+		el.empty();
+		el.addClass("grill-cloud-panel");
+		const has = !!this.plugin.data.settings.apiKeys.grillcloud;
+		const credits = this.plugin.cloudCredits;
+		const state = this.plugin.cloudState;
+		const head = el.createDiv({ cls: "grill-cloud-panel-title", text: "Grill Cloud" });
+		if (recommended) head.createSpan({ cls: "grill-mode-tag", text: "Recommended" });
+		el.createDiv({ cls: "grill-cloud-panel-lead", text: "AI writes and grades questions from your notes. Nothing to set up." });
+		if (!has) {
+			if (this.plugin.sharesDeviceCloud()) el.createDiv({ cls: "grill-meta", text: "You already use Grill Cloud in another vault on this device. Starting here uses the same balance." });
+			const facts = el.createDiv({ cls: "grill-cloud-facts" });
+			for (const fact of CLOUD_FACTS) facts.createDiv({ cls: "grill-cloud-fact", text: fact });
+			const more = el.createEl("details", { cls: "grill-cloud-more" });
+			more.createEl("summary", { text: "What exactly is sent?" });
+			more.createEl("p", { text: CLOUD_PITCH });
+			const go = el.createEl("button", { text: "Start free", cls: "mod-cta grill-cloud-go grill-primary-cta" });
+			// What pressing it agrees to, in plain sight beside it, not folded away.
+			if (cloud.privacyUrl || cloud.termsUrl) {
+				const legal = el.createDiv({ cls: "grill-cloud-agree grill-meta" });
+				legal.appendText("For ages 18 and over. By starting you agree to the ");
+				if (cloud.termsUrl) legal.createEl("a", { text: "terms", href: cloud.termsUrl });
+				if (cloud.privacyUrl && cloud.termsUrl) legal.appendText(" and the ");
+				if (cloud.privacyUrl) legal.createEl("a", { text: "privacy policy", href: cloud.privacyUrl });
+				legal.appendText(".");
+			}
+			return go;
+		}
+		// A redraw of this panel loses the caller's button, so the caller redraws itself.
+		el.createEl("p", {
+			cls: "grill-meta",
+			text:
+				state === "none"
+					? "On, with no credits yet. Add credits in settings to begin."
+					: state === "ok" && credits !== null
+						? `On. ${creditsInWords(credits)}. ${usageInWords(this.plugin.data.settings.cloudUsage)}`
+						: state === "refused" || state === "offline"
+							? this.plugin.cloudNote || "Couldn't reach Grill Cloud."
+							: "Checking your balance...",
+		});
+		if (state === "none" || (state === "ok" && (credits ?? 0) < lowBalance(this.plugin.data.settings.cloudUsage))) {
+			const more = el.createEl("a", { cls: "grill-chip-link", text: "Add credits in settings" });
+			more.onclick = () => this.plugin.openSettings();
+		}
+		return el.createEl("button", { text: state === "ok" ? "Continue with Grill Cloud" : "Start free", cls: "mod-cta grill-cloud-go grill-primary-cta" });
 	}
 
 	/** Provider + key (or server URL) + a Check button, for onboarding. Re-renders itself
@@ -756,7 +928,11 @@ export class SessionView extends ItemView {
 	private renderProviderSetup(el: HTMLElement): void {
 		el.empty();
 		const s = this.plugin.data.settings;
-		const p = s.provider;
+		// Grill Cloud has its own card above; this panel is for a key of one's own. (It
+		// also covers a settings file that names Grill Cloud in a build without it.)
+		// Looking at it changes nothing: someone on Grill Cloud stays on it until they pick
+		// a provider here, check a key, or press Continue.
+		const p: ProviderId = s.provider === "grillcloud" ? "anthropic" : s.provider;
 		const info = PROVIDERS[p];
 		const save = (): void => void this.plugin.persist();
 
@@ -767,8 +943,8 @@ export class SessionView extends ItemView {
 		};
 
 		const pick = row("Provider").createEl("select", { cls: "dropdown" });
-		for (const [id, pi] of Object.entries(PROVIDERS) as Array<[ProviderId, (typeof PROVIDERS)[ProviderId]]>) {
-			pick.createEl("option", { value: id, text: pi.label });
+		for (const [id, pi] of offeredProviders()) {
+			if (id !== "grillcloud") pick.createEl("option", { value: id, text: pi.label });
 		}
 		pick.value = p;
 		pick.onchange = () => {
@@ -816,6 +992,11 @@ export class SessionView extends ItemView {
 		check.onclick = async () => {
 			// Pick up a value typed but not yet blurred.
 			el.querySelectorAll("input").forEach((i) => i.dispatchEvent(new Event("change")));
+			// Checking a key of one's own is choosing to use it.
+			if (s.provider !== p) {
+				s.provider = p;
+				save();
+			}
 			const cfg = this.plugin.llmConfig();
 			if (!cfg) {
 				status.setText(p === "custom" ? "Add a base URL and model first." : "Add your key first.");
@@ -879,6 +1060,107 @@ export class SessionView extends ItemView {
 	/** All notes eligible for quizzing, ignoring the current session scope. */
 	private allEligible(): TFile[] {
 		return this.app.vault.getMarkdownFiles().filter((f) => !this.plugin.isExcluded(f.path));
+	}
+
+	/** On Grill Cloud, the home screen has a credit counter in the corner of the
+	 * cabinet, like the credits on an arcade machine. It turns ember when the balance
+	 * may not cover another session, and opens settings, which is where credits are
+	 * added: nothing is ever sold on the screens where studying happens. Nothing is
+	 * shown, or asked of the server, on any other provider. */
+	private cloudCounter(screen: HTMLElement): void {
+		const s = this.plugin.data.settings;
+		if (!cloudEnabled() || s.provider !== "grillcloud" || !s.apiKeys.grillcloud) return;
+		if (s.questionSource !== "ai" && s.gradingMode !== "ai") return;
+		// Inside the GRILL mark's own line, so the two sit on one baseline at any size.
+		const counter = (screen.querySelector<HTMLElement>(".grill-arcade-mark") ?? screen).createEl("a", { cls: "grill-cloud-counter" });
+		counter.onclick = () => this.plugin.openSettings();
+		const fill = (): void => {
+			counter.empty();
+			const credits = this.plugin.cloudCredits;
+			const state = this.plugin.cloudState;
+			if (state !== "ok" && state !== "none") return;
+			if (state === "ok" && credits === null) return;
+			const low = state === "none" || (credits ?? 0) < lowBalance(s.cloudUsage);
+			counter.toggleClass("is-low", low);
+			counter.setAttr("aria-label", low ? "Grill Cloud credits are low. Open settings to add more." : "Grill Cloud credits. Open settings.");
+			counter.createSpan({ cls: "grill-cloud-counter-label", text: "Credits" });
+			counter.createSpan({ cls: "grill-cloud-counter-number", text: (credits ?? 0).toLocaleString("en-US") });
+		};
+		fill();
+		// A purchase landing while this screen is up changes the number in place.
+		this.cloudRedraw = () => {
+			if (counter.isConnected) fill();
+		};
+		// Sessions spend credits, so look again each time this is drawn.
+		void this.plugin.refreshCloud().then(() => counter.isConnected && fill());
+	}
+
+	/** Under a session's summary: what it used and what's left. A receipt. */
+	private cloudReceipt(parent: HTMLElement, used: number): void {
+		const s = this.plugin.data.settings;
+		const credits = this.plugin.cloudCredits;
+		if (!cloudEnabled() || s.provider !== "grillcloud" || used <= 0 || credits === null) return;
+		const line = parent.createDiv({ cls: "grill-meta grill-cloud-line" });
+		line.createSpan({ text: `That session used ${used} ${used === 1 ? "credit" : "credits"}. ${creditsInWords(credits)}.` });
+		if (credits >= lowBalance(s.cloudUsage)) return;
+		line.createSpan({ text: " " });
+		const more = line.createEl("a", { text: "Add more in settings" });
+		more.onclick = () => this.plugin.openSettings();
+	}
+
+	/** Shown once on the home screen to everyone who had Grill before 7.0: what is new,
+	 * in three lines. Someone with no way to AI questions set up (no key, no Ollama) is
+	 * offered Grill Cloud right there, with what it sends said before anything is; for
+	 * everyone else it is just the news. Either way one press puts it away for good.
+	 * New installs never see it: setup has just told them all of this. */
+	private whatsNew(parent: HTMLElement): void {
+		const s = this.plugin.data.settings;
+		if (!cloudEnabled() || s.dismissedOffers.includes(NEW_IN_7)) return;
+		const box = parent.createDiv({ cls: "grill-cloud-offer grill-whats-new" });
+		box.createDiv({ cls: "grill-cloud-offer-title", text: "New in Grill 7.0" });
+		const news = box.createDiv({ cls: "grill-cloud-facts" });
+		const item = (lead: string, rest: string): void => {
+			const el = news.createDiv({ cls: "grill-cloud-fact" });
+			el.createEl("strong", { text: lead });
+			el.appendText(` ${rest}`);
+		};
+		const done = async (): Promise<void> => {
+			s.dismissedOffers = [...new Set([...s.dismissedOffers, NEW_IN_7])];
+			await this.plugin.persist();
+		};
+		const none = !s.apiKeys.grillcloud && this.plugin.llmConfig() === null;
+		item("Grill Cloud.", none ? "AI questions and grading with no API key. Start free below." : "AI questions and grading with no API key. It's in settings if you ever want it.");
+		item("Explain this, then keep asking.", "One button explains an answer, and you can ask follow-ups underneath.");
+		item("A natural voice.", "Press the speaker on a question or an explanation to hear it read.");
+		if (none) {
+			// No key and no Ollama: the headline of 7.0 is for exactly this person.
+			const go = this.renderCloudPanel(box.createDiv());
+			go.onclick = async () => {
+				go.disabled = true;
+				go.setText("Setting up...");
+				let message = "Something went wrong. Try again.";
+				try {
+					message = await this.plugin.startCloud();
+				} catch (e) {
+					console.error("Grill: couldn't start Grill Cloud", e);
+				}
+				new Notice(`Grill: ${message}`, 8000);
+				// Not reached: leave it up to try again.
+				if (this.plugin.cloudState !== "ok" && this.plugin.cloudState !== "none") {
+					go.disabled = false;
+					go.setText("Start free");
+					return;
+				}
+				await done();
+				this.plugin.refreshStatusBar();
+				this.renderStart();
+			};
+		}
+		const close = box.createEl("a", { cls: "grill-chip-link", text: none ? "Not now" : "Got it" });
+		close.onclick = async () => {
+			await done();
+			box.remove();
+		};
 	}
 
 	private renderStart(): void {
@@ -978,6 +1260,9 @@ export class SessionView extends ItemView {
 		// commit action, same reasoning: the default, no-scope path (the engine picking
 		// due + fresh material itself) is what most sessions should be, and it shouldn't
 		// be readable-past or accidentally tickable into misfiring.
+		this.cloudRedraw = null;
+		this.whatsNew(screen);
+		this.cloudCounter(screen);
 		const grillBtn = screen.createEl("button", { text: "Get grilled", cls: "mod-cta grill-start-btn grill-primary-cta" });
 		grillBtn.onclick = () => {
 			this.sessionScope = null;
@@ -1797,7 +2082,9 @@ export class SessionView extends ItemView {
 			// steers the model away from restating them, but they read as deleted to the
 			// student — hide them here rather than let a "deleted" question keep showing
 			// up in Manage questions.
-			for (const q of qs) if (!q.rejected) allEntries.push({ conceptId, q });
+			// Nor is an image that was read and found to have nothing worth hiding: that
+			// entry only records that it needn't be read again.
+			for (const q of qs) if (!q.rejected && !(q.type === "occlusion" && !q.occlusionRegions?.length)) allEntries.push({ conceptId, q });
 		}
 
 		let cardSeq = 0;
@@ -2485,21 +2772,13 @@ export class SessionView extends ItemView {
 		}
 		if (q.type === "occlusion") this.renderOcclusionImage(card, q, false);
 
-		if (ttsAvailable()) {
+		if (ttsAvailable() || this.plugin.naturalVoiceSource()) {
 			// Derived from the raw markdown, not qEl's rendered text: MarkdownRenderer.render
 			// (see `md` above) resolves asynchronously, so qEl's textContent isn't reliably
 			// populated yet at this point in the render. Placed after qEl, not inside it, so
 			// it trails the question instead of sitting in its own column pushing text over.
 			const speakText = toSpeechText(q.question);
-			const speakBtn = card.createEl("button", {
-				cls: "clickable-icon grill-tts-btn",
-				attr: { "aria-label": "Read question aloud", type: "button" },
-			});
-			setIcon(speakBtn, "volume-2");
-			speakBtn.onclick = () => {
-				const s = this.plugin.data.settings;
-				speak(speakText, { lang: s.ttsLanguage, voiceURI: s.ttsVoiceURI });
-			};
+			this.hearButton(card, speakText, "Read question aloud");
 		}
 
 		const selfGrade = this.plugin.data.settings.gradingMode === "self";
@@ -2636,12 +2915,27 @@ export class SessionView extends ItemView {
 						: "Answer from memory... (Cmd/Ctrl+Enter to submit)",
 				},
 			});
+			// An answer whose marking failed (a dropped connection, no credits) is still here.
+			if (this.keptAnswer && this.keptAnswer.idx === this.idx) ta.value = this.keptAnswer.text;
+			this.keptAnswer = null;
+		}
+		// One bar, read left to right as what to do: answer (and say how sure you are),
+		// or, if stuck, take a hint or say so. Flagging a bad question is rare, so it is a
+		// small icon at the far end. Everything is inside `row`, which is what gets
+		// disabled as a whole once an answer is on its way.
+		const row = card.createDiv({ cls: "grill-btn-row grill-answer-bar" });
+		const main = row.createDiv({ cls: "grill-answer-main" });
+		if (!isMc && !isTf) {
+			const submit = main.createEl("button", { text: selfGrade ? "Show answer" : "Submit", cls: "mod-cta grill-submit-btn" });
+			submit.onclick = () => doAction(false);
 		}
 		// Confidence check (AI grading only): predict how sure you are before the grade
 		// lands, so calibration compares your confidence to an objective mark.
 		if (this.askConfidenceNow(selfGrade)) {
-			const conf = card.createDiv({ cls: "grill-confidence" });
-			conf.createSpan({ cls: "grill-meta", text: "How sure are you?" });
+			const conf = main.createDiv({ cls: "grill-confidence" });
+			conf.setAttr("role", "group");
+			conf.setAttr("aria-label", "How sure are you?");
+			conf.createSpan({ cls: "grill-meta", text: "How sure?" });
 			const btns: HTMLButtonElement[] = [];
 			for (const lvl of CONFIDENCE_LEVELS) {
 				const b = conf.createEl("button", { text: lvl.label, cls: "grill-conf-btn" });
@@ -2653,29 +2947,26 @@ export class SessionView extends ItemView {
 				btns.push(b);
 			}
 		}
-
-		const row = card.createDiv({ cls: "grill-btn-row" });
-		if (!isMc && !isTf) {
-			const submit = row.createEl("button", { text: selfGrade ? "Show answer" : "Submit", cls: "mod-cta grill-submit-btn" });
-			submit.onclick = () => doAction(false);
-		}
+		const stuck = row.createDiv({ cls: "grill-answer-stuck" });
 		if (hints.length) {
-			const hintBtn = row.createEl("button", { text: "Hint", cls: "grill-hint-btn" });
+			const hintLabel = (): string => (hintsUsed === 0 ? "Hint" : hintsUsed >= hints.length ? "No more hints" : `Hint ${hintsUsed + 1} of ${hints.length}`);
+			const hintBtn = stuck.createEl("button", { text: hintLabel(), cls: "grill-hint-btn" });
 			hintBtn.onclick = () => {
 				if (hintsUsed < hints.length) {
 					const h = hintBox.createDiv({ cls: "grill-hint" });
 					this.md(`*Hint ${hintsUsed + 1}:* ${hints[hintsUsed]}`, h, q.node);
 					hintsUsed += 1;
+					hintBtn.setText(hintLabel());
 					if (hintsUsed >= hints.length) hintBtn.disabled = true;
 				}
 			};
 		}
-		const skip = row.createEl("button", { text: "I don't know", cls: "grill-quiet-btn" });
+		const skip = stuck.createEl("button", { text: "I don't know", cls: "grill-quiet-btn" });
 		// Authored questions are the user's own writing, verbatim from the note — nothing
 		// generated to flag, nothing cached to purge.
 		if (!q.authored) {
-			const bad = row.createEl("button", { text: "Bad question", cls: "grill-quiet-btn grill-bad-question-btn" });
-			bad.setAttribute("title", "Wrong, broken, or nonsensical — delete it and move on, no penalty");
+			const bad = row.createEl("button", { cls: "clickable-icon grill-bad-question-btn", attr: { "aria-label": "Bad question: wrong, broken or nonsensical. Deletes it and moves on, no penalty.", type: "button" } });
+			setIcon(bad, "flag");
 			bad.onclick = () => {
 				row.querySelectorAll("button").forEach((b) => (b.disabled = true));
 				void this.reportBadQuestion();
@@ -2792,25 +3083,26 @@ export class SessionView extends ItemView {
 		// offered right after the answer that produced it (see pendingOverride's doc
 		// comment) — not on an older question, and never for self-grade (your own
 		// rating already is the ground truth there).
-		if (r.verdict !== "correct" && this.pendingOverride) {
-			const markBtn = badgeRow.createEl("button", { text: "Mark correct", cls: "grill-quiet-btn" });
-			markBtn.onclick = () => {
-				markBtn.disabled = true;
-				void this.markCorrect(r);
-			};
-		}
+		// Hear what the card says: the verdict, your answer, the feedback, and the expected
+		// answer when there is one. (A verdict the feedback only repeats is said once.)
+		const sameAsVerdict = r.feedback.trim().replace(/[.!]+$/, "").toLowerCase() === v.text.toLowerCase();
+		const spoken = toSpeechText(
+			[
+				`${v.text}.`,
+				!r.gaveUp && r.answer ? `Your answer: ${r.answer}` : "",
+				sameAsVerdict ? "" : r.feedback,
+				r.verdict !== "correct" && r.modelAnswer ? `The expected answer: ${r.modelAnswer}` : "",
+			]
+				.filter(Boolean)
+				.join("\n\n"),
+		);
+		if (ttsAvailable() || this.plugin.naturalVoiceSource()) this.hearButton(badgeRow, spoken, "Read this aloud", "grill-tts-feedback");
+		const canMark = r.verdict !== "correct" && this.pendingOverride;
 		// Same single-use restriction as "Mark correct" (pendingOverride), same
 		// authored/bridge exclusion as the pre-answer version, and skipped on the
 		// route-consent screen — discarding the question there would pull the rug out
 		// from under the yes/no choice being offered below.
-		if (!pendingExtension && !this.questions[this.idx].authored && this.pendingOverride) {
-			const badBtn = badgeRow.createEl("button", { text: "Bad question", cls: "grill-quiet-btn" });
-			badBtn.setAttribute("title", "Wrong, broken, or nonsensical — delete it and move on, no penalty");
-			badBtn.onclick = () => {
-				badBtn.disabled = true;
-				void this.discardAnsweredQuestion(r);
-			};
-		}
+		const canDiscard = !pendingExtension && !this.questions[this.idx].authored && this.pendingOverride;
 		if (!r.gaveUp && r.answer) {
 			verdictCard.createDiv({ cls: "grill-block-label", text: "Your answer" });
 			const ans = verdictCard.createDiv({ cls: "grill-your-answer" });
@@ -2829,26 +3121,38 @@ export class SessionView extends ItemView {
 		// The review card: expected answer + on-demand explanation — "what to study".
 		// Only rendered when it would actually have something in it.
 		const showExpectedAnswer = r.verdict !== "correct" && !!r.modelAnswer;
-		const showExplain = !pendingExtension && this.canExplain(r);
-		if (showExpectedAnswer || showExplain) {
+		const showHelp = !pendingExtension && (this.canExplain(r) || !!r.explanation || !!r.discussion?.length);
+		if (showExpectedAnswer) {
 			const reviewCard = card.createDiv({ cls: "grill-flow-card grill-review-card" });
-			if (showExpectedAnswer) {
-				reviewCard.createDiv({ cls: "grill-block-label", text: "Expected answer" });
-				this.md(r.modelAnswer, reviewCard.createDiv({ cls: "grill-model-answer" }), r.node);
-				if (this.questions[this.idx].type === "occlusion") {
-					this.renderOcclusionImage(reviewCard, this.questions[this.idx], true);
-				}
+			reviewCard.createDiv({ cls: "grill-block-label", text: "Expected answer" });
+			this.md(r.modelAnswer, reviewCard.createDiv({ cls: "grill-model-answer" }), r.node);
+			if (this.questions[this.idx].type === "occlusion") {
+				this.renderOcclusionImage(reviewCard, this.questions[this.idx], true);
 			}
-			if (showExplain) this.offerExplanation(reviewCard, r);
 		}
+		// The explanation and whatever is asked after it flow down from here.
+		const helpAt = showHelp ? card.createDiv({ cls: "grill-thread-host" }) : null;
 
 		if (r.missingLink && r.connectTo) this.offerLink(card, r.node, r.connectTo);
 
 		if (pendingExtension) {
+			// The last question, with an offer of one more below: the grade can still be
+			// overruled here, which is when it matters most.
+			if (canMark) {
+				const mark = card.createEl("button", { text: "Mark correct", cls: "grill-quiet-btn grill-mark-alone" });
+				mark.onclick = () => {
+					mark.disabled = true;
+					void this.markCorrect(r);
+				};
+			}
 			this.renderRouteConsentInto(card, pendingExtension);
 			return;
 		}
-		const btn = card.createEl("button", {
+		// What next, on one line: move on, or understand it better first. Overruling the
+		// grade and throwing the question out are rare, so they sit quietly at the end,
+		// the flag being the same one the question itself carries.
+		const actions = card.createDiv({ cls: "grill-btn-row grill-next-bar" });
+		const btn = actions.createEl("button", {
 			text: this.idx + 1 < this.targetCount ? "Next question" : "Finish session",
 			cls: "mod-cta grill-submit-btn",
 		});
@@ -2856,8 +3160,233 @@ export class SessionView extends ItemView {
 			btn.disabled = true; // instant ack, independent of whether a wait follows; also blocks a double-click
 			void this.goToQuestion(this.idx + 1);
 		};
+		if (helpAt) this.offerHelp(helpAt, actions, r);
+		const quiet = actions.createDiv({ cls: "grill-next-quiet" });
+		if (canMark) {
+			const mark = quiet.createEl("button", { text: "Mark correct", cls: "grill-quiet-btn" });
+			mark.onclick = () => {
+				mark.disabled = true;
+				void this.markCorrect(r);
+			};
+		}
+		if (canDiscard) {
+			const bad = quiet.createEl("button", { cls: "clickable-icon grill-bad-question-btn", attr: { "aria-label": "Bad question: wrong, broken or nonsensical. Deletes it and moves on, no penalty.", type: "button" } });
+			setIcon(bad, "flag");
+			bad.onclick = () => {
+				bad.disabled = true;
+				void this.discardAnsweredQuestion(r);
+			};
+		}
 		btn.focus();
 	}
+
+	/** A speaker button that reads `text` aloud. A natural voice has to be fetched
+	 * first, which takes a few seconds for a long passage, so the button shows it is
+	 * working from the moment it is pressed until the voice starts. */
+	private hearButton(parent: HTMLElement, text: string, label: string, cls = ""): HTMLButtonElement {
+		const hear = parent.createEl("button", { cls: `clickable-icon grill-tts-btn ${cls}`.trim(), attr: { "aria-label": label, type: "button" } });
+		setIcon(hear, "volume-2");
+		hear.onclick = async () => {
+			hear.addClass("is-loading");
+			try {
+				await this.plugin.readAloud(text);
+			} finally {
+				hear.removeClass("is-loading");
+			}
+		};
+		return hear;
+	}
+
+	/** "Explain this", and whatever is asked after it: one conversation that flows down
+	 * from the question. The button writes a full explanation (what went wrong, the
+	 * idea behind it, an example, a diagram or the note's own image when one helps), and
+	 * under it is a box for follow-ups, which the tutor answers from the note for as
+	 * long as it helps. Next question is always still there, and the grade stands: this
+	 * is for understanding, not for arguing marks. All of it is kept with the question's
+	 * result, and written into the session note when the session is finished. */
+	private offerHelp(host: HTMLElement, actions: HTMLElement, r: QuestionResult): void {
+		const cfg = this.canExplain(r) ? this.plugin.llmConfig() : null;
+		const q = this.questions[this.idx];
+		const who = cfg ? `Grill (${cfg.model})` : "Grill";
+		let box: HTMLElement | null = null;
+		let turns: HTMLElement;
+
+		/** One turn's frame: who is speaking, a button to hear it, and its body. */
+		const frame = (role: "student" | "tutor", spoken: string): HTMLElement => {
+			const el = turns.createDiv({ cls: `grill-thread-turn is-${role}` });
+			const head = el.createDiv({ cls: "grill-thread-who" });
+			head.createSpan({ text: role === "student" ? "You" : who });
+			const text = toSpeechText(spoken);
+			if (role === "tutor" && text && (ttsAvailable() || this.plugin.naturalVoiceSource())) {
+				this.hearButton(head, text, "Read this aloud");
+			}
+			return el.createDiv({ cls: "grill-thread-text" });
+		};
+		const say = async (turn: ThreadTurn): Promise<void> => {
+			const body = frame(turn.role, turn.text);
+			this.md(turn.text, body, r.node);
+			if (turn.diagram) await this.renderDiagramBlock(body, turn.diagram);
+			if (turn.imagePath) await this.renderRelevantImage(body, turn.imagePath);
+		};
+		const explained = (x: NonNullable<QuestionResult["explanation"]>): string =>
+			[x.whatWentWrong && `What went wrong: ${x.whatWentWrong}`, x.keyConcept && `Key concept: ${x.keyConcept}`, x.example && `Example: ${x.example}`].filter(Boolean).join("\n\n");
+		const sayExplanation = async (x: NonNullable<QuestionResult["explanation"]>): Promise<void> => {
+			const out = frame("tutor", explained(x));
+			out.addClass("grill-explanation");
+			this.explanationBlock(out, "What went wrong", x.whatWentWrong, r.node);
+			this.explanationBlock(out, "Key concept", x.keyConcept, r.node);
+			this.explanationBlock(out, "Example", x.example, r.node);
+			await this.renderDiagramBlock(out, x.diagram);
+			await this.renderRelevantImage(out, x.relevantImagePath ?? "");
+		};
+
+		/** The box for follow-ups, under everything said so far. */
+		const form = (): void => {
+			if (!cfg || !box) return;
+			const row = box.createDiv({ cls: "grill-thread-form" });
+			const input = row.createEl("textarea", {
+				cls: "grill-thread-input",
+				attr: { rows: "2", placeholder: "Ask a follow-up... (Enter to send)", "aria-label": "Ask a follow-up about this question" },
+			});
+			const send = row.createEl("button", { text: "Send", cls: "mod-cta" });
+			const ask = async (): Promise<void> => {
+				const text = input.value.trim();
+				if (!text || send.disabled) return;
+				const thread = r.discussion ?? [];
+				// A long thread costs more with every turn, and by then a session on the
+				// note itself teaches more than more questions about one answer.
+				if (thread.filter((turn) => turn.role === "student").length >= THREAD_LIMIT) {
+					new Notice("Grill: that's a long thread for one question. Move on, and it will come back for another try.", 8000);
+					return;
+				}
+				send.disabled = true;
+				input.disabled = true;
+				await say({ role: "student", text });
+				const asked = turns.lastElementChild;
+				const waiting = turns.createDiv({ cls: "grill-thread-turn is-tutor is-waiting" });
+				waiting.createDiv({ cls: "grill-thread-who", text: who });
+				waiting.createDiv({ cls: "grill-thread-text grill-meta", text: "Reading your note..." });
+				waiting.scrollIntoView({ block: "nearest" });
+				const epoch = this.sessionEpoch;
+				try {
+					// The tutor is told what it already explained, so it builds on it.
+					const before: ThreadTurn[] = r.explanation ? [{ role: "tutor", text: explained(r.explanation) }, ...thread] : thread;
+					const reply = await discussQuestion(
+						cfg,
+						q,
+						this.noteText[r.node] ?? "",
+						r.answer,
+						r.feedback,
+						r.verdict,
+						before,
+						text,
+						this.sessionPersona,
+						this.sessionInstructions,
+						this.noteImages[r.node] ?? [],
+					);
+					if (epoch !== this.sessionEpoch) return;
+					r.discussion = [...thread, { role: "student", text }, reply];
+					this.dirty = true;
+					waiting.remove();
+					await say(reply);
+					turns.lastElementChild?.scrollIntoView({ block: "nearest" });
+					input.value = "";
+				} catch (e) {
+					if (epoch !== this.sessionEpoch) return;
+					// Nothing was answered: take the question back off the screen and leave it
+					// in the box, so it isn't lost and isn't recorded as asked.
+					waiting.remove();
+					asked?.remove();
+					this.tellError(e);
+				} finally {
+					send.disabled = false;
+					input.disabled = false;
+					input.focus();
+				}
+			};
+			send.onclick = () => void ask();
+			input.addEventListener("keydown", (e) => {
+				if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+					e.preventDefault();
+					void ask();
+				}
+			});
+		};
+
+		const open = (): void => {
+			box = host.createDiv({ cls: "grill-thread" });
+			turns = box.createDiv({ cls: "grill-thread-turns" });
+		};
+		// Something was already said here (this screen redrawn, or a session replayed):
+		// show it as it was, and carry on from it.
+		if (r.explanation || r.discussion?.length) {
+			open();
+			void (async () => {
+				if (r.explanation) await sayExplanation(r.explanation);
+				for (const turn of r.discussion ?? []) await say(turn);
+				form();
+			})();
+			return;
+		}
+		// This screen redrawn while an explanation is on its way (Mark correct does that):
+		// don't offer to pay for a second one.
+		if (!cfg || this.explaining.has(r)) return;
+		const btn = actions.createEl("button", { text: "Explain this", cls: "grill-hint-btn" });
+		btn.onclick = async () => {
+			// The button has done its job once pressed: what it asked for takes its place.
+			btn.remove();
+			this.explaining.add(r);
+			open();
+			const waiting = turns.createDiv({ cls: "grill-thread-turn is-tutor is-waiting" });
+			waiting.createDiv({ cls: "grill-thread-who", text: who });
+			// Named stages, not a frozen "Explaining...": there's no real token stream to
+			// show (requestUrl is a buffered, non-streaming call), so this is honest staged
+			// status text, not a fake typing animation.
+			const status = waiting.createDiv({ cls: "grill-thread-text grill-meta", text: "Reading your answer and the note..." });
+			const stageTimer = window.setTimeout(() => status.setText("Writing an explanation..."), 1200);
+			const epoch = this.sessionEpoch;
+			try {
+				const hintsShown = [q.hints.tier1, q.hints.tier2, q.hints.tier3].slice(0, r.hintsUsed).filter(Boolean);
+				const explanation = await explainQuestion(
+					cfg,
+					q,
+					this.noteText[r.node] ?? "",
+					r.answer,
+					r.feedback,
+					r.verdict,
+					hintsShown,
+					this.noteImages[r.node] ?? [],
+					this.sessionPersona,
+					this.sessionInstructions,
+				);
+				if (epoch !== this.sessionEpoch) return;
+				r.explanation = explanation;
+				this.dirty = true;
+				waiting.remove();
+				await sayExplanation(explanation);
+				form();
+			} catch (e) {
+				if (epoch !== this.sessionEpoch) return;
+				// Nothing came back: put the button where it was.
+				box?.remove();
+				box = null;
+				this.tellError(e);
+				this.offerHelp(host, actions, r);
+				const again = actions.lastElementChild;
+				const quietEnd = actions.querySelector(".grill-next-quiet");
+				if (again && quietEnd && again !== quietEnd) actions.insertBefore(again, quietEnd);
+			} finally {
+				window.clearTimeout(stageTimer);
+				this.explaining.delete(r);
+				// It arrived after the screen was redrawn: show it where the screen is now.
+				if (r.explanation && !host.isConnected && epoch === this.sessionEpoch && this.results[this.results.length - 1] === r && this.contentEl.querySelector(".grill-next-bar")) {
+					this.renderFeedback(r);
+				}
+			}
+		};
+	}
+	/** Results an explanation is being written for right now. */
+	private explaining = new Set<QuestionResult>();
 
 	/** The consent step for extending a session past its agreed length: this was going
 	 * to be the last question, but either the missed note builds on a weak prerequisite,
@@ -2891,54 +3420,6 @@ export class SessionView extends ItemView {
 	 * at all) and `offerExplanation` itself, so the two checks can't drift apart. */
 	private canExplain(r: QuestionResult): boolean {
 		return !this.replayMode && !!this.plugin.llmConfig();
-	}
-
-	/** "Explain this": the rescue action for when the feedback/hints/expected-answer above
-	 * still leave the student stuck — one contextual LLM call, not a chat, rendered inline
-	 * as three labeled parts instead of one prose blob. */
-	private offerExplanation(card: HTMLElement, r: QuestionResult): void {
-		if (!this.canExplain(r)) return;
-		const cfg = this.plugin.llmConfig()!;
-		const q = this.questions[this.idx]; // same source Question that produced r
-		const box = card.createDiv({ cls: "grill-explain-box" });
-		const btn = box.createEl("button", { text: "Explain this", cls: "grill-hint-btn" });
-		btn.onclick = async () => {
-			btn.disabled = true;
-			// Named stages, not a frozen "Explaining...", matching loadNextBatch's own
-			// "say what it's actually doing" approach (see withDebouncedLoading's callers) —
-			// there's no real token stream to show (requestUrl is a buffered, non-streaming
-			// call), so this is honest staged status text, not a fake typing animation.
-			btn.setText("Reading your answer and the note...");
-			const stageTimer = window.setTimeout(() => btn.setText("Writing an explanation..."), 1200);
-			try {
-				const hintsShown = [q.hints.tier1, q.hints.tier2, q.hints.tier3].slice(0, r.hintsUsed).filter(Boolean);
-				const explanation = await explainQuestion(
-					cfg,
-					q,
-					this.noteText[r.node] ?? "",
-					r.answer,
-					r.feedback,
-					r.verdict,
-					hintsShown,
-					this.noteImages[r.node] ?? [],
-					this.sessionPersona,
-					this.sessionInstructions,
-				);
-				const out = box.createDiv({ cls: "grill-explanation" });
-				this.explanationBlock(out, "What went wrong", explanation.whatWentWrong, r.node);
-				this.explanationBlock(out, "Key concept", explanation.keyConcept, r.node);
-				this.explanationBlock(out, "Example", explanation.example, r.node);
-				await this.renderDiagramBlock(out, explanation.diagram);
-				await this.renderRelevantImage(out, explanation.relevantImagePath);
-				btn.remove();
-			} catch (e) {
-				new Notice(`Grill: ${(e as Error).message}`, 8000);
-				btn.disabled = false;
-				btn.setText("Explain this");
-			} finally {
-				window.clearTimeout(stageTimer);
-			}
-		};
 	}
 
 	/** One labeled sub-block of a structured Explanation; skipped when the model left the
@@ -3301,6 +3782,25 @@ export class SessionView extends ItemView {
 			a.onclick = () => void this.app.workspace.getLeaf(false).openFile(note);
 		}
 		this.renderOffers(card);
+		// On Grill Cloud: what that session used and what's left, and the packs once it
+		// may not cover another. The end of a session is when "one more" is wanted.
+		this.cloudRedraw = null;
+		const cloudAt = card.createDiv();
+		// What the session used is taken now, before anything else can start: a new
+		// session begun while the work below is still running must not have its spending
+		// counted into this one, or this one's into it.
+		const sessionSpend = this.plugin.takeCloudSpend();
+		const epoch = this.sessionEpoch;
+		void (async () => {
+			// On Grill Cloud the dashboard's arc is worked out here, not at launch, so
+			// what it costs is part of this session's receipt and nothing is spent unseen.
+			if (this.plugin.data.settings.provider === "grillcloud") await this.plugin.maybeSynthesizeArc().catch(() => undefined);
+			// If nothing new has begun, whatever was spent since is that arc.
+			// A new session has begun meanwhile: its spending is its own, so this one is
+			// recorded as it stood, and the running count is left alone.
+			const used = epoch === this.sessionEpoch ? await this.plugin.noteCloudSession(sessionSpend) : await this.plugin.recordCloudSession(sessionSpend);
+			if (cloudAt.isConnected) this.cloudReceipt(cloudAt, used);
+		})();
 		const btnRow = card.createDiv({ cls: "grill-btn-row grill-start-btn grill-btn-row-fill" });
 		const again = btnRow.createEl("button", { text: "Study again", cls: "mod-cta grill-primary-cta" });
 		again.setAttr("aria-label", "Start a new adaptive session");
@@ -3362,6 +3862,7 @@ export class SessionView extends ItemView {
 			new Notice(`Grill: your last answers haven't saved yet (${this.lastFlushError}), so a redo can't start. They're still kept in memory.`, 10000);
 			return;
 		}
+		await this.plugin.noteCloudSession();
 		this.sessionEpoch += 1;
 		this.liveState = false;
 		this.replayMode = true;
@@ -3857,10 +4358,17 @@ export class SessionView extends ItemView {
 	private async appendOcclusionConcepts(names: string[]): Promise<void> {
 		const cap = SessionView.OCCLUSION_SCAN_CAP;
 		let scans = 0;
+		// At most one image question per note in a session, a different image each day.
+		// A note of slides or figures used to turn every one into a question, and a
+		// session on it was nothing else.
+		const today = Math.floor(Date.now() / 86_400_000);
 		for (const n of names) {
+			const found: Concept[] = [];
 			for (const img of this.noteImages[n] ?? []) {
 				const id = `${n}::occlusion::${img.path}`;
-				const sourceHash = hashStr(img.dataBase64);
+				// The prefix is the version of how regions are chosen: changing it has every
+				// image read again once, so results from an older, looser rule aren't reused.
+				const sourceHash = hashStr(`occlusion-2:${img.dataBase64}`);
 				let regions: { x: number; y: number; w: number; h: number; label: string }[];
 				const cached = (this.questionBank[id] ?? []).find((e) => e.sourceHash === sourceHash);
 				if (cached) {
@@ -3878,10 +4386,8 @@ export class SessionView extends ItemView {
 						console.error(`Grill: OCR failed for ${img.path}:`, e);
 						continue;
 					}
-					if (!regions.length) {
-						console.debug(`Grill: occlusion found nothing legible in ${img.path}.`);
-						continue;
-					}
+					// Nothing worth hiding (not a labelled diagram): remembered as such below, so
+					// the image isn't read again every session.
 					const q: CachedQuestion = {
 						node: n,
 						conceptId: id,
@@ -3900,6 +4406,7 @@ export class SessionView extends ItemView {
 					this.questionBank[id] = [q];
 					this.bankDirty = true;
 				}
+				if (!regions.length) continue;
 				const concept: Concept = {
 					id,
 					note: n,
@@ -3915,10 +4422,13 @@ export class SessionView extends ItemView {
 					occlusionImage: img.path,
 					occlusionRegions: regions,
 				};
-				const arr = this.conceptsByNote.get(n);
-				if (arr) arr.push(concept);
-				else this.conceptsByNote.set(n, [concept]);
+				found.push(concept);
 			}
+			if (!found.length) continue;
+			const concept = found[today % found.length];
+			const arr = this.conceptsByNote.get(n);
+			if (arr) arr.push(concept);
+			else this.conceptsByNote.set(n, [concept]);
 		}
 	}
 
@@ -3954,7 +4464,7 @@ export class SessionView extends ItemView {
 				// "Get grilled" reloaded from disk and a single 429 cost the whole session.
 				await this.flush();
 				const kept = this.results.length ? ` Your ${this.results.length} answer(s) so far are saved.` : "";
-				new Notice(`Grill: ${(e as Error).message}${kept}`, 8000);
+				this.tellError(e, kept);
 				this.renderStart();
 				return;
 			}
@@ -4030,6 +4540,10 @@ export class SessionView extends ItemView {
 			new Notice(`Grill: your last answers haven't saved yet (${this.lastFlushError}), so a new session can't start. They're still kept in memory.`, 10000);
 			return;
 		}
+		this.keptAnswer = null;
+		// A session left without finishing still used what it used: keep that in the
+		// record of what sessions cost, then start counting this one from nothing.
+		await this.plugin.noteCloudSession();
 		const s = this.plugin.data.settings;
 		const needsKey = this.plugin.usesAI();
 		const cfg = this.plugin.llmConfig();
@@ -4042,6 +4556,15 @@ export class SessionView extends ItemView {
 			new Notice(
 				createFragment((frag) => {
 					frag.appendText("Grill: ");
+					if (cloudEnabled()) {
+						// Settings opens on Grill Cloud, which says what it sends before it starts.
+						const cloudLink = frag.createEl("a", { text: "start free with Grill Cloud" });
+						cloudLink.onclick = (e) => {
+							e.preventDefault();
+							this.plugin.openSettings();
+						};
+						frag.appendText(", ");
+					}
 					const open = frag.createEl("a", { text: "add an API key" });
 					open.onclick = (e) => {
 						e.preventDefault();
@@ -4519,7 +5042,9 @@ export class SessionView extends ItemView {
 				misconceptionTag = g.misconceptionTag;
 			} catch (e) {
 				if (epoch !== this.sessionEpoch) return;
-				new Notice(`Grill: ${(e as Error).message}`, 8000);
+				this.tellError(e);
+				// The answer was typed once already: put it back, don't make them retype it.
+				this.keptAnswer = { idx: this.idx, text: answer };
 				this.renderQuestion();
 				return;
 			}
@@ -4973,6 +5498,8 @@ export class SessionView extends ItemView {
 	}
 
 	async onClose(): Promise<void> {
+		this.plugin.cloudListeners.delete(this.onCloud);
+		this.cloudRedraw = null;
 		this.map?.dispose();
 		this.map = null;
 		this.mapRebuild = null;

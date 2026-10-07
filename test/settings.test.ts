@@ -3,6 +3,17 @@ import assert from "node:assert/strict";
 import { deepFake, fakeEl, fakeSetting, Plugin, settingNames } from "obsidian";
 import GrillPlugin, { GrillSettingTab } from "../src/main";
 import { KeyStash, type ApiKeys, type SecretStore } from "../src/secrets";
+import { cloud } from "../src/cloud";
+
+// These tests are about the settings page as it is without Grill Cloud. The source
+// ships with it switched off and the release commit switches it on, so the state is
+// set here, not assumed. (Grill Cloud's own rows are tested in cloud.test.ts.)
+const withoutCloud = (): void => {
+	cloud.url = "";
+	cloud.privacyUrl = "";
+	cloud.termsUrl = "";
+};
+withoutCloud();
 
 const noKeys = (): ApiKeys => ({ anthropic: "", openai: "", gemini: "", deepseek: "", ollama: "", custom: "" });
 const VAULT = "2fe04f6f57789abb";
@@ -166,7 +177,7 @@ P.addStatusBarItem = () => fakeEl();
 async function boot(disk: { data: any }, kc: SecretStore | null, failFirstSave = false) {
 	const adapter = deepFake({ exists: async () => false, read: async () => "{}", write: async () => undefined });
 	const vault = deepFake({ adapter, getMarkdownFiles: () => [], getFiles: () => [], getAbstractFileByPath: () => null });
-	const app = deepFake({ vault, appId: VAULT, ...(kc ? { secretStorage: kc } : {}) });
+	const app = deepFake({ vault, appId: VAULT, secretStorage: kc ?? undefined });
 	const plugin = new (GrillPlugin as any)() as any;
 	plugin.app = app;
 	plugin.loadData = async () => (disk.data === null ? null : JSON.parse(JSON.stringify(disk.data)));
@@ -273,6 +284,28 @@ function names(items: any[]): string[] {
 	}
 	return out;
 }
+
+test("with Grill Cloud on, it has the first section and the page still has no duplicate rows", async () => {
+	cloud.url = "https://grill.example/cloud";
+	cloud.privacyUrl = "https://grill.example/privacy";
+	cloud.termsUrl = "https://grill.example/terms";
+	try {
+		for (const provider of ["anthropic", "ollama", "custom", "grillcloud"]) {
+			const { tab } = await boot({ data: { settings: { provider } } }, keychain());
+			const defs = tab.getSettingDefinitions() as any[];
+			assert.deepEqual(
+				defs.map((d) => d.heading ?? d.name),
+				["Grill Cloud", "Your own key or Ollama", "Studying", "Graph", "Scope", "Tuning"],
+			);
+			const every = names(defs);
+			assert.equal(new Set(every).size, every.length, `duplicate row names (${provider})`);
+			// Privacy and terms are small print on the card, not a row of their own.
+			assert.ok(!every.includes("Privacy and terms"));
+		}
+	} finally {
+		withoutCloud();
+	}
+});
 
 test("the searchable definitions and the classic page list the same rows", async () => {
 	for (const provider of ["anthropic", "openai", "gemini", "deepseek", "ollama", "custom"]) {

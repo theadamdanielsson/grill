@@ -10,6 +10,11 @@ Grill asks a model to do two jobs, and they need different amounts of muscle:
 So pick for the grading. Everything below is about getting grading you can trust for the least
 money, or for free.
 
+**The short version: use Grill Cloud.** Press Start free in Grill and it runs on Claude
+Sonnet 5.5, the model this page recommends for grading, with no key to get and nothing to
+configure. It's free to try, then prepaid credits. The rest of this page is for when you'd
+rather bring your own key or run a model on your own machine.
+
 Two questions decide it: **do you have an API key?** and **what can your machine run?**
 
 ---
