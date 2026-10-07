@@ -1,5 +1,17 @@
 # Changelog
 
+## 7.0.1
+
+- **A busy provider no longer ends your session.** When your own key's provider is
+  rate-limiting or briefly down, Grill waits a few seconds and asks again, twice at most.
+- **Errors say what to do.** A rejected key, a model that doesn't exist, a provider
+  that's rate-limiting, a server Grill can't reach: each is said in a sentence, not as a
+  raw API error. If Ollama doesn't have the model, Grill gives you the `ollama pull` line.
+- **The model list says why it's empty.** A wrong key or an Ollama that isn't running
+  now shows on the Model row in settings.
+- Grill Cloud no longer quotes a number of credits per session before you've had one.
+  It varies too much with your notes.
+
 ## 7.0.0
 
 ![Grill 7.0](https://raw.githubusercontent.com/theadamdanielsson/grill/7.0.0/docs/release-7.svg)

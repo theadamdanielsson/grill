@@ -26,6 +26,8 @@ Focus a session on a folder or tag from the **Study** dropdown; Grill weights it
 - **Explain this, then keep asking:** one button explains an answer, with a diagram or the image from your note when it helps, and you can ask follow-ups underneath like a chat. It's written into the session note when you finish the session.
 - **A natural voice:** questions, feedback and explanations read aloud in a natural AI voice on Grill Cloud or an OpenAI key, or in your device's voice anywhere.
 - **Finds links you're missing:** spots notes that belong together but aren't linked, and adds the `[[link]]` for you.
+- **Works with the cards you already have:** Spaced Repetition's `==cloze==` and `::`/`?` cards and Anki's `{{c1::…}}` clozes are used as they are.
+- **Your notes stay as you wrote them:** the schedule and your history live in their own files under `Grill/`, never inside your notes. Grill only edits a note when you press Link these notes.
 - **Your own questions:** drop a `> [!grill]` callout into any note and Grill asks it verbatim — true/false, multiple-choice, and select-all too, not just free text.
 - **Edit a bad question instead of just deleting it:** the pencil on the home screen opens every cached question, grouped by note and searchable, for fixing in place.
 - **Reads embedded PDFs:** a `![[worksheet.pdf]]` embed isn't invisible to Grill — it pulls the PDF's text in and quizzes on it like any other note content, worked exercises included.
@@ -118,6 +120,8 @@ Short version of the common ones below; the full list, with what's actually happ
 - **A model isn't reading the images in my notes.** Not every model can — Grill sends them automatically to models that support vision, and tells you in-session when the model you picked can't.
 - **A PDF isn't being quizzed on.** Check it's embedded, `![[file.pdf]]` with the `!`, not just linked. A scanned PDF with no real text underneath (or a password-protected one) has nothing for Grill to extract either — it needs an actual text layer, not just a picture of text.
 - **API errors, or grading looks wrong.** Double check the key and model name in settings; a model ID typo is the usual cause. Grading is a model's opinion, not gospel — it's usually right, but the expected answer is always shown so you can judge for yourself.
+
+Something else, or an idea? [Open an issue](https://github.com/theadamdanielsson/grill/issues).
 
 ## Privacy and cost
 

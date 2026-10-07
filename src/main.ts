@@ -2150,6 +2150,8 @@ export class GrillSettingTab extends PluginSettingTab {
 	/** Live model lists, cached per provider for the lifetime of the tab. */
 	private modelLists: Partial<Record<ProviderId, string[]>> = {};
 	private fetching: Partial<Record<ProviderId, boolean>> = {};
+	/** Why the last model-list fetch came back empty, when it said. */
+	private modelProblems: Partial<Record<ProviderId, string>> = {};
 	private showCustomModel = false;
 	/** Whether Grill Cloud has been asked for the balance since the tab was opened. */
 	private cloudAsked = false;
@@ -2243,12 +2245,13 @@ export class GrillSettingTab extends PluginSettingTab {
 		if (this.fetching[p]) return;
 		this.fetching[p] = true;
 		const s = this.plugin.data.settings;
-		const models = await listModels(p, s.apiKeys[p], p === "custom" ? s.customBaseUrl : s.ollamaUrl);
+		const hadProblem = this.modelProblems[p];
+		const { models, problem } = await listModels(p, s.apiKeys[p], p === "custom" ? s.customBaseUrl : s.ollamaUrl);
 		this.fetching[p] = false;
-		if (models.length) {
-			this.modelLists[p] = models;
-			this.rerender();
-		}
+		if (models.length) this.modelLists[p] = models;
+		if (problem) this.modelProblems[p] = problem;
+		else delete this.modelProblems[p];
+		if (models.length || problem !== hadProblem) this.rerender();
 	}
 
 	/** Reset the behavioural settings to the recommended defaults, keeping the user's
@@ -2620,6 +2623,7 @@ export class GrillSettingTab extends PluginSettingTab {
 					.onChange(async (v) => {
 						s.apiKeys[p] = v.trim();
 						delete this.modelLists[p];
+						delete this.modelProblems[p];
 						await this.plugin.persist();
 					});
 				t.inputEl.type = "password";
@@ -2640,6 +2644,7 @@ export class GrillSettingTab extends PluginSettingTab {
 						.onChange(async (v) => {
 							s.customBaseUrl = v.trim();
 							delete this.modelLists.custom;
+							delete this.modelProblems.custom;
 							await this.plugin.persist();
 						}),
 				),
@@ -3003,6 +3008,7 @@ export class GrillSettingTab extends PluginSettingTab {
 						.onChange(async (v) => {
 							s.ollamaUrl = v.trim() || "http://localhost:11434";
 							delete this.modelLists.ollama;
+							delete this.modelProblems.ollama;
 							await this.plugin.persist();
 						}),
 				),
@@ -3028,17 +3034,19 @@ export class GrillSettingTab extends PluginSettingTab {
 		const options = list.length ? list : info.fallbackModels;
 		const current = s.models[p] || info.defaultModel;
 		const staleCurrent = list.length > 0 && !list.includes(current);
+		// The list couldn't be fetched, and the reason is known: a rejected key, a server
+		// that isn't running. Said here, where the key and the model are chosen.
+		const listProblem = list.length ? undefined : this.modelProblems[p];
 		ai.push({
 			name: "Model",
 			desc: staleCurrent
 				? `'${current}' isn't on your account. Pick another.`
 				: list.length
 					? `${list.length} models on your account.`
-					: p === "ollama"
-						? "Refresh to list your installed models."
-						: "Common models. Refresh to list yours.",
+					: (listProblem ??
+						(p === "ollama" ? "Refresh to list your installed models." : "Common models. Refresh to list yours.")),
 			build: (setting) => {
-				setting.descEl.toggleClass("mod-warning", staleCurrent);
+				setting.descEl.toggleClass("mod-warning", staleCurrent || !!listProblem);
 				setting.addDropdown((d) => {
 					for (const m of options) d.addOption(m, m);
 					if (current && !options.includes(current) && !this.showCustomModel)
@@ -3078,7 +3086,8 @@ export class GrillSettingTab extends PluginSettingTab {
 						}),
 				);
 				// Kick off a background model-list fetch the first time the row is shown.
-				if (!this.modelLists[p] && (s.apiKeys[p] || p === "ollama" || (p === "custom" && s.customBaseUrl)))
+				// Not again after a failure that was said: the refresh button is the retry.
+				if (!this.modelLists[p] && !this.modelProblems[p] && (s.apiKeys[p] || p === "ollama" || (p === "custom" && s.customBaseUrl)))
 					void this.refreshModels(p);
 			},
 		});

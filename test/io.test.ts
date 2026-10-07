@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { net, notices } from "obsidian";
-import { testModel } from "../src/llm";
+import { listModels, providerRetry, testModel } from "../src/llm";
 import { GrillStore } from "../src/store";
 
 // ---------------------------------------------------------------- model calls
@@ -56,6 +56,89 @@ test("OpenAI-style finish_reason length counts as truncation", async () => {
 	};
 	assert.equal(await testModel({ provider: "deepseek", apiKey: "k", model: "deepseek-flash" }), null);
 	assert.equal(calls, 2);
+});
+
+// A busy provider is waited out; a refusal is said plainly and not asked again.
+
+const ok = { stop_reason: "end_turn", content: [{ type: "text", text: '{"ok":true}' }] };
+const answer = (status: number, json: unknown, headers?: Record<string, string>) => ({ status, json, text: JSON.stringify(json), headers }) as never;
+
+test("a rate limit or a brief server error is asked again, twice at most", async () => {
+	providerRetry.ms = [1, 1];
+	let calls = 0;
+	net.handler = async () => (++calls < 3 ? answer(calls === 1 ? 429 : 503, { error: { message: "slow down" } }) : answer(200, ok));
+	assert.equal(await testModel(anthropic), null, "the student never sees the wait");
+	assert.equal(calls, 3);
+
+	calls = 0;
+	net.handler = async () => (++calls, answer(529, { error: { message: "Overloaded" } }));
+	assert.match((await testModel(anthropic)) ?? "", /^Anthropic is having trouble right now \(529\)\. Try again in a moment\.$/);
+	assert.equal(calls, 3, "the first try and two more");
+});
+
+test("a provider that names its own wait gets it, unless the wait is too long to sit through", async () => {
+	providerRetry.ms = [60_000, 60_000];
+	let calls = 0;
+	net.handler = async () => (++calls === 1 ? answer(429, {}, { "Retry-After": "0" }) : answer(200, ok));
+	assert.equal(await testModel(anthropic), null, "its own zero-second wait was used, not the default");
+	assert.equal(calls, 2);
+
+	calls = 0;
+	net.handler = async () => (++calls, answer(429, { error: { message: "You exceeded your current quota." } }, { "retry-after": "3600" }));
+	const said = (await testModel({ provider: "openai", apiKey: "k", model: "gpt-5.5-mini" })) ?? "";
+	assert.equal(calls, 1, "an hour is not waited out");
+	assert.match(said, /^OpenAI is rate-limiting this key, or its quota is used up\. Wait a minute and try again\. OpenAI said: "You exceeded your current quota\."$/);
+	providerRetry.ms = [1, 1];
+});
+
+test("a refusal is said in plain words and is not retried", async () => {
+	let calls = 0;
+	const reply = (status: number, json: unknown) => {
+		calls = 0;
+		net.handler = async () => (++calls, answer(status, json));
+	};
+	reply(401, { error: { message: "invalid x-api-key" } });
+	assert.equal(await testModel(anthropic), "Anthropic rejected the API key. Check it in Grill's settings.");
+	assert.equal(calls, 1);
+
+	reply(404, { error: { message: "model: claude-nope" } });
+	assert.equal(await testModel({ ...anthropic, model: "claude-nope" }), "Anthropic has no model called 'claude-nope'. Pick another in Grill's settings.");
+	assert.equal(calls, 1);
+
+	// Ollama sends its error as a bare sentence, and a missing model has a one-line fix.
+	reply(404, { error: "model 'qwen3:8b' not found" });
+	assert.equal(await testModel({ provider: "ollama", apiKey: "", model: "qwen3:8b", baseUrl: "http://localhost:11434" }), "Ollama doesn't have 'qwen3:8b' yet. Run: ollama pull qwen3:8b");
+
+	reply(400, { error: { message: "max_tokens: too large" } });
+	assert.equal(await testModel(anthropic), 'Anthropic answered with an error (400). Anthropic said: "max_tokens: too large"');
+	assert.equal(calls, 1);
+});
+
+test("a server that can't be reached is named, with what to check", async () => {
+	net.handler = async () => {
+		throw new Error("net::ERR_CONNECTION_REFUSED");
+	};
+	assert.equal(
+		await testModel({ provider: "ollama", apiKey: "", model: "qwen3:8b", baseUrl: "http://localhost:11434" }),
+		"Couldn't reach Ollama at http://localhost:11434. Check that it's running.",
+	);
+	assert.equal(await testModel(anthropic), "Couldn't reach Anthropic. Check your connection and try again.");
+});
+
+test("a model list that can't be fetched says why instead of coming back empty", async () => {
+	net.handler = async () => answer(200, { data: [{ id: "deepseek-flash" }, { id: "deepseek-pro" }] });
+	assert.deepEqual(await listModels("deepseek", "k"), { models: ["deepseek-flash", "deepseek-pro"] });
+
+	net.handler = async () => answer(401, { error: { message: "Incorrect API key provided" } });
+	assert.deepEqual(await listModels("openai", "wrong"), { models: [], problem: "OpenAI rejected the API key. Check it in Grill's settings." });
+
+	net.handler = async () => {
+		throw new Error("net::ERR_CONNECTION_REFUSED");
+	};
+	assert.deepEqual(await listModels("ollama", "", "http://localhost:11434/"), {
+		models: [],
+		problem: "Couldn't reach Ollama at http://localhost:11434. Check that it's running.",
+	});
 });
 
 // ---------------------------------------------------------------- store

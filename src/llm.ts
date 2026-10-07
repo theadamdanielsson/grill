@@ -382,7 +382,8 @@ interface HttpCall {
 }
 
 interface ApiErrorBody {
-	error?: { message?: string; status?: string };
+	// Most providers send an object; Ollama sends the sentence itself.
+	error?: { message?: string; status?: string } | string;
 }
 
 /** An error from Grill Cloud: its own wording, and a code the screen can act on
@@ -402,10 +403,68 @@ export class CloudError extends Error {
 	}
 }
 
-function apiError(status: number, json: unknown, text: string): Error {
-	const body = json as ApiErrorBody | null;
-	const detail = body?.error?.message ?? body?.error?.status ?? text.slice(0, 200);
-	return new Error(`API error ${status}${detail ? `: ${detail}` : ""}`);
+/** An error a provider answered with: the status, so a busy server can be told from a
+ * wrong key, and a sentence that says what to do about it. */
+export class ApiError extends Error {
+	readonly status: number;
+	/** How long the provider asked to be left alone, when it said. */
+	readonly retryAfterMs: number | null;
+	constructor(status: number, message: string, retryAfterMs: number | null = null) {
+		super(message);
+		this.status = status;
+		this.retryAfterMs = retryAfterMs;
+	}
+	/** Busy or briefly broken, not refused: asking again in a moment can work. */
+	get transient(): boolean {
+		return [429, 500, 502, 503, 529].includes(this.status);
+	}
+}
+
+/** What to call a provider in a sentence. */
+function who(provider: ProviderId): string {
+	return provider === "custom" ? "Your endpoint" : PROVIDERS[provider].label.replace(/ \(.*$/, "");
+}
+
+/** A `retry-after` given in seconds. (A date is ignored: nothing Grill calls sends one.) */
+function retryAfter(headers: Record<string, string> | undefined): number | null {
+	const key = Object.keys(headers ?? {}).find((k) => k.toLowerCase() === "retry-after");
+	const seconds = key ? Number(headers?.[key]) : NaN;
+	return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : null;
+}
+
+/** The provider's error as a sentence the student can act on. `model` is the one that
+ * was asked for, when the request was for a model at all. */
+function apiError(provider: ProviderId, model: string | null, resp: { status: number; text: string; headers?: Record<string, string> }, json: unknown): ApiError {
+	const { status } = resp;
+	const err = (json as ApiErrorBody | null)?.error;
+	const said = (typeof err === "string" ? err : (err?.message ?? err?.status ?? resp.text ?? "")).slice(0, 160).trim();
+	const name = who(provider);
+	// Their own words, for the cases where the status alone doesn't say which thing it is.
+	const theirs = said ? ` ${name} said: "${said}"` : "";
+	let message: string;
+	if (status === 401) message = `${name} rejected the API key. Check it in Grill's settings.`;
+	else if (status === 403) message = `${name} refused this request. The key may not have access to ${model ? `'${model}'` : "it"}.${theirs}`;
+	else if (status === 404 && provider === "ollama" && model) message = `Ollama doesn't have '${model}' yet. Run: ollama pull ${model}`;
+	else if (status === 404 && model && provider !== "custom") message = `${name} has no model called '${model}'. Pick another in Grill's settings.`;
+	else if (status === 404) message = `${name} answered "not found". Check the address${model ? " and the model name" : ""}.`;
+	else if (status === 429) message = `${name} is rate-limiting this key, or its quota is used up. Wait a minute and try again.${theirs}`;
+	else if (status >= 500) message = `${name} is having trouble right now (${status}). Try again in a moment.`;
+	else message = `${name} answered with an error (${status}).${theirs}`;
+	return new ApiError(status, message, retryAfter(resp.headers));
+}
+
+/** The request never got an answer: offline, a wrong address, or a local server that
+ * isn't running. */
+function unreachable(provider: ProviderId, url: string): Error {
+	let at = "";
+	try {
+		at = new URL(url).origin;
+	} catch {
+		/* not an address at all: say so without one */
+	}
+	if (provider === "ollama") return new Error(`Couldn't reach Ollama${at ? ` at ${at}` : ""}. Check that it's running.`);
+	if (provider === "custom") return new Error(`Couldn't reach your endpoint${at ? ` at ${at}` : ""}. Check the base URL and that it's running.`);
+	return new Error(`Couldn't reach ${who(provider)}. Check your connection and try again.`);
 }
 
 /** Gemini's responseSchema is an OpenAPI-style subset: uppercase type enums,
@@ -703,6 +762,8 @@ async function callJSONOnce(
 			throw: false,
 			headers: call.headers,
 			body: JSON.stringify(call.body),
+		}).catch(() => {
+			throw unreachable(cfg.provider, call.url);
 		}),
 		requestTimeoutMs(cfg),
 	);
@@ -717,7 +778,7 @@ async function callJSONOnce(
 		// Grill Cloud's errors are already plain sentences written for the student.
 		if (resp.status >= 400) throw new CloudError(resp.status, json);
 	}
-	if (resp.status >= 400) throw apiError(resp.status, json, resp.text);
+	if (resp.status >= 400) throw apiError(cfg.provider, cfg.model, resp, json);
 	// A 2xx with an empty/null body (a local/custom endpoint restarting mid-response, a
 	// proxy returning an empty 200) makes every provider's extract() throw a raw
 	// TypeError reading a property off null — that never reaches the `!text` check
@@ -753,12 +814,20 @@ async function callJSONOnce(
 /** A model occasionally returns no content at all, or garbles the JSON, on an otherwise
  * healthy request — known transient flakiness with reasoning models, not something a
  * second identical request usually repeats. Retry once before surfacing it to the
- * student as a failed batch/grade. A real API error (bad key, rate limit, quota) throws
- * from callJSONOnce before reaching this catch, so it's never retried into a second
- * billed call for a failure that won't fix itself. */
-/** Grill Cloud lets one request through at a time when a balance is nearly spent, and
+ * student as a failed batch/grade. A refusal (bad key, no such model) throws from
+ * callJSONOnce before reaching that catch, so it's never retried into a second billed
+ * call for a failure that won't fix itself. */
+/** Two kinds of "not now" are waited out quietly here, so one busy moment doesn't end a
+ * session.
+ *
+ * Grill Cloud lets one request through at a time when a balance is nearly spent, and
  * tells the next to wait. Grill grades one answer while writing the next question, so
- * that is ordinary: wait and ask again, quietly, for up to about a minute. */
+ * that is ordinary: wait and ask again for up to about a minute.
+ *
+ * A provider that is rate-limiting or briefly broken (429, 500, 502, 503, 529) is asked
+ * again twice, after as long as it said or a few seconds. Nothing was produced by the
+ * failed request, so there is no second bill. A wait longer than `longest` isn't sat
+ * through: the student is told instead. */
 async function callJSON(
 	cfg: LLMConfig,
 	system: string,
@@ -768,18 +837,36 @@ async function callJSON(
 	images: ImageInput[] = [],
 	effort: "low" | "medium" = "medium",
 ): Promise<unknown> {
-	for (let waited = 0; ; waited++) {
+	const pause = (ms: number): Promise<void> => new Promise((done) => window.setTimeout(done, ms));
+	let waited = 0;
+	let retried = 0;
+	for (;;) {
 		try {
 			return await callJSONSettled(cfg, system, user, schema, maxTokens, images, effort);
 		} catch (e) {
-			if (!(e instanceof CloudError && e.code === "wait") || waited >= 5) throw e;
-			await new Promise((done) => window.setTimeout(done, cloudWait.ms * (waited + 1)));
+			if (e instanceof CloudError && e.code === "wait" && waited < 5) {
+				await pause(cloudWait.ms * ++waited);
+				continue;
+			}
+			if (e instanceof ApiError && e.transient && retried < providerRetry.ms.length) {
+				const ms = e.retryAfterMs ?? providerRetry.ms[retried];
+				if (ms <= providerRetry.longest) {
+					retried++;
+					await pause(ms);
+					continue;
+				}
+			}
+			throw e;
 		}
 	}
 }
 
 /** How long to wait before asking again, at first. Tests shorten it. */
 export const cloudWait = { ms: 3000 };
+
+/** The waits before each retry of a busy provider, and the longest one worth sitting
+ * through when the provider names its own. Tests shorten them. */
+export const providerRetry = { ms: [2000, 6000], longest: 20000 };
 
 async function callJSONSettled(
 	cfg: LLMConfig,
@@ -880,15 +967,43 @@ interface OllamaTagsResponse {
 	models?: Array<{ name: string }>;
 }
 
-/** Fetch the live model list from a provider. Returns [] on any failure;
- * callers fall back to PROVIDERS[p].fallbackModels. */
-export async function listModels(provider: ProviderId, apiKey: string, baseUrl?: string): Promise<string[]> {
+/** One request for a model list. A refusal or an unreachable server is thrown as the
+ * same sentences a model call would give, so a rejected key is said, not swallowed. */
+async function modelsRequest(provider: ProviderId, req: RequestUrlParam): Promise<RequestUrlResponse> {
+	let r: RequestUrlResponse;
 	try {
+		r = await timedRequest({ ...req, throw: false }, 10_000);
+	} catch {
+		throw unreachable(provider, req.url);
+	}
+	if (r.status >= 400) {
+		let json: unknown = null;
+		try {
+			json = r.json as unknown;
+		} catch {
+			/* non-JSON error body */
+		}
+		throw apiError(provider, null, r, json);
+	}
+	return r;
+}
+
+/** Fetch the live model list from a provider. On any failure the list is empty and
+ * `problem` says why; callers fall back to PROVIDERS[p].fallbackModels. */
+export async function listModels(provider: ProviderId, apiKey: string, baseUrl?: string): Promise<{ models: string[]; problem?: string }> {
+	try {
+		return { models: await fetchModels(provider, apiKey, baseUrl) };
+	} catch (e) {
+		return { models: [], problem: (e as Error).message };
+	}
+}
+
+async function fetchModels(provider: ProviderId, apiKey: string, baseUrl?: string): Promise<string[]> {
+	{
 		switch (provider) {
 			case "anthropic": {
-				const r = await timedRequest({
+				const r = await modelsRequest(provider, {
 					url: "https://api.anthropic.com/v1/models?limit=100",
-					throw: false,
 					headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
 				});
 				const anthropicModels = (r.json as AnthropicModelListResponse | undefined)?.data ?? [];
@@ -898,9 +1013,8 @@ export async function listModels(provider: ProviderId, apiKey: string, baseUrl?:
 					.filter(Boolean);
 			}
 			case "openai": {
-				const r = await timedRequest({
+				const r = await modelsRequest(provider, {
 					url: "https://api.openai.com/v1/models",
-					throw: false,
 					headers: { authorization: `Bearer ${apiKey}` },
 				});
 				const bad = /(audio|realtime|tts|transcribe|whisper|image|embed|moderation|dall-e|davinci|babbage|search|computer-use|codex|chat-latest|gpt-3\.5|o1-mini|o1-preview)/;
@@ -912,9 +1026,8 @@ export async function listModels(provider: ProviderId, apiKey: string, baseUrl?:
 					.reverse();
 			}
 			case "gemini": {
-				const r = await timedRequest({
+				const r = await modelsRequest(provider, {
 					url: "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",
-					throw: false,
 					headers: { "x-goog-api-key": apiKey },
 				});
 				const geminiModels = (r.json as GeminiModelListResponse | undefined)?.models ?? [];
@@ -924,18 +1037,16 @@ export async function listModels(provider: ProviderId, apiKey: string, baseUrl?:
 					.filter((n) => n.startsWith("gemini") && !/(image|tts|live|audio|embedding|aqa|learnlm|thinking-exp)/.test(n));
 			}
 			case "deepseek": {
-				const r = await timedRequest({
+				const r = await modelsRequest(provider, {
 					url: "https://api.deepseek.com/models",
-					throw: false,
 					headers: { authorization: `Bearer ${apiKey}` },
 				});
 				const deepseekModels = (r.json as OpenAIModelListResponse | undefined)?.data ?? [];
 				return deepseekModels.map((m) => m.id).filter(Boolean);
 			}
 			case "ollama": {
-				const r = await timedRequest({
+				const r = await modelsRequest(provider, {
 					url: `${(baseUrl ?? "http://localhost:11434").replace(/\/$/, "")}/api/tags`,
-					throw: false,
 				});
 				const ollamaModels = (r.json as OllamaTagsResponse | undefined)?.models ?? [];
 				return ollamaModels.map((m) => m.name).filter(Boolean);
@@ -944,9 +1055,8 @@ export async function listModels(provider: ProviderId, apiKey: string, baseUrl?:
 				return ["Grill Cloud"];
 			case "custom": {
 				if (!baseUrl) return [];
-				const r = await timedRequest({
+				const r = await modelsRequest(provider, {
 					url: `${baseUrl.replace(/\/$/, "")}/models`,
-					throw: false,
 					headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
 				});
 				// OpenAI-compatible {data:[{id}]}; endpoints vary, so don't filter.
@@ -954,8 +1064,6 @@ export async function listModels(provider: ProviderId, apiKey: string, baseUrl?:
 				return customModels.map((m) => m.id).filter(Boolean).sort();
 			}
 		}
-	} catch {
-		/* network/parse failure -> [] */
 	}
 	return [];
 }
