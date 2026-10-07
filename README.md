@@ -6,9 +6,7 @@ I take a lot of notes to learn new information and needed a system to learn them
 
 ![Grill: open it, start a session, answer, get graded with specific feedback](docs/grill-demo.gif)
 
-<img src="docs/icons/play.svg" width="44" height="44" alt="">
-
-## How to use it
+## <picture><source media="(prefers-color-scheme: dark)" srcset="docs/icons/play-dark.svg"><img src="docs/icons/play.svg" height="20" alt=""></picture> How to use it
 
 1. **Start free.** On first run, press Start free. That's Grill Cloud: no API key, no sign-up, a few free credits to try it. You can use your own API key or Ollama instead, or study fully offline. Then tick which folders Grill should cover, or leave them blank for your whole vault.
 2. **Get grilled.** Hit the flame (or **Get grilled**). Grill writes questions from your notes and marks what you type back, with partial credit and specific feedback.
@@ -18,9 +16,7 @@ Focus a session on a folder or tag from the **Study** dropdown; Grill weights it
 
 ![Grill's own learning graph next to Obsidian's native one, same vault: a completely different visual language, not just a themed panel](docs/screenshot-graph.png)
 
-<img src="docs/icons/flame.svg" width="44" height="44" alt="">
-
-## What you get
+## <img src="docs/icons/flame.svg" height="24" alt=""> What you get
 
 - **Nothing to set up:** [Grill Cloud](#grill-cloud) writes and grades your questions with no API key and no account. Free to try.
 - **Or your own key, or fully offline:** Claude, GPT, Gemini, DeepSeek, any OpenAI-compatible endpoint (OpenRouter, Groq, LM Studio), local Ollama, or a no-key deterministic mode. Same engine either way — your model, your cost, your data staying on whichever machine you point it at. No account with Grill, and no server of mine in the middle unless you pick [Grill Cloud](#grill-cloud).
@@ -41,9 +37,7 @@ Full detail on how each of these actually works — scheduling, the knowledge gr
 
 ![Got it right, and the concept still gets explained back to you, with a worked example](docs/screenshot-explanation.png)
 
-<img src="docs/icons/cloud.svg" width="44" height="44" alt="">
-
-## Grill Cloud
+## <picture><source media="(prefers-color-scheme: dark)" srcset="docs/icons/cloud-dark.svg"><img src="docs/icons/cloud.svg" height="20" alt=""></picture> Grill Cloud
 
 The easiest way to use Grill. Press Start free and you're studying: Grill Cloud writes the questions, grades your answers and explains them, with no API key and no sign-up. Grill makes a key on your device and, while each day's free credits last, you get some to try it.
 
@@ -60,39 +54,29 @@ There's nothing to look after. Grill makes a key on your device when you press S
 
 Used credits can't be refunded. Unused ones can if you ask within 14 days. Grill Cloud is for people 18 and over.
 
-<img src="docs/icons/key.svg" width="44" height="44" alt="">
-
-## With your own key
+## <picture><source media="(prefers-color-scheme: dark)" srcset="docs/icons/key-dark.svg"><img src="docs/icons/key.svg" height="20" alt=""></picture> With your own key
 
 Prefer to pay a model provider directly? Pick "use my own API key or Ollama" on first run, or choose a provider in settings. Grill works the same on Claude, GPT, Gemini, DeepSeek or any OpenAI-compatible endpoint, and on a local model through Ollama, where nothing leaves your machine. Your notes go straight from your machine to the provider you chose; my server isn't involved. Which model to pick is in [docs/models.md](docs/models.md).
 
-<img src="docs/icons/screen.svg" width="44" height="44" alt="">
-
-## With no AI at all
+## <picture><source media="(prefers-color-scheme: dark)" srcset="docs/icons/screen-dark.svg"><img src="docs/icons/screen.svg" height="20" alt=""></picture> With no AI at all
 
 Questions you've already written work without any model. A `> [!grill]` callout is asked exactly as you wrote it, and flashcards in your notes are used as they are: Spaced Repetition's `==cloze==` and `::`/`?` separators, and Anki's `{{c1::…}}` clozes. Grill can also pull simple questions straight from a note's structure (bold terms, headings, "Term: definition" lines). You grade yourself, the same spaced-repetition schedule applies, and nothing is sent anywhere. Set "Study mode" to "Fully offline" in settings. It's a fallback, not the main event: the questions are only as good as your notes are structured, and nothing marks your writing.
 
-<img src="docs/icons/page.svg" width="44" height="44" alt="">
-
-## Documentation
+## <picture><source media="(prefers-color-scheme: dark)" srcset="docs/icons/page-dark.svg"><img src="docs/icons/page.svg" height="20" alt=""></picture> Documentation
 
 - **[docs/features.md](docs/features.md)** — how scheduling, the knowledge graph, missing-link detection, custom questions, PDFs, and persona/instructions actually work.
 - **[docs/privacy.md](docs/privacy.md)** — exactly what leaves your machine, where it goes, and what Grill stores.
 - **[docs/models.md](docs/models.md)** — which model to use, by budget and by how much RAM your machine has.
 - **[docs/troubleshooting.md](docs/troubleshooting.md)** — the mechanics behind the common "is this a bug" questions.
 
-<img src="docs/icons/ask.svg" width="44" height="44" alt="">
-
-## Worth knowing before you install
+## <picture><source media="(prefers-color-scheme: dark)" srcset="docs/icons/ask-dark.svg"><img src="docs/icons/ask.svg" height="20" alt=""></picture> Worth knowing before you install
 
 - For AI questions and grading you need [Grill Cloud](#grill-cloud), your own API key, or Ollama installed. Without any of them, the offline mode still works.
 - It's only as good as your notes. Half-written notes make half-baked questions.
 - The grading is a model's opinion, not gospel. It's usually right, but not always, so it always shows you the expected answer. Trust yourself over it.
 - Local models are the weak link. Good for privacy, not for the best questions.
 
-<img src="docs/icons/check.svg" width="44" height="44" alt="">
-
-## Requirements
+## <picture><source media="(prefers-color-scheme: dark)" srcset="docs/icons/check-dark.svg"><img src="docs/icons/check.svg" height="20" alt=""></picture> Requirements
 
 - **Obsidian 1.8.0 or newer.** Grill checks this on load and won't run on an older build.
 - **Desktop or mobile** — it's not desktop-only, though writing long answers is obviously easier with a keyboard.
@@ -103,9 +87,7 @@ Questions you've already written work without any model. A `> [!grill]` callout 
   - None of those: your own questions and flashcards still work with no AI. See [With no AI at all](#with-no-ai-at-all) above.
 - No account with Grill itself, ever — there's nothing to sign up for.
 
-<img src="docs/icons/install.svg" width="44" height="44" alt="">
-
-## Installation
+## <picture><source media="(prefers-color-scheme: dark)" srcset="docs/icons/install-dark.svg"><img src="docs/icons/install.svg" height="20" alt=""></picture> Installation
 
 Website: [grill.onbridger.com](https://grill.onbridger.com)
 
@@ -124,9 +106,7 @@ then drop `main.js`, `manifest.json`, and `styles.css` into `<vault>/.obsidian/p
 
 After installing, open Grill (the flame icon, or the "Open Grill" command) — first run asks which folders it should cover.
 
-<img src="docs/icons/cross.svg" width="44" height="44" alt="">
-
-## Troubleshooting
+## <picture><source media="(prefers-color-scheme: dark)" srcset="docs/icons/cross-dark.svg"><img src="docs/icons/cross.svg" height="20" alt=""></picture> Troubleshooting
 
 Short version of the common ones below; the full list, with what's actually happening under the hood, is in [docs/troubleshooting.md](docs/troubleshooting.md).
 
@@ -145,4 +125,4 @@ Grill only talks to the model provider you configure, with your own key. No anal
 
 MIT
 
-![](docs/fire.svg)
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/fire-dark.svg"><img src="docs/fire.svg" alt=""></picture>
