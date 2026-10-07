@@ -4,7 +4,7 @@ I take a lot of notes to learn new information and needed a system to learn them
 
 ![Grill's home screen: pick a scope and get grilled](docs/screenshot-home.png)
 
-![Grill: open it, start a session, answer, get graded with specific feedback](docs/grill-demo.gif)
+<p align="center"><img src="docs/grill-demo.gif" alt="Grill: open it, start a session, answer, get graded with specific feedback"></p>
 
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="docs/icons/play-dark.svg"><img src="docs/icons/play.svg" height="20" alt=""></picture> How to use it
 
