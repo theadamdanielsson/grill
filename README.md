@@ -37,6 +37,7 @@ Full detail on how each of these actually works — scheduling, the knowledge gr
 
 ![Got it right, and the concept still gets explained back to you, with a worked example](docs/screenshot-explanation.png)
 
+<a name="grill-cloud"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="docs/icons/cloud-dark.svg"><img src="docs/icons/cloud.svg" height="20" alt=""></picture> Grill Cloud
 
 The easiest way to use Grill. Press Start free and you're studying: Grill Cloud writes the questions, grades your answers and explains them, with no API key and no sign-up. Grill makes a key on your device and, while each day's free credits last, you get some to try it.
@@ -58,6 +59,7 @@ Used credits can't be refunded. Unused ones can if you ask within 14 days. Grill
 
 Prefer to pay a model provider directly? Pick "use my own API key or Ollama" on first run, or choose a provider in settings. Grill works the same on Claude, GPT, Gemini, DeepSeek or any OpenAI-compatible endpoint, and on a local model through Ollama, where nothing leaves your machine. Your notes go straight from your machine to the provider you chose; my server isn't involved. Which model to pick is in [docs/models.md](docs/models.md).
 
+<a name="with-no-ai-at-all"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="docs/icons/screen-dark.svg"><img src="docs/icons/screen.svg" height="20" alt=""></picture> With no AI at all
 
 Questions you've already written work without any model. A `> [!grill]` callout is asked exactly as you wrote it, and flashcards in your notes are used as they are: Spaced Repetition's `==cloze==` and `::`/`?` separators, and Anki's `{{c1::…}}` clozes. Grill can also pull simple questions straight from a note's structure (bold terms, headings, "Term: definition" lines). You grade yourself, the same spaced-repetition schedule applies, and nothing is sent anywhere. Set "Study mode" to "Fully offline" in settings. It's a fallback, not the main event: the questions are only as good as your notes are structured, and nothing marks your writing.
