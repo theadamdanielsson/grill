@@ -1,7 +1,7 @@
 {
 	"id": "grill",
 	"name": "Grill",
-	"version": "7.0.0",
+	"version": "7.0.1",
 	"minAppVersion": "1.8.0",
 	"description": "Quiz yourself on your own notes. AI writes the questions, grades your answers and maps what you know. Start free with Grill Cloud, bring your own key (Claude, GPT, Gemini, DeepSeek, Ollama), or study fully offline.",
 	"author": "Adam Danielsson",
