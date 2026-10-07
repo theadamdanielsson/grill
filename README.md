@@ -2,8 +2,6 @@
 
 I take a lot of notes to learn new information and needed a system to learn them more deeply. Grill works by creating questions according to the underlying information and your preferences. It then tests you and tracks your knowledge through spaced repetition while showing your progress on a map of your notes. Works using BYOK, fully local, or a mix of both.
 
-Website: [grill.onbridger.com](https://grill.onbridger.com)
-
 ![Grill's home screen: pick a scope and get grilled](docs/screenshot-home.png)
 
 ![Grill: open it, start a session, answer, get graded with specific feedback](docs/grill-demo.gif)
@@ -108,6 +106,8 @@ Questions you've already written work without any model. A `> [!grill]` callout 
 <img src="docs/icons/install.svg" width="44" height="44" alt="">
 
 ## Installation
+
+Website: [grill.onbridger.com](https://grill.onbridger.com)
 
 **From Obsidian (recommended):** Settings → Community plugins → Browse, search "Grill", Install, then Enable. If Community plugins are off, Settings → Community plugins → turn on "Turn on community plugins" first.
 
