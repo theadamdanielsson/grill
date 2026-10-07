@@ -42,7 +42,7 @@ Full detail on how each of these actually works — scheduling, the knowledge gr
 
 The easiest way to use Grill. Press Start free and you're studying: Grill Cloud writes the questions, grades your answers and explains them, with no API key and no sign-up. Grill makes a key on your device and, while each day's free credits last, you get some to try it.
 
-After that you buy credits when you want them: 400 for $3.99 or 1,100 for $9.99, plus tax where it applies. You pay once per pack. A session usually uses 5 to 40 credits depending on how long your notes are and how much you ask for explanations, and Grill tells you what each finished one used. Credits show up in Grill by themselves a few seconds after you pay, and they don't expire. The checkout is run by Stripe, so the page says "Sold through Link" and your card statement shows Link, not Grill. Buying happens in Grill's settings and nowhere else.
+After that you buy credits when you want them: 400 for $3.99 or 1,100 for $9.99, plus tax where it applies. You pay once per pack. How many credits a session uses depends on how long your notes are and how much you ask for explanations, and Grill tells you what each finished one used. Credits show up in Grill by themselves a few seconds after you pay, and they don't expire. The checkout is run by Stripe, so the page says "Sold through Link" and your card statement shows Link, not Grill. Buying happens in Grill's settings and nowhere else.
 
 It runs on Claude Sonnet 5.5, the same model Grill recommends for grading.
 
