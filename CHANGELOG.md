@@ -1,5 +1,11 @@
 # Changelog
 
+## 7.0.3
+
+- **Diagram text is drawn in your theme's font.** A diagram's labels could come out in
+  the browser's default serif, not the font the diagram was laid out in, so text
+  didn't fit its boxes.
+
 ## 7.0.2
 
 - **Diagrams draw.** A diagram in an explanation or a follow-up could go missing
