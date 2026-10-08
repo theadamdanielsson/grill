@@ -1,0 +1,9 @@
+# Security fixes for npm arrive on their own (the repo's Dependabot security updates
+# setting). Routine npm version bumps are left off on purpose: the bundled libraries
+# change what users run, and nothing here can check a bump inside Obsidian.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
