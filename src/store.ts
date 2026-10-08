@@ -18,6 +18,7 @@ import { safeSlice } from "./text";
 import { BridgeMap } from "./bridges";
 import { PdfCacheMap } from "./pdf";
 import { ConceptExtractionCacheMap } from "./generate-local";
+import { safeDiagram, safeMarkdown } from "./safemd";
 
 /** A generated question cached for reuse. `sourceHash` ties it to the concept's
  * source text at generation time; a mismatch means the note changed and the entry
@@ -726,14 +727,19 @@ export class GrillStore {
 			"",
 		];
 
+		// Everything a model wrote is made inert before it is written here: this note is
+		// rendered by Obsidian on every opening, long after the session. See safemd.ts.
+		/** Model text, safe, with its later lines kept inside the quote it is written in. */
+		const quote = (text: string): string => safeMarkdown(text).split("\n").join("\n> ");
+
 		if (debrief) {
-			lines.push("> [!summary] Debrief", `> ${debrief.headline}`);
-			if (debrief.pattern) lines.push(">", `> **Recurring pattern:** ${debrief.pattern}`);
+			lines.push("> [!summary] Debrief", `> ${quote(debrief.headline)}`);
+			if (debrief.pattern) lines.push(">", `> **Recurring pattern:** ${quote(debrief.pattern)}`);
 			if (debrief.gaps.length) {
 				lines.push(">", "> **To review:**");
 				for (const g of debrief.gaps) {
 					const noteRef = link ? `[[${g.note}]]` : g.note;
-					lines.push(`> - **${g.concept}** (${noteRef}): ${g.why}`);
+					lines.push(`> - **${quote(g.concept)}** (${noteRef}): ${quote(g.why)}`);
 				}
 			}
 			if (debrief.nextFocus.length) {
@@ -744,32 +750,34 @@ export class GrillStore {
 		}
 		for (const e of entries) {
 			const label = e.gaveUp ? "Skipped" : e.verdict === "correct" ? "Correct" : e.verdict === "partial" ? "Partially correct" : "Incorrect";
-			lines.push(link ? `## [[${e.node}]]` : `## ${e.node}`, "", e.question, "");
+			lines.push(link ? `## [[${e.node}]]` : `## ${e.node}`, "", safeMarkdown(e.question), "");
 			if (!e.gaveUp && e.answer) {
-				lines.push(`> [!quote] Your answer`, ...e.answer.split("\n").map((l) => `> ${l}`), "");
+				lines.push(`> [!quote] Your answer`, ...safeMarkdown(e.answer).split("\n").map((l) => `> ${l}`), "");
 			}
-			lines.push(`**${label}.** ${e.feedback}`, "");
+			lines.push(`**${label}.** ${safeMarkdown(e.feedback)}`, "");
 			if (e.verdict !== "correct" && e.modelAnswer) {
-				lines.push(`**Expected answer:** ${e.modelAnswer}`, "");
+				lines.push(`**Expected answer:** ${safeMarkdown(e.modelAnswer)}`, "");
 			}
 			// What was asked afterwards, and what the tutor said: often the part worth rereading.
 			const x = e.explanation;
 			if (x) {
 				lines.push("> [!info] Explanation");
 				for (const [label, text] of [["What went wrong", x.whatWentWrong], ["Key concept", x.keyConcept], ["Example", x.example]] as const) {
-					if (text) lines.push(`> **${label}.** ${text.split("\n").join("\n> ")}`, ">");
+					if (text) lines.push(`> **${label}.** ${quote(text)}`, ">");
 				}
 				if (x.relevantImagePath) lines.push(`> ![[${x.relevantImagePath}]]`, ">");
 				if (lines[lines.length - 1] === ">") lines.pop();
 				lines.push("");
-				if (x.diagram) lines.push("```mermaid", x.diagram, "```", "");
+				const drawn = safeDiagram(x.diagram ?? "");
+				if (drawn) lines.push("```mermaid", drawn, "```", "");
 			}
 			for (const turn of e.discussion ?? []) {
-				const quoted = turn.text.split("\n").map((l) => `> ${l}`);
+				const quoted = safeMarkdown(turn.text).split("\n").map((l) => `> ${l}`);
 				lines.push(turn.role === "student" ? "> [!question] You asked" : "> [!note] Grill", ...quoted);
 				if (turn.imagePath) lines.push(">", `> ![[${turn.imagePath}]]`);
 				lines.push("");
-				if (turn.diagram) lines.push("```mermaid", turn.diagram, "```", "");
+				const drawn = safeDiagram(turn.diagram ?? "");
+				if (drawn) lines.push("```mermaid", drawn, "```", "");
 			}
 		}
 

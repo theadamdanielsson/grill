@@ -1,6 +1,6 @@
 /** Quiz session side panel. */
 
-import { ItemView, MarkdownRenderer, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
+import { ItemView, loadMermaid, MarkdownRenderer, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
 import { cloud, CLOUD_FACTS, CLOUD_PITCH, cloudEnabled, creditsInWords, lowBalance, usageInWords } from "./cloud";
 import { adjudicateBridges, ConceptTarget, contentWords, debriefSession, discussQuestion, embedTexts, explainQuestion, formatSatisfies, generateQuestions, Grade, CloudError, gradeAnswer, LLMConfig, offeredProviders, PROVIDERS, ProviderId, Question, supportsEmbeddings, supportsVision, testModel, ThreadTurn, Verdict } from "./llm";
@@ -74,6 +74,37 @@ import { CONFIDENCE_LEVELS, calibrationLine, pushCalibration } from "./calibrati
 import { celebrate, playSfx } from "./sfx";
 import { stopSpeaking, toSpeechText, ttsAvailable } from "./tts";
 import { SessionEntry } from "./store";
+import { safeDiagram, safeMarkdown } from "./safemd";
+
+/** Mermaid's drawing, made fit to be shown as an image: well-formed XML, with a size
+ * of its own. Null if it isn't a drawing (Mermaid draws its errors as one too).
+ *
+ * Mermaid writes its SVG by HTML's rules, so a label can hold a bare <br> or a named
+ * entity, which an image, read strictly as XML, rejects. When that happens it is read
+ * the forgiving way and written out again as XML. */
+function svgForImage(svg: string): string | null {
+	if (!svg) return null;
+	let doc = new DOMParser().parseFromString(svg, "image/svg+xml");
+	if (doc.querySelector("parsererror")) {
+		const root = new DOMParser().parseFromString(svg, "text/html").body.firstElementChild;
+		if (!root || root.localName !== "svg") return null;
+		// The forgiving parser keeps xmlns as an ordinary attribute, which would be written
+		// out twice: the namespaces are worked out again from the elements themselves.
+		for (const el of [root, ...Array.from(root.querySelectorAll("*"))]) el.removeAttribute("xmlns");
+		doc = new DOMParser().parseFromString(new XMLSerializer().serializeToString(root), "image/svg+xml");
+	}
+	const root = doc.documentElement;
+	if (root.localName !== "svg" || doc.querySelector("parsererror, .error-icon, .error-text") || !root.children.length) return null;
+	// Mermaid sizes a drawing as "100% of whatever holds it", which for an image is
+	// nothing. Give it the size of its own drawing area, and let the page scale it down.
+	const box = (root.getAttribute("viewBox") ?? "").trim().split(/[\s,]+/).map(Number);
+	if (box.length === 4 && box[2] > 0 && box[3] > 0) {
+		root.setAttribute("width", String(Math.ceil(box[2])));
+		root.setAttribute("height", String(Math.ceil(box[3])));
+		root.removeAttribute("style");
+	}
+	return new XMLSerializer().serializeToString(root);
+}
 
 export const VIEW_TYPE = "grill-session";
 /** Follow-ups one question's thread takes before it suggests moving on. */
@@ -1038,8 +1069,10 @@ export class SessionView extends ItemView {
 	 * uniquely named there (any subfoldered or duplicate-basename vault). Callers with a
 	 * concrete note in scope should pass its path; only truly note-less content (a
 	 * synthetic message with no user-authored links in it) should fall back to "". */
+	/** Render Markdown. Nearly everything shown this way was written by a model, from a
+	 * note the student may not have written, so it is made inert first: see safemd.ts. */
 	private md(markdown: string, el: HTMLElement, sourcePath = ""): void {
-		void MarkdownRenderer.render(this.app, markdown, el, sourcePath, this);
+		void MarkdownRenderer.render(this.app, safeMarkdown(markdown), el, sourcePath, this);
 	}
 
 	private openNote(name: string): void {
@@ -3431,36 +3464,74 @@ export class SessionView extends ItemView {
 		this.md(text, block, sourcePath);
 	}
 
-	/** Renders the model's optional Mermaid diagram. Mermaid parses asynchronously after
-	 * MarkdownRenderer.render's own promise resolves, and a malformed diagram (an LLM
-	 * output, not vetted syntax) renders as an inline error box rather than throwing —
-	 * so this renders off-screen first and only promotes the result if an actual <svg>
-	 * appeared, silently dropping the block otherwise instead of showing broken output. */
+	/** The model's optional Mermaid diagram, under its own label: drawn if Mermaid can
+	 * draw it (a model's diagram is not vetted syntax), and otherwise shown as the text
+	 * it was written as. */
 	private async renderDiagramBlock(parent: HTMLElement, diagram: string): Promise<void> {
+		// Again here, not only where the model's reply is read: a diagram kept from an
+		// earlier version's session is drawn through this too.
+		diagram = safeDiagram(diagram);
 		if (!diagram) return;
-		const scratch = document.body.createDiv({ cls: "grill-diagram-scratch" });
+		const block = (): HTMLElement => {
+			const el = parent.createDiv({ cls: "grill-explanation-block" });
+			el.createDiv({ cls: "grill-block-label", text: "Diagram" });
+			return el;
+		};
+		/** As it was written, when it can't be drawn: the reply beside it says "here is a
+		 * diagram", so it isn't left out without a word. */
+		const written = (el: HTMLElement): void => {
+			el.createEl("pre", { cls: "grill-diagram-source" }).createEl("code", { text: diagram });
+		};
+		const picture = await this.drawDiagram(diagram);
+		const el = block();
+		if (!picture) return written(el);
+		const holder = el.createDiv({ cls: "grill-diagram" });
+		picture.addEventListener(
+			"error",
+			() => {
+				holder.remove();
+				written(el);
+			},
+			{ once: true },
+		);
+		holder.appendChild(picture);
+	}
+
+	/** Have Mermaid draw a diagram and hand it back as a picture, or null if it can't.
+	 *
+	 * Mermaid is asked directly (it is Obsidian's own copy), not by rendering a
+	 * ```mermaid block as Markdown: that route hands the text to Obsidian's code-block
+	 * processors and did not reliably come back with a drawing. And the drawing is shown
+	 * as an image, not put into the page as elements: an image can't run a script, act on
+	 * a click or fetch anything, whatever a diagram's text manages to get into it. (The
+	 * same way the Claudian plugin draws them.) The text has already been through
+	 * safeDiagram. */
+	private async drawDiagram(diagram: string): Promise<HTMLImageElement | null> {
+		const id = `grill-mermaid-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6)}`;
+		// Mermaid measures text as it lays a diagram out, so it needs somewhere in the page
+		// to work: off to the side, unseen.
+		const staging = document.body.createDiv({ cls: "grill-diagram-scratch" });
 		try {
-			await MarkdownRenderer.render(this.app, "```mermaid\n" + diagram + "\n```", scratch, "", this);
-			let svg: Element | null = null;
-			for (let i = 0; i < 10 && !svg; i++) {
-				await new Promise((r) => window.setTimeout(r, 150));
-				svg = scratch.querySelector("svg");
-			}
-			if (!svg) return;
-			const block = parent.createDiv({ cls: "grill-explanation-block" });
-			block.createDiv({ cls: "grill-block-label", text: "Diagram" });
-			block.createDiv({ cls: "grill-diagram" }).appendChild(svg.cloneNode(true));
+			const mermaid = (await loadMermaid()) as { render?: (id: string, text: string, container?: HTMLElement) => Promise<{ svg?: string } | string> } | null;
+			if (!mermaid || typeof mermaid.render !== "function") return null;
+			const out = await mermaid.render(id, diagram, staging);
+			const markup = svgForImage(typeof out === "string" ? out : (out?.svg ?? ""));
+			if (!markup) return null;
+			const img = createEl("img", { attr: { alt: "Diagram" } });
+			img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(markup)}`;
+			return img;
+		} catch (e) {
+			// Said in the console, where it can be read if a diagram is ever left undrawn.
+			console.debug("Grill: the diagram couldn't be drawn", e);
+			return null;
 		} finally {
-			scratch.remove();
+			staging.remove();
+			// Mermaid leaves its working elements behind when a diagram doesn't parse.
+			document.getElementById(id)?.remove();
+			document.getElementById("d" + id)?.remove();
 		}
 	}
 
-	/** Shows the single note-embedded image the model judged relevant to this specific
-	 * question ("" for the common case of none — see Explanation.relevantImagePath).
-	 * Renders a real `![[embed]]` first so Obsidian's native click-to-zoom works, same
-	 * as any other embed in the vault; only falls back to a plain <img> if that embed
-	 * doesn't hydrate in time (a custom ItemView doesn't always resolve `.internal-embed`
-	 * placeholders the way the main markdown view does). */
 	private async renderRelevantImage(parent: HTMLElement, path: string): Promise<void> {
 		if (!path) return;
 		const dest = this.app.vault.getAbstractFileByPath(path);

@@ -164,3 +164,7 @@ export const net: { handler: (req: RequestUrlParam) => Promise<RequestUrlRespons
 export function requestUrl(req: RequestUrlParam): Promise<RequestUrlResponse> {
 	return net.handler(req);
 }
+
+export async function loadMermaid(): Promise<unknown> {
+	return {};
+}

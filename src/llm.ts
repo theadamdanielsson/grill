@@ -11,6 +11,7 @@ import { safeSlice } from "./text";
 import { cloud, cloudEnabled, heardFromCloud } from "./cloud";
 import type { Arc, CanonMisconception, SessionDebrief, TagAssignment } from "./debrief";
 import type { BridgeCandidate, RawBridge } from "./bridges";
+import { safeDiagram } from "./safemd";
 
 export type ProviderId = "anthropic" | "openai" | "gemini" | "deepseek" | "ollama" | "custom" | "grillcloud";
 
@@ -945,7 +946,7 @@ export function cleanDiagram(raw: string): string {
 		.replace(/^```[a-zA-Z]*[ \t]*\r?\n?/, "")
 		.replace(/\r?\n?```[ \t]*$/, "")
 		.trim();
-	return /```|~~~/.test(body) ? "" : body;
+	return safeDiagram(body);
 }
 
 export function cleanText(t: string): string {

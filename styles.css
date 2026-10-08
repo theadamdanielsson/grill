@@ -28,6 +28,18 @@
 .grill-wrap.grill-arcade-mode {
   padding: 0;
 }
+/* And its height: the cabinet was only as tall as what was in it, so in a pane taller
+   than that it sat as a box at the top with the raw pane background showing below.
+   The wrap is at least the pane's height, and the cabinet takes all of it; when there
+   is more in it than the pane holds, it grows and the pane scrolls as before. */
+.grill-wrap.grill-arcade-mode {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+.grill-wrap.grill-arcade-mode > .grill-arcade-screen {
+  flex: 1 0 auto;
+}
 
 /* The arcade cabinet: applied only to the two screens that are meant to feel like the
  * banner (the start screen and the progress dashboard), not the question/answer flow,
@@ -1222,6 +1234,21 @@
 .grill-diagram svg {
   max-width: 100%;
   height: auto;
+}
+.grill-diagram img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+/* A diagram is drawn in Mermaid's light palette and shown as an image, which the
+ * theme's colours can't reach: turned over for a dark theme, as Obsidian does its own. */
+.theme-dark .grill-diagram img {
+  filter: invert(100%) hue-rotate(180deg) saturate(1.25);
+}
+.grill-diagram-source {
+  overflow-x: auto;
+  white-space: pre;
+  font-size: var(--font-smaller);
 }
 .grill-note-images {
   display: flex;

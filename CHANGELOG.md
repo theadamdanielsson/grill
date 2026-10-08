@@ -1,5 +1,16 @@
 # Changelog
 
+## 7.0.2
+
+- **Diagrams draw.** A diagram in an explanation or a follow-up could go missing
+  without a word. Grill now draws it properly, and if one can't be drawn you see what
+  was written instead of nothing.
+- **What a model writes can't act on your vault.** A reply is text, math, tables, code
+  and pictures from your own notes. A picture from the web, HTML, or a code block another
+  plugin would run is shown as plain text instead. This matters most when you study
+  notes someone else wrote.
+- **The start screen fills its pane.** No empty strip under it in a tall pane.
+
 ## 7.0.1
 
 - **A busy provider no longer ends your session.** When your own key's provider is
