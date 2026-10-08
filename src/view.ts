@@ -82,7 +82,7 @@ import { safeDiagram, safeMarkdown } from "./safemd";
  * Mermaid writes its SVG by HTML's rules, so a label can hold a bare <br> or a named
  * entity, which an image, read strictly as XML, rejects. When that happens it is read
  * the forgiving way and written out again as XML. */
-function svgForImage(svg: string): string | null {
+function svgForImage(svg: string, font = ""): string | null {
 	if (!svg) return null;
 	let doc = new DOMParser().parseFromString(svg, "image/svg+xml");
 	if (doc.querySelector("parsererror")) {
@@ -102,6 +102,16 @@ function svgForImage(svg: string): string | null {
 		root.setAttribute("width", String(Math.ceil(box[2])));
 		root.setAttribute("height", String(Math.ceil(box[3])));
 		root.removeAttribute("style");
+	}
+	// An image stands alone: the page's fonts and CSS variables don't reach inside it,
+	// so a font named through one comes out as the browser's default serif. Mermaid laid
+	// the diagram out measuring the page's font; say that font outright, so the text is
+	// drawn in what it was measured in.
+	const family = font.replace(/[<>{};]/g, "").trim();
+	if (family) {
+		const style = doc.createElementNS("http://www.w3.org/2000/svg", "style");
+		style.textContent = `* { font-family: ${family} !important; }`;
+		root.appendChild(style);
 	}
 	return new XMLSerializer().serializeToString(root);
 }
@@ -3515,7 +3525,13 @@ export class SessionView extends ItemView {
 			const mermaid = (await loadMermaid()) as { render?: (id: string, text: string, container?: HTMLElement) => Promise<{ svg?: string } | string> } | null;
 			if (!mermaid || typeof mermaid.render !== "function") return null;
 			const out = await mermaid.render(id, diagram, staging);
-			const markup = svgForImage(typeof out === "string" ? out : (out?.svg ?? ""));
+			const svg = typeof out === "string" ? out : (out?.svg ?? "");
+			// The font the diagram asks for, as the page resolves it here (it is usually
+			// named through a CSS variable of the theme's), falling back to the pane's own.
+			const probe = staging.createSpan();
+			probe.style.fontFamily = /font-family:\s*([^;}"]+)/.exec(svg)?.[1]?.trim() ?? "";
+			const font = getComputedStyle(probe).fontFamily || getComputedStyle(this.contentEl).fontFamily;
+			const markup = svgForImage(svg, font);
 			if (!markup) return null;
 			const img = createEl("img", { attr: { alt: "Diagram" } });
 			img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(markup)}`;
