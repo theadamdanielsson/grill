@@ -121,7 +121,7 @@ Short version of the common ones below; the full list, with what's actually happ
 - **A PDF isn't being quizzed on.** Check it's embedded, `![[file.pdf]]` with the `!`, not just linked. A scanned PDF with no real text underneath (or a password-protected one) has nothing for Grill to extract either — it needs an actual text layer, not just a picture of text.
 - **API errors, or grading looks wrong.** Double check the key and model name in settings; a model ID typo is the usual cause. Grading is a model's opinion, not gospel — it's usually right, but the expected answer is always shown so you can judge for yourself.
 
-Something else, or an idea? [Open an issue](https://github.com/theadamdanielsson/grill/issues).
+Something broken? [Open an issue](https://github.com/theadamdanielsson/grill/issues). A question or an idea? [Start a discussion](https://github.com/theadamdanielsson/grill/discussions).
 
 ## Privacy and cost
 
