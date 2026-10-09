@@ -1,5 +1,13 @@
 # Changelog
 
+## 7.1.1
+
+- **A theme to match.** [Grill, the theme](https://github.com/theadamdanielsson/grill-theme)
+  puts the rest of Obsidian in Grill's colours, dark and light. With it on, Grill's
+  screens follow your light mode. On every other theme they look as they did.
+- **Lettering has its own colours.** A snippet or theme can now recolour what Grill
+  writes without touching what it fills, so the map and the buttons keep theirs.
+
 ## 7.1.0
 
 - **Two steps to your first question.** Setup no longer opens on a welcome screen. Pick
