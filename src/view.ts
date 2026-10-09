@@ -1688,7 +1688,7 @@ export class SessionView extends ItemView {
 			edge: v("--grill-grid", "#3a1c0a"),
 			edgeInherited: v("--grill-ember-dark", "#5c1400"),
 			edgeProven: v("--grill-gold", "#ffd23f"),
-			text: v("--grill-gold-lit", "#ffe98a"),
+			text: v("--grill-ink", "#ffe98a"),
 			ring: v("--grill-gold", "#ffd23f"),
 			surface: v("--grill-screen-deep", "#0f0904"),
 		};

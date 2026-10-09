@@ -109,7 +109,7 @@
   font-family: "Grill Pixel", var(--font-monospace);
   font-size: 0.62em;
   letter-spacing: 0.08em;
-  color: var(--grill-gold-lit, #ffe98a);
+  color: var(--grill-ink, #ffe98a);
   text-shadow: 0 0 2px var(--grill-gold-white, #fff2b0), 0 0 8px var(--grill-flame, #ff7a22), 0 0 16px var(--grill-flame-hot, #ff5a1f);
   margin-bottom: 0.7em;
 }
@@ -121,33 +121,33 @@
  * the screen itself handles plain inherited text; these handle the classes that set an
  * explicit theme-token colour of their own and so don't just inherit it. */
 .grill-arcade-screen {
-  color: var(--grill-dim, #c9a875);
+  color: var(--grill-ink-dim, #c9a875);
 }
 .grill-arcade-screen .grill-meta {
-  color: var(--grill-dim, #c9a875);
+  color: var(--grill-ink-dim, #c9a875);
 }
 .grill-arcade-screen .grill-chip-link {
-  color: var(--grill-gold, #ffd23f);
+  color: var(--grill-ink-gold, #ffd23f);
 }
 .grill-arcade-screen .grill-chip {
-  color: var(--grill-dim, #c9a875);
+  color: var(--grill-ink-dim, #c9a875);
 }
 .grill-arcade-screen .grill-recent-row:hover {
   background: rgba(255, 122, 34, 0.09);
 }
 .grill-arcade-screen .grill-scope-caret,
 .grill-arcade-screen .grill-onboard-row label {
-  color: var(--grill-dim, #c9a875);
+  color: var(--grill-ink-dim, #c9a875);
 }
 .grill-arcade-screen .grill-onboard-folders {
   border-color: var(--grill-ember-dark, #5c1400);
   background: var(--grill-screen-deep, #0f0904);
 }
 .grill-arcade-screen .grill-scope-group {
-  color: var(--grill-flame, #ff7a22);
+  color: var(--grill-ink-flame, #ff7a22);
 }
 .grill-arcade-screen .grill-score {
-  color: var(--grill-gold-lit, #ffe98a);
+  color: var(--grill-ink, #ffe98a);
 }
 .grill-arcade-screen .grill-divider {
   border-top-color: var(--grill-grid, #3a1c0a);
@@ -157,17 +157,17 @@
   border: 1px solid var(--grill-ember-dark, #5c1400);
 }
 .grill-arcade-screen .grill-summary-row {
-  color: var(--grill-dim, #c9a875);
+  color: var(--grill-ink-dim, #c9a875);
 }
 .grill-arcade-screen .grill-route-consent,
 .grill-arcade-screen .grill-debrief {
   background: var(--grill-screen-deep, #0f0904);
 }
 .grill-arcade-screen .grill-debrief-headline p {
-  color: var(--grill-gold-lit, #ffe98a);
+  color: var(--grill-ink, #ffe98a);
 }
 .grill-arcade-screen .grill-debrief-pattern p {
-  color: var(--grill-dim, #c9a875);
+  color: var(--grill-ink-dim, #c9a875);
 }
 .grill-arcade-screen .grill-debrief-gap {
   background: var(--grill-screen, #140b07);
@@ -193,6 +193,16 @@
   --grill-flame: #ff7a22;
   --grill-flame-hot: #ff5a1f;
   --grill-dim: #c9a875;
+  /* What is written, as against what is filled or lit: lettering takes these, so a
+     stylesheet that puts the screen on a light ground can darken the lettering and
+     leave the fills, the borders and the map's colours as they are. */
+  --grill-ink: var(--grill-gold-lit);
+  --grill-ink-gold: var(--grill-gold);
+  --grill-ink-white: var(--grill-gold-white);
+  --grill-ink-dim: var(--grill-dim);
+  --grill-ink-accent: var(--grill-accent);
+  --grill-ink-flame: var(--grill-flame);
+  --grill-ink-hot: var(--grill-flame-hot);
   --grill-dim-2: #8a6a45;
   --grill-grid: #3a1c0a;
   --grill-radius-s: 3px;
@@ -246,7 +256,7 @@
 }
 .grill-view .grill-primary-cta {
   background: linear-gradient(#ffb44e, var(--grill-accent) 45%, var(--grill-ember) 100%);
-  color: var(--grill-screen);
+  color: var(--grill-accent-contrast, #140b07);
   border: 2px solid var(--grill-gold);
   box-shadow: 0 4px 0 var(--grill-ember-deep), 0 4px 14px rgba(255, 90, 31, 0.35);
   text-shadow: 0 1px 0 rgba(255, 210, 63, 0.5);
@@ -266,13 +276,13 @@
 }
 .grill-view .grill-due-cta {
   background: linear-gradient(rgba(255, 122, 34, 0.06), rgba(255, 90, 31, 0.02));
-  color: var(--grill-gold);
+  color: var(--grill-ink-gold);
   border: 2px solid var(--grill-flame);
   box-shadow: 0 3px 0 var(--grill-ember-dark);
 }
 .grill-view .grill-due-cta:hover {
   background: linear-gradient(rgba(255, 122, 34, 0.1), rgba(255, 90, 31, 0.04));
-  color: var(--grill-gold-lit);
+  color: var(--grill-ink);
   border-color: var(--grill-gold);
   filter: none;
 }
@@ -322,7 +332,7 @@
   border-radius: var(--grill-radius-s);
   border: 2px solid var(--grill-flame);
   background: linear-gradient(rgba(255, 122, 34, 0.06), rgba(255, 90, 31, 0.02));
-  color: var(--grill-gold);
+  color: var(--grill-ink-gold);
   transition: transform 0.08s ease, box-shadow 0.08s ease, filter 0.08s ease;
   /* The due-CTA draws a solid "skirt" below its own border for the mechanical-button
      look (.grill-due-cta below) — without the same shadow here, the pencil's border-box
@@ -338,7 +348,7 @@
   padding-bottom: 0.9em;
 }
 .grill-view .grill-manage-btn:hover {
-  color: var(--grill-gold-lit);
+  color: var(--grill-ink);
   border-color: var(--grill-gold);
 }
 .grill-view .grill-manage-btn:active {
@@ -361,7 +371,7 @@
   letter-spacing: 0.05em;
   font-size: 0.68em;
   line-height: 1.6;
-  color: var(--grill-flame);
+  color: var(--grill-ink-flame);
   font-weight: normal;
 }
 .grill-view .grill-section-label::after {
@@ -431,7 +441,7 @@
   margin-top: 0.5em;
   background: transparent;
   border: 1px solid var(--grill-accent, var(--interactive-accent));
-  color: var(--grill-accent, var(--interactive-accent));
+  color: var(--grill-ink-accent, var(--interactive-accent));
 }
 .grill-connections-btn:hover {
   background: var(--grill-accent, var(--interactive-accent));
@@ -499,7 +509,7 @@
   background-color: var(--grill-screen-deep);
   background-image: radial-gradient(circle, rgba(255, 178, 50, 0.11) 1px, transparent 1.4px);
   background-size: 15px 15px;
-  box-shadow: inset 0 0 0 1px #000, inset 0 0 24px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--grill-map-shade, inset 0 0 0 1px #000, inset 0 0 24px rgba(0, 0, 0, 0.55));
 }
 .grill-graph {
   display: block;
@@ -551,7 +561,7 @@
   padding: 0.6em 0.7em;
   border-radius: var(--grill-radius-s);
   background: var(--grill-screen);
-  color: var(--grill-dim);
+  color: var(--grill-ink-dim);
   border: 1px solid var(--grill-ember-dark);
   box-shadow: none;
   height: auto;
@@ -569,7 +579,7 @@
 .grill-filter-chip:focus-visible,
 .grill-filter-chip:active {
   background: var(--grill-screen);
-  color: var(--grill-gold-lit);
+  color: var(--grill-ink);
   border-color: var(--grill-flame);
 }
 .grill-filter-chip:hover {
@@ -590,7 +600,7 @@
 .grill-filter-chip.is-active:focus-visible,
 .grill-filter-chip.is-active:active {
   background: linear-gradient(var(--grill-gold), var(--grill-flame));
-  color: var(--grill-screen);
+  color: var(--grill-accent-contrast, #140b07);
   border-color: var(--grill-gold-lit);
   font-weight: var(--font-semibold, 600);
   box-shadow: 0 0 10px rgba(255, 210, 63, 0.35);
@@ -719,7 +729,7 @@
   margin-top: 0.4em;
 }
 .grill-settings .setting-item-heading .setting-item-name {
-  color: var(--grill-flame, #ff7a22);
+  color: var(--grill-ink-flame, #ff7a22);
 }
 
 /* The Tuning escape hatch: every number the scheduler runs on, reachable but never
@@ -1008,7 +1018,7 @@
 }
 .grill-view .grill-hint-btn {
   border: 1px solid color-mix(in srgb, var(--grill-accent, var(--interactive-accent)) 45%, var(--background-modifier-border));
-  color: var(--grill-accent, var(--text-normal));
+  color: var(--grill-ink-accent, var(--text-normal));
   background: transparent;
   box-shadow: none;
 }
@@ -1344,7 +1354,7 @@
 .grill-secondary-btn {
   background: transparent;
   border: 1px solid var(--grill-accent, var(--interactive-accent));
-  color: var(--grill-accent, var(--interactive-accent));
+  color: var(--grill-ink-accent, var(--interactive-accent));
   box-shadow: none;
 }
 .grill-secondary-btn:hover {
@@ -1367,7 +1377,7 @@
 .grill-view .grill-menu-btn {
   background: var(--grill-screen, transparent);
   border: 1px solid var(--grill-ember-dark, #5c1400);
-  color: var(--grill-dim, #c9a875);
+  color: var(--grill-ink-dim, #c9a875);
   box-shadow: none;
 }
 .grill-view .grill-menu-btn:hover,
@@ -1376,7 +1386,7 @@
 .grill-view .grill-menu-btn:active {
   background: var(--grill-screen, transparent);
   border-color: var(--grill-flame, #ff7a22);
-  color: var(--grill-gold-lit, #ffe98a);
+  color: var(--grill-ink, #ffe98a);
 }
 .grill-dot {
   width: 8px;
@@ -1428,28 +1438,28 @@
   font-family: "Grill Pixel", var(--font-monospace);
   font-size: 0.62em;
   letter-spacing: 0.03em;
-  color: var(--grill-gold-lit, #ffe98a);
+  color: var(--grill-ink, #ffe98a);
   text-shadow: 0 0 8px rgba(255, 122, 34, 0.5);
   margin: 0.9em 0 0.4em;
 }
 .grill-loading .grill-meta {
-  color: var(--grill-dim, #c9a875);
+  color: var(--grill-ink-dim, #c9a875);
 }
 .grill-loading-cancel {
   margin-top: 1em;
   font-size: var(--font-ui-small);
   background: transparent;
   border: 1px solid var(--grill-ember-dark, #5c1400);
-  color: var(--grill-dim, #c9a875);
+  color: var(--grill-ink-dim, #c9a875);
   box-shadow: none;
 }
 .grill-loading-cancel:hover {
-  color: var(--grill-gold-lit, #ffe98a);
+  color: var(--grill-ink, #ffe98a);
   border-color: var(--grill-accent);
 }
 .grill-flame-spin {
   display: flex;
-  color: var(--grill-accent);
+  color: var(--grill-ink-accent);
   filter: drop-shadow(0 0 10px rgba(255, 122, 34, 0.5));
   animation: grill-flicker 1.1s ease-in-out infinite;
 }
@@ -1716,7 +1726,7 @@ settings:
     linear-gradient(var(--grill-gold), var(--grill-gold)) top 4px right 4px / 5px 5px no-repeat,
     linear-gradient(var(--grill-gold), var(--grill-gold)) bottom 4px left 4px / 5px 5px no-repeat,
     linear-gradient(var(--grill-gold), var(--grill-gold)) bottom 4px right 4px / 5px 5px no-repeat,
-    linear-gradient(#1a0f08, #130b06);
+    linear-gradient(var(--grill-panel, #1a0f08), var(--grill-panel-deep, #130b06));
   box-shadow: inset 0 0 0 3px var(--grill-screen), inset 0 0 0 4px var(--grill-gold), inset 0 0 14px rgba(255, 90, 31, 0.12);
   transition: transform 0.12s ease, box-shadow 0.12s ease;
 }
@@ -1728,7 +1738,7 @@ settings:
   font-family: "Grill Pixel", var(--font-monospace);
   font-size: 1.3em;
   line-height: 1.4;
-  color: var(--grill-accent);
+  color: var(--grill-ink-accent);
   font-variant-numeric: tabular-nums;
   text-shadow: 0 0 10px rgba(255, 140, 43, 0.5);
 }
@@ -1737,12 +1747,12 @@ settings:
   font-size: 0.5em;
   line-height: 1.6;
   letter-spacing: 0.02em;
-  color: var(--grill-dim);
+  color: var(--grill-ink-dim);
   margin-top: 0.5em;
 }
-.grill-stat-correct .grill-stat-value { color: var(--grill-gold-lit); text-shadow: 0 0 12px rgba(255, 233, 138, 0.6); }
-.grill-stat-incorrect .grill-stat-value { color: var(--grill-flame-hot); text-shadow: 0 0 12px rgba(255, 90, 31, 0.65); }
-.grill-stat-accent .grill-stat-value { color: var(--grill-gold); text-shadow: 0 0 12px rgba(255, 210, 63, 0.5); }
+.grill-stat-correct .grill-stat-value { color: var(--grill-ink); text-shadow: 0 0 12px rgba(255, 233, 138, 0.6); }
+.grill-stat-incorrect .grill-stat-value { color: var(--grill-ink-hot); text-shadow: 0 0 12px rgba(255, 90, 31, 0.65); }
+.grill-stat-accent .grill-stat-value { color: var(--grill-ink-gold); text-shadow: 0 0 12px rgba(255, 210, 63, 0.5); }
 
 /* Meter: a labelled progress track, for anything that's honestly a fraction (concept
  * coverage per note) instead of a bare "x/y" left as plain text. Track is a lighter
@@ -1784,7 +1794,7 @@ settings:
 }
 .grill-meter-value {
   font-size: var(--font-ui-small);
-  color: var(--grill-dim);
+  color: var(--grill-ink-dim);
   width: 3.2em;
   text-align: right;
   flex-shrink: 0;
@@ -1867,7 +1877,7 @@ settings:
   gap: 3px;
   margin-bottom: 3px;
   font-size: var(--font-ui-smaller, 0.75em);
-  color: var(--grill-dim, #c9a875);
+  color: var(--grill-ink-dim, #c9a875);
 }
 .grill-heatmap {
   display: grid;
@@ -1896,7 +1906,7 @@ settings:
   gap: 0.3em;
   margin-top: 0.5em;
   font-size: var(--font-ui-smaller, 0.75em);
-  color: var(--grill-dim, #c9a875);
+  color: var(--grill-ink-dim, #c9a875);
 }
 .grill-hm-legend .grill-hm-cell {
   width: 11px;
@@ -2130,26 +2140,26 @@ textarea.grill-mgmt-field {
 }
 /* Kept faint and small: it is the ground the step stands on, not the thing to look at. */
 .grill-onboard-map line {
-  stroke: var(--grill-dim, #c9a875);
+  stroke: var(--grill-ink-dim, #c9a875);
   stroke-width: 1;
   opacity: 0.1;
   animation: grill-onboard-link 22s linear var(--grill-map-delay, 0s) infinite backwards;
 }
 .grill-onboard-map circle {
-  fill: var(--grill-dim, #c9a875);
+  fill: var(--grill-ink-dim, #c9a875);
   opacity: 0.16;
   animation: grill-onboard-note 22s ease-in-out var(--grill-map-delay, 0s) infinite backwards;
 }
 @keyframes grill-onboard-note {
-  0% { fill: var(--grill-dim, #c9a875); opacity: 0.16; }
-  4% { fill: var(--grill-gold, #ffd23f); opacity: 0.45; }
+  0% { fill: var(--grill-ink-dim, #c9a875); opacity: 0.16; }
+  4% { fill: var(--grill-ink-gold, #ffd23f); opacity: 0.45; }
   16%, 88% { fill: #5fd38d; opacity: 0.4; }
-  100% { fill: var(--grill-dim, #c9a875); opacity: 0.16; }
+  100% { fill: var(--grill-ink-dim, #c9a875); opacity: 0.16; }
 }
 @keyframes grill-onboard-link {
-  0%, 12% { stroke: var(--grill-dim, #c9a875); opacity: 0.1; }
+  0%, 12% { stroke: var(--grill-ink-dim, #c9a875); opacity: 0.1; }
   18%, 88% { stroke: #5fd38d; opacity: 0.22; }
-  100% { stroke: var(--grill-dim, #c9a875); opacity: 0.1; }
+  100% { stroke: var(--grill-ink-dim, #c9a875); opacity: 0.1; }
 }
 /* No motion wanted: the map as it looks part-way through, standing still. */
 @media (prefers-reduced-motion: reduce) {
@@ -2162,7 +2172,7 @@ textarea.grill-mgmt-field {
     opacity: 0.4;
   }
   .grill-onboard-map circle:nth-of-type(4n + 1) {
-    fill: var(--grill-gold, #ffd23f);
+    fill: var(--grill-ink-gold, #ffd23f);
     opacity: 0.45;
   }
 }
@@ -2307,12 +2317,12 @@ textarea.grill-mgmt-field {
   padding: 0.1em 0.6em;
   border-radius: 999px;
   font-size: var(--font-ui-smaller, 0.8em);
-  color: var(--grill-dim, #c9a875);
+  color: var(--grill-ink-dim, #c9a875);
   border: 1px solid var(--grill-ember-dark, #5c1400);
   white-space: nowrap;
 }
 .grill-cloud-chip.is-on {
-  color: var(--grill-screen-deep, #0f0904);
+  color: var(--grill-accent-contrast, #140b07);
   background: var(--grill-gold, #ffd23f);
   border-color: var(--grill-gold, #ffd23f);
   font-weight: var(--font-semibold, 600);
@@ -2327,11 +2337,11 @@ textarea.grill-mgmt-field {
   font-family: "Grill Pixel", var(--font-monospace);
   font-size: 1.9em;
   line-height: 1.1;
-  color: var(--grill-gold-lit, #ffe98a);
+  color: var(--grill-ink, #ffe98a);
   text-shadow: 0 0 8px var(--grill-flame, #ff7a22);
 }
 .grill-cloud-balance-unit {
-  color: var(--grill-dim, #c9a875);
+  color: var(--grill-ink-dim, #c9a875);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-size: var(--font-ui-smaller, 0.8em);
@@ -2355,12 +2365,12 @@ textarea.grill-mgmt-field {
   gap: 0.6em;
 }
 .grill-cloud-card-corner .extra-setting-button {
-  color: var(--grill-dim, #c9a875);
+  color: var(--grill-ink-dim, #c9a875);
 }
 .grill-cloud-card-foot {
   margin-top: 0.8em;
   font-size: var(--font-ui-smaller, 0.8em);
-  color: var(--grill-dim, #c9a875);
+  color: var(--grill-ink-dim, #c9a875);
   opacity: 0.85;
 }
 .grill-cloud-card.grill-cloud-waiting .grill-cloud-card-body .grill-meta {
@@ -2370,7 +2380,7 @@ textarea.grill-mgmt-field {
   animation: grill-cloud-pop 1.4s ease-out 1;
 }
 @keyframes grill-cloud-pop {
-  0% { transform: scale(1.18); transform-origin: left center; color: var(--grill-gold-white, #fff2b0); }
+  0% { transform: scale(1.18); transform-origin: left center; color: var(--grill-ink-white, #fff2b0); }
   100% { transform: scale(1); }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -2404,38 +2414,39 @@ textarea.grill-mgmt-field {
   background: none;
 }
 .grill-arcade-screen .grill-cloud-panel-title {
-  color: var(--grill-gold-lit, #ffe98a);
+  color: var(--grill-ink, #ffe98a);
 }
 .grill-arcade-screen .grill-cloud-panel-lead {
-  color: var(--grill-gold-lit, #ffe98a);
+  color: var(--grill-ink, #ffe98a);
 }
 .grill-arcade-screen .grill-cloud-facts,
 .grill-arcade-screen .grill-cloud-more {
-  color: var(--grill-dim, #c9a875);
+  color: var(--grill-ink-dim, #c9a875);
 }
 .grill-arcade-screen .grill-cloud-fact::before,
 .grill-arcade-screen .grill-cloud-offer-title {
-  color: var(--grill-flame, #ff7a22);
+  color: var(--grill-ink-flame, #ff7a22);
 }
 .grill-arcade-screen .grill-cloud-more summary,
 .grill-arcade-screen .grill-onboard-others a {
-  color: var(--grill-gold, #ffd23f);
+  color: var(--grill-ink-gold, #ffd23f);
 }
 .grill-arcade-screen .grill-mode-tag {
   background: var(--grill-ember, #b91c00);
+  /* Lettering on a fill, not on the ground: it stays lit whatever the ground is. */
   color: var(--grill-gold-lit, #ffe98a);
 }
 .grill-arcade-screen .grill-cloud-buy button.mod-cta {
   background-image: none;
   background: var(--grill-flame, #ff7a22);
-  color: var(--grill-screen-deep, #0f0904);
+  color: var(--grill-accent-contrast, #140b07);
   font-weight: var(--font-semibold, 600);
   border: 0;
   box-shadow: none;
 }
 .grill-arcade-screen .grill-cloud-buy button:not(.mod-cta) {
   background: transparent;
-  color: var(--grill-gold, #ffd23f);
+  color: var(--grill-ink-gold, #ffd23f);
   border: 1px solid var(--grill-ember, #b91c00);
   box-shadow: none;
 }
@@ -2466,18 +2477,18 @@ textarea.grill-mgmt-field {
   display: none;
 }
 .grill-cloud-counter-label {
-  color: var(--grill-dim, #c9a875);
+  color: var(--grill-ink-dim, #c9a875);
   text-shadow: none;
   text-transform: uppercase;
 }
 .grill-cloud-counter-number {
-  color: var(--grill-gold-lit, #ffe98a);
+  color: var(--grill-ink, #ffe98a);
 }
 .grill-cloud-counter:hover .grill-cloud-counter-number {
-  color: var(--grill-gold-white, #fff2b0);
+  color: var(--grill-ink-white, #fff2b0);
 }
 .grill-cloud-counter.is-low .grill-cloud-counter-number {
-  color: var(--grill-flame-hot, #ff5a1f);
+  color: var(--grill-ink-hot, #ff5a1f);
   animation: grill-cloud-wait 1.2s ease-in-out infinite;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -2625,7 +2636,7 @@ textarea.grill-mgmt-field {
   margin: 0.2em 0 0.6em;
 }
 .grill-whats-new .grill-cloud-fact strong {
-  color: var(--grill-gold-lit, #ffe98a);
+  color: var(--grill-ink, #ffe98a);
 }
 .grill-whats-new .grill-cloud-panel-title,
 .grill-whats-new .grill-cloud-panel-lead {
@@ -2638,7 +2649,7 @@ textarea.grill-mgmt-field {
   font-size: var(--font-ui-smaller, 0.85em);
 }
 .grill-arcade-screen .grill-cloud-agree a {
-  color: var(--grill-gold, #ffd23f);
+  color: var(--grill-ink-gold, #ffd23f);
 }
 .grill-mark-alone {
   margin: 0.4em 0 0 auto;
@@ -2652,9 +2663,9 @@ textarea.grill-mgmt-field {
   gap: 1em;
 }
 .grill-arcade-screen .grill-cloud-legal a {
-  color: var(--grill-dim, #c9a875);
+  color: var(--grill-ink-dim, #c9a875);
   text-decoration: underline;
 }
 .grill-arcade-screen .grill-cloud-legal a:hover {
-  color: var(--grill-gold, #ffd23f);
+  color: var(--grill-ink-gold, #ffd23f);
 }
