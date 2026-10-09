@@ -8,7 +8,7 @@ I take a lot of notes to learn new information and needed a system to learn them
 
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="docs/icons/play-dark.svg"><img src="docs/icons/play.svg" height="20" alt=""></picture> How to use it
 
-1. **Start free.** On first run, press Start free. That's Grill Cloud: no API key, no sign-up, a few free credits to try it. You can use your own API key or Ollama instead, or study fully offline. Then tick which folders Grill should cover, or leave them blank for your whole vault.
+1. **Start free.** On first run, press Start free. That's Grill Cloud: no API key, no sign-up, a few free credits to try it. You can use your own API key or Ollama instead, or study fully offline. Then start on the note you have open, or pick the folders Grill should cover.
 2. **Get grilled.** Hit the flame (or **Get grilled**). Grill writes questions from your notes and marks what you type back, with partial credit and specific feedback.
 3. **Watch your map fill in.** Every note you've learned colours in on the graph (green for solid, amber for shaky) so you can see your knowledge light up.
 

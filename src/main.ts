@@ -16,7 +16,7 @@ import {
 import { configureFSRSWeights, MasteryMap } from "./mastery";
 import { CalPoint, isCalPoint } from "./calibration";
 import { LLMConfig, offeredProviders, PROVIDERS, ProviderId, Question, listModels, migrateLegacyModels, synthesizeArc, testModel } from "./llm";
-import { cloud, CLOUD_FACTS, CLOUD_PITCH, CloudPack, cloudAccount, cloudBalance, cloudSpeech, cloudCheckoutUrl, cloudDelete, cloudEnabled, cloudStart, creditsInWords, isCloudKey, newCloudKey, packLabel, usageInWords } from "./cloud";
+import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, CloudPack, cloudAccount, cloudBalance, cloudSpeech, cloudCheckoutUrl, cloudDelete, cloudEnabled, cloudStart, creditsInWords, isCloudKey, newCloudKey, packLabel, usageInWords } from "./cloud";
 import { ConceptMap, dueConceptCount, migrateResetScheduling, rebalanceDueDates, reconcileConcepts } from "./concepts";
 import { pairKey } from "./bridges";
 import {
@@ -578,7 +578,7 @@ export default class GrillPlugin extends Plugin {
 			id: "show-setup",
 			name: "Show setup again",
 			callback: async () => {
-				// The same three steps as first run: the way to change how questions get
+				// The same steps as first run: the way to change how questions get
 				// written (Grill Cloud, a key of your own, offline) without hunting in settings.
 				await this.activateView();
 				const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view;
@@ -2709,7 +2709,7 @@ export class GrillSettingTab extends PluginSettingTab {
 				});
 				if (!cloudKey) {
 					// Said before anything is sent: what it costs, what it needs, where notes go.
-					body.createDiv({ cls: "grill-cloud-panel-lead", text: "AI writes and grades questions from your notes. Nothing to set up." });
+					body.createDiv({ cls: "grill-cloud-panel-lead", text: CLOUD_LEAD });
 					if (this.plugin.sharesDeviceCloud()) body.createDiv({ cls: "grill-meta", text: "You already use Grill Cloud in another vault on this device. Starting here uses the same balance." });
 					const facts = body.createDiv({ cls: "grill-cloud-facts" });
 					for (const fact of CLOUD_FACTS) facts.createDiv({ cls: "grill-cloud-fact", text: fact });

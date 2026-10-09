@@ -2,7 +2,7 @@
 
 import { ItemView, loadMermaid, MarkdownRenderer, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
-import { cloud, CLOUD_FACTS, CLOUD_PITCH, cloudEnabled, creditsInWords, lowBalance, usageInWords } from "./cloud";
+import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, cloudEnabled, creditsInWords, lowBalance, usageInWords } from "./cloud";
 import { adjudicateBridges, ConceptTarget, contentWords, debriefSession, discussQuestion, embedTexts, explainQuestion, formatSatisfies, generateQuestions, Grade, CloudError, gradeAnswer, LLMConfig, offeredProviders, PROVIDERS, ProviderId, Question, supportsEmbeddings, supportsVision, testModel, ThreadTurn, Verdict } from "./llm";
 import { detectOcclusionRegions } from "./ocr";
 import {
@@ -195,6 +195,70 @@ function renderFlameIcon(container: HTMLElement): void {
 	}
 }
 
+/** First run's picture of the map: notes as dots in a 400 x 220 field, [x, y, size],
+ * and the links between them by index. Drawn grey; each dot then turns amber, then
+ * green, in the order below, the way a real map does over weeks of sessions. */
+const ONBOARD_MAP_NOTES: Array<[number, number, number]> = [
+	[38, 60, 5],
+	[84, 118, 7],
+	[62, 178, 4],
+	[132, 50, 6],
+	[150, 150, 8],
+	[196, 96, 5],
+	[214, 186, 5],
+	[248, 40, 4],
+	[262, 130, 7],
+	[306, 80, 6],
+	[318, 174, 4],
+	[352, 126, 5],
+	[370, 46, 4],
+	[176, 26, 3],
+	[112, 196, 3],
+	[282, 204, 3],
+];
+const ONBOARD_MAP_LINKS: Array<[number, number]> = [
+	[0, 1],
+	[0, 3],
+	[1, 2],
+	[1, 4],
+	[2, 14],
+	[3, 5],
+	[3, 13],
+	[4, 5],
+	[4, 6],
+	[4, 14],
+	[5, 8],
+	[5, 7],
+	[6, 8],
+	[6, 15],
+	[7, 9],
+	[8, 9],
+	[8, 10],
+	[9, 11],
+	[9, 12],
+	[10, 11],
+	[10, 15],
+];
+/** Seconds between one dot lighting and the next. */
+const ONBOARD_MAP_STAGGER = 0.9;
+/** Positions are given as shares of the box, so the map spreads over whatever shape
+ * the pane leaves it; sizes are in pixels, so a dot stays round. */
+function renderOnboardMap(container: HTMLElement): void {
+	const box = container.createDiv({ cls: "grill-onboard-map" });
+	const svg = box.createSvg("svg", { attr: { "aria-hidden": "true" } });
+	const x = (v: number): string => `${(v / 4).toFixed(1)}%`;
+	const y = (v: number): string => `${(v / 2.2).toFixed(1)}%`;
+	// A dot lights on its turn; a link lights once both its ends have.
+	for (const [a, b] of ONBOARD_MAP_LINKS) {
+		const [x1, y1] = ONBOARD_MAP_NOTES[a];
+		const [x2, y2] = ONBOARD_MAP_NOTES[b];
+		svg.createSvg("line", { attr: { x1: x(x1), y1: y(y1), x2: x(x2), y2: y(y2), style: `--grill-map-delay: ${(Math.max(a, b) * ONBOARD_MAP_STAGGER).toFixed(1)}s` } });
+	}
+	ONBOARD_MAP_NOTES.forEach(([cx, cy, r], i) => {
+		svg.createSvg("circle", { attr: { cx: x(cx), cy: y(cy), r: r * 1.3, style: `--grill-map-delay: ${(i * ONBOARD_MAP_STAGGER).toFixed(1)}s` } });
+	});
+}
+
 const NOTE_CHAR_CAP = 4000;
 /** How many reference documents / notes startSession scans at once (see
  * mapWithConcurrency in text.ts). These reads/parses are independent of each other,
@@ -236,6 +300,9 @@ const BATCH = 2;
 /** A scan still running after this long is treated as hung (an OCR or embedding
  * model download with no timeout of its own) and no longer blocks a new start. */
 const SCAN_LOCK_MS = 5 * 60_000;
+/** Concepts a note must yield before first run offers it as the first session: fewer
+ * makes a first session of a question or two, or none at all. */
+const ONBOARD_NOTE_CONCEPTS = 3;
 /** Debounce for the mid-session checkpoint save after a grade. */
 const CHECKPOINT_MS = 3000;
 /** How many questions the background prefetch tries to keep buffered ahead of the one
@@ -678,27 +745,33 @@ export class SessionView extends ItemView {
 		this.map.setNumberDisplay(s.graphNumberMode, s.graphCoverageWeight / 100);
 	}
 
-	/** First-run: choose which folders are Grill's study material + graph. */
 	/** Folders ticked in onboarding, kept while moving between its steps. */
 	private onboardFolders = new Set<string>();
 
-	/** First run, as three short steps with one decision each: what Grill is, how the
-	 * questions get written, which notes. With Grill Cloud available the second step
-	 * leads with it: it is the only way to AI questions that needs nothing set up, and
-	 * getting an API key was where new installs gave up. The other two ways are one
-	 * click away on the same screen. */
-	private renderOnboarding(step: 1 | 2 | 3 = 1, own = false): void {
+	/** First run, as two short steps with one decision each: how the questions get
+	 * written, then what to be asked about first. With Grill Cloud available the first
+	 * step leads with it: it is the only way to AI questions that needs nothing set up,
+	 * and getting an API key was where new installs gave up. The other two ways are one
+	 * click away on the same screen. The second step leads, for a new install, with
+	 * the note that is open: one press to a first question, on a note the student can
+	 * see. `pick` opens the folder list instead. `first` is that note once looked for
+	 * (null: none worth offering). */
+	private renderOnboarding(step: 1 | 2 = 1, own = false, pick = false, first?: TFile | null): void {
 		const wrap = this.root(true);
 		this.cloudRedraw = null;
 		const s = this.plugin.data.settings;
 		const screen = wrap.createDiv({ cls: "grill-arcade-screen grill-onboard" });
 		screen.createDiv({ cls: "grill-arcade-mark", text: "GRILL" });
+		// Drawn under whatever the step puts on screen (ordered last in the stylesheet),
+		// in the room a tall pane leaves.
+		renderOnboardMap(screen);
 		const steps = screen.createDiv({ cls: "grill-onboard-steps" });
-		if (step > 1) {
+		if (step === 2 || own) {
 			const back = steps.createEl("a", { cls: "grill-chip-link", text: "Back" });
-			back.onclick = () => this.renderOnboarding(own ? 2 : ((step - 1) as 1 | 2));
+			// From the folder list, back to the note it was reached from.
+			back.onclick = () => (step === 2 && pick && first ? this.renderOnboarding(2, false, false, first) : this.renderOnboarding(1));
 		}
-		steps.createSpan({ cls: "grill-meta", text: `Step ${step} of 3` });
+		steps.createSpan({ cls: "grill-meta", text: `Step ${step} of 2` });
 		// Someone already set up who opened this from the command can leave it as it was.
 		if (s.onboarded) {
 			const cancel = steps.createEl("a", { cls: "grill-chip-link", text: "Cancel" });
@@ -706,22 +779,6 @@ export class SessionView extends ItemView {
 		}
 
 		if (step === 1) {
-			screen.createDiv({ cls: "grill-score", text: "Welcome to Grill" });
-			const how = screen.createEl("ul", { cls: "grill-onboard-how" });
-			const point = (lead: string, rest: string): void => {
-				const li = how.createEl("li");
-				li.createEl("strong", { text: lead });
-				li.appendText(` ${rest}`);
-			};
-			point("Quiz yourself", "on your own notes. Grill writes the questions.");
-			point("Watch your map fill in", "as you prove what you know.");
-			point("Study anything", "in one folder, a tag, or the whole vault.");
-			const next = screen.createEl("button", { text: "Set it up", cls: "mod-cta grill-start-btn grill-primary-cta" });
-			next.onclick = () => this.renderOnboarding(2);
-			return;
-		}
-
-		if (step === 2) {
 			const useAI = (): void => {
 				s.questionSource = "ai";
 				s.gradingMode = "ai";
@@ -730,7 +787,7 @@ export class SessionView extends ItemView {
 				s.questionSource = "local";
 				s.gradingMode = "self";
 				await this.plugin.persist();
-				this.renderOnboarding(3);
+				this.renderOnboarding(2);
 			};
 			if (own) {
 				// A key of one's own: the same fields the settings tab writes.
@@ -744,7 +801,7 @@ export class SessionView extends ItemView {
 					if (s.provider === "grillcloud") s.provider = "anthropic";
 					useAI();
 					await this.plugin.persist();
-					this.renderOnboarding(3);
+					this.renderOnboarding(2);
 				};
 				return;
 			}
@@ -758,7 +815,7 @@ export class SessionView extends ItemView {
 					return el;
 				};
 				card("AI-powered", "AI writes and grades questions from your notes. Uses your own API key, or a local model through Ollama.").onclick = () =>
-					this.renderOnboarding(2, true);
+					this.renderOnboarding(1, true);
 				card("Fully offline", "Questions built from your notes' own structure, graded by you. No key, no cost, nothing leaves your vault.").onclick = () =>
 					void offline();
 				return;
@@ -768,7 +825,7 @@ export class SessionView extends ItemView {
 			// With a key already here (set up before, or arrived by sync): show what's on
 			// it, and redraw this step when that changes.
 			const again = (): void => {
-				if (panel.isConnected) this.renderOnboarding(2);
+				if (panel.isConnected) this.renderOnboarding(1);
 			};
 			this.cloudRedraw = again;
 			if (s.apiKeys.grillcloud && this.plugin.cloudState === "unknown") {
@@ -783,11 +840,12 @@ export class SessionView extends ItemView {
 					s.provider = "grillcloud";
 					useAI();
 					await this.plugin.persist();
-					this.renderOnboarding(3);
+					this.renderOnboarding(2);
 					return;
 				}
 				go.disabled = true;
 				go.setText("Setting up...");
+				const was = { provider: s.provider, questionSource: s.questionSource, gradingMode: s.gradingMode };
 				let message = "Something went wrong. Try again.";
 				try {
 					message = await this.plugin.startCloud();
@@ -795,18 +853,68 @@ export class SessionView extends ItemView {
 					go.disabled = false;
 				}
 				new Notice(`Grill: ${message}`, 8000);
-				// Not reached, or refused: stay here, where another way can be picked.
-				const reached = this.plugin.cloudState === "ok" || this.plugin.cloudState === "none";
-				this.renderOnboarding(reached ? 3 : 2);
+				// Not reached, refused, or on with no credits to start on: stay here, where
+				// another way can be picked. Going on would end at a first session that
+				// can't start. With no credits, how Grill studies goes back to what it was,
+				// so Cancel or closing the pane doesn't leave a mode that can't work.
+				if (this.plugin.cloudState === "none") {
+					Object.assign(s, was);
+					await this.plugin.persist();
+				}
+				this.renderOnboarding(this.plugin.cloudState === "ok" ? 2 : 1);
 			};
 			// The other two ways, plainly there, one click each.
 			const others = screen.createDiv({ cls: "grill-onboard-others" });
 			others.createSpan({ cls: "grill-meta", text: "Or " });
 			const mine = others.createEl("a", { text: "use my own API key or Ollama" });
-			mine.onclick = () => this.renderOnboarding(2, true);
+			mine.onclick = () => this.renderOnboarding(1, true);
 			others.createSpan({ cls: "grill-meta", text: ", or " });
 			const none = others.createEl("a", { text: "study offline with no AI" });
 			none.onclick = () => void offline();
+			return;
+		}
+
+		const finish = async (files: TFile[] | null): Promise<void> => {
+			// Starting on a note leaves Grill's folders as they were: ticks made in the
+			// folder list and then walked away from are not a choice.
+			if (!files) s.includedFolders = [...chosen];
+			s.dismissedOffers = [...new Set([...s.dismissedOffers, NEW_IN_7])];
+			s.onboarded = true;
+			await this.plugin.persist();
+			this.plugin.refreshStatusBar();
+			// The home screen first, so there is somewhere to land if a session can't
+			// start (no key yet, no notes in scope); then straight into the first one.
+			this.renderStart();
+			if (files) {
+				void this.startScopedSession(files);
+				return;
+			}
+			this.sessionScope = null;
+			this.dueOnly = false;
+			void this.startSession();
+		};
+		const chosen = this.onboardFolders;
+
+		// A new install is offered the note that is open, when there is enough in it: the
+		// shortest way to a first question. Someone set up already came here to change
+		// something, and goes straight to their folders.
+		if (!pick && !s.onboarded && first === undefined) {
+			void this.firstNote().then((note) => {
+				if (screen.isConnected) this.renderOnboarding(2, false, false, note);
+			});
+			return;
+		}
+		if (!pick && !s.onboarded && first) {
+			screen.createDiv({ cls: "grill-section-label", text: "What should Grill ask you about first?" });
+			const btn = screen.createEl("button", { text: `Get grilled on ${first.basename}`, cls: "mod-cta grill-start-btn grill-primary-cta grill-onboard-note-btn" });
+			btn.onclick = () => void finish([first]);
+			screen.createEl("p", {
+				cls: "grill-meta grill-onboard-first",
+				text: `Start with the note you have open. Later sessions draw from ${s.includedFolders.length ? "Grill's folders" : "your whole vault"}, which you can change any time in settings.`,
+			});
+			const others = screen.createDiv({ cls: "grill-onboard-others" });
+			const folders = others.createEl("a", { text: "Pick folders instead" });
+			folders.onclick = () => this.renderOnboarding(2, false, true, first);
 			return;
 		}
 
@@ -819,7 +927,6 @@ export class SessionView extends ItemView {
 		const folderRoot = `${this.plugin.data.settings.folder}/`;
 		const eligible = this.app.vault.getMarkdownFiles().filter((f) => !f.path.startsWith(folderRoot));
 		const folders = listFolders(eligible);
-		const chosen = this.onboardFolders;
 
 		if (!folders.length) {
 			screen.createEl("p", { cls: "grill-meta", text: "No folders found — Grill will use your whole vault." });
@@ -869,17 +976,25 @@ export class SessionView extends ItemView {
 		}
 
 		const btn = screen.createEl("button", { text: "Get grilled", cls: "mod-cta grill-start-btn grill-primary-cta" });
-		btn.onclick = async () => {
-			s.includedFolders = [...chosen];
-			s.dismissedOffers = [...new Set([...s.dismissedOffers, NEW_IN_7])];
-			s.onboarded = true;
-			await this.plugin.persist();
-			this.plugin.refreshStatusBar();
-			// The home screen first, so there is somewhere to land if a session can't
-			// start (no key yet, no notes in scope); then straight into the first one.
-			this.renderStart();
-			void this.startSession();
-		};
+		btn.onclick = () => void finish(null);
+	}
+
+	/** The open note, if it is worth a first session: a note of the user's own with
+	 * enough in it for a few questions in the mode just chosen. Drawings and boards
+	 * kept in markdown files are not notes to be quizzed on. */
+	private async firstNote(): Promise<TFile | null> {
+		try {
+			const f = this.app.workspace.getActiveFile();
+			if (!(f instanceof TFile) || f.extension !== "md" || this.plugin.isExcluded(f.path)) return null;
+			const fm = this.app.metadataCache.getFileCache(f)?.frontmatter;
+			if (fm && ("excalidraw-plugin" in fm || "kanban-plugin" in fm)) return null;
+			const s = this.plugin.data.settings;
+			const concepts = extractConcepts(f.basename, await this.app.vault.cachedRead(f), s.questionFormats);
+			const usable = s.questionSource === "local" ? concepts.filter((c) => c.local) : concepts;
+			return usable.length >= ONBOARD_NOTE_CONCEPTS ? f : null;
+		} catch {
+			return null;
+		}
 	}
 
 	/** A typed answer whose marking failed, put back into the box when it is redrawn. */
@@ -925,7 +1040,7 @@ export class SessionView extends ItemView {
 		const state = this.plugin.cloudState;
 		const head = el.createDiv({ cls: "grill-cloud-panel-title", text: "Grill Cloud" });
 		if (recommended) head.createSpan({ cls: "grill-mode-tag", text: "Recommended" });
-		el.createDiv({ cls: "grill-cloud-panel-lead", text: "AI writes and grades questions from your notes. Nothing to set up." });
+		el.createDiv({ cls: "grill-cloud-panel-lead", text: CLOUD_LEAD });
 		if (!has) {
 			if (this.plugin.sharesDeviceCloud()) el.createDiv({ cls: "grill-meta", text: "You already use Grill Cloud in another vault on this device. Starting here uses the same balance." });
 			const facts = el.createDiv({ cls: "grill-cloud-facts" });
@@ -950,7 +1065,7 @@ export class SessionView extends ItemView {
 			cls: "grill-meta",
 			text:
 				state === "none"
-					? "On, with no credits yet. Add credits in settings to begin."
+					? "On, with no credits yet. Add credits in settings to begin, or pick another way below."
 					: state === "ok" && credits !== null
 						? `On. ${creditsInWords(credits)}. ${usageInWords(this.plugin.data.settings.cloudUsage)}`
 						: state === "refused" || state === "offline"

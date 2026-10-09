@@ -73,7 +73,7 @@ Changing the persona only changes Grill's voice. How questions are built and how
 
 Open Grill and you land on your **knowledge graph**: every note Grill studies, drawn as a map. It starts grey. As you practise, each note colours in by how well you know it (green known, amber shaky) and grows with how durably you know it, and the links between notes you've both learned brighten. It's the same idea as a fill-in-the-map game: you're colouring in your own knowledge by proving you've learned it. Pick a folder or tag and that slice lights up so you can see exactly what a session will cover; finish the session and watch the map change.
 
-This is a *learning* graph (what you've proven), which is a different thing from Obsidian's own graph of what you've written. On first run Grill asks which folders are its territory (leave it blank for the whole vault); change it any time under settings.
+This is a *learning* graph (what you've proven), which is a different thing from Obsidian's own graph of what you've written. Grill studies your whole vault unless you pick folders on first run; change it any time under settings.
 
 ## Look and feel
 

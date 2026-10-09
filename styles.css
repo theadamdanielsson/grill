@@ -149,9 +149,6 @@
 .grill-arcade-screen .grill-score {
   color: var(--grill-gold-lit, #ffe98a);
 }
-.grill-arcade-screen .grill-onboard-how strong {
-  color: var(--grill-gold-lit, #ffe98a);
-}
 .grill-arcade-screen .grill-divider {
   border-top-color: var(--grill-grid, #3a1c0a);
 }
@@ -604,13 +601,16 @@
 }
 
 /* First-run onboarding: choose Grill's folders. */
-.grill-onboard-how {
-  margin: 0.4em 0 0.9em;
-  padding-left: 1.1em;
+/* A note's name can be long: let the button wrap, not clip. */
+.grill-view .grill-onboard-note-btn {
+  white-space: normal;
+  height: auto;
   line-height: 1.5;
+  overflow-wrap: anywhere;
 }
-.grill-onboard-how li {
-  margin: 0.15em 0;
+.grill-onboard-first {
+  margin: 0.8em 0 0;
+  line-height: 1.5;
 }
 .grill-onboard-controls {
   display: flex;
@@ -2102,8 +2102,69 @@ textarea.grill-mgmt-field {
 }
 .grill-onboard-others {
   margin: 0.9em 0 0.2em;
-  text-align: center;
   line-height: 1.7;
+}
+/* First run holds little, and its pane can be tall. The room left under the step is
+   a picture of what Grill is for: a map of notes, grey at first, each turning amber
+   and then green in turn. It takes whatever height is left and none when there is
+   none (a long folder list), and it is last on screen whatever the step drew. */
+.grill-arcade-screen.grill-onboard {
+  display: flex;
+  flex-direction: column;
+}
+.grill-onboard-map {
+  order: 1;
+  flex: 1 1 0;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  margin-top: 1.2em;
+}
+/* Clear of the pane's bottom edge, where Obsidian's status bar sits over the corner. */
+.grill-onboard-map svg {
+  position: absolute;
+  inset: 0 0 2em;
+  width: 100%;
+  height: calc(100% - 2em);
+  overflow: visible;
+}
+/* Kept faint and small: it is the ground the step stands on, not the thing to look at. */
+.grill-onboard-map line {
+  stroke: var(--grill-dim, #c9a875);
+  stroke-width: 1;
+  opacity: 0.1;
+  animation: grill-onboard-link 22s linear var(--grill-map-delay, 0s) infinite backwards;
+}
+.grill-onboard-map circle {
+  fill: var(--grill-dim, #c9a875);
+  opacity: 0.16;
+  animation: grill-onboard-note 22s ease-in-out var(--grill-map-delay, 0s) infinite backwards;
+}
+@keyframes grill-onboard-note {
+  0% { fill: var(--grill-dim, #c9a875); opacity: 0.16; }
+  4% { fill: var(--grill-gold, #ffd23f); opacity: 0.45; }
+  16%, 88% { fill: #5fd38d; opacity: 0.4; }
+  100% { fill: var(--grill-dim, #c9a875); opacity: 0.16; }
+}
+@keyframes grill-onboard-link {
+  0%, 12% { stroke: var(--grill-dim, #c9a875); opacity: 0.1; }
+  18%, 88% { stroke: #5fd38d; opacity: 0.22; }
+  100% { stroke: var(--grill-dim, #c9a875); opacity: 0.1; }
+}
+/* No motion wanted: the map as it looks part-way through, standing still. */
+@media (prefers-reduced-motion: reduce) {
+  .grill-onboard-map line,
+  .grill-onboard-map circle {
+    animation: none;
+  }
+  .grill-onboard-map circle:nth-of-type(3n) {
+    fill: #5fd38d;
+    opacity: 0.4;
+  }
+  .grill-onboard-map circle:nth-of-type(4n + 1) {
+    fill: var(--grill-gold, #ffd23f);
+    opacity: 0.45;
+  }
 }
 .grill-onboard-others a {
   cursor: pointer;

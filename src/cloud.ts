@@ -68,10 +68,13 @@ export const cloud = {
 	onCost: null as ((credits: number) => void) | null,
 };
 
+/** Why pick it, in one line under its name: nothing to get, nothing to fill in. */
+export const CLOUD_LEAD = "No API key. No sign-up. One click and you're studying.";
+
 /** The three things to know before starting, said wherever Grill Cloud is offered. */
 export const CLOUD_FACTS = [
+	"AI writes your questions and grades your answers.",
 	"Free credits to start, while each day's last. Then credit packs from $3.99 + tax.",
-	"No account and no API key.",
 	"Your notes go through Grill's server to Claude. Grill's server doesn't store them.",
 ];
 
