@@ -1,5 +1,16 @@
 # Changelog
 
+## 7.1.0
+
+- **Two steps to your first question.** Setup no longer opens on a welcome screen. Pick
+  how your questions get written, then start.
+- **Start on the note you have open.** A new install is offered a first session on the
+  open note, when there's enough in it to ask about. Picking folders is one click away.
+- **No dead end when the free credits are out.** If Grill Cloud has none to give, setup
+  stays where you can pick another way, and how Grill studies goes back to what it was.
+- **A map on the setup screen.** Under the step, notes turn amber and then green, the
+  way your own map fills in. It stands still if your system asks for less motion.
+
 ## 7.0.3
 
 - **Diagram text is drawn in your theme's font.** A diagram's labels could come out in
