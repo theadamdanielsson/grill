@@ -732,10 +732,11 @@ export class SessionView extends ItemView {
 	 * pane already open at that point (e.g. persisted open across an app reload) can render its
 	 * start screen from the empty placeholder first — showing 0 known/struggling and every note
 	 * untested — with nothing to tell it the real data arrived a moment later. Re-render, but
-	 * only if still idle on the start screen (checked via a DOM marker, not extra state), so this
+	 * only if still idle on the start screen (checked via a DOM marker, the start screen's own
+	 * tiles, which both the old home and the chat home draw; not extra state), so this
 	 * never interrupts an active question, loading screen, or summary. */
 	refreshIfOnStartScreen(): void {
-		if (this.contentEl.querySelector(".grill-scope-header")) this.renderStart();
+		if (this.contentEl.querySelector(".grill-start-stats")) this.renderStart();
 	}
 
 	/** Called after maybeSynthesizeArc finishes in the background post-launch, so a
@@ -3285,7 +3286,7 @@ export class SessionView extends ItemView {
 			const bad = row.createEl("button", { cls: "clickable-icon grill-bad-question-btn", attr: { "aria-label": "Bad question: wrong, broken or nonsensical. Deletes it and moves on, no penalty.", type: "button" } });
 			setIcon(bad, "flag");
 			bad.onclick = () => {
-				row.querySelectorAll("button").forEach((b) => (b.disabled = true));
+				card.querySelectorAll("button").forEach((b) => (b.disabled = true));
 				void this.reportBadQuestion();
 			};
 		}
@@ -3299,7 +3300,7 @@ export class SessionView extends ItemView {
 			// a second call — see its declaration above.
 			if (actionTaken) return;
 			actionTaken = true;
-			row.querySelectorAll("button").forEach((b) => (b.disabled = true));
+			card.querySelectorAll("button").forEach((b) => (b.disabled = true));
 			let answer = "";
 			if (!giveUp) {
 				if (isMc || isTf) answer = this.mcPicked;
@@ -3328,14 +3329,20 @@ export class SessionView extends ItemView {
 			const ask = card.createDiv({ cls: "grill-thread-ask" });
 			const input = ask.createEl("textarea", {
 				cls: "grill-thread-input",
-				attr: { rows: "1", placeholder: "Ask about it... (Enter to send)", "aria-label": "Ask about this question" },
+				attr: { rows: "2", placeholder: "Ask about it... (Enter to send)", "aria-label": "Ask about this question" },
 			});
 			const send = ask.createEl("button", { text: "Ask", cls: "grill-hint-btn" });
+			// Everything for when you are stuck sits together at the foot: ask, take a
+			// hint, or say you don't know, with the flag at the far end.
+			const help = card.createDiv({ cls: "grill-thread-help" });
+			help.appendChild(stuck);
+			const flag = row.querySelector(".grill-bad-question-btn");
+			if (flag) help.appendChild(flag);
 			const go = (): void => {
 				const text = input.value.trim();
 				if (!text || actionTaken) return;
 				actionTaken = true;
-				row.querySelectorAll("button").forEach((b) => (b.disabled = true));
+				card.querySelectorAll("button").forEach((b) => (b.disabled = true));
 				send.disabled = true;
 				input.disabled = true;
 				void this.answerAsked(askCfg, q, text, hintsUsed);

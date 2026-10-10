@@ -3155,3 +3155,58 @@ textarea.grill-mgmt-field {
 .grill-blank-input + .grill-blank-text {
   margin-left: 0.3em;
 }
+
+/* The question's buttons, grouped by what they are for. First line: how sure you are,
+ * and Send at the far end. Last line: what to do when stuck (a hint, "I don't know"),
+ * quiet, with the flag at the end. */
+.grill-thread-frame .grill-answer-main {
+  flex: 1 1 100%;
+}
+.grill-thread-frame .grill-answer-main .grill-submit-btn {
+  order: 2;
+  margin-left: auto;
+}
+.grill-thread-frame .grill-answer-stuck {
+  flex: 1 1 auto;
+  margin-left: 0;
+  gap: 1.2em;
+}
+.grill-view .grill-thread-frame .grill-answer-stuck button,
+.grill-view .grill-thread-frame .grill-answer-stuck button:hover {
+  height: auto;
+  padding: 0.2em 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+.grill-view .grill-thread-frame .grill-answer-stuck button:hover:not(:disabled) {
+  color: var(--text-accent);
+  text-decoration: underline;
+}
+.grill-thread-help {
+  display: flex;
+  align-items: center;
+  gap: 0.8em;
+  margin-top: 0.5em;
+}
+/* The box to ask in: a proper box, as wide as the pane, not a strip at its foot. */
+.grill-thread-ask {
+  align-items: stretch;
+}
+.grill-view .grill-thread-ask .grill-thread-input {
+  padding: 0.7em 0.9em;
+  font-size: var(--font-text-size, 1em);
+  line-height: 1.4;
+  background: var(--grill-screen-deep, #0f0904);
+  color: var(--text-normal);
+}
+.grill-view .grill-thread-ask .grill-thread-input:focus {
+  border-color: var(--grill-accent, #ff8c2b);
+  box-shadow: none;
+}
+.grill-view .grill-thread-ask .grill-hint-btn {
+  height: auto;
+  padding: 0 1.3em;
+}
