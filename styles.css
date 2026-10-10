@@ -2748,3 +2748,52 @@ textarea.grill-mgmt-field {
   color: var(--grill-ink-accent, #ff8c2b);
   cursor: pointer;
 }
+
+/* ---------------------------------------------------------------- thread */
+/* The session as a thread: finished questions, one line each, above the one in hand.
+ * Theme tokens, like the question and feedback cards it sits over. */
+.grill-thread-history {
+  display: flex;
+  flex-direction: column;
+  gap: var(--grill-space-xs);
+  margin: var(--grill-space-md) 0 0;
+}
+.grill-thread-segment {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s, var(--grill-radius-s));
+}
+.grill-thread-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--grill-space-sm);
+  padding: 0.45em 0.7em;
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+}
+.grill-thread-summary::-webkit-details-marker {
+  display: none;
+}
+.grill-thread-n {
+  font-variant-numeric: tabular-nums;
+}
+.grill-thread-note {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-normal);
+}
+.grill-thread-verdict {
+  flex-shrink: 0;
+}
+.grill-thread-body {
+  padding: 0 0.7em 0.7em;
+  border-top: 1px solid var(--background-modifier-border);
+}
+.grill-thread-body .grill-quiet-btn {
+  margin-left: 0;
+  padding-left: 0;
+}

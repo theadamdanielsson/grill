@@ -100,6 +100,10 @@ interface GrillSettings {
 	 * isn't a choice worth a row. Kept as a field so an install that turned it off
 	 * stays off; the same applies to `linkSessions` and `sessionDebrief` below. */
 	showProgress: boolean;
+	/** The session drawn as a thread: finished questions stay above the one in hand.
+	 * Off until the rest of the chat home is in place; switched by a command, not a
+	 * settings row. */
+	threadView: boolean;
 	/** Wiki-link session transcripts to the quizzed notes. On; see `showProgress`. */
 	linkSessions: boolean;
 	/** Vault folders to exclude from sessions (relative paths). */
@@ -307,6 +311,7 @@ function defaultSettings(): GrillSettings {
 		questionsPerSession: 5,
 		folder: "Grill",
 		showProgress: true,
+		threadView: false,
 		linkSessions: true,
 		excludedFolders: [],
 		includedFolders: [],
@@ -395,6 +400,7 @@ export default class GrillPlugin extends Plugin {
 		if (typeof s.questionsPerSession === "number") settings.questionsPerSession = s.questionsPerSession;
 		if (typeof s.folder === "string" && s.folder.trim()) settings.folder = s.folder.trim();
 		if (typeof s.showProgress === "boolean") settings.showProgress = s.showProgress;
+		if (typeof s.threadView === "boolean") settings.threadView = s.threadView;
 		if (typeof s.linkSessions === "boolean") settings.linkSessions = s.linkSessions;
 		if (Array.isArray(s.excludedFolders))
 			settings.excludedFolders = s.excludedFolders.filter((v): v is string => typeof v === "string");
@@ -605,6 +611,15 @@ export default class GrillPlugin extends Plugin {
 			id: "clear-question-cache",
 			name: "Clear cached questions",
 			callback: () => void this.clearQuestionCache(),
+		});
+		this.addCommand({
+			id: "toggle-thread-view",
+			name: "Switch the thread view on or off (preview)",
+			callback: async () => {
+				this.data.settings.threadView = !this.data.settings.threadView;
+				await this.persist();
+				new Notice(`Grill: thread view ${this.data.settings.threadView ? "on" : "off"}. It applies from the next question.`);
+			},
 		});
 		this.addCommand({
 			id: "export-review-log",

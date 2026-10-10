@@ -74,6 +74,7 @@ import { CONFIDENCE_LEVELS, calibrationLine, pushCalibration } from "./calibrati
 import { celebrate, playSfx } from "./sfx";
 import { stopSpeaking, toSpeechText, ttsAvailable } from "./tts";
 import { SessionEntry } from "./store";
+import { renderThreadHistory } from "./thread";
 import { safeDiagram, safeMarkdown } from "./safemd";
 
 /** Mermaid's drawing, made fit to be shown as an image: well-formed XML, with a size
@@ -2853,6 +2854,7 @@ export class SessionView extends ItemView {
 	private renderQuestion(): void {
 		const wrap = this.root();
 		this.progressBar(wrap);
+		this.threadHistory(wrap, this.results);
 		this.pendingConfidence = null;
 		const q = this.questions[this.idx];
 		const card = wrap.createDiv({ cls: "grill-body" });
@@ -3225,10 +3227,22 @@ export class SessionView extends ItemView {
 		return { text: "Incorrect", cls: "grill-v-incorrect" };
 	}
 
+	/** With the thread view on, the questions already answered this session, one line
+	 * each, above whatever is drawn next. */
+	private threadHistory(wrap: HTMLElement, done: QuestionResult[]): void {
+		if (!this.plugin.data.settings.threadView) return;
+		renderThreadHistory(
+			wrap,
+			done.map((entry, i) => ({ n: i + 1, entry, label: this.verdictLabel(entry) })),
+			{ md: (markdown, el, sourcePath) => this.md(markdown, el, sourcePath), openNote: (name) => this.openNote(name) },
+		);
+	}
+
 	private renderFeedback(r: QuestionResult, pendingExtension: PendingExtension | null = null): void {
 		if (this.plugin.data.settings.sounds) playSfx(r.verdict); // correct / partial / incorrect
 		const wrap = this.root();
 		this.progressBar(wrap);
+		this.threadHistory(wrap, this.results.filter((x) => x !== r));
 		const card = wrap.createDiv({ cls: "grill-body" });
 		const meta = card.createDiv({ cls: "grill-meta-row" });
 		meta.createSpan({ cls: "grill-meta", text: `Question ${this.idx + 1} of ${this.targetCount}` });
@@ -3332,6 +3346,15 @@ export class SessionView extends ItemView {
 		};
 		if (helpAt) this.offerHelp(helpAt, actions, r);
 		const quiet = actions.createDiv({ cls: "grill-next-quiet" });
+		// What was sent was graded as an answer but wasn't meant as one. Only where the
+		// answer was typed: a picked choice is never anything but an answer.
+		if (this.plugin.data.settings.threadView && this.pendingOverride && !r.gaveUp && this.typedAnswer(this.questions[this.idx])) {
+			const back = quiet.createEl("button", { text: "That wasn't my answer", cls: "grill-quiet-btn" });
+			back.onclick = () => {
+				back.disabled = true;
+				void this.takeBackAnswer(r);
+			};
+		}
 		if (canMark) {
 			const mark = quiet.createEl("button", { text: "Mark correct", cls: "grill-quiet-btn" });
 			mark.onclick = () => {
@@ -5595,6 +5618,12 @@ export class SessionView extends ItemView {
 			}
 		}
 		this.recomputeAggregate(o.note);
+	}
+
+	/** True for the question types answered by typing, where a message could be
+	 * something other than an answer. */
+	private typedAnswer(q: Question): boolean {
+		return !q.type || q.type === "write" || q.type === "blank";
 	}
 
 	/** "That wasn't my answer": what was sent was read as an answer and graded, but it
