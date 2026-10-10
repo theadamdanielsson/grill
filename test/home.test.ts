@@ -97,3 +97,36 @@ test("a typed request that names nothing in the vault matches nothing", () => {
 	assert.equal(matchScope("   ", VAULT), null);
 	assert.equal(matchScope("test me on", VAULT), null);
 });
+
+import { learnContext, sessionTitle, stripFrontmatter } from "../src/learn";
+
+test("Learn reads the note without its frontmatter, and a share of each linked note", () => {
+	const main = { name: "CPI", text: "---\ntags: [macro]\n---\nThe CPI measures the average price of consumption." };
+	const linked = [
+		{ name: "GDP deflator", text: "The deflator measures the average price of output." },
+		{ name: "Empty", text: "---\nx: 1\n---\n" },
+		{ name: "CPI", text: "itself" },
+	];
+	const ctx = learnContext(main, linked);
+	assert.equal(ctx.noteText, "The CPI measures the average price of consumption.");
+	assert.equal(ctx.linkedText, "'GDP deflator':\nThe deflator measures the average price of output.");
+});
+
+test("Learn keeps what it sends within its budget", () => {
+	const long = "x".repeat(50_000);
+	const linked = Array.from({ length: 9 }, (_, i) => ({ name: `L${i}`, text: long }));
+	const ctx = learnContext({ name: "N", text: long }, linked, { note: 100, linked: 10, maxLinked: 3 });
+	assert.equal(ctx.noteText.length, 100);
+	assert.equal(ctx.linkedText.split("\n\n").length, 3);
+	assert.ok(ctx.linkedText.length < 100);
+});
+
+test("frontmatter is only stripped from the top of a note", () => {
+	assert.equal(stripFrontmatter("text\n---\nnot: frontmatter\n---\nmore"), "text\n---\nnot: frontmatter\n---\nmore");
+});
+
+test("a session is titled by the notes it covered", () => {
+	assert.equal(sessionTitle(["GDP deflator", "GDP deflator", "Redo"]), "GDP deflator");
+	assert.equal(sessionTitle(["Output", "Real GDP", "Output", "Nominal GDP", "Redo"]), "Output +2");
+	assert.equal(sessionTitle(["Redo"]), "");
+});

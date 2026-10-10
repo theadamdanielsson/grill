@@ -816,6 +816,48 @@ export class GrillStore {
 		}
 	}
 
+	/** A Learn conversation, kept as a note under `<folder>/Learn/`, apart from the
+	 * session notes: nothing in it was graded, so it has no score and must not be read
+	 * as a session by what counts reviews. */
+	async saveLearnThread(
+		note: string,
+		turns: Array<{ role: "student" | "tutor"; text: string; diagram?: string }>,
+		meta: { provider: string; model: string; startedAt: Date },
+	): Promise<TFile | null> {
+		if (!turns.length) return null;
+		const d = meta.startedAt;
+		const pad = (n: number) => String(n).padStart(2, "0");
+		const dir = normalizePath(`${this.folder()}/Learn/${d.getFullYear()}-${pad(d.getMonth() + 1)}`);
+		await this.ensureFolder(this.folder());
+		await this.ensureFolder(normalizePath(`${this.folder()}/Learn`));
+		await this.ensureFolder(dir);
+		const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}.${pad(d.getMinutes())}`;
+		const lines: string[] = [
+			"---",
+			`date: ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+			"type: learn",
+			`note: ${JSON.stringify(note)}`,
+			`provider: ${meta.provider}`,
+			`model: ${meta.model}`,
+			"---",
+			`# Learn: [[${note}]]`,
+			"",
+		];
+		for (const turn of turns) {
+			const quoted = safeMarkdown(turn.text).split("\n").map((l) => `> ${l}`);
+			lines.push(turn.role === "student" ? "> [!question] You asked" : "> [!note] Grill", ...quoted, "");
+			const drawn = safeDiagram(turn.diagram ?? "");
+			if (drawn) lines.push("```mermaid", drawn, "```", "");
+		}
+		let path = normalizePath(`${dir}/${stamp}.md`);
+		if (await this.app.vault.adapter.exists(path)) path = normalizePath(`${dir}/${stamp}.${pad(d.getSeconds())}.md`);
+		try {
+			return await this.app.vault.create(path, lines.join("\n"));
+		} catch {
+			return null;
+		}
+	}
+
 	/** One-time backfill for a vault that already has real session history from
 	 * before the arc feature existed: without this, activeDayCount only sees days
 	 * logged going forward, so an existing user with weeks of real study behind

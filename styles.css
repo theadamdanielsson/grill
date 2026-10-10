@@ -3219,3 +3219,48 @@ textarea.grill-mgmt-field {
 .grill-review-head .grill-tts-btn {
   margin: 0;
 }
+
+/* ---------------------------------------------------------------- learn / test */
+/* The switch on the home screen: two halves of one control. */
+.grill-home-modes {
+  display: flex;
+  gap: 0.45em;
+  margin-top: 1.1em;
+}
+.grill-view button.grill-home-mode,
+.grill-view button.grill-home-mode:hover {
+  flex: 1 1 0;
+  height: auto;
+  padding: 0.75em 0;
+  border: 2px solid var(--grill-ember-dark, #5c1400);
+  border-radius: var(--grill-radius-s);
+  background: var(--grill-screen-deep, #0f0904);
+  box-shadow: none;
+  color: var(--grill-ink, #ffe98a);
+  font-family: "Grill Pixel", var(--font-monospace);
+  font-size: 0.62em;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.grill-view button.grill-home-mode:hover {
+  border-color: var(--grill-accent, #ff8c2b);
+}
+.grill-view button.grill-home-mode.is-on,
+.grill-view button.grill-home-mode.is-on:hover {
+  border-color: var(--grill-accent, #ff8c2b);
+  background: var(--grill-accent, #ff8c2b);
+  color: var(--grill-accent-contrast, #140b07);
+}
+.grill-home-modes + .grill-home-suggestions {
+  margin-top: 0.6em;
+}
+/* A Learn conversation: what was said, and the box to say more at the foot. */
+.grill-learn-turns {
+  display: flex;
+  flex-direction: column;
+  gap: 1em;
+}
+.grill-learn .grill-learn-box {
+  padding-top: 1.4em;
+}

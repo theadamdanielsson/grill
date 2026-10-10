@@ -27,13 +27,20 @@ export interface HomeCredits {
 	open(): void;
 }
 
+export type HomeMode = "learn" | "test";
+
 export interface HomeData {
+	/** Learn: you ask and Grill explains, nothing graded. Test: Grill asks and it counts. */
+	mode: HomeMode;
+	setMode(mode: HomeMode): void;
 	suggestions: HomeSuggestion[];
 	recent: HomeRecent[];
 	/** The note open beside the pane, when it can be studied. */
 	openNote: string | null;
 	/** Draws into the room left between the recent list and the suggestions. */
 	fill?(host: HTMLElement): void;
+	placeholder: string;
+	sendLabel: string;
 	/** What was typed, trimmed; empty when Send was pressed on an empty box. */
 	send(text: string): void;
 	showProgress(): void;
@@ -87,6 +94,15 @@ export function renderChatHome(screen: HTMLElement, d: HomeData): void {
 	const space = screen.createDiv({ cls: "grill-home-space" });
 	d.fill?.(space);
 
+	const modes = screen.createDiv({ cls: "grill-home-modes", attr: { role: "group", "aria-label": "Mode" } });
+	for (const [mode, label] of [["learn", "Learn"], ["test", "Test"]] as const) {
+		const b = modes.createEl("button", { cls: "grill-home-mode", text: label, attr: { type: "button", "aria-pressed": String(d.mode === mode) } });
+		b.toggleClass("is-on", d.mode === mode);
+		b.onclick = () => {
+			if (d.mode !== mode) d.setMode(mode);
+		};
+	}
+
 	if (d.suggestions.length) {
 		const list = screen.createDiv({ cls: "grill-home-suggestions" });
 		for (const s of d.suggestions) {
@@ -103,11 +119,11 @@ export function renderChatHome(screen: HTMLElement, d: HomeData): void {
 	const box = screen.createDiv({ cls: "grill-home-box" });
 	const input = box.createEl("textarea", {
 		cls: "grill-home-input",
-		attr: { rows: "2", placeholder: "Say what to test, or just press Get grilled", "aria-label": "What to be tested on" },
+		attr: { rows: "2", placeholder: d.placeholder, "aria-label": d.mode === "learn" ? "What to ask about" : "What to be tested on" },
 	});
 	const bar = box.createDiv({ cls: "grill-home-bar" });
 	bar.createSpan({ cls: "grill-meta grill-home-open", text: d.openNote ? `Open note: ${d.openNote}` : "" });
-	const send = bar.createEl("button", { text: "Get grilled", cls: "mod-cta grill-primary-cta grill-home-send", attr: { type: "button" } });
+	const send = bar.createEl("button", { text: d.sendLabel, cls: "mod-cta grill-primary-cta grill-home-send", attr: { type: "button" } });
 	const go = (): void => {
 		if (send.disabled) return;
 		send.disabled = true;

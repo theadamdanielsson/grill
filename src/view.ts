@@ -3,7 +3,7 @@
 import { ItemView, loadMermaid, MarkdownRenderer, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
 import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, cloudEnabled, creditsInWords, lowBalance, usageInWords } from "./cloud";
-import { adjudicateBridges, ConceptTarget, contentWords, debriefSession, discussQuestion, embedTexts, explainQuestion, formatSatisfies, generateQuestions, Grade, CloudError, gradeAnswer, LLMConfig, offeredProviders, PROVIDERS, ProviderId, Question, supportsEmbeddings, supportsVision, testModel, ThreadTurn, Verdict } from "./llm";
+import { adjudicateBridges, ConceptTarget, contentWords, debriefSession, discussQuestion, embedTexts, explainQuestion, formatSatisfies, generateQuestions, Grade, CloudError, gradeAnswer, learnFromNotes, LLMConfig, offeredProviders, PROVIDERS, ProviderId, Question, supportsEmbeddings, supportsVision, testModel, ThreadTurn, Verdict } from "./llm";
 import { detectOcclusionRegions } from "./ocr";
 import {
 	Concept,
@@ -77,7 +77,8 @@ import { celebrate, playSfx } from "./sfx";
 import { stopSpeaking, toSpeechText, ttsAvailable } from "./tts";
 import { SessionEntry } from "./store";
 import { renderThreadHistory } from "./thread";
-import { renderChatHome, renderCreditsRing, type HomeSuggestion } from "./home";
+import { renderChatHome, renderCreditsRing, type HomeMode, type HomeSuggestion } from "./home";
+import { learnContext, sessionTitle } from "./learn";
 import { safeDiagram, safeMarkdown } from "./safemd";
 
 /** Mermaid's drawing, made fit to be shown as an image: well-formed XML, with a size
@@ -454,6 +455,19 @@ export class SessionView extends ItemView {
 	/** Set with `sessionScope` when a session is to ask only these concepts, as "Retry
 	 * my misses" and "Catch up" do. Read once, when the session picks its questions. */
 	private conceptFilter: Set<string> | null = null;
+	/** Which side of the home screen is showing. Kept for as long as the pane is open. */
+	private homeMode: HomeMode = "test";
+	/** The Learn conversation in hand, if there is one: the note it is about, what the
+	 * model is given to read, and what has been said. */
+	private learn: {
+		note: TFile;
+		noteText: string;
+		linkedText: string;
+		turns: ThreadTurn[];
+		startedAt: Date;
+		persona: string;
+		instructions: string;
+	} | null = null;
 	/** Due-queue sessions (status bar, "Review N due"): only due/struggling
 	 * concepts, never padded with untested/known ones to fill a full session. */
 	private dueOnly = false;
@@ -1692,12 +1706,37 @@ export class SessionView extends ItemView {
 			void this.startSession();
 		};
 
+		const learning = this.homeMode === "learn";
+		const active = this.app.workspace.getActiveFile();
+		const openNote = active && active.extension === "md" && !this.plugin.isExcluded(active.path) ? active : null;
 		const suggestions: HomeSuggestion[] = [];
 		const missed = missedConceptIds(concepts, isEligible);
-		if (missed.length) {
+		if (learning) {
+			// What was missed is what is worth having explained: the two notes with the
+			// most misses, then the note that is open.
+			const perNote = new Map<string, number>();
+			for (const id of missed) {
+				const n = concepts[id]?.note;
+				if (n && byName.has(n)) perNote.set(n, (perNote.get(n) ?? 0) + 1);
+			}
+			for (const [n, count] of [...perNote].sort((a, b) => b[1] - a[1]).slice(0, 2)) {
+				suggestions.push({
+					label: `Explain what I missed: ${n}`,
+					count: String(count),
+					run: () => void this.startLearn(byName.get(n) as TFile, "I keep missing questions on this note. Explain it to me from the basics."),
+				});
+			}
+			if (openNote) {
+				suggestions.push({
+					label: `Walk me through this note: ${openNote.basename}`,
+					run: () => void this.startLearn(openNote, "Walk me through the main ideas in this note."),
+				});
+			}
+		}
+		if (!learning && missed.length) {
 			suggestions.push({ label: "Retry my misses", count: String(missed.length), run: () => begin(notesOf(missed), true, missed) });
 		}
-		const dueNow = dueConceptCount(concepts, isEligible);
+		const dueNow = learning ? 0 : dueConceptCount(concepts, isEligible);
 		if (dueNow > CATCH_UP) {
 			suggestions.push({
 				label: "Catch up",
@@ -1715,24 +1754,56 @@ export class SessionView extends ItemView {
 		} else if (dueNow > 0) {
 			suggestions.push({ label: "Review what is due", count: String(dueNow), run: () => begin(dueFiles(eligible, concepts), true) });
 		}
-		const untested = untestedFiles(eligible, concepts);
+		const untested = learning ? [] : untestedFiles(eligible, concepts);
 		if (untested.length && untested.length < eligible.length) {
 			suggestions.push({ label: "Something new", count: String(untested.length), run: () => begin(untested, false) });
 		}
-		const active = this.app.workspace.getActiveFile();
-		const openNote = active && active.extension === "md" && !this.plugin.isExcluded(active.path) ? active : null;
-		if (openNote) suggestions.push({ label: `This note: ${openNote.basename}`, run: () => begin([openNote], false) });
+		if (!learning && openNote) suggestions.push({ label: `This note: ${openNote.basename}`, run: () => begin([openNote], false) });
 
+		const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 		renderChatHome(screen, {
+			mode: this.homeMode,
+			setMode: (mode) => {
+				this.homeMode = mode;
+				this.renderStart();
+			},
 			suggestions,
+			// Titled by what was studied, with when and how it went beside it.
 			recent: this.recentSessions().map((f) => {
-				const score = this.app.metadataCache.getFileCache(f)?.frontmatter?.score;
-				return { title: f.basename, meta: score ? String(score) : "", open: () => void this.app.workspace.getLeaf(false).openFile(f) };
+				const cache = this.app.metadataCache.getFileCache(f);
+				const fm = cache?.frontmatter;
+				const learned = fm?.type === "learn";
+				const title = learned
+					? String(fm?.note ?? "")
+					: sessionTitle((cache?.headings ?? []).filter((h) => h.level === 2).map((h) => h.heading));
+				const when = typeof fm?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(fm.date) ? `${Number(fm.date.slice(8))} ${MONTHS[Number(fm.date.slice(5, 7)) - 1]}` : "";
+				const how = learned ? "Learn" : fm?.score ? String(fm.score) : "";
+				return {
+					title: title || f.basename,
+					meta: [when, how].filter(Boolean).join(" · "),
+					open: () => void this.app.workspace.getLeaf(false).openFile(f),
+				};
 			}),
 			openNote: openNote?.basename ?? null,
+			placeholder: learning ? "Ask anything about your notes" : "Say what to test, or just press Get grilled",
+			sendLabel: learning ? "Ask" : "Get grilled",
 			// The room between what was done and what to do next: when it was done.
 			fill: (host) => this.renderHeatmap(host),
 			send: (text) => {
+				if (learning) {
+					if (!text) {
+						new Notice("Grill: type what you want to ask.", 5000);
+						return;
+					}
+					// About the note it names, if it names one; otherwise the one that is open.
+					const about = matchScope(text, eligible)?.files[0] ?? openNote;
+					if (!about) {
+						new Notice("Grill: open the note you want to ask about, or name it.", 8000);
+						return;
+					}
+					void this.startLearn(about, text);
+					return;
+				}
 				if (!text) return begin(null, false);
 				const found = matchScope(text, eligible);
 				if (!found) {
@@ -1744,6 +1815,136 @@ export class SessionView extends ItemView {
 			showProgress: () => this.showDashboard(),
 			showQuestions: () => void this.renderManageQuestions(),
 		});
+	}
+
+	/** Learn: a conversation about one note, with nothing graded. The note and the
+	 * notes it links to are read once, here, and sent with every message. */
+	private async startLearn(note: TFile, firstAsk?: string): Promise<void> {
+		const cfg = this.plugin.llmConfig();
+		if (!cfg) {
+			new Notice("Grill: Learn needs a model. Choose Grill Cloud or add a key in settings.", 8000);
+			return;
+		}
+		if (this.dirty || this.bankDirty || this.bridgesDirty) await this.flush();
+		const instr = await this.plugin.store.loadInstructions();
+		const eligible = new Map(this.allEligible().map((f) => [f.path, f] as const));
+		const links = Object.keys(this.app.metadataCache.resolvedLinks[note.path] ?? {}).flatMap((path) => (eligible.has(path) ? [eligible.get(path) as TFile] : []));
+		const read = async (f: TFile): Promise<{ name: string; text: string }> => ({ name: f.basename, text: await this.app.vault.cachedRead(f) });
+		const ctx = learnContext(await read(note), await Promise.all(links.slice(0, 8).map(read)));
+		this.learn = { note, ...ctx, turns: [], startedAt: new Date(), persona: instr.persona, instructions: instr.preferences };
+		this.renderLearn();
+		if (firstAsk) await this.askLearn(firstAsk);
+	}
+
+	private renderLearn(): void {
+		const L = this.learn;
+		if (!L) return this.renderStart();
+		const wrap = this.root();
+		const strip = wrap.createDiv({ cls: "grill-thread-strip" });
+		strip.createSpan({ cls: "grill-thread-kind", text: "Learn" });
+		const name = strip.createSpan({ cls: "grill-thread-count grill-chip-link", text: L.note.basename });
+		name.onclick = () => this.openNote(L.note.basename);
+		const end = strip.createEl("button", { cls: "grill-thread-end", text: "End" });
+		end.onclick = () => void this.endLearn(false);
+
+		const card = wrap.createDiv({ cls: "grill-body grill-learn" });
+		const turns = card.createDiv({ cls: "grill-thread-turns grill-learn-turns" });
+		if (!L.turns.length) turns.createDiv({ cls: "grill-meta", text: "Ask anything about this note. Nothing here is graded." });
+		for (const turn of L.turns) void this.learnTurn(turns, turn);
+
+		const box = card.createDiv({ cls: "grill-thread-ask grill-learn-box" });
+		const input = box.createEl("textarea", {
+			cls: "grill-thread-input",
+			attr: { rows: "2", placeholder: "Ask about this note... (Enter to send)", "aria-label": "Ask about this note" },
+		});
+		const send = box.createEl("button", { text: "Send", cls: "mod-cta grill-submit-btn" });
+		const go = (): void => {
+			const text = input.value.trim();
+			if (!text || send.disabled) return;
+			void this.askLearn(text);
+		};
+		send.onclick = go;
+		input.addEventListener("keydown", (e) => {
+			if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+				e.preventDefault();
+				go();
+			}
+		});
+		const foot = card.createDiv({ cls: "grill-thread-help" });
+		const test = foot.createEl("button", { cls: "grill-hint-btn", text: "Test me on this" });
+		test.disabled = !L.turns.length;
+		test.onclick = () => void this.endLearn(true);
+		input.focus();
+	}
+
+	/** One turn of a Learn conversation, drawn the way follow-ups under a question are. */
+	private async learnTurn(turns: HTMLElement, turn: ThreadTurn): Promise<void> {
+		const L = this.learn;
+		if (!L) return;
+		const el = turns.createDiv({ cls: `grill-thread-turn is-${turn.role}` });
+		const head = el.createDiv({ cls: "grill-thread-who" });
+		head.createSpan({ text: turn.role === "student" ? "You" : "Grill" });
+		const spoken = toSpeechText(turn.text);
+		if (turn.role === "tutor" && spoken && (ttsAvailable() || this.plugin.naturalVoiceSource())) this.hearButton(head, spoken, "Read this aloud");
+		const body = el.createDiv({ cls: "grill-thread-text" });
+		this.md(turn.text, body, L.note.path);
+		if (turn.diagram) await this.renderDiagramBlock(body, turn.diagram);
+	}
+
+	/** Send one message in the Learn conversation. Nothing is kept if the reply fails:
+	 * what was typed goes back in the box. */
+	private async askLearn(text: string): Promise<void> {
+		const L = this.learn;
+		const cfg = this.plugin.llmConfig();
+		if (!L || !cfg) return;
+		if (L.turns.filter((t) => t.role === "student").length >= THREAD_LIMIT) {
+			new Notice("Grill: that's a long conversation. Test yourself on it, or start a new one.", 8000);
+			return;
+		}
+		const asked: ThreadTurn = { role: "student", text };
+		L.turns.push(asked);
+		this.renderLearn();
+		const turnsEl = this.contentEl.querySelector<HTMLElement>(".grill-learn-turns");
+		const waiting = turnsEl?.createDiv({ cls: "grill-thread-turn is-tutor is-waiting" });
+		waiting?.createDiv({ cls: "grill-thread-who", text: "Grill" });
+		waiting?.createDiv({ cls: "grill-thread-text grill-meta", text: "Reading your note..." });
+		waiting?.scrollIntoView({ block: "nearest" });
+		this.contentEl.querySelectorAll<HTMLButtonElement | HTMLTextAreaElement>(".grill-learn button, .grill-learn textarea").forEach((b) => (b.disabled = true));
+		try {
+			const reply = await learnFromNotes(cfg, L.note.basename, L.noteText, L.linkedText, L.turns.slice(0, -1), text, L.persona, L.instructions);
+			if (this.learn !== L) return;
+			L.turns.push(reply);
+			this.renderLearn();
+			this.contentEl.querySelector(".grill-learn-turns")?.lastElementChild?.scrollIntoView({ block: "nearest" });
+		} catch (e) {
+			if (this.learn !== L) return;
+			L.turns.splice(L.turns.indexOf(asked), 1);
+			this.tellError(e);
+			this.renderLearn();
+			const input = this.contentEl.querySelector<HTMLTextAreaElement>(".grill-learn .grill-thread-input");
+			if (input) input.value = text;
+		}
+	}
+
+	/** Leave the Learn conversation, keeping it as a note. `test`: go straight into a
+	 * test on the note it was about, which is how what was explained gets checked. */
+	private async endLearn(test: boolean): Promise<void> {
+		const L = this.learn;
+		this.learn = null;
+		if (!L) return this.renderStart();
+		const cfg = this.plugin.llmConfig();
+		if (L.turns.some((t) => t.role === "tutor")) {
+			await this.plugin.store.saveLearnThread(L.note.basename, L.turns, {
+				provider: cfg?.provider ?? "",
+				model: cfg?.provider === "grillcloud" ? "hosted" : (cfg?.model ?? ""),
+				startedAt: L.startedAt,
+			});
+		}
+		if (!test) return this.renderStart();
+		this.sessionScope = [L.note];
+		this.dueOnly = false;
+		this.conceptFilter = null;
+		await this.startSession();
 	}
 
 	/** Grill Cloud credits as a ring beside the wordmark, in place of the number. Full
@@ -1784,9 +1985,10 @@ export class SessionView extends ItemView {
 
 	private recentSessions(): TFile[] {
 		const dir = `${this.plugin.data.settings.folder}/Sessions/`;
+		const learnDir = `${this.plugin.data.settings.folder}/Learn/`;
 		return this.app.vault
 			.getMarkdownFiles()
-			.filter((f) => f.path.startsWith(dir))
+			.filter((f) => f.path.startsWith(dir) || (this.plugin.data.settings.threadView && f.path.startsWith(learnDir)))
 			.sort((a, b) => b.stat.ctime - a.stat.ctime)
 			.slice(0, 5);
 	}
