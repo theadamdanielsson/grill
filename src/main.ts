@@ -126,6 +126,9 @@ interface GrillSettings {
 	/** What this vault's last few Grill Cloud sessions cost, in credits, oldest first.
 	 * Shown back as a receipt ("your last session used 11"), never sent anywhere. */
 	cloudUsage: number[];
+	/** What the credits ring measures against: the balance after the last top-up
+	 * (`full`), and the balance last seen (`last`), by which a top-up is noticed. */
+	cloudRing: { full: number; last: number };
 	/** Account ids (hashes, never keys) of Grill Cloud keys deleted from this vault, so a
 	 * stale copy on another device can't bring one back. */
 	cloudGone: string[];
@@ -319,6 +322,7 @@ function defaultSettings(): GrillSettings {
 		dismissedOffers: [],
 		retiredCloudKeys: [],
 		cloudUsage: [],
+		cloudRing: { full: 0, last: 0 },
 		cloudGone: [],
 		sendImages: true,
 		enableOcclusion: false,
@@ -409,6 +413,9 @@ export default class GrillPlugin extends Plugin {
 		if (typeof s.onboarded === "boolean") settings.onboarded = s.onboarded;
 		if (Array.isArray(s.cloudGone)) settings.cloudGone = s.cloudGone.filter(isAccountId).slice(-GONE_KEYS_KEPT);
 		if (Array.isArray(s.cloudUsage)) settings.cloudUsage = s.cloudUsage.filter((n) => typeof n === "number" && n > 0 && n < 100_000).slice(-10);
+		if (s.cloudRing && typeof s.cloudRing.full === "number" && typeof s.cloudRing.last === "number") {
+			settings.cloudRing = { full: Math.max(0, s.cloudRing.full), last: Math.max(0, s.cloudRing.last) };
+		}
 		if (Array.isArray(s.retiredCloudKeys)) settings.retiredCloudKeys = s.retiredCloudKeys.filter((k) => typeof k === "string" && isCloudKey(k)).slice(0, RETIRED_KEYS_KEPT);
 		if (Array.isArray(s.dismissedOffers))
 			settings.dismissedOffers = s.dismissedOffers.filter((v): v is string => typeof v === "string");
@@ -2304,6 +2311,8 @@ export class GrillSettingTab extends PluginSettingTab {
 			dismissedOffers: s.dismissedOffers,
 			retiredCloudKeys: s.retiredCloudKeys,
 			cloudUsage: s.cloudUsage,
+			cloudRing: s.cloudRing,
+			threadView: s.threadView,
 			cloudGone: s.cloudGone,
 			conceptsMigrated: s.conceptsMigrated,
 			legacyDefaultsMigrated: s.legacyDefaultsMigrated,

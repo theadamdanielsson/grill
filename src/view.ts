@@ -26,6 +26,8 @@ import {
 	conceptTargetDifficulty,
 	conceptTested,
 	dueConceptCount,
+	missedConceptIds,
+	spreadBacklog,
 	noteAggregate,
 	pickConcepts,
 	priorityNotes,
@@ -69,12 +71,13 @@ import {
 	SessionDebrief,
 	topMisconceptions,
 } from "./debrief";
-import { dueFiles, filesForScope, listFolders, listTags, Scope, untestedFiles } from "./scope";
+import { dueFiles, filesForScope, listFolders, listTags, matchScope, Scope, untestedFiles } from "./scope";
 import { CONFIDENCE_LEVELS, calibrationLine, pushCalibration } from "./calibration";
 import { celebrate, playSfx } from "./sfx";
 import { stopSpeaking, toSpeechText, ttsAvailable } from "./tts";
 import { SessionEntry } from "./store";
 import { renderThreadHistory } from "./thread";
+import { renderChatHome, renderCreditsRing, type HomeSuggestion } from "./home";
 import { safeDiagram, safeMarkdown } from "./safemd";
 
 /** Mermaid's drawing, made fit to be shown as an image: well-formed XML, with a size
@@ -314,6 +317,8 @@ const SCAN_LOCK_MS = 5 * 60_000;
 const ONBOARD_NOTE_CONCEPTS = 3;
 /** Debounce for the mid-session checkpoint save after a grade. */
 const CHECKPOINT_MS = 3000;
+/** Catch up: how many of a backlog stay due now, and how many come back each day after. */
+const CATCH_UP = 15;
 /** How many questions the background prefetch tries to keep buffered ahead of the one
  * on screen (see prefetchAhead). A single BATCH's worth (2) isn't enough runway: a
  * couple of quick MC/TF answers can outrun one model round-trip, so goToQuestion's own
@@ -446,6 +451,9 @@ export class SessionView extends ItemView {
 	private byName = new Map<string, TFile>();
 	/** When set, sessions draw only from these files (Grill this note/folder). */
 	sessionScope: TFile[] | null = null;
+	/** Set with `sessionScope` when a session is to ask only these concepts, as "Retry
+	 * my misses" and "Catch up" do. Read once, when the session picks its questions. */
+	private conceptFilter: Set<string> | null = null;
 	/** Due-queue sessions (status bar, "Review N due"): only due/struggling
 	 * concepts, never padded with untested/known ones to fill a full session. */
 	private dueOnly = false;
@@ -1372,6 +1380,11 @@ export class SessionView extends ItemView {
 		};
 		showCounts(eligible);
 
+		if (this.plugin.data.settings.threadView) {
+			this.chatHome(screen, eligible, statsEl);
+			return;
+		}
+
 		// Highest-intent action first: one tap straight into the due queue. Mobile
 		// has no status bar, so this is the due signal there too.
 		// `due` (notes) seeds which notes' concepts get extracted for the session;
@@ -1651,6 +1664,117 @@ export class SessionView extends ItemView {
 				row.onclick = () => void this.app.workspace.getLeaf(false).openFile(f);
 			}
 		}
+	}
+
+	/** The home screen in the thread view, under the tiles: what Grill suggests, and a
+	 * box to say what to be tested on instead. No pile of due reviews, no scope picker
+	 * and no map; the tiles open the progress screen. */
+	private chatHome(screen: HTMLElement, eligible: TFile[], statsEl: HTMLElement): void {
+		screen.addClass("grill-home");
+		this.cloudRedraw = null;
+		this.creditsRing(screen);
+		statsEl.addClass("grill-stats-link");
+		statsEl.onclick = () => this.showDashboard();
+
+		const names = new Set(eligible.map((f) => f.basename));
+		const isEligible = (note: string): boolean => names.has(note);
+		const byName = new Map(eligible.map((f) => [f.basename, f] as const));
+		const concepts = this.plugin.concepts;
+		const notesOf = (ids: string[]): TFile[] => {
+			const notes = new Set(ids.map((id) => concepts[id]?.note));
+			return [...notes].flatMap((n) => (n && byName.has(n) ? [byName.get(n) as TFile] : []));
+		};
+		const begin = (scope: TFile[] | null, dueOnly: boolean, only: string[] | null = null): void => {
+			this.sessionScope = scope;
+			this.dueOnly = dueOnly;
+			this.conceptFilter = only ? new Set(only) : null;
+			void this.startSession();
+		};
+
+		const suggestions: HomeSuggestion[] = [];
+		const missed = missedConceptIds(concepts, isEligible);
+		if (missed.length) {
+			suggestions.push({ label: "Retry my misses", count: String(missed.length), run: () => begin(notesOf(missed), true, missed) });
+		}
+		const dueNow = dueConceptCount(concepts, isEligible);
+		if (dueNow > CATCH_UP) {
+			suggestions.push({
+				label: "Catch up",
+				count: `${CATCH_UP} of ${dueNow}`,
+				run: async () => {
+					// The rest of the pile moves out before the session starts, and is saved
+					// first: a session reads the schedule it finds on disk.
+					const { kept, moved } = spreadBacklog(concepts, isEligible, CATCH_UP, CATCH_UP);
+					if (!(await this.saveOrNotice(this.plugin.store.saveConcepts(concepts)))) return;
+					this.plugin.refreshStatusBar();
+					if (moved) new Notice(`Grill: ${kept.length} for now. The other ${moved} come back over the next ${Math.ceil(moved / CATCH_UP)} days.`, 8000);
+					begin(notesOf(kept), true, kept);
+				},
+			});
+		} else if (dueNow > 0) {
+			suggestions.push({ label: "Review what is due", count: String(dueNow), run: () => begin(dueFiles(eligible, concepts), true) });
+		}
+		const untested = untestedFiles(eligible, concepts);
+		if (untested.length && untested.length < eligible.length) {
+			suggestions.push({ label: "Something new", count: String(untested.length), run: () => begin(untested, false) });
+		}
+		const active = this.app.workspace.getActiveFile();
+		const openNote = active && active.extension === "md" && !this.plugin.isExcluded(active.path) ? active : null;
+		if (openNote) suggestions.push({ label: `This note: ${openNote.basename}`, run: () => begin([openNote], false) });
+
+		renderChatHome(screen, {
+			suggestions,
+			recent: this.recentSessions().map((f) => {
+				const score = this.app.metadataCache.getFileCache(f)?.frontmatter?.score;
+				return { title: f.basename, meta: score ? String(score) : "", open: () => void this.app.workspace.getLeaf(false).openFile(f) };
+			}),
+			openNote: openNote?.basename ?? null,
+			send: (text) => {
+				if (!text) return begin(null, false);
+				const found = matchScope(text, eligible);
+				if (!found) {
+					new Notice(`Grill: no note or folder matches "${text}". Try its name, or press Get grilled with the box empty.`, 8000);
+					return;
+				}
+				begin(found.files, false);
+			},
+			showProgress: () => this.showDashboard(),
+			showQuestions: () => void this.renderManageQuestions(),
+		});
+	}
+
+	/** Grill Cloud credits as a ring beside the wordmark, in place of the number. Full
+	 * is the balance after the last top-up: when the balance goes up, that is a top-up,
+	 * and the ring is full again. */
+	private creditsRing(screen: HTMLElement): void {
+		const s = this.plugin.data.settings;
+		if (!cloudEnabled() || s.provider !== "grillcloud" || !s.apiKeys.grillcloud) return;
+		if (s.questionSource !== "ai" && s.gradingMode !== "ai") return;
+		const host = (screen.querySelector<HTMLElement>(".grill-arcade-mark") ?? screen).createSpan({ cls: "grill-credits-host" });
+		const fill = (): void => {
+			host.empty();
+			const credits = this.plugin.cloudCredits;
+			const state = this.plugin.cloudState;
+			if (state !== "ok" && state !== "none") return;
+			if (state === "ok" && credits === null) return;
+			const now = credits ?? 0;
+			if (now > s.cloudRing.last || s.cloudRing.full <= 0) s.cloudRing.full = Math.max(now, 1);
+			if (now !== s.cloudRing.last) {
+				s.cloudRing.last = now;
+				void this.plugin.persist();
+			}
+			const low = state === "none" || now < lowBalance(s.cloudUsage);
+			renderCreditsRing(host, {
+				left: now / s.cloudRing.full,
+				low,
+				label: low ? "Grill Cloud credits are low. Open settings to add more." : "Grill Cloud credits. Open settings.",
+				open: () => this.plugin.openSettings(),
+			});
+		};
+		fill();
+		this.cloudRedraw = () => {
+			if (host.isConnected) fill();
+		};
 	}
 
 	private recentSessions(): TFile[] {
@@ -3186,6 +3310,34 @@ export class SessionView extends ItemView {
 				);
 		};
 		skip.onclick = () => doAction(true);
+		// A question answered by picking or by filling blanks has no box to ask in, so
+		// the thread view gives it one. Whatever is typed here can only be a question:
+		// it goes straight to an answer, with no call to decide what it was.
+		const askCfg = thread && !ta && !selfGrade && !this.replayMode && !q.missingLink ? this.plugin.llmConfig() : null;
+		if (askCfg) {
+			const ask = card.createDiv({ cls: "grill-thread-ask" });
+			const input = ask.createEl("textarea", {
+				cls: "grill-thread-input",
+				attr: { rows: "1", placeholder: "Ask about it... (Enter to send)", "aria-label": "Ask about this question" },
+			});
+			const send = ask.createEl("button", { text: "Ask", cls: "grill-hint-btn" });
+			const go = (): void => {
+				const text = input.value.trim();
+				if (!text || actionTaken) return;
+				actionTaken = true;
+				row.querySelectorAll("button").forEach((b) => (b.disabled = true));
+				send.disabled = true;
+				input.disabled = true;
+				void this.answerAsked(askCfg, q, text, hintsUsed);
+			};
+			send.onclick = go;
+			input.addEventListener("keydown", (e) => {
+				if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+					e.preventDefault();
+					go();
+				}
+			});
+		}
 		if (ta) {
 			ta.addEventListener("keydown", (e) => {
 				if ((e.metaKey || e.ctrlKey) && e.key === "Enter") doAction(false);
@@ -4793,6 +4945,10 @@ export class SessionView extends ItemView {
 	}
 
 	private async startSession(): Promise<void> {
+		// Taken here, not where it is used: a start that bails out early must not leave
+		// the filter behind for whatever session is started next.
+		const only = this.conceptFilter;
+		this.conceptFilter = null;
 		// Save whatever session was running before this one reloads state from disk:
 		// starting a session mid-session (status bar, "Review due", "Grill this note")
 		// used to throw away every grade from the one in progress.
@@ -5093,7 +5249,7 @@ export class SessionView extends ItemView {
 			const want = this.dueOnly ? NO_MEANINGFUL_CAP : Math.max(1, s.questionsPerSession);
 
 			// No-key mode can only use concepts that carry a deterministic question.
-			const pickable = s.questionSource === "local" ? allConcepts.filter((c) => c.local) : allConcepts;
+			const pickable = (s.questionSource === "local" ? allConcepts.filter((c) => c.local) : allConcepts).filter((c) => !only || only.has(c.id));
 			// The daily new-concept cap only governs the unscoped default flow ("Get
 			// grilled", sessionScope null) — a deliberately scoped pick ("Grill this
 			// note/folder", a committed Custom Study selection) isn't throttled by it, same

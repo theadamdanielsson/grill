@@ -118,3 +118,26 @@ export function filesForScope(
 		}
 	}
 }
+
+/** What a typed request to be tested is about: a folder or the notes whose names it
+ * mentions. Plain matching on names, no model: "test me on chapter 2" finds the folder
+ * "Chapter 2", "gdp deflator" finds the note. Null when nothing matches. */
+export function matchScope(text: string, eligible: TFile[]): { files: TFile[]; name: string } | null {
+	const norm = (s: string): string => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+	const want = norm(text).replace(/^(please )?((test|grill|quiz|ask) me|questions?) (on|about) /, "").replace(/^(on|about) /, "").trim();
+	if (!want) return null;
+	const folders = listFolders(eligible);
+	const inFolder = (path: string): TFile[] => eligible.filter((f) => f.path.startsWith(`${path}/`));
+	const leaf = (path: string): string => norm(path.split("/").pop() ?? path);
+	// A folder named exactly that, then a note named exactly that, then the nearest
+	// thing: notes or folders whose name contains what was typed.
+	const folder = folders.find((p) => leaf(p) === want) ?? folders.find((p) => norm(p) === want);
+	if (folder) return { files: inFolder(folder), name: folder.split("/").pop() ?? folder };
+	const exact = eligible.filter((f) => norm(f.basename) === want);
+	if (exact.length) return { files: exact, name: exact[0].basename };
+	const notes = eligible.filter((f) => norm(f.basename).includes(want));
+	if (notes.length) return { files: notes, name: notes.length === 1 ? notes[0].basename : `${notes.length} notes matching "${text.trim()}"` };
+	const loose = folders.find((p) => leaf(p).includes(want));
+	if (loose) return { files: inFolder(loose), name: loose.split("/").pop() ?? loose };
+	return null;
+}

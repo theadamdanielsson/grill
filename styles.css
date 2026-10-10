@@ -2961,3 +2961,162 @@ textarea.grill-mgmt-field {
 .grill-thread-frame .grill-answer-bar {
   margin-bottom: 4px;
 }
+/* The box to ask in, under a question that is answered by picking. */
+.grill-thread-ask {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5em;
+  margin-top: auto;
+  padding-top: 1.2em;
+}
+.grill-thread-ask .grill-thread-input {
+  flex: 1;
+  min-width: 0;
+  font-family: inherit;
+  resize: none;
+  border: 1px solid var(--grill-ember-dark, #5c1400);
+}
+
+/* ---------------------------------------------------------------- chat home */
+/* The home screen as a chat: tiles, what was done lately, then what Grill suggests
+ * and a box to say what you want, at the foot of the pane. */
+.grill-arcade-screen.grill-home {
+  display: flex;
+  flex-direction: column;
+}
+.grill-home-space {
+  flex: 1 1 auto;
+  min-height: 1.2em;
+}
+.grill-stats.grill-stats-link {
+  cursor: pointer;
+}
+/* Credits as a ring beside the wordmark, where the number was. */
+.grill-arcade-mark > .grill-credits-host {
+  position: absolute;
+  top: -0.35em;
+  right: 0;
+  display: flex;
+}
+.grill-view button.grill-credits-ring,
+.grill-view button.grill-credits-ring:hover {
+  display: flex;
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+}
+.grill-credits-track {
+  stroke: var(--grill-ember-dark, #5c1400);
+}
+.grill-credits-left {
+  stroke: var(--grill-gold, #ffd23f);
+}
+.grill-credits-ring.is-low .grill-credits-left {
+  stroke: var(--grill-flame-hot, #ff5a1f);
+}
+.grill-credits-ring:hover .grill-credits-left {
+  stroke: var(--grill-gold-white, #fff2b0);
+}
+.grill-home-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45em;
+}
+.grill-view button.grill-home-suggestion,
+.grill-view button.grill-home-suggestion:hover {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.8em;
+  width: 100%;
+  height: auto;
+  min-height: 2.9em;
+  padding: 0.5em 0.9em;
+  border: 1px solid var(--grill-ember-dark, #5c1400);
+  border-radius: var(--grill-radius-s);
+  background: var(--grill-screen-deep, #0f0904);
+  box-shadow: none;
+  color: var(--grill-ink, #ffe98a);
+  font-size: var(--font-ui-medium);
+  text-align: left;
+  cursor: pointer;
+}
+.grill-view button.grill-home-suggestion:hover {
+  border-color: var(--grill-accent, #ff8c2b);
+  background: rgba(255, 122, 34, 0.09);
+}
+.grill-home-suggestion-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.grill-home-suggestion-count {
+  flex-shrink: 0;
+  font-family: "Grill Pixel", var(--font-monospace);
+  font-size: 0.62em;
+  color: var(--grill-ink-gold, #ffd23f);
+}
+.grill-home-box {
+  margin-top: 0.9em;
+}
+.grill-view .grill-home-input {
+  width: 100%;
+  font-family: inherit;
+  resize: none;
+  border: 2px solid var(--grill-accent, #ff8c2b);
+  border-radius: var(--grill-radius-s);
+  background: var(--grill-screen-deep, #0f0904);
+  color: var(--grill-ink, #ffe98a);
+}
+.grill-view .grill-home-input::placeholder {
+  color: var(--grill-ink-dim, #c9a875);
+}
+.grill-view .grill-home-input:focus {
+  border-color: var(--grill-gold, #ffd23f);
+  box-shadow: none;
+}
+.grill-home-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.8em;
+  margin-top: 0.5em;
+  padding-bottom: 4px;
+}
+.grill-home-open {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.grill-view .grill-home-bar .grill-home-send {
+  width: auto;
+  flex-shrink: 0;
+  margin-top: 0;
+  padding-left: 1.4em;
+  padding-right: 1.4em;
+}
+.grill-home-foot {
+  display: flex;
+  gap: 1.2em;
+  margin-top: 0.9em;
+}
+.grill-view button.grill-home-link,
+.grill-view button.grill-home-link:hover {
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--grill-ink-dim, #c9a875);
+  font-size: var(--font-ui-small);
+  cursor: pointer;
+}
+.grill-view button.grill-home-link:hover {
+  color: var(--grill-ink-gold, #ffd23f);
+  text-decoration: underline;
+}

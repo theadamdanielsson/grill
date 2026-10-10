@@ -649,3 +649,49 @@ export function migrateResetScheduling(map: MasteryMap): void {
 		}
 	}
 }
+
+/** True when the last graded answer on this concept was a miss. The review log says so
+ * directly; a concept from before the log was kept is read from its streak instead. */
+function lastAnswerMissed(cm: ConceptMastery): boolean {
+	const last = cm.reviewLog?.[cm.reviewLog.length - 1];
+	if (last) return last.rating === 1;
+	return cm.incorrect > 0 && cm.streak === 0;
+}
+
+/** "My misses": concepts whose last answer was a miss and which are due again. */
+export function missedConceptIds(map: ConceptMap, isEligible: (note: string) => boolean, now = new Date()): string[] {
+	const out: string[] = [];
+	for (const [id, cm] of Object.entries(map)) {
+		if (!conceptTested(cm) || !cm.dueAt || new Date(cm.dueAt) > now) continue;
+		if (!isEligible(cm.note) || !lastAnswerMissed(cm)) continue;
+		out.push(id);
+	}
+	return out;
+}
+
+/** Catch up on a backlog without facing all of it at once. Of everything due, the
+ * `keep` most pressing stay due now: misses first, then whatever has waited longest.
+ * The rest move out, `perDay` to a day from tomorrow, in that same order, so the pile
+ * comes back at a pace that can be kept. Only due dates move; what is known about each
+ * concept is untouched. Returns the ids kept and how many were moved. */
+export function spreadBacklog(
+	map: ConceptMap,
+	isEligible: (note: string) => boolean,
+	keep: number,
+	perDay: number,
+	now = new Date(),
+): { kept: string[]; moved: number } {
+	const due = Object.entries(map)
+		.filter(([, cm]) => conceptTested(cm) && !!cm.dueAt && new Date(cm.dueAt) <= now && isEligible(cm.note))
+		.sort(([, a], [, b]) => {
+			const miss = Number(lastAnswerMissed(b)) - Number(lastAnswerMissed(a));
+			return miss || (a.dueAt as string).localeCompare(b.dueAt as string);
+		});
+	const kept = due.slice(0, Math.max(0, keep)).map(([id]) => id);
+	const rest = due.slice(kept.length);
+	const each = Math.max(1, perDay);
+	rest.forEach(([, cm], i) => {
+		cm.dueAt = new Date(now.getTime() + (1 + Math.floor(i / each)) * 86400_000).toISOString();
+	});
+	return { kept, moved: rest.length };
+}
