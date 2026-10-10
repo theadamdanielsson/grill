@@ -26,6 +26,7 @@ import {
 	conceptTargetDifficulty,
 	conceptTested,
 	dueConceptCount,
+	lastAnswerMissed,
 	missedConceptIds,
 	spreadBacklog,
 	noteAggregate,
@@ -1731,6 +1732,18 @@ export class SessionView extends ItemView {
 		}
 	}
 
+	/** Start a test. `scope`: the notes to draw from, or null for the usual session.
+	 * `only`: ask exactly these concepts, as "Retry my misses" does. */
+	private beginTest(scope: TFile[] | null, dueOnly: boolean, only: string[] | null = null): void {
+		this.sessionScope = scope;
+		this.dueOnly = dueOnly;
+		this.conceptFilter = only ? new Set(only) : null;
+		void this.startSession();
+	}
+
+	/** Which view of the Questions screen is showing. */
+	private questionsView: "missed" | "all" | null = null;
+
 	/** The home screen in the thread view, under the tiles: what Grill suggests, and a
 	 * box to say what to be tested on instead. No pile of due reviews, no scope picker
 	 * and no map; the tiles open the progress screen. */
@@ -1749,12 +1762,7 @@ export class SessionView extends ItemView {
 			const notes = new Set(ids.map((id) => concepts[id]?.note));
 			return [...notes].flatMap((n) => (n && byName.has(n) ? [byName.get(n) as TFile] : []));
 		};
-		const begin = (scope: TFile[] | null, dueOnly: boolean, only: string[] | null = null): void => {
-			this.sessionScope = scope;
-			this.dueOnly = dueOnly;
-			this.conceptFilter = only ? new Set(only) : null;
-			void this.startSession();
-		};
+		const begin = (scope: TFile[] | null, dueOnly: boolean, only: string[] | null = null): void => this.beginTest(scope, dueOnly, only);
 
 		const learning = this.homeMode === "learn";
 		const active = this.app.workspace.getActiveFile();
@@ -1864,7 +1872,10 @@ export class SessionView extends ItemView {
 				begin(found.files, false);
 			},
 			showProgress: () => this.showDashboard(),
-			showQuestions: () => void this.renderManageQuestions(),
+			showQuestions: () => {
+				this.questionsView = null;
+				void this.renderManageQuestions();
+			},
 		});
 	}
 
@@ -2533,7 +2544,9 @@ export class SessionView extends ItemView {
 			s.createDiv({ cls: "grill-stat-label", text: label });
 		};
 		stat("due now", String(dueNow));
-		stat("due this week", String(dueWeek));
+		// "Due this week" read as a contradiction beside a backlog (178 now, 0 this week).
+		// What was last answered wrong is the number that says what to do next.
+		stat("missed", String(missedConceptIds(this.plugin.concepts, (note) => eligibleNames.has(note), new Date(), false).length), "incorrect");
 		stat("known", String(counts.known), "correct");
 		// 0% when nothing's been answered, so it reads consistently with the other
 		// stats (due/known all show 0 on a fresh vault) rather than a lone dash.
@@ -2567,21 +2580,7 @@ export class SessionView extends ItemView {
 			const arcCard = screen.createDiv({ cls: "grill-card" });
 			arcCard.createDiv({ cls: "grill-arc-headline", text: arc.headline });
 			if (arc.shift) arcCard.createDiv({ cls: "grill-meta", text: arc.shift });
-			// One row per resolved item, not a single comma-joined sentence: a vault
-			// with a real history behind it (backfilled or just lived-in) can easily
-			// have 15-20 of these, and a wall-of-text paragraph at that length is
-			// exactly the "textblock at scale" this list existed to avoid — same
-			// MISC_SHOWN_CAP reasoning as "What you keep getting wrong" below.
-			if (arc.resolved.length) {
-				arcCard.createDiv({ cls: "grill-section-label", text: "Resolved" });
-				const list = arcCard.createDiv({ cls: "grill-misc-list" });
-				for (const item of arc.resolved.slice(0, MISC_SHOWN_CAP)) {
-					list.createDiv({ cls: "grill-arc-resolved-row", text: item });
-				}
-				if (arc.resolved.length > MISC_SHOWN_CAP) {
-					arcCard.createDiv({ cls: "grill-meta", text: `+${arc.resolved.length - MISC_SHOWN_CAP} more` });
-				}
-			}
+			// What has been resolved is listed once, under "Beaten" below.
 		}
 
 		// What you keep getting wrong — already-sorted worst/most-recurring first
@@ -2622,23 +2621,27 @@ export class SessionView extends ItemView {
 						const chip = notes.createSpan({ cls: "grill-chip grill-chip-link", text: n });
 						chip.onclick = () => this.openNote(n);
 					}
+					// Something to do about it: have it explained, or be tested on the notes
+					// it showed up in.
+					const files = c.notes.flatMap((n) => eligible.filter((f) => f.basename === n));
+					if (files.length) {
+						const explain = actions.createSpan({ cls: "grill-chip-link", text: "Explain" });
+						explain.onclick = () => void this.startLearn(files[0], `I keep making this mistake: "${c.label}". Explain what I am getting wrong and how to think about it.`);
+						const test = actions.createSpan({ cls: "grill-chip-link", text: "Test" });
+						test.onclick = () => this.beginTest(files, false);
+					}
 				}
 			}
 			if (activeAll.length > active.length) {
 				miscCard.createDiv({ cls: "grill-meta", text: `+${activeAll.length - active.length} more recurring` });
 			}
 		}
-		if (beaten.length) {
-			// One row per beaten tag, not a single comma-joined sentence — same
-			// "textblock at scale" fix as the arc's Resolved list above, and the same
-			// MISC_SHOWN_CAP already used to cap `beaten` itself.
-			miscCard.createDiv({ cls: "grill-section-label", text: "Beaten" });
-			const beatenList = miscCard.createDiv({ cls: "grill-misc-list" });
-			for (const c of beaten) {
-				beatenList.createDiv({ cls: "grill-arc-resolved-row", text: c.label });
-			}
-			const more = beatenAll.length - beaten.length;
-			if (more > 0) miscCard.createDiv({ cls: "grill-meta", text: `+${more} more` });
+		if (beatenAll.length) {
+			// A count that opens: what is behind you needs less room than what is ahead.
+			const fold = miscCard.createEl("details", { cls: "grill-beaten" });
+			fold.createEl("summary", { cls: "grill-section-label", text: `Beaten: ${beatenAll.length}` });
+			const beatenList = fold.createDiv({ cls: "grill-misc-list" });
+			for (const c of beatenAll) beatenList.createDiv({ cls: "grill-arc-resolved-row", text: c.label });
 		}
 
 		// Concept coverage: honest counts from the per-concept scheduler.
@@ -2698,12 +2701,19 @@ export class SessionView extends ItemView {
 			// shaky-first ordering that scattered "Chapter 12" in among "Chapter 2"
 			// and "Chapter 3".
 			const allRows = [...byFolder.entries()]
-				.map(([path, e]) => ({ folder: labelOf(path), ...e, shaky: e.tested - e.known }))
+				.map(([path, e]) => ({ path, folder: labelOf(path), ...e, shaky: e.tested - e.known }))
 				.sort((a, b) => a.folder.localeCompare(b.folder, undefined, { numeric: true }));
 			const rows = this.coverageExpanded ? allRows : allRows.slice(0, MISC_SHOWN_CAP);
 			const list = coverageCard.createDiv({ cls: "grill-meter-list" });
 			for (const r of rows) {
 				const row = list.createDiv({ cls: "grill-meter-row" });
+				// A folder's row starts a test on that folder.
+				const inFolder = r.path === "?" ? [] : eligible.filter((f) => (f.parent && f.parent.path !== "/" ? f.parent.path : "/") === r.path);
+				if (inFolder.length) {
+					row.addClass("grill-meter-row-link");
+					row.setAttr("title", `Test ${r.folder}`);
+					row.onclick = () => this.beginTest(inFolder, false);
+				}
 				row.createSpan({ cls: "grill-meter-label", text: r.folder });
 				const track = row.createDiv({ cls: "grill-meter-track" });
 				const pct = r.tested ? Math.round((100 * r.known) / r.tested) : 0;
@@ -2719,18 +2729,13 @@ export class SessionView extends ItemView {
 			}
 		}
 
-		// Missing links Grill has helped you connect.
-		const bridges = await this.plugin.store.loadBridges();
-		const linked = Object.values(bridges).filter((b) => b.status === "linked").length;
-		if (linked > 0) {
-			screen.createDiv({ cls: "grill-section-label", text: "Connections made" });
-			screen.createDiv({
-				cls: "grill-card grill-meta",
-				text: `Grill has helped you link ${linked} pair${linked === 1 ? "" : "s"} of notes you hadn't connected.`,
-			});
-		}
-
 		this.renderHeatmap(screen);
+
+		// The map lives here now, off the home screen: one view among the others.
+		if (this.plugin.data.settings.threadView) {
+			screen.createDiv({ cls: "grill-section-label", text: "Map" });
+			void this.renderMap(screen.createDiv({ cls: "grill-map-wrap" }));
+		}
 	}
 
 	// ------------------------------------------------------------ manage questions
@@ -2750,10 +2755,18 @@ export class SessionView extends ItemView {
 		// the arcade screen's fixed dark CRT palette for a form-heavy UI.
 		const wrap = this.root();
 		const screen = wrap.createDiv({ cls: "grill-body" });
-		const header = screen.createDiv({ cls: "grill-mgmt-header" });
-		const back = header.createEl("button", { text: "← Back", cls: "grill-secondary-btn" });
+		// The same head as the progress screen: what this is, and the way back.
+		const header = screen.createDiv({ cls: "grill-meta-row grill-mgmt-header" });
+		header.createSpan({ cls: "grill-score", text: "Questions" });
+		const back = header.createSpan({ cls: "grill-chip-link", text: "Back" });
 		back.onclick = () => this.renderStart();
-		header.createDiv({ cls: "grill-mgmt-title", text: "Manage questions" });
+
+		// Two views of one list: what was last answered wrong, and everything.
+		const eligible = this.allEligible();
+		const eligibleNames = new Set(eligible.map((f) => f.basename));
+		const missed = new Set(missedConceptIds(this.plugin.concepts, (note) => eligibleNames.has(note), new Date(), false));
+		const viewsEl = screen.createDiv({ cls: "grill-home-modes grill-mgmt-views", attr: { role: "group", "aria-label": "Which questions" } });
+		const actionsEl = screen.createDiv({ cls: "grill-mgmt-actions" });
 
 		const searchEl = screen.createEl("input", {
 			cls: "grill-mgmt-search",
@@ -2772,19 +2785,48 @@ export class SessionView extends ItemView {
 			// entry only records that it needn't be read again.
 			for (const q of qs) if (!q.rejected && !(q.type === "occlusion" && !q.occlusionRegions?.length)) allEntries.push({ conceptId, q });
 		}
+		const missedEntries = allEntries.filter((e) => missed.has(e.conceptId));
+		if (this.questionsView === null) this.questionsView = missed.size ? "missed" : "all";
+		const view = this.questionsView;
+		for (const [id, label] of [["missed", `Missed (${missed.size})`], ["all", `All (${allEntries.length})`]] as const) {
+			const b = viewsEl.createEl("button", { cls: "grill-home-mode", text: label, attr: { type: "button", "aria-pressed": String(view === id) } });
+			b.toggleClass("is-on", view === id);
+			b.onclick = () => {
+				if (this.questionsView === id) return;
+				this.questionsView = id;
+				void this.renderManageQuestions();
+			};
+		}
+		const filesOf = (ids: Iterable<string>): TFile[] => {
+			const notes = new Set([...ids].map((id) => this.plugin.concepts[id]?.note));
+			return eligible.filter((f) => notes.has(f.basename));
+		};
+		if (view === "missed" && missed.size) {
+			const retry = actionsEl.createEl("button", { text: `Retry all ${missed.size}`, cls: "mod-cta grill-submit-btn" });
+			retry.onclick = () => this.beginTest(filesOf(missed), false, [...missed]);
+		}
+		const shown = view === "missed" ? missedEntries : allEntries;
 
 		let cardSeq = 0;
 		const renderList = (): void => {
 			listEl.empty();
 			const term = searchEl.value.trim().toLowerCase();
 			const filtered = term
-				? allEntries.filter(
+				? shown.filter(
 						(e) => e.q.question.toLowerCase().includes(term) || e.q.modelAnswer.toLowerCase().includes(term),
 					)
-				: allEntries;
+				: shown;
 			if (!filtered.length) {
 				const empty = listEl.createDiv({ cls: "grill-mgmt-empty" });
-				if (allEntries.length) {
+				if (view === "missed" && !shown.length) {
+					empty.createDiv({ cls: "grill-mgmt-empty-title", text: missed.size ? "Nothing to show for your misses" : "No misses" });
+					empty.createDiv({
+						cls: "grill-meta",
+						text: missed.size
+							? "The questions you last missed aren't kept here: they were written by you in a note, or have been replaced."
+							: "Nothing you were last asked is marked wrong or skipped.",
+					});
+				} else if (shown.length) {
 					empty.createDiv({ cls: "grill-mgmt-empty-title", text: `No matches for "${searchEl.value.trim()}"` });
 					const clear = empty.createEl("button", { text: "Clear search", cls: "grill-quiet-btn" });
 					clear.onclick = () => {
@@ -2813,6 +2855,24 @@ export class SessionView extends ItemView {
 				const group = listEl.createDiv({ cls: "grill-mgmt-group" });
 				const groupHeader = group.createDiv({ cls: "grill-mgmt-group-header" });
 				groupHeader.createSpan({ text: `${note} (${entries.length})` });
+				if (view === "missed") {
+					// What to do about a note's misses, without leaving the list.
+					const ids = [...new Set(entries.map((e) => e.conceptId))];
+					const files = filesOf(ids);
+					if (files.length) {
+						const acts = groupHeader.createSpan({ cls: "grill-mgmt-group-actions" });
+						const explain = acts.createSpan({ cls: "grill-chip-link", text: "Explain" });
+						explain.onclick = (e) => {
+							e.stopPropagation();
+							void this.startLearn(files[0], "What have I been getting wrong on this note, and what do I need to understand to fix it?");
+						};
+						const test = acts.createSpan({ cls: "grill-chip-link", text: `Retry ${ids.length}` });
+						test.onclick = (e) => {
+							e.stopPropagation();
+							this.beginTest(files, false, ids);
+						};
+					}
+				}
 				const body = group.createDiv({ cls: "grill-mgmt-group-body" });
 				groupHeader.onclick = () => body.toggleClass("grill-mgmt-collapsed", !body.hasClass("grill-mgmt-collapsed"));
 				for (const entry of entries) {
@@ -2853,6 +2913,15 @@ export class SessionView extends ItemView {
 		summary.createSpan({ cls: "grill-chip grill-mgmt-type-chip", text: SessionView.MGMT_TYPE_LABELS[type] });
 		const previewEl = summary.createSpan({ cls: "grill-mgmt-card-preview" });
 		this.md(q.question, previewEl);
+		// How it has gone, from the record on the concept this question tests.
+		const cm = this.plugin.concepts[conceptId];
+		if (cm && cm.correct + cm.partial + cm.incorrect > 0) {
+			const missedLast = lastAnswerMissed(cm);
+			summary.createSpan({
+				cls: `grill-mgmt-card-record${missedLast ? " grill-v-incorrect" : ""}`,
+				text: `${cm.correct} right, ${cm.incorrect} missed${missedLast ? " · missed last" : ""}`,
+			});
+		}
 		const body = card.createDiv({ cls: "grill-mgmt-card-body" });
 		let built = false;
 		summary.onclick = () => {
@@ -5694,7 +5763,8 @@ export class SessionView extends ItemView {
 			this.contagionUsed = 0;
 			this.contagionNotes.clear();
 			this.planCursor = 0;
-			const want = this.dueOnly ? NO_MEANINGFUL_CAP : Math.max(1, s.questionsPerSession);
+			// A session given its concepts asks all of them, whatever the usual length.
+			const want = only ? Math.max(1, only.size) : this.dueOnly ? NO_MEANINGFUL_CAP : Math.max(1, s.questionsPerSession);
 
 			// No-key mode can only use concepts that carry a deterministic question.
 			const pickable = (s.questionSource === "local" ? allConcepts.filter((c) => c.local) : allConcepts).filter((c) => !only || only.has(c.id));

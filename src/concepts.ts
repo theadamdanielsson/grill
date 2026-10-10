@@ -652,17 +652,20 @@ export function migrateResetScheduling(map: MasteryMap): void {
 
 /** True when the last graded answer on this concept was a miss. The review log says so
  * directly; a concept from before the log was kept is read from its streak instead. */
-function lastAnswerMissed(cm: ConceptMastery): boolean {
+export function lastAnswerMissed(cm: ConceptMastery): boolean {
 	const last = cm.reviewLog?.[cm.reviewLog.length - 1];
 	if (last) return last.rating === 1;
 	return cm.incorrect > 0 && cm.streak === 0;
 }
 
-/** "My misses": concepts whose last answer was a miss and which are due again. */
-export function missedConceptIds(map: ConceptMap, isEligible: (note: string) => boolean, now = new Date()): string[] {
+/** "My misses": concepts whose last answer was a miss. `dueOnly` (the default) keeps
+ * to the ones that are due again, which is what a session can ask right now; without
+ * it, every concept last answered wrong, for a list of them. */
+export function missedConceptIds(map: ConceptMap, isEligible: (note: string) => boolean, now = new Date(), dueOnly = true): string[] {
 	const out: string[] = [];
 	for (const [id, cm] of Object.entries(map)) {
-		if (!conceptTested(cm) || !cm.dueAt || new Date(cm.dueAt) > now) continue;
+		if (!conceptTested(cm)) continue;
+		if (dueOnly && (!cm.dueAt || new Date(cm.dueAt) > now)) continue;
 		if (!isEligible(cm.note) || !lastAnswerMissed(cm)) continue;
 		out.push(id);
 	}

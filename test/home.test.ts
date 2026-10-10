@@ -296,3 +296,8 @@ test("a question is about particular notes when it names one of them", () => {
 	assert.equal(namesANote("tell me which notes form the backbone of the course", ["Extra Sheet D - Chapter 14 (Challenges of Growth)", "Deflation Spiral"]), false);
 	assert.equal(namesANote("explain this", []), false);
 });
+
+test("the list of misses takes in what was missed but isn't due again yet", () => {
+	const map: ConceptMap = { missedDue: cm("A", -1, 1), missedLater: cm("A", 3, 1), rightDue: cm("B", -2, 3) };
+	assert.deepEqual(missedConceptIds(map, all, NOW, false), ["missedDue", "missedLater"]);
+});

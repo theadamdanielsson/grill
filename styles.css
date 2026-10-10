@@ -3282,3 +3282,67 @@ textarea.grill-mgmt-field {
   margin: 0;
   padding: 0 0.5em 0.5em;
 }
+
+/* ---------------------------------------------------------------- questions */
+/* One screen for the questions Grill keeps: what was last missed, and all of them. */
+.grill-mgmt-header {
+  justify-content: space-between;
+}
+.grill-view .grill-mgmt-views {
+  margin: 0 0 0.8em;
+}
+.grill-view .grill-mgmt-views button.grill-home-mode,
+.grill-view .grill-mgmt-views button.grill-home-mode:hover {
+  padding: 0.55em 0;
+  font-family: inherit;
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-semibold, 600);
+  letter-spacing: 0;
+  text-transform: none;
+}
+.grill-mgmt-actions:empty {
+  display: none;
+}
+.grill-mgmt-actions {
+  margin-bottom: 0.9em;
+}
+.grill-mgmt-group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.8em;
+}
+.grill-mgmt-group-actions {
+  display: flex;
+  gap: 1em;
+  flex-shrink: 0;
+  font-weight: normal;
+  font-size: var(--font-ui-small);
+}
+.grill-mgmt-card-record {
+  flex-shrink: 0;
+  margin-left: 0.8em;
+  font-size: var(--font-ui-smaller, 0.8em);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- progress */
+/* A folder's row starts a test on it. */
+.grill-meter-row.grill-meter-row-link {
+  cursor: pointer;
+}
+.grill-meter-row.grill-meter-row-link:hover {
+  background: rgba(255, 122, 34, 0.09);
+}
+/* What has been beaten: a count that opens. */
+.grill-beaten > summary {
+  cursor: pointer;
+  list-style: none;
+}
+.grill-beaten > summary::-webkit-details-marker {
+  display: none;
+}
+.grill-misc-actions {
+  gap: 0.9em;
+}
