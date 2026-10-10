@@ -3277,3 +3277,8 @@ textarea.grill-mgmt-field {
 .grill-home-suggestion-why {
   flex-shrink: 0;
 }
+/* The older questions of a long session, folded into one line, and the list it opens. */
+.grill-thread-earlier-list {
+  margin: 0;
+  padding: 0 0.5em 0.5em;
+}
