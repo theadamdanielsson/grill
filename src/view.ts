@@ -128,6 +128,14 @@ const NEW_IN_7 = "new-7.0";
  * one isn't — V8's TimSort-derived sort is non-uniform on it, systematically favoring
  * some positions over others (and differently on different engines, so desktop and
  * mobile Obsidian wouldn't even be biased the same way). Doesn't mutate the input. */
+/** Put a concept back to a snapshot exactly. Object.assign alone restores what the
+ * snapshot has but leaves behind what the answer added (a concept's first review-log
+ * entry, its leech count), so those are cleared first. */
+function restoreConcept(cm: ConceptMastery, snapshot: ConceptMastery): void {
+	for (const key of Object.keys(cm)) delete (cm as unknown as Record<string, unknown>)[key];
+	Object.assign(cm, structuredClone(snapshot));
+}
+
 function shuffled<T>(arr: readonly T[]): T[] {
 	const out = arr.slice();
 	for (let i = out.length - 1; i > 0; i--) {
@@ -5499,7 +5507,7 @@ export class SessionView extends ItemView {
 		if (!o || r.verdict === "correct") return;
 		const cm = this.concepts[o.conceptId];
 		if (cm) {
-			Object.assign(cm, structuredClone(o.conceptSnapshot));
+			restoreConcept(cm, o.conceptSnapshot);
 			const retention = this.plugin.data.settings.desiredRetention / 100;
 			recordConceptAnswer(
 				this.concepts,
@@ -5553,7 +5561,7 @@ export class SessionView extends ItemView {
 		const o = this.pendingOverride;
 		if (!o) return;
 		const cm = this.concepts[o.conceptId];
-		if (cm) Object.assign(cm, structuredClone(o.conceptSnapshot));
+		if (cm) restoreConcept(cm, o.conceptSnapshot);
 		const m = this.plugin.mastery[o.note];
 		if (m) {
 			if (o.originalVerdict === "correct") m.correct = Math.max(0, m.correct - 1);
