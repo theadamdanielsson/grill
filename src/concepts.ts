@@ -672,6 +672,9 @@ export function missedConceptIds(map: ConceptMap, isEligible: (note: string) => 
 	return out;
 }
 
+/** Catch up: how many of a backlog stay due now, and how many come back each day after. */
+export const CATCH_UP = 15;
+
 /** Catch up on a backlog without facing all of it at once. Of everything due, the
  * `keep` most pressing stay due now: misses first, then whatever has waited longest.
  * The rest move out, `perDay` to a day from tomorrow, in that same order, so the pile

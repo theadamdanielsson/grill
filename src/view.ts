@@ -25,6 +25,7 @@ import {
 	blockedByDailyCap,
 	conceptTargetDifficulty,
 	conceptTested,
+	CATCH_UP,
 	dueConceptCount,
 	lastAnswerMissed,
 	missedConceptIds,
@@ -319,8 +320,6 @@ const SCAN_LOCK_MS = 5 * 60_000;
 const ONBOARD_NOTE_CONCEPTS = 3;
 /** Debounce for the mid-session checkpoint save after a grade. */
 const CHECKPOINT_MS = 3000;
-/** Catch up: how many of a backlog stay due now, and how many come back each day after. */
-const CATCH_UP = 15;
 /** Learn: how many of the latest session notes are read for past answers on a note, and
  * how many of those answers are sent. */
 const LEARN_SESSIONS_READ = 40;
@@ -1732,6 +1731,26 @@ export class SessionView extends ItemView {
 		}
 	}
 
+	/** The note of the most recent Learn conversation, if no session has tested it since.
+	 * Read from the notes Grill keeps: the Learn note names what it was about, and a
+	 * session note has a heading for every note it asked on. */
+	private lastLearnedUntested(byName: Map<string, TFile>): TFile | null {
+		const folder = this.plugin.data.settings.folder;
+		const all = this.app.vault.getMarkdownFiles();
+		const learned = all.filter((f) => f.path.startsWith(`${folder}/Learn/`)).sort((a, b) => b.stat.ctime - a.stat.ctime)[0];
+		if (!learned) return null;
+		const name = this.app.metadataCache.getFileCache(learned)?.frontmatter?.note;
+		const note = typeof name === "string" ? byName.get(name) : undefined;
+		if (!note) return null;
+		const testedSince = all.some(
+			(f) =>
+				f.path.startsWith(`${folder}/Sessions/`) &&
+				f.stat.ctime > learned.stat.ctime &&
+				(this.app.metadataCache.getFileCache(f)?.headings ?? []).some((h) => h.level === 2 && h.heading.replace(/^\[\[(.+?)\]\]$/, "$1") === note.basename),
+		);
+		return testedSince ? null : note;
+	}
+
 	/** Start a test. `scope`: the notes to draw from, or null for the usual session.
 	 * `only`: ask exactly these concepts, as "Retry my misses" does. */
 	private beginTest(scope: TFile[] | null, dueOnly: boolean, only: string[] | null = null): void {
@@ -1816,6 +1835,18 @@ export class SessionView extends ItemView {
 		if (untested.length && untested.length < eligible.length) {
 			suggestions.push({ label: "Something new", count: String(untested.length), run: () => begin(untested, false) });
 		}
+		// What was last asked about in Learn and not tested since: the check that turns
+		// an explanation into something known.
+		if (!learning) {
+			const asked = this.lastLearnedUntested(byName);
+			if (asked && asked !== openNote) {
+				suggestions.push({
+					label: `Test what I asked about: ${asked.basename}`,
+					run: () => begin([asked], false),
+					check: async () => ((await this.enoughToTest(asked)) ? null : "Too short to test"),
+				});
+			}
+		}
 		if (!learning && openNote) {
 			suggestions.push({
 				label: `This note: ${openNote.basename}`,
@@ -1852,8 +1883,15 @@ export class SessionView extends ItemView {
 			under: learning ? "Reads the notes your question is about" : undefined,
 			placeholder: learning ? "Ask anything about your notes" : "Say what to test, or just press Get grilled",
 			sendLabel: learning ? "Ask" : "Get grilled",
-			// The room between what was done and what to do next: when it was done.
-			fill: (host) => this.renderHeatmap(host),
+			// The room between what was done and what to do next: when it was done. Only
+			// when there is room: in a short pane it would push the box out of view, and
+			// the box is what the screen is for.
+			fill: (host) => {
+				this.renderHeatmap(host);
+				window.requestAnimationFrame(() => {
+					if (host.isConnected && this.contentEl.scrollHeight > this.contentEl.clientHeight + 4) host.empty();
+				});
+			},
 			send: (text) => {
 				if (learning) {
 					if (!text) {

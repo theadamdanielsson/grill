@@ -295,7 +295,7 @@ test("with Grill Cloud on, it has the first section and the page still has no du
 			const defs = tab.getSettingDefinitions() as any[];
 			assert.deepEqual(
 				defs.map((d) => d.heading ?? d.name),
-				["Grill Cloud", "Your own key or Ollama", "Studying", "Graph", "Scope", "Tuning"],
+				["Grill Cloud", "Your own key or Ollama", "Studying", "Scope", "Tuning"],
 			);
 			const every = names(defs);
 			assert.equal(new Set(every).size, every.length, `duplicate row names (${provider})`);
@@ -314,11 +314,11 @@ test("the searchable definitions and the classic page list the same rows", async
 		const defs = tab.getSettingDefinitions() as any[];
 		assert.deepEqual(
 			defs.map((d) => d.type),
-			["group", "group", "group", "group", "page"],
+			["group", "group", "group", "page"],
 		);
 		assert.deepEqual(
 			defs.map((d) => d.heading ?? d.name),
-			["AI", "Studying", "Graph", "Scope", "Tuning"],
+			["AI", "Studying", "Scope", "Tuning"],
 		);
 		const every = names(defs);
 		assert.equal(new Set(every).size, every.length, "duplicate row names");
@@ -336,7 +336,7 @@ test("the searchable definitions and the classic page list the same rows", async
 
 		// The classic page draws exactly the same rows, in the same order.
 		tab.display();
-		const headings = ["AI", "Studying", "Graph", "Scope"];
+		const headings = ["AI", "Studying", "Scope"];
 		assert.deepEqual(
 			settingNames.filter((n) => !headings.includes(n)),
 			defined,

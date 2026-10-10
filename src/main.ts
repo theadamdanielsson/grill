@@ -18,7 +18,7 @@ import { CalPoint, isCalPoint } from "./calibration";
 import { LLMConfig, offeredProviders, PROVIDERS, ProviderId, Question, listModels, migrateLegacyModels, synthesizeArc, testModel } from "./llm";
 import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, CloudPack, cloudAccount, cloudBalance, cloudSpeech, cloudCheckoutUrl, cloudDelete, cloudEnabled, cloudStart, creditsInWords, isCloudKey, newCloudKey, packLabel, usageInWords } from "./cloud";
 import { RefillModal } from "./refill";
-import { ConceptMap, dueConceptCount, migrateResetScheduling, rebalanceDueDates, reconcileConcepts } from "./concepts";
+import { CATCH_UP, ConceptMap, dueConceptCount, migrateResetScheduling, rebalanceDueDates, reconcileConcepts } from "./concepts";
 import { pairKey } from "./bridges";
 import {
 	ACTIVE_DAYS_BETWEEN_ARCS,
@@ -737,7 +737,13 @@ export default class GrillPlugin extends Plugin {
 			this.statusBar = this.addStatusBarItem();
 			this.statusBar.addClass("mod-clickable");
 			// Click goes straight into the due queue when something's due, else opens the panel.
-			this.statusBar.onClickEvent(() => void (this.dueCount() > 0 ? this.startDueSession() : this.activateView()));
+			// With a backlog past one catch-up session, the status bar opens Grill, where
+			// Catch up is offered, instead of starting on the whole pile.
+			this.statusBar.onClickEvent(() => {
+				const n = this.dueCount();
+				const pile = this.data.settings.threadView && n > CATCH_UP;
+				void (n > 0 && !pile ? this.startDueSession() : this.activateView());
+			});
 		}
 		this.addSettingTab(new GrillSettingTab(this.app, this));
 
@@ -1125,7 +1131,10 @@ export default class GrillPlugin extends Plugin {
 	refreshStatusBar(): void {
 		if (!this.statusBar) return;
 		const n = this.dueCount();
-		this.statusBar.setText(n > 0 ? `Grill: ${n} due` : "Grill");
+		// A backlog isn't counted out in the corner of every window: past what one
+		// catch-up session takes, it says there are reviews, not how many.
+		const pile = this.data.settings.threadView && n > CATCH_UP;
+		this.statusBar.setText(n > 0 ? (pile ? "Grill: reviews due" : `Grill: ${n} due`) : "Grill");
 	}
 
 	/** Whether a session touches the model at all — questions, grading, or both. Single
@@ -3149,7 +3158,7 @@ export class GrillSettingTab extends PluginSettingTab {
 
 		ai.push({
 			name: "Persona & instructions",
-			desc: "Grill's character and how you want to be quizzed, in a note you can edit.",
+			desc: "Grill's character, and how you want to be tested and answered, in a note you can edit.",
 			aliases: ["prompt", "tone"],
 			build: (setting) =>
 				setting.addButton((b) =>
@@ -3164,7 +3173,7 @@ export class GrillSettingTab extends PluginSettingTab {
 		const studying: Row[] = [
 			this.sliderRow(
 				"Questions per session",
-				"",
+				"How many an open test asks. Retry and Catch up ask what they count.",
 				1,
 				50,
 				Math.min(Math.max(s.questionsPerSession, 1), 50),
@@ -3248,45 +3257,9 @@ export class GrillSettingTab extends PluginSettingTab {
 			this.voiceRow(s),
 		];
 
-		// ------------------------------------------------------------ Graph
-		const graph: Row[] = [
-			{
-				name: "Colour by",
-				desc: "What the graph's colours show.",
-				aliases: ["color", "map"],
-				build: (setting) =>
-					setting.addDropdown((d) =>
-						d
-							.addOption("mastery", "Mastery (default)")
-							.addOption("recency", "Recency: stale notes read red")
-							.addOption("dueness", "Due-ness: overdue notes read red")
-							.addOption("misconceptions", "Misconceptions: notes you keep getting wrong read red")
-							.setValue(s.graphColorMode)
-							.onChange(async (v) => {
-								s.graphColorMode = v as ColorMode;
-								await this.plugin.persist();
-								this.plugin.refreshMapDisplay();
-							}),
-					),
-			},
-			{
-				name: "Grade numbers on the graph",
-				desc: "Show a score on each practised note.",
-				build: (setting) =>
-					setting.addDropdown((d) =>
-						d
-							.addOption("off", "Off")
-							.addOption("percent", "Percent (78%)")
-							.addOption("letter", "Letter grade (B+)")
-							.setValue(s.graphNumberMode)
-							.onChange(async (v) => {
-								s.graphNumberMode = v as NumberMode;
-								await this.plugin.persist();
-								this.plugin.refreshMapDisplay();
-							}),
-					),
-			},
-		];
+		// The map's display options (what its colours show, the score on each note) had a
+		// section here. The map is one view on the progress screen now, in its defaults;
+		// an install that changed them keeps what it chose.
 
 		// ------------------------------------------------------------ Scope
 		const folderList = (v: string): string[] =>
@@ -3297,7 +3270,7 @@ export class GrillSettingTab extends PluginSettingTab {
 		const scope: Row[] = [
 			{
 				name: "Grill's folders",
-				desc: "Folders to study, comma-separated. Blank for the whole vault.",
+				desc: "Folders Grill tests you on and reads to answer you, comma-separated. Blank for the whole vault.",
 				aliases: ["include", "scope"],
 				build: (setting) =>
 					setting.addText((t) =>
@@ -3337,7 +3310,6 @@ export class GrillSettingTab extends PluginSettingTab {
 				rows: all || p !== "grillcloud" ? ai : ai.filter((r) => r.name !== "Model" && r.name !== "Custom model ID"),
 			},
 			{ heading: "Studying", rows: [...studyMode, ...studying] },
-			{ heading: "Graph", rows: graph },
 			{ heading: "Scope", rows: scope },
 		];
 	}
