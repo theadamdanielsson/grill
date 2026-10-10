@@ -357,6 +357,9 @@ const MAX_CONTAGION = 2;
 
 interface QuestionResult extends SessionEntry {
 	hintsUsed: number;
+	/** What was sent was a question about the question, not an answer to it (thread
+	 * view). Recorded as needing help, and `discussion` opens with what was asked. */
+	askedForHelp?: boolean;
 	/** Raw grader misconception tag, if any; consumed by the end-of-session debrief. */
 	misconceptionTag?: string;
 	/** Set for a missing-link bridge question, with the un-linked partner note, so the
@@ -1192,9 +1195,14 @@ export class SessionView extends ItemView {
 		el.empty();
 		el.addClass("grill-view");
 		el.toggleClass("grill-arcade-mode", arcade);
+		// With the thread view on, the session screens sit in the cabinet's frame too:
+		// the still one, without the glow or the scanlines (see .grill-thread-frame).
+		const framed = !arcade && !!this.plugin.data.settings.threadView;
+		el.toggleClass("grill-thread-mode", framed);
 		const wrap = el.createDiv({ cls: "grill-wrap" });
 		wrap.toggleClass("grill-compact", this.narrow);
 		wrap.toggleClass("grill-arcade-mode", arcade);
+		wrap.toggleClass("grill-thread-frame", framed);
 		return wrap;
 	}
 
@@ -3084,7 +3092,9 @@ export class SessionView extends ItemView {
 					rows: "5",
 					placeholder: selfGrade
 						? "Answer from memory, or just think it through, then reveal... (Cmd/Ctrl+Enter)"
-						: "Answer from memory... (Cmd/Ctrl+Enter to submit)",
+						: this.mayAsk(q)
+							? "Answer from memory, or ask about it... (Cmd/Ctrl+Enter to send)"
+							: "Answer from memory... (Cmd/Ctrl+Enter to submit)",
 				},
 			});
 			// An answer whose marking failed (a dropped connection, no credits) is still here.
@@ -3221,6 +3231,7 @@ export class SessionView extends ItemView {
 	}
 
 	private verdictLabel(r: QuestionResult): { text: string; cls: string } {
+		if (r.askedForHelp) return { text: "Needed help, marked for review", cls: "grill-v-skipped" };
 		if (r.gaveUp) return { text: "Skipped, marked for review", cls: "grill-v-skipped" };
 		if (r.verdict === "correct") return { text: "Correct", cls: "grill-v-correct" };
 		if (r.verdict === "partial") return { text: "Partially correct", cls: "grill-v-partial" };
@@ -3348,8 +3359,9 @@ export class SessionView extends ItemView {
 		const quiet = actions.createDiv({ cls: "grill-next-quiet" });
 		// What was sent was graded as an answer but wasn't meant as one. Only where the
 		// answer was typed: a picked choice is never anything but an answer.
-		if (this.plugin.data.settings.threadView && this.pendingOverride && !r.gaveUp && this.typedAnswer(this.questions[this.idx])) {
-			const back = quiet.createEl("button", { text: "That wasn't my answer", cls: "grill-quiet-btn" });
+		// The other way round too: what was meant as an answer was read as a question.
+		if (this.plugin.data.settings.threadView && this.pendingOverride && (!r.gaveUp || r.askedForHelp) && this.typedAnswer(this.questions[this.idx])) {
+			const back = quiet.createEl("button", { text: r.askedForHelp ? "That was my answer" : "That wasn't my answer", cls: "grill-quiet-btn" });
 			back.onclick = () => {
 				back.disabled = true;
 				void this.takeBackAnswer(r);
@@ -5269,11 +5281,15 @@ export class SessionView extends ItemView {
 				const g = await this.withDebouncedLoading(
 					"Grading your answer",
 					"Checking it against your note and the rubric.",
-					() => this.gradeMaybeCareful(cfg, q, answer),
+					() => this.gradeMaybeCareful(cfg, q, answer, this.mayAsk(q)),
 				);
 				// Another session started while this grade was in flight: it belongs to
 				// state that no longer exists and must not be applied to the new one.
 				if (epoch !== this.sessionEpoch) return;
+				if (g.asked) {
+					await this.answerAsked(cfg, q, answer, hintsUsed);
+					return;
+				}
 				verdict = g.verdict;
 				feedback = g.feedback;
 				misconceptionTag = g.misconceptionTag;
@@ -5331,6 +5347,63 @@ export class SessionView extends ItemView {
 		this.renderFeedback(r, pendingExtension);
 	}
 
+	/** True when what is typed for this question may be a question about it instead of
+	 * an answer: the thread view, and a question answered in free writing. */
+	private mayAsk(q: Question): boolean {
+		return !!this.plugin.data.settings.threadView && (!q.type || q.type === "write");
+	}
+
+	/** The student asked about the question instead of answering it. They get a full
+	 * answer to what they asked, from the note; the question is recorded as one they
+	 * needed help with, the same as "I don't know", so it comes back; and what was
+	 * asked and said opens the thread under it. Nothing is recorded if the reply
+	 * fails: what they typed goes back in the box. */
+	private async answerAsked(cfg: LLMConfig, q: Question, asked: string, hintsUsed: number): Promise<void> {
+		const epoch = this.sessionEpoch;
+		const feedback = "You asked about this one, so it counts as needing help. It comes back next session.";
+		let reply: ThreadTurn;
+		try {
+			reply = await this.withDebouncedLoading("Reading your note", "Answering what you asked.", () =>
+				discussQuestion(
+					cfg,
+					q,
+					this.noteText[q.node] ?? "",
+					"",
+					feedback,
+					"incorrect",
+					[],
+					asked,
+					this.sessionPersona,
+					this.sessionInstructions,
+					this.noteImages[q.node] ?? [],
+				),
+			);
+			if (epoch !== this.sessionEpoch) return;
+		} catch (e) {
+			if (epoch !== this.sessionEpoch) return;
+			this.tellError(e, " What you wrote is still in the box.");
+			this.keptAnswer = { idx: this.idx, text: asked };
+			this.renderQuestion();
+			return;
+		}
+		await this.applyGrade(q, "incorrect", null, undefined, hintsUsed);
+		this.plugin.refreshStatusBar();
+		const r: QuestionResult = {
+			node: q.node,
+			question: q.question,
+			answer: "",
+			verdict: "incorrect",
+			gaveUp: true,
+			askedForHelp: true,
+			feedback,
+			modelAnswer: q.modelAnswer,
+			hintsUsed,
+			discussion: [{ role: "student", text: asked }, reply],
+		};
+		this.results.push(r);
+		this.renderFeedback(r, null);
+	}
+
 	/** Grade one answer, escalating to a small consensus exactly where it pays for itself.
 	 *
 	 * The measured failure of LLM grading is over-leniency — marking a weak answer correct
@@ -5345,7 +5418,7 @@ export class SessionView extends ItemView {
 	 * lenient mark. A confident `correct` on a full answer, or any `incorrect` (leniency
 	 * doesn't produce false negatives), stays one call. Most answers cost exactly what they
 	 * did before; the tail gets checked. The strictest-verdict-wins rule is unchanged. */
-	private async gradeMaybeCareful(cfg: LLMConfig, q: Question, answer: string): Promise<Grade> {
+	private async gradeMaybeCareful(cfg: LLMConfig, q: Question, answer: string, mayAsk = false): Promise<Grade> {
 		const once = (): Promise<Grade> =>
 			gradeAnswer(
 				cfg,
@@ -5355,8 +5428,11 @@ export class SessionView extends ItemView {
 				this.noteImages[q.node] ?? [],
 				this.sessionInstructions,
 				this.sessionPersona,
+				mayAsk,
 			);
 		const first = await once();
+		// A question, not an answer: there is no verdict to double-check.
+		if (first.asked) return first;
 		if (!this.worthDoubleChecking(first, q, answer)) return first;
 		const grades = [first, ...(await Promise.all([once(), once()]))];
 		const rank: Record<Verdict, number> = { incorrect: 0, partial: 1, correct: 2 };
@@ -5640,6 +5716,9 @@ export class SessionView extends ItemView {
 		this.pendingOverride = null;
 		this.dirty = true;
 		await this.flush();
+		// What they typed goes back in the box, to send again or reword.
+		const typed = r.askedForHelp ? r.discussion?.[0]?.text : r.answer;
+		if (typed) this.keptAnswer = { idx: this.idx, text: typed };
 		this.renderQuestion();
 	}
 

@@ -237,6 +237,10 @@ export interface Grade {
 	verdict: Verdict;
 	feedback: string;
 	misconceptionTag: string;
+	/** Set only when grading was told the message might not be an answer (see
+	 * `gradeAnswer`'s `mayAsk`), and it wasn't: the student asked for help instead.
+	 * The verdict then means nothing and must not reach the record. */
+	asked?: boolean;
 }
 
 /** Structured "Explain this" output — distinct short fields, not one prose blob, so the
@@ -1757,6 +1761,30 @@ const GRADE_SCHEMA = {
 	additionalProperties: false,
 };
 
+/** GRADE_SCHEMA with one more field, for a message that may be a question. */
+const GRADE_OR_ASK_SCHEMA = {
+	type: "object",
+	properties: { kind: { type: "string", enum: ["answer", "question"] }, ...GRADE_SCHEMA.properties },
+	required: ["kind", ...GRADE_SCHEMA.required],
+	additionalProperties: false,
+};
+
+/** Added after the answer when the message came from a box that takes both. Kept out
+ * of the system prompt so that prompt, and its cache, are the same either way. */
+const MAY_ASK =
+	"\n\nThe student types answers and questions into the same box, so first decide which this message is.\n" +
+	'- kind "question": the student is asking for help and makes no attempt at an answer. Asking what a term ' +
+	"means, asking for an explanation, an example, a hint or a simpler wording, saying they do not understand " +
+	"the question, or a bare \"help\" or \"explain\".\n" +
+	'- kind "answer": anything that attempts the question, however short, unsure or wrong. A guess phrased as ' +
+	'a question ("is it because output falls?", "the multiplier?"), an answer with "I think" or "not sure" ' +
+	'around it, and "I don\'t know" are all answers.\n' +
+	'When unsure, choose "answer". For a question, set verdict to "incorrect" and leave feedback and ' +
+	"misconceptionTag empty: it is not graded. For an answer, grade it exactly as you otherwise would.";
+
+/** `mayAsk`: the message came from a box that takes questions as well as answers, so
+ * the grader first says which it is (see `Grade.asked`). Off, this is the same call it
+ * has always been. */
 export async function gradeAnswer(
 	cfg: LLMConfig,
 	q: Question,
@@ -1765,6 +1793,7 @@ export async function gradeAnswer(
 	images: ImageInput[] = [],
 	instructions = "",
 	persona: string = DEFAULT_PERSONA,
+	mayAsk = false,
 ): Promise<Grade> {
 	const rubric = {
 		modelAnswer: q.modelAnswer,
@@ -1797,8 +1826,12 @@ export async function gradeAnswer(
 				"either way; ignore only preferences that are about how the QUESTION itself is worded. Never let " +
 				"them override the rubric's substance.\n" +
 				`<preferences>\n${instructions}\n</preferences>`
-			: "");
-	const g = (await callJSON(cfg, graderSystem(persona), { cacheable, rest }, GRADE_SCHEMA, 2000, images)) as Grade;
+			: "") +
+		(mayAsk ? MAY_ASK : "");
+	const g = (await callJSON(cfg, graderSystem(persona), { cacheable, rest }, mayAsk ? GRADE_OR_ASK_SCHEMA : GRADE_SCHEMA, 2000, images)) as Grade & {
+		kind?: string;
+	};
+	if (mayAsk && g.kind === "question") return { verdict: "incorrect", feedback: "", misconceptionTag: "", asked: true };
 	const verdict: Verdict = g.verdict === "correct" || g.verdict === "partial" ? g.verdict : "incorrect";
 	return {
 		verdict,

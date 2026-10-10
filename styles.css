@@ -2797,3 +2797,47 @@ textarea.grill-mgmt-field {
   margin-left: 0;
   padding-left: 0;
 }
+
+/* The session screens in the cabinet's frame, for the thread view: the same gold
+ * double-frame, corner rivets and dot-grid ground as the start screen, but still. No
+ * flame glow and no scanlines, which would sit behind and over what is being read
+ * and typed. The frame fills the pane; what is in it keeps the reading width. */
+.grill-view.grill-thread-mode {
+  padding: 0;
+}
+.grill-wrap.grill-thread-frame {
+  max-width: none;
+  min-height: 100%;
+  box-sizing: border-box;
+  padding: 1.1em 1.4em 1.5em;
+  border: 3px solid var(--grill-ember, #b91c00);
+  box-shadow: inset 0 0 0 1px var(--grill-gold, #ffd23f), inset 0 1px 0 rgba(255, 210, 63, 0.12);
+  background:
+    linear-gradient(var(--grill-gold, #ffd23f), var(--grill-gold, #ffd23f)) top 5px left 5px / 8px 8px no-repeat,
+    linear-gradient(var(--grill-gold, #ffd23f), var(--grill-gold, #ffd23f)) top 5px right 5px / 8px 8px no-repeat,
+    linear-gradient(var(--grill-gold, #ffd23f), var(--grill-gold, #ffd23f)) bottom 5px left 5px / 8px 8px no-repeat,
+    linear-gradient(var(--grill-gold, #ffd23f), var(--grill-gold, #ffd23f)) bottom 5px right 5px / 8px 8px no-repeat,
+    radial-gradient(circle, rgba(255, 178, 50, 0.13) 1px, transparent 1.4px) 0 0 / 15px 15px,
+    var(--grill-screen, #140b07);
+  color: var(--grill-ink, #ffe98a);
+  /* These screens are written against the theme's own colour names. Inside the frame
+     those names point at the cabinet's palette, so every card, field and label in
+     the flow follows without a rule of its own, on a light theme as on a dark one. */
+  --text-normal: var(--grill-ink, #ffe98a);
+  --text-muted: var(--grill-ink-dim, #c9a875);
+  --text-faint: var(--grill-ink-dim, #c9a875);
+  --text-accent: var(--grill-ink-gold, #ffd23f);
+  --text-on-accent: var(--grill-accent-contrast, #140b07);
+  --background-primary: var(--grill-screen, #140b07);
+  --background-secondary: var(--grill-screen-deep, #0f0904);
+  --background-modifier-border: var(--grill-ember-dark, #5c1400);
+  --background-modifier-form-field: var(--grill-screen-deep, #0f0904);
+  --background-modifier-hover: rgba(255, 122, 34, 0.09);
+  --interactive-accent: var(--grill-accent, #ff8c2b);
+  --interactive-accent-hover: var(--grill-flame, #ff7a22);
+}
+.grill-wrap.grill-thread-frame > * {
+  max-width: 40em;
+  margin-left: auto;
+  margin-right: auto;
+}

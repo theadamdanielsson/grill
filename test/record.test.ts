@@ -140,6 +140,24 @@ test("a message graded by mistake is taken back, and the question stays to be an
 		assert.equal(view.pendingOverride, null);
 	}));
 
+test("what was typed goes back in the box when it is taken back", () =>
+	frozen(async () => {
+		const { view, plugin } = makeView();
+		const q = start(view, plugin);
+
+		await view.applyGrade(q, "incorrect", null, undefined, 0);
+		const answered = { question: q.question, verdict: "incorrect", answer: "what is this about?" };
+		view.results = [answered];
+		await view.takeBackAnswer(answered);
+		assert.deepEqual(view.keptAnswer, { idx: 0, text: "what is this about?" });
+
+		await view.applyGrade(q, "incorrect", null, undefined, 0);
+		const asked = { question: q.question, verdict: "incorrect", answer: "", gaveUp: true, askedForHelp: true, discussion: [{ role: "student", text: "the multiplier?" }] };
+		view.results = [asked];
+		await view.takeBackAnswer(asked);
+		assert.deepEqual(view.keptAnswer, { idx: 0, text: "the multiplier?" });
+	}));
+
 test("Mark correct ends where a correct answer would have", () =>
 	frozen(async () => {
 		const wrong = makeView();
