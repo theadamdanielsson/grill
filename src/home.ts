@@ -11,6 +11,9 @@ export interface HomeSuggestion {
 	/** Shown at the end of the row: how many questions or notes it covers. */
 	count?: string;
 	run(): void;
+	/** Resolves to why this can't be started right now, or null when it can. Looked up
+	 * after the row is drawn; a reason takes the count's place and the row goes dead. */
+	check?(): Promise<string | null>;
 }
 
 export interface HomeRecent {
@@ -109,6 +112,11 @@ export function renderChatHome(screen: HTMLElement, d: HomeData): void {
 			const row = list.createEl("button", { cls: "grill-home-suggestion", attr: { type: "button" } });
 			row.createSpan({ cls: "grill-home-suggestion-label", text: s.label });
 			if (s.count) row.createSpan({ cls: "grill-home-suggestion-count", text: s.count });
+			void s.check?.().then((reason) => {
+				if (!reason || !row.isConnected) return;
+				row.disabled = true;
+				row.createSpan({ cls: "grill-meta grill-home-suggestion-why", text: reason });
+			});
 			row.onclick = () => {
 				list.querySelectorAll("button").forEach((b) => (b.disabled = true));
 				s.run();

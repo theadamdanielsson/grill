@@ -3264,3 +3264,16 @@ textarea.grill-mgmt-field {
 .grill-learn .grill-learn-box {
   padding-top: 1.4em;
 }
+
+/* The wait for a grade or a reply, as a line under the question it is about. */
+.grill-thread-wait {
+  margin-top: 0.9em;
+}
+/* A suggestion that can't be started right now, with why in place of its count. */
+.grill-view button.grill-home-suggestion:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.grill-home-suggestion-why {
+  flex-shrink: 0;
+}

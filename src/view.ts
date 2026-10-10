@@ -470,6 +470,8 @@ export class SessionView extends ItemView {
 		linkedText: string;
 		/** What Grill has on record about this note: see `learnRecord`. */
 		record: string;
+		/** False when the note is too short to be tested on: see `enoughToTest`. */
+		testable: boolean;
 		turns: ThreadTurn[];
 		startedAt: Date;
 		persona: string;
@@ -1048,6 +1050,20 @@ export class SessionView extends ItemView {
 			return usable.length >= ONBOARD_NOTE_CONCEPTS ? f : null;
 		} catch {
 			return null;
+		}
+	}
+
+	/** Whether a note has enough in it to be tested on: the rule first run uses, at least
+	 * `ONBOARD_NOTE_CONCEPTS` things Grill can ask about. A note with one or two makes
+	 * a session too short to tell anything, on questions stretched from too little. */
+	private async enoughToTest(f: TFile): Promise<boolean> {
+		const s = this.plugin.data.settings;
+		try {
+			const concepts = extractConcepts(f.basename, await this.app.vault.cachedRead(f), s.questionFormats);
+			const usable = s.questionSource === "local" ? concepts.filter((c) => c.local) : concepts;
+			return usable.length >= ONBOARD_NOTE_CONCEPTS;
+		} catch {
+			return true;
 		}
 	}
 
@@ -1777,7 +1793,13 @@ export class SessionView extends ItemView {
 		if (untested.length && untested.length < eligible.length) {
 			suggestions.push({ label: "Something new", count: String(untested.length), run: () => begin(untested, false) });
 		}
-		if (!learning && openNote) suggestions.push({ label: `This note: ${openNote.basename}`, run: () => begin([openNote], false) });
+		if (!learning && openNote) {
+			suggestions.push({
+				label: `This note: ${openNote.basename}`,
+				run: () => begin([openNote], false),
+				check: async () => ((await this.enoughToTest(openNote)) ? null : "Too short to test"),
+			});
+		}
 
 		const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 		renderChatHome(screen, {
@@ -1851,7 +1873,8 @@ export class SessionView extends ItemView {
 		const read = async (f: TFile): Promise<{ name: string; text: string }> => ({ name: f.basename, text: await this.app.vault.cachedRead(f) });
 		const ctx = learnContext(await read(note), await Promise.all(links.slice(0, 8).map(read)));
 		const record = await this.recordFor(note.basename);
-		this.learn = { note, ...ctx, record, turns: [], startedAt: new Date(), persona: instr.persona, instructions: instr.preferences };
+		const testable = await this.enoughToTest(note);
+		this.learn = { note, ...ctx, record, testable, turns: [], startedAt: new Date(), persona: instr.persona, instructions: instr.preferences };
 		this.renderLearn();
 		if (firstAsk) await this.askLearn(firstAsk);
 	}
@@ -1939,8 +1962,9 @@ export class SessionView extends ItemView {
 		});
 		const foot = card.createDiv({ cls: "grill-thread-help" });
 		const test = foot.createEl("button", { cls: "grill-hint-btn", text: "Test me on this" });
-		test.disabled = !L.turns.length;
+		test.disabled = !L.turns.length || !L.testable;
 		test.onclick = () => void this.endLearn(true);
+		if (!L.testable) foot.createSpan({ cls: "grill-meta", text: "This note is too short to test." });
 		input.focus();
 	}
 
@@ -3082,6 +3106,12 @@ export class SessionView extends ItemView {
 
 	private renderLoading(title: string, detail: string, onCancel?: () => void): void {
 		const wrap = this.root();
+		// Mid-session in the thread view, what has been answered stays on the page while
+		// the next question is written under it.
+		if (this.results.length && this.targetCount > 0 && this.threadStrip(wrap)) {
+			this.progressBar(wrap);
+			this.threadHistory(wrap, this.results);
+		}
 		const box = wrap.createDiv({ cls: "grill-loading" });
 		setIcon(box.createDiv({ cls: "grill-flame-spin" }), "flame");
 		box.createEl("p", { text: title, cls: "grill-loading-title" });
@@ -3128,6 +3158,25 @@ export class SessionView extends ItemView {
 			return await work();
 		} finally {
 			window.clearTimeout(timer);
+		}
+	}
+
+	/** As `withDebouncedLoading`, but in the thread view with a question on screen the
+	 * wait is one line under that question instead of a screen that replaces it: the
+	 * question stays where it is, and what comes back is drawn beneath it. */
+	private async withWaitInThread<T>(title: string, detail: string, work: () => Promise<T>): Promise<T> {
+		const body = this.plugin.data.settings.threadView ? this.contentEl.querySelector<HTMLElement>(".grill-body") : null;
+		if (!body || !body.querySelector("[data-grill-q]")) return this.withDebouncedLoading(title, detail, work);
+		let line: HTMLElement | null = null;
+		const timer = window.setTimeout(() => {
+			line = body.createDiv({ cls: "grill-thread-wait grill-meta", text: `${title}...` });
+			line.scrollIntoView({ block: "nearest" });
+		}, SessionView.LOADING_DEBOUNCE_MS);
+		try {
+			return await work();
+		} finally {
+			window.clearTimeout(timer);
+			(line as HTMLElement | null)?.remove();
 		}
 	}
 
@@ -3326,6 +3375,8 @@ export class SessionView extends ItemView {
 		}
 
 		const qEl = card.createDiv({ cls: "grill-question" });
+		// So the feedback can keep this very element in place: see renderFeedback.
+		if (thread) qEl.dataset.grillQ = String(this.idx);
 		// Loose match (3+ underscores): the same tolerance questionDefect already
 		// validates against, in case a model writes ___ or _____ instead of ____.
 		// Up to three per question (questionDefect caps it); each gets its own input.
@@ -3705,6 +3756,14 @@ export class SessionView extends ItemView {
 
 	private renderFeedback(r: QuestionResult, pendingExtension: PendingExtension | null = null): void {
 		if (this.plugin.data.settings.sounds) playSfx(r.verdict); // correct / partial / incorrect
+		// In the thread view the question stays where it was and the verdict is drawn
+		// under it. The element itself is carried over, as rendered and as filled in, so
+		// nothing is redrawn above the verdict and the page doesn't jump.
+		const kept = this.plugin.data.settings.threadView
+			? this.contentEl.querySelector<HTMLElement>(`.grill-body > .grill-question[data-grill-q="${this.idx}"]`)
+			: null;
+		const scrolled = this.contentEl.scrollTop;
+		kept?.remove();
 		const wrap = this.root();
 		const thread = this.threadStrip(wrap, !pendingExtension);
 		this.progressBar(wrap);
@@ -3719,11 +3778,19 @@ export class SessionView extends ItemView {
 		// ends the session the same way.
 		if (!pendingExtension && !thread) this.renderEndSessionLink(card);
 
-		const qEl = card.createDiv({ cls: "grill-question grill-question-small" });
-		this.md(r.question, qEl, r.node);
+		if (kept) {
+			card.appendChild(kept);
+			kept.querySelectorAll("input").forEach((el) => (el.disabled = true));
+			this.contentEl.scrollTop = scrolled;
+		} else {
+			const qEl = card.createDiv({ cls: thread ? "grill-question" : "grill-question grill-question-small" });
+			if (thread) qEl.dataset.grillQ = String(this.idx);
+			this.md(r.question, qEl, r.node);
+		}
 
 		// The verdict card: badge + your answer + grader feedback — "what happened".
 		const verdictCard = card.createDiv({ cls: "grill-flow-card grill-verdict-card" });
+		if (kept) window.setTimeout(() => verdictCard.isConnected && verdictCard.scrollIntoView({ block: "nearest" }), 0);
 		const v = this.verdictLabel(r);
 		const badgeRow = verdictCard.createDiv({ cls: "grill-verdict-row" });
 		const badge = badgeRow.createDiv({ cls: `grill-verdict-badge ${v.cls}` });
@@ -5744,7 +5811,7 @@ export class SessionView extends ItemView {
 			if (!cfg) return;
 			const epoch = this.sessionEpoch;
 			try {
-				const g = await this.withDebouncedLoading(
+				const g = await this.withWaitInThread(
 					"Grading your answer",
 					"Checking it against your note and the rubric.",
 					() => this.gradeMaybeCareful(cfg, q, answer, this.mayAsk(q)),
@@ -5829,7 +5896,7 @@ export class SessionView extends ItemView {
 		const feedback = "You asked about this one, so it counts as needing help. It comes back next session.";
 		let reply: ThreadTurn;
 		try {
-			reply = await this.withDebouncedLoading("Reading your note", "Answering what you asked.", () =>
+			reply = await this.withWaitInThread("Reading your note", "Answering what you asked.", () =>
 				discussQuestion(
 					cfg,
 					q,
