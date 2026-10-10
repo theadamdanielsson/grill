@@ -692,6 +692,18 @@ export class SessionView extends ItemView {
 		if (!this.plugin.data.settings.onboarded) this.renderOnboarding();
 		else this.renderStart();
 		this.registerDomEvent(document, "keydown", (e) => this.handleSessionKeydown(e));
+		// The chat home names the open note, in a suggestion and under the box: follow it
+		// when another note is opened. Whatever is typed in the box is kept across the
+		// redraw.
+		this.registerEvent(
+			this.app.workspace.on("file-open", (file) => {
+				if (!file || !this.contentEl.querySelector(".grill-home")) return;
+				const typed = this.contentEl.querySelector<HTMLTextAreaElement>(".grill-home-input")?.value ?? "";
+				this.renderStart();
+				const box = this.contentEl.querySelector<HTMLTextAreaElement>(".grill-home-input");
+				if (box && typed) box.value = typed;
+			}),
+		);
 		// Mobile OSes kill a backgrounded app without onClose ever firing: save the
 		// moment the app is hidden rather than trusting the pane to close cleanly.
 		this.registerDomEvent(document, "visibilitychange", () => {
