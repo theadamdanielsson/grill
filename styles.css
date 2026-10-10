@@ -1998,6 +1998,22 @@ settings:
   text-overflow: ellipsis;
   color: var(--text-normal);
 }
+/* The preview is rendered Markdown, so formulas draw. Keep it on the one line. */
+.grill-mgmt-card-preview p {
+  display: inline;
+  margin: 0;
+}
+.grill-mgmt-card-preview img {
+  display: none;
+}
+/* A formula may otherwise break across lines inside itself, which wraps the row. */
+.grill-mgmt-card-preview mjx-container {
+  display: inline-block;
+}
+.grill-mgmt-card-preview mjx-container,
+.grill-mgmt-card-preview mjx-container * {
+  white-space: nowrap;
+}
 .grill-mgmt-card-body {
   padding: 0 0.75em 0.75em;
   border-top: 1px solid var(--background-modifier-border);

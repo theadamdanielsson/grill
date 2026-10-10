@@ -2310,6 +2310,7 @@ export class SessionView extends ItemView {
 		tf: "True/False",
 		multi: "Select all",
 		match: "Match",
+		occlusion: "Image",
 	};
 
 	/** Collapsed-by-default shell for one cached question variant: a one-line summary
@@ -2323,7 +2324,8 @@ export class SessionView extends ItemView {
 		const type = q.type ?? "write";
 		const summary = card.createDiv({ cls: "grill-mgmt-card-summary" });
 		summary.createSpan({ cls: "grill-chip grill-mgmt-type-chip", text: SessionView.MGMT_TYPE_LABELS[type] });
-		const previewEl = summary.createSpan({ cls: "grill-mgmt-card-preview", text: q.question });
+		const previewEl = summary.createSpan({ cls: "grill-mgmt-card-preview" });
+		this.md(q.question, previewEl);
 		const body = card.createDiv({ cls: "grill-mgmt-card-body" });
 		let built = false;
 		summary.onclick = () => {
@@ -2498,7 +2500,8 @@ export class SessionView extends ItemView {
 			if (pairs) q.pairs = pairs;
 
 			if (!(await this.saveOrNotice(this.plugin.store.saveQuestionBank(this.questionBank)))) return;
-			previewEl.setText(q.question);
+			previewEl.empty();
+			this.md(q.question, previewEl);
 			new Notice("Grill: question saved.", 3000);
 		};
 
