@@ -2867,3 +2867,97 @@ textarea.grill-mgmt-field {
   margin-left: auto;
   margin-right: auto;
 }
+
+/* The thread view's layout: a strip saying what is running, the finished questions,
+ * the question in hand as a card, and the box to answer in at the foot of the pane,
+ * the way a conversation is laid out. */
+.grill-wrap.grill-thread-frame {
+  display: flex;
+  flex-direction: column;
+}
+.grill-wrap.grill-thread-frame > * {
+  width: 100%;
+}
+.grill-thread-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.9em;
+}
+.grill-thread-mode {
+  font-family: "Grill Pixel", var(--font-monospace);
+  font-size: 0.62em;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--grill-ink-accent, #ff8c2b);
+}
+.grill-thread-count {
+  flex: 1;
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+}
+.grill-view button.grill-thread-end {
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  cursor: pointer;
+}
+.grill-view button.grill-thread-end:hover {
+  background: transparent;
+  color: var(--text-accent);
+  text-decoration: underline;
+}
+.grill-wrap.grill-thread-frame > .grill-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  margin-top: 1.1em;
+}
+/* The question in hand, set apart from what was asked before it. */
+.grill-thread-frame .grill-body > .grill-question:not(.grill-question-small) {
+  margin-top: 0.5em;
+  padding: 0.85em 1em;
+  border: 2px solid var(--grill-accent, #ff8c2b);
+  border-radius: var(--grill-radius-m);
+  background: rgba(255, 140, 43, 0.07);
+}
+.grill-thread-frame .grill-body > .grill-tts-btn {
+  margin-top: 0.4em;
+}
+/* The box sinks to the foot of the pane, with its buttons under it. */
+.grill-thread-frame .grill-body > .grill-answer {
+  margin-top: auto;
+  border: 1px solid var(--grill-ember-dark, #5c1400);
+}
+.grill-thread-frame .grill-body > .grill-answer:focus {
+  border-color: var(--grill-accent, #ff8c2b);
+  box-shadow: none;
+}
+/* Send, and Next: the cabinet's own button. */
+.grill-view .grill-thread-frame .grill-submit-btn,
+.grill-view .grill-thread-frame .grill-submit-btn:hover {
+  font-family: "Grill Pixel", var(--font-monospace);
+  font-size: 0.62em;
+  letter-spacing: 0.04em;
+  padding: 0.9em 1.4em;
+  height: auto;
+  border: 2px solid var(--grill-gold, #ffd23f);
+  border-radius: var(--grill-radius-s);
+  background: linear-gradient(#ffb44e, var(--grill-accent, #ff8c2b) 45%, var(--grill-ember, #b91c00) 100%);
+  color: var(--grill-accent-contrast, #140b07);
+  box-shadow: 0 4px 0 var(--grill-ember-deep, #7a1200), 0 4px 14px rgba(255, 90, 31, 0.35);
+  text-shadow: 0 1px 0 rgba(255, 210, 63, 0.5);
+}
+.grill-view .grill-thread-frame .grill-submit-btn:hover {
+  filter: brightness(1.06);
+}
+.grill-view .grill-thread-frame .grill-submit-btn:active {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 var(--grill-ember-deep, #7a1200), 0 1px 6px rgba(255, 90, 31, 0.3);
+}
+.grill-thread-frame .grill-answer-bar {
+  margin-bottom: 4px;
+}

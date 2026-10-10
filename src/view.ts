@@ -2861,13 +2861,14 @@ export class SessionView extends ItemView {
 
 	private renderQuestion(): void {
 		const wrap = this.root();
+		const thread = this.threadStrip(wrap);
 		this.progressBar(wrap);
 		this.threadHistory(wrap, this.results);
 		this.pendingConfidence = null;
 		const q = this.questions[this.idx];
 		const card = wrap.createDiv({ cls: "grill-body" });
 		const meta = card.createDiv({ cls: "grill-meta-row" });
-		meta.createSpan({ cls: "grill-meta", text: `Question ${this.idx + 1} of ${this.targetCount}` });
+		meta.createSpan({ cls: "grill-meta", text: thread ? `${this.idx + 1}.` : `Question ${this.idx + 1} of ${this.targetCount}` });
 		const hideName = this.nameLeaksAnswer(q);
 		if (!hideName) meta.createSpan({ cls: "grill-chip", text: q.node });
 		// Only the generic case needs this — a bridge/routed/contagion question already
@@ -2877,7 +2878,7 @@ export class SessionView extends ItemView {
 			const reason = this.dueReasonTag(q.conceptId);
 			if (reason) meta.createSpan({ cls: `grill-due-reason ${reason.cls}`, text: reason.text });
 		}
-		this.renderEndSessionLink(card);
+		if (!thread) this.renderEndSessionLink(card);
 
 		// Connections mode: make the bridge legible. Names are the point of the mode,
 		// but honour "hide note name" so we never leak the answer.
@@ -3089,7 +3090,7 @@ export class SessionView extends ItemView {
 			ta = card.createEl("textarea", {
 				cls: "grill-answer",
 				attr: {
-					rows: "5",
+					rows: thread ? "3" : "5",
 					placeholder: selfGrade
 						? "Answer from memory, or just think it through, then reveal... (Cmd/Ctrl+Enter)"
 						: this.mayAsk(q)
@@ -3108,7 +3109,7 @@ export class SessionView extends ItemView {
 		const row = card.createDiv({ cls: "grill-btn-row grill-answer-bar" });
 		const main = row.createDiv({ cls: "grill-answer-main" });
 		if (!isMc && !isTf) {
-			const submit = main.createEl("button", { text: selfGrade ? "Show answer" : "Submit", cls: "mod-cta grill-submit-btn" });
+			const submit = main.createEl("button", { text: selfGrade ? "Show answer" : thread ? "Send" : "Submit", cls: "mod-cta grill-submit-btn" });
 			submit.onclick = () => doAction(false);
 		}
 		// Confidence check (AI grading only): predict how sure you are before the grade
@@ -3238,6 +3239,21 @@ export class SessionView extends ItemView {
 		return { text: "Incorrect", cls: "grill-v-incorrect" };
 	}
 
+	/** With the thread view on, the line over a session screen: what is running, how far
+	 * through it is, and the way out. Returns whether it drew, which is whether the
+	 * screen under it is in the thread view. */
+	private threadStrip(wrap: HTMLElement, endable = true): boolean {
+		if (!this.plugin.data.settings.threadView) return false;
+		const strip = wrap.createDiv({ cls: "grill-thread-strip" });
+		strip.createSpan({ cls: "grill-thread-mode", text: this.replayMode ? "Redo" : "Test" });
+		strip.createSpan({ cls: "grill-thread-count", text: `${Math.min(this.idx + 1, this.targetCount)} of ${this.targetCount}` });
+		if (endable) {
+			const end = strip.createEl("button", { cls: "grill-thread-end", text: "End session" });
+			end.onclick = () => void this.endSessionEarly();
+		}
+		return true;
+	}
+
 	/** With the thread view on, the questions already answered this session, one line
 	 * each, above whatever is drawn next. */
 	private threadHistory(wrap: HTMLElement, done: QuestionResult[]): void {
@@ -3252,17 +3268,18 @@ export class SessionView extends ItemView {
 	private renderFeedback(r: QuestionResult, pendingExtension: PendingExtension | null = null): void {
 		if (this.plugin.data.settings.sounds) playSfx(r.verdict); // correct / partial / incorrect
 		const wrap = this.root();
+		const thread = this.threadStrip(wrap, !pendingExtension);
 		this.progressBar(wrap);
 		this.threadHistory(wrap, this.results.filter((x) => x !== r));
 		const card = wrap.createDiv({ cls: "grill-body" });
 		const meta = card.createDiv({ cls: "grill-meta-row" });
-		meta.createSpan({ cls: "grill-meta", text: `Question ${this.idx + 1} of ${this.targetCount}` });
+		meta.createSpan({ cls: "grill-meta", text: thread ? `${this.idx + 1}.` : `Question ${this.idx + 1} of ${this.targetCount}` });
 		const chip = meta.createSpan({ cls: "grill-chip grill-chip-link", text: r.node });
 		chip.onclick = () => this.openNote(r.node);
 		chip.setAttr("aria-label", "Open note");
 		// Not on the route-consent screen (the last question only): its own "No" already
 		// ends the session the same way.
-		if (!pendingExtension) this.renderEndSessionLink(card);
+		if (!pendingExtension && !thread) this.renderEndSessionLink(card);
 
 		const qEl = card.createDiv({ cls: "grill-question grill-question-small" });
 		this.md(r.question, qEl, r.node);
