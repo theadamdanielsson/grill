@@ -5560,20 +5560,7 @@ export class SessionView extends ItemView {
 	private async discardAnsweredQuestion(r: QuestionResult): Promise<void> {
 		const o = this.pendingOverride;
 		if (!o) return;
-		const cm = this.concepts[o.conceptId];
-		if (cm) restoreConcept(cm, o.conceptSnapshot);
-		const m = this.plugin.mastery[o.note];
-		if (m) {
-			if (o.originalVerdict === "correct") m.correct = Math.max(0, m.correct - 1);
-			else if (o.originalVerdict === "partial") m.partial = Math.max(0, m.partial - 1);
-			else m.incorrect = Math.max(0, m.incorrect - 1);
-			if (o.originalMisconceptionTag) {
-				const remaining = (m.misconceptions[o.originalMisconceptionTag] ?? 0) - 1;
-				if (remaining <= 0) delete m.misconceptions[o.originalMisconceptionTag];
-				else m.misconceptions[o.originalMisconceptionTag] = remaining;
-			}
-		}
-		this.recomputeAggregate(o.note);
+		this.undoGrade(o);
 		const entry = this.questionBank[o.conceptId]?.find((e) => e.question === r.question);
 		if (entry && !entry.rejected) {
 			entry.rejected = true;
@@ -5588,6 +5575,43 @@ export class SessionView extends ItemView {
 		new Notice("Grill: question deleted. Won't come back, and it doesn't count against you.");
 		await this.flush();
 		await this.goToQuestion(this.idx);
+	}
+
+	/** Take the last graded answer out of the record: the concept goes back to its
+	 * pre-answer snapshot and the note's counters and misconception tally lose the
+	 * verdict. What the two ways of withdrawing an answer have in common. */
+	private undoGrade(o: NonNullable<SessionView["pendingOverride"]>): void {
+		const cm = this.concepts[o.conceptId];
+		if (cm) restoreConcept(cm, o.conceptSnapshot);
+		const m = this.plugin.mastery[o.note];
+		if (m) {
+			if (o.originalVerdict === "correct") m.correct = Math.max(0, m.correct - 1);
+			else if (o.originalVerdict === "partial") m.partial = Math.max(0, m.partial - 1);
+			else m.incorrect = Math.max(0, m.incorrect - 1);
+			if (o.originalMisconceptionTag) {
+				const remaining = (m.misconceptions[o.originalMisconceptionTag] ?? 0) - 1;
+				if (remaining <= 0) delete m.misconceptions[o.originalMisconceptionTag];
+				else m.misconceptions[o.originalMisconceptionTag] = remaining;
+			}
+		}
+		this.recomputeAggregate(o.note);
+	}
+
+	/** "That wasn't my answer": what was sent was read as an answer and graded, but it
+	 * wasn't one. The grade leaves the record as if it had never been given and the
+	 * same question is asked again. Unlike `discardAnsweredQuestion` the question
+	 * stays, in the session and in the bank. Same single-use restriction as "Mark
+	 * correct": only right after the answer that produced it. */
+	private async takeBackAnswer(r: QuestionResult): Promise<void> {
+		const o = this.pendingOverride;
+		if (!o) return;
+		this.undoGrade(o);
+		const ri = this.results.lastIndexOf(r);
+		if (ri !== -1) this.results.splice(ri, 1);
+		this.pendingOverride = null;
+		this.dirty = true;
+		await this.flush();
+		this.renderQuestion();
 	}
 
 	/** Persist all session state at once (concepts, mastery, registry). Called at

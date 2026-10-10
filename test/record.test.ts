@@ -119,6 +119,27 @@ for (const withLog of [true, false]) {
 		}));
 }
 
+test("a message graded by mistake is taken back, and the question stays to be answered", () =>
+	frozen(async () => {
+		const { view, plugin } = makeView();
+		const q = start(view, plugin, false);
+		const before = structuredClone(view.concepts[ID]);
+		view.questionBank = { [ID]: [{ question: q.question }] };
+
+		await view.applyGrade(q, "incorrect", null, "mixes-up-x", 0);
+		const r = { question: q.question, verdict: "incorrect" };
+		view.results = [r];
+		await view.takeBackAnswer(r);
+
+		assert.deepEqual(view.concepts[ID], before);
+		assert.equal(plugin.mastery.N.incorrect, 0);
+		assert.deepEqual(plugin.mastery.N.misconceptions, {});
+		assert.equal(view.results.length, 0);
+		assert.equal(view.questions.length, 1);
+		assert.equal(view.questionBank[ID][0].rejected, undefined);
+		assert.equal(view.pendingOverride, null);
+	}));
+
 test("Mark correct ends where a correct answer would have", () =>
 	frozen(async () => {
 		const wrong = makeView();
