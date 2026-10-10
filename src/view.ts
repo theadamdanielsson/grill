@@ -78,7 +78,7 @@ import { stopSpeaking, toSpeechText, ttsAvailable } from "./tts";
 import { SessionEntry } from "./store";
 import { renderThreadHistory } from "./thread";
 import { renderChatHome, renderCreditsRing, type HomeMode, type HomeSuggestion } from "./home";
-import { learnContext, learnRecord, parseSessionNote, sessionTitle, type PastAnswer } from "./learn";
+import { learnContext, learnRecord, parseLearnNote, parseSessionNote, sessionTitle, type PastAnswer } from "./learn";
 import { safeDiagram, safeMarkdown } from "./safemd";
 
 /** Mermaid's drawing, made fit to be shown as an image: well-formed XML, with a size
@@ -324,6 +324,7 @@ const CATCH_UP = 15;
  * how many of those answers are sent. */
 const LEARN_SESSIONS_READ = 40;
 const LEARN_ANSWERS_SENT = 10;
+const LEARN_ASKED_SENT = 8;
 /** How many questions the background prefetch tries to keep buffered ahead of the one
  * on screen (see prefetchAhead). A single BATCH's worth (2) isn't enough runway: a
  * couple of quick MC/TF answers can outrun one model round-trip, so goToQuestion's own
@@ -1729,7 +1730,7 @@ export class SessionView extends ItemView {
 				suggestions.push({
 					label: `Explain what I missed: ${n}`,
 					count: String(count),
-					run: () => void this.startLearn(byName.get(n) as TFile, "I keep missing questions on this note. Explain it to me from the basics."),
+					run: () => void this.startLearn(byName.get(n) as TFile, "What have I been getting wrong on this note, and what do I need to understand to fix it?"),
 				});
 			}
 			if (openNote) {
@@ -1868,14 +1869,26 @@ export class SessionView extends ItemView {
 			.sort((a, b) => b.stat.ctime - a.stat.ctime)
 			.slice(0, LEARN_SESSIONS_READ);
 		const answers: PastAnswer[] = [];
+		// What was asked before, with when, so the two sources can be put in one order.
+		const asked: Array<{ at: number; text: string }> = [];
 		for (const f of sessions) {
 			if (answers.length >= LEARN_ANSWERS_SENT) break;
 			const when = this.app.metadataCache.getFileCache(f)?.frontmatter?.date;
 			for (const a of parseSessionNote(await this.app.vault.cachedRead(f))) {
-				if (a.note === noteName && answers.length < LEARN_ANSWERS_SENT) answers.push({ ...a, when: typeof when === "string" ? when : undefined });
+				if (a.note !== noteName) continue;
+				if (answers.length < LEARN_ANSWERS_SENT) answers.push({ ...a, when: typeof when === "string" ? when : undefined });
+				for (const q of a.asked ?? []) asked.push({ at: f.stat.ctime, text: q });
 			}
 		}
-		return learnRecord({ concepts, misconceptions, answers });
+		const learnDir = `${this.plugin.data.settings.folder}/Learn/`;
+		const learned = this.app.vault
+			.getMarkdownFiles()
+			.filter((f) => f.path.startsWith(learnDir) && this.app.metadataCache.getFileCache(f)?.frontmatter?.note === noteName)
+			.sort((a, b) => b.stat.ctime - a.stat.ctime)
+			.slice(0, 10);
+		for (const f of learned) for (const q of parseLearnNote(await this.app.vault.cachedRead(f))) asked.push({ at: f.stat.ctime, text: q });
+		asked.sort((a, b) => b.at - a.at);
+		return learnRecord({ concepts, misconceptions, answers, asked: asked.slice(0, LEARN_ASKED_SENT).map((q) => q.text) });
 	}
 
 	private renderLearn(): void {

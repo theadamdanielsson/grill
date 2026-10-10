@@ -131,7 +131,7 @@ test("a session is titled by the notes it covered", () => {
 	assert.equal(sessionTitle(["Redo"]), "");
 });
 
-import { learnRecord, parseSessionNote } from "../src/learn";
+import { learnRecord, parseLearnNote, parseSessionNote } from "../src/learn";
 
 const SESSION_NOTE = `---
 date: 2026-10-07
@@ -186,7 +186,7 @@ test("a session note reads back as the questions, answers and verdicts it was wr
 	assert.deepEqual(got, [
 		{ note: "Updated IS-relation", question: "When the interest rate increases, what happens next?", answer: "Output decreases, which lowers\ninvestment and consumption.", result: "correct", feedback: "Correct.", expected: "" },
 		{ note: "Updated IS-relation", question: "Describe how this leads to a larger fall in output.", answer: "", result: "skipped", feedback: "No penalty for honesty.", expected: "The multiplier effect." },
-		{ note: "GDP deflator", question: "What is the deflator in 2010?", answer: "2.0", result: "incorrect", feedback: "Not quite.", expected: "1.044" },
+		{ note: "GDP deflator", question: "What is the deflator in 2010?", answer: "2.0", result: "incorrect", feedback: "Not quite.", expected: "1.044", asked: ["why?"] },
 	]);
 });
 
@@ -213,4 +213,20 @@ test("the record for a note says how it has gone and what was answered", () => {
 
 test("a note that was never tested has no record", () => {
 	assert.equal(learnRecord({ concepts: [{ label: "x", correct: 0, partial: 0, incorrect: 0, lastMissed: false }], misconceptions: [], answers: [] }), "");
+});
+
+test("the record carries why an answer was marked down, and what was asked before", () => {
+	const text = learnRecord({
+		concepts: [],
+		misconceptions: [],
+		answers: parseSessionNote(SESSION_NOTE).filter((a) => a.note === "GDP deflator"),
+		asked: ["why is it an index?", "why?"],
+	});
+	assert.match(text, /Answered: 2\.0\n   Marked: incorrect\. Expected: 1\.044\n   Feedback given: Not quite\./);
+	assert.match(text, /What they have asked about this note before, newest first:\n- why is it an index\?\n- why\?/);
+});
+
+test("a saved Learn conversation reads back as the questions that were asked", () => {
+	const note = "---\ntype: learn\nnote: \"CPI\"\n---\n# Learn: [[CPI]]\n\n> [!question] You asked\n> what is\n> inflation?\n\n> [!note] Grill\n> A rise in prices.\n\n> [!question] You asked\n> and deflation?\n";
+	assert.deepEqual(parseLearnNote(note), ["what is inflation?", "and deflation?"]);
 });

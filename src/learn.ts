@@ -50,6 +50,8 @@ export interface PastAnswer {
 	result: "correct" | "partial" | "incorrect" | "skipped";
 	feedback: string;
 	expected: string;
+	/** What the student asked under this question afterwards, in order. */
+	asked?: string[];
 	/** The session's date, YYYY-MM-DD, when the caller knows it. */
 	when?: string;
 }
@@ -67,7 +69,7 @@ const RESULTS: Record<string, PastAnswer["result"]> = {
 export function parseSessionNote(text: string): PastAnswer[] {
 	const out: PastAnswer[] = [];
 	let cur: PastAnswer | null = null;
-	let part: "question" | "answer" | "after" = "question";
+	let part: "question" | "answer" | "asked" | "after" = "question";
 	for (const line of text.split(/\r?\n/)) {
 		const head = /^## (.+)$/.exec(line);
 		if (head) {
@@ -86,6 +88,11 @@ export function parseSessionNote(text: string): PastAnswer[] {
 			part = "answer";
 			continue;
 		}
+		if (line.startsWith("> [!question] You asked")) {
+			(cur.asked ??= []).push("");
+			part = "asked";
+			continue;
+		}
 		const verdict = /^\*\*(Correct|Partially correct|Incorrect|Skipped)\.\*\*\s*(.*)$/.exec(line);
 		if (verdict) {
 			cur.result = RESULTS[verdict[1]];
@@ -102,6 +109,10 @@ export function parseSessionNote(text: string): PastAnswer[] {
 		else if (part === "answer") {
 			if (line.startsWith(">")) cur.answer += (cur.answer ? "\n" : "") + line.replace(/^> ?/, "");
 			else if (line.trim()) part = "after";
+		} else if (part === "asked" && cur.asked) {
+			const at = cur.asked.length - 1;
+			if (line.startsWith(">")) cur.asked[at] += (cur.asked[at] ? " " : "") + line.replace(/^> ?/, "").trim();
+			else part = "after";
 		}
 	}
 	if (cur) out.push(cur);
@@ -113,14 +124,18 @@ export interface LearnRecordInput {
 	misconceptions: Array<{ label: string; count: number; status: string }>;
 	/** Newest first. */
 	answers: PastAnswer[];
+	/** What the student has asked about this note before, in Learn or under a question,
+	 * newest first. */
+	asked?: string[];
 }
 
 /** What Grill has on record about one note, in words a model can answer from: how each
  * concept has gone, the confusions the grader has named, and the most recent answers
  * as they were given. Empty when the note has never been tested. Cut to `cap`. */
-export function learnRecord(r: LearnRecordInput, cap = 4000): string {
+export function learnRecord(r: LearnRecordInput, cap = 6000): string {
 	const tested = r.concepts.filter((c) => c.correct + c.partial + c.incorrect > 0);
-	if (!tested.length && !r.answers.length && !r.misconceptions.length) return "";
+	const asked = (r.asked ?? []).filter(Boolean);
+	if (!tested.length && !r.answers.length && !r.misconceptions.length && !asked.length) return "";
 	const lines: string[] = [];
 	if (tested.length) {
 		const sum = (k: "correct" | "partial" | "incorrect"): number => tested.reduce((n, c) => n + c[k], 0);
@@ -140,7 +155,28 @@ export function learnRecord(r: LearnRecordInput, cap = 4000): string {
 			lines.push(`${i + 1}.${a.when ? ` [${a.when}]` : ""} Asked: ${a.question.replace(/\s+/g, " ")}`);
 			lines.push(`   ${said}`);
 			lines.push(`   Marked: ${a.result}.${a.result !== "correct" && a.expected ? ` Expected: ${a.expected.replace(/\s+/g, " ")}` : ""}`);
+			// Why it was marked down, in the grader's words, where there was an answer to mark.
+			if (a.answer && a.result !== "correct" && a.feedback) lines.push(`   Feedback given: ${a.feedback.replace(/\s+/g, " ")}`);
 		});
 	}
+	if (asked.length) {
+		lines.push("What they have asked about this note before, newest first:");
+		for (const q of asked) lines.push(`- ${q.replace(/\s+/g, " ")}`);
+	}
 	return safeSlice(lines.join("\n"), cap);
+}
+
+/** The questions asked in a saved Learn conversation: each "You asked" block, in order. */
+export function parseLearnNote(text: string): string[] {
+	const out: string[] = [];
+	let open = false;
+	for (const line of text.split(/\r?\n/)) {
+		if (line.startsWith("> [!question] You asked")) {
+			out.push("");
+			open = true;
+		} else if (open && line.startsWith(">")) {
+			out[out.length - 1] += (out[out.length - 1] ? " " : "") + line.replace(/^> ?/, "").trim();
+		} else open = false;
+	}
+	return out.filter(Boolean);
 }
