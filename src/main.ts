@@ -101,8 +101,8 @@ interface GrillSettings {
 	 * stays off; the same applies to `linkSessions` and `sessionDebrief` below. */
 	showProgress: boolean;
 	/** The session drawn as a thread: finished questions stay above the one in hand.
-	 * Off until the rest of the chat home is in place; switched by a command, not a
-	 * settings row. */
+	 * On. A command switches it, not a settings row, while the old screens remain to
+	 * compare against. */
 	threadView: boolean;
 	/** Wiki-link session transcripts to the quizzed notes. On; see `showProgress`. */
 	linkSessions: boolean;
@@ -311,7 +311,7 @@ function defaultSettings(): GrillSettings {
 		questionsPerSession: 5,
 		folder: "Grill",
 		showProgress: true,
-		threadView: false,
+		threadView: true,
 		linkSessions: true,
 		excludedFolders: [],
 		includedFolders: [],
