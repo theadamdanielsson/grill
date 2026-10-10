@@ -180,3 +180,49 @@ export function parseLearnNote(text: string): string[] {
 	}
 	return out.filter(Boolean);
 }
+
+const STOP = new Set(
+	"a an and are as at be but by can did do does for from had has have how i if in into is it its me my not of on or so than that the their them then there these they this to was we were what when where which who why will with would you your about tell explain more".split(" "),
+);
+
+/** The words of a question or a note that say what it is about. */
+export function contentTerms(text: string): string[] {
+	return (text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).filter((w) => w.length > 2 && !STOP.has(w));
+}
+
+/** The notes a question is most likely about, best first: plain term matching, no
+ * model. A term counts for more the fewer notes use it, and for more again when it is
+ * in a note's name. `prefer` (the open note) wins a near tie, so a question asked
+ * while reading something is taken to be about it unless another note fits clearly
+ * better. Notes that share no term with the question are left out. */
+export function rankNotes(question: string, notes: LearnNote[], k = 5, prefer = ""): LearnNote[] {
+	const terms = [...new Set(contentTerms(question))];
+	if (!terms.length || !notes.length) return [];
+	const bags = notes.map((n) => {
+		const words = contentTerms(stripFrontmatter(n.text));
+		const tf = new Map<string, number>();
+		for (const w of words) tf.set(w, (tf.get(w) ?? 0) + 1);
+		return { n, tf, len: words.length, name: new Set(contentTerms(n.name)) };
+	});
+	const avgLen = bags.reduce((sum, b) => sum + b.len, 0) / bags.length || 1;
+	const scored = bags.map((b) => {
+		let score = 0;
+		for (const t of terms) {
+			const df = bags.reduce((c, x) => c + (x.tf.has(t) || x.name.has(t) ? 1 : 0), 0);
+			if (!df) continue;
+			const idf = Math.log(1 + notes.length / df);
+			// A term's count levels off, and counts for less in a long note, so a long
+			// sheet that mentions everything doesn't outrank the note that is about it.
+			const tf = b.tf.get(t) ?? 0;
+			if (tf) score += (idf * tf * 2.2) / (tf + 1.2 * (0.25 + (0.75 * b.len) / avgLen));
+			if (b.name.has(t)) score += 3 * idf;
+		}
+		if (score > 0 && b.n.name === prefer) score *= 1.25;
+		return { n: b.n, score };
+	});
+	return scored
+		.filter((s) => s.score > 0)
+		.sort((a, b) => b.score - a.score)
+		.slice(0, k)
+		.map((s) => s.n);
+}

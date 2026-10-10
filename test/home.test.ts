@@ -230,3 +230,34 @@ test("a saved Learn conversation reads back as the questions that were asked", (
 	const note = "---\ntype: learn\nnote: \"CPI\"\n---\n# Learn: [[CPI]]\n\n> [!question] You asked\n> what is\n> inflation?\n\n> [!note] Grill\n> A rise in prices.\n\n> [!question] You asked\n> and deflation?\n";
 	assert.deepEqual(parseLearnNote(note), ["what is inflation?", "and deflation?"]);
 });
+
+import { rankNotes } from "../src/learn";
+
+const NOTES = [
+	{ name: "Consumer Price Index (CPI)", text: "The CPI measures the average price of consumption, the cost of living." },
+	{ name: "GDP deflator", text: "The GDP deflator measures the average price of output." },
+	{ name: "Inflation", text: "Inflation is a sustained rise in the price level. Economists care about inflation because it changes income distribution." },
+	{ name: "Multiplier", text: "The multiplier is the chain by which a fall in demand lowers output again and again." },
+	{ name: "Unemployment", text: "The unemployment rate is the unemployed over the labour force." },
+];
+const ranked = (q: string, prefer = ""): string[] => rankNotes(q, NOTES, 3, prefer).map((n) => n.name);
+
+test("a question asked of the vault finds the notes it is about, best first", () => {
+	assert.equal(ranked("why do economists care about inflation?")[0], "Inflation");
+	assert.equal(ranked("explain the multiplier")[0], "Multiplier");
+	assert.deepEqual(ranked("unemployment rate"), ["Unemployment"]);
+});
+
+test("a question that names nothing in the notes matches nothing", () => {
+	assert.deepEqual(ranked("explain this to me"), []);
+	assert.deepEqual(ranked("thermodynamics"), []);
+});
+
+test("the open note wins a near tie, and loses to a clearly better match", () => {
+	// "measures" is in two notes once and in neither name, so they come out close:
+	// whichever is second moves to first when it is the open note.
+	const close = ranked("what measures it");
+	assert.equal(close.length, 2);
+	assert.equal(ranked("what measures it", close[1])[0], close[1]);
+	assert.equal(ranked("explain the multiplier", "GDP deflator")[0], "Multiplier");
+});

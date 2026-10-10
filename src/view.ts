@@ -78,7 +78,7 @@ import { stopSpeaking, toSpeechText, ttsAvailable } from "./tts";
 import { SessionEntry } from "./store";
 import { renderThreadHistory } from "./thread";
 import { renderChatHome, renderCreditsRing, type HomeMode, type HomeSuggestion } from "./home";
-import { learnContext, learnRecord, parseLearnNote, parseSessionNote, sessionTitle, type PastAnswer } from "./learn";
+import { learnContext, learnRecord, parseLearnNote, parseSessionNote, rankNotes, sessionTitle, type PastAnswer } from "./learn";
 import { safeDiagram, safeMarkdown } from "./safemd";
 
 /** Mermaid's drawing, made fit to be shown as an image: well-formed XML, with a size
@@ -466,6 +466,9 @@ export class SessionView extends ItemView {
 	 * model is given to read, and what has been said. */
 	private learn: {
 		note: TFile;
+		/** The other notes the answer may draw on, when the question was asked of the
+		 * whole vault: shown as where it comes from, and tested with the note. */
+		also: TFile[];
 		noteText: string;
 		linkedText: string;
 		/** What Grill has on record about this note: see `learnRecord`. */
@@ -1826,6 +1829,7 @@ export class SessionView extends ItemView {
 				};
 			}),
 			openNote: openNote?.basename ?? null,
+			under: learning ? "Answers from the notes that match your question" : undefined,
 			placeholder: learning ? "Ask anything about your notes" : "Say what to test, or just press Get grilled",
 			sendLabel: learning ? "Ask" : "Get grilled",
 			// The room between what was done and what to do next: when it was done.
@@ -1836,13 +1840,7 @@ export class SessionView extends ItemView {
 						new Notice("Grill: type what you want to ask.", 5000);
 						return;
 					}
-					// About the note it names, if it names one; otherwise the one that is open.
-					const about = matchScope(text, eligible)?.files[0] ?? openNote;
-					if (!about) {
-						new Notice("Grill: open the note you want to ask about, or name it.", 8000);
-						return;
-					}
-					void this.startLearn(about, text);
+					void this.askVault(text, eligible, openNote);
 					return;
 				}
 				if (!text) return begin(null, false);
@@ -1860,7 +1858,7 @@ export class SessionView extends ItemView {
 
 	/** Learn: a conversation about one note, with nothing graded. The note and the
 	 * notes it links to are read once, here, and sent with every message. */
-	private async startLearn(note: TFile, firstAsk?: string): Promise<void> {
+	private async startLearn(note: TFile, firstAsk?: string, also: TFile[] = []): Promise<void> {
 		const cfg = this.plugin.llmConfig();
 		if (!cfg) {
 			new Notice("Grill: Learn needs a model. Choose Grill Cloud or add a key in settings.", 8000);
@@ -1871,10 +1869,15 @@ export class SessionView extends ItemView {
 		const eligible = new Map(this.allEligible().map((f) => [f.path, f] as const));
 		const links = Object.keys(this.app.metadataCache.resolvedLinks[note.path] ?? {}).flatMap((path) => (eligible.has(path) ? [eligible.get(path) as TFile] : []));
 		const read = async (f: TFile): Promise<{ name: string; text: string }> => ({ name: f.basename, text: await this.app.vault.cachedRead(f) });
-		const ctx = learnContext(await read(note), await Promise.all(links.slice(0, 8).map(read)));
+		// Asked of the whole vault: the notes that matched come first and get more room
+		// each than a linked note does, then whatever the main note links to.
+		const others = [...also, ...links.filter((f) => !also.includes(f))].filter((f) => f !== note);
+		const ctx = also.length
+			? learnContext(await read(note), await Promise.all(others.slice(0, 6).map(read)), { note: 9000, linked: 3500, maxLinked: 6 })
+			: learnContext(await read(note), await Promise.all(links.slice(0, 8).map(read)));
 		const record = await this.recordFor(note.basename);
 		const testable = await this.enoughToTest(note);
-		this.learn = { note, ...ctx, record, testable, turns: [], startedAt: new Date(), persona: instr.persona, instructions: instr.preferences };
+		this.learn = { note, also, ...ctx, record, testable, turns: [], startedAt: new Date(), persona: instr.persona, instructions: instr.preferences };
 		this.renderLearn();
 		if (firstAsk) await this.askLearn(firstAsk);
 	}
@@ -1926,6 +1929,22 @@ export class SessionView extends ItemView {
 		return learnRecord({ concepts, misconceptions, answers, asked: asked.slice(0, LEARN_ASKED_SENT).map((q) => q.text) });
 	}
 
+	/** A question typed on the home screen, asked of the whole vault: the notes it is
+	 * most about are found by their words (see `rankNotes`), the best one leads and the
+	 * next few go with it. A question that matches nothing ("explain this") is taken to
+	 * be about the open note. */
+	private async askVault(text: string, eligible: TFile[], openNote: TFile | null): Promise<void> {
+		const texts = await Promise.all(eligible.map(async (f) => ({ name: f.basename, text: await this.app.vault.cachedRead(f) })));
+		const byName = new Map(eligible.map((f) => [f.basename, f] as const));
+		const found = rankNotes(text, texts, 5, openNote?.basename ?? "").flatMap((n) => (byName.has(n.name) ? [byName.get(n.name) as TFile] : []));
+		const main = found[0] ?? openNote;
+		if (!main) {
+			new Notice("Grill: nothing in your notes matches that. Open the note you mean, or use its words.", 8000);
+			return;
+		}
+		await this.startLearn(main, text, found.slice(1));
+	}
+
 	private renderLearn(): void {
 		const L = this.learn;
 		if (!L) return this.renderStart();
@@ -1936,6 +1955,16 @@ export class SessionView extends ItemView {
 		name.onclick = () => this.openNote(L.note.basename);
 		const end = strip.createEl("button", { cls: "grill-thread-end", text: "End" });
 		end.onclick = () => void this.endLearn(false);
+		if (L.also.length) {
+			// Where the answers come from, each a way into that note.
+			const from = wrap.createDiv({ cls: "grill-learn-from grill-meta" });
+			from.createSpan({ text: "Also reading: " });
+			L.also.forEach((f, i) => {
+				if (i) from.createSpan({ text: ", " });
+				const link = from.createSpan({ cls: "grill-chip-link", text: f.basename });
+				link.onclick = () => this.openNote(f.basename);
+			});
+		}
 
 		const card = wrap.createDiv({ cls: "grill-body grill-learn" });
 		const turns = card.createDiv({ cls: "grill-thread-turns grill-learn-turns" });
@@ -2032,7 +2061,7 @@ export class SessionView extends ItemView {
 			});
 		}
 		if (!test) return this.renderStart();
-		this.sessionScope = [L.note];
+		this.sessionScope = [L.note, ...L.also];
 		this.dueOnly = false;
 		this.conceptFilter = null;
 		await this.startSession();

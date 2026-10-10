@@ -40,6 +40,8 @@ export interface HomeData {
 	recent: HomeRecent[];
 	/** The note open beside the pane, when it can be studied. */
 	openNote: string | null;
+	/** Said under the box in place of the open note, when the box isn't about it. */
+	under?: string;
 	/** Draws into the room left between the recent list and the suggestions. */
 	fill?(host: HTMLElement): void;
 	placeholder: string;
@@ -130,7 +132,7 @@ export function renderChatHome(screen: HTMLElement, d: HomeData): void {
 		attr: { rows: "2", placeholder: d.placeholder, "aria-label": d.mode === "learn" ? "What to ask about" : "What to be tested on" },
 	});
 	const bar = box.createDiv({ cls: "grill-home-bar" });
-	bar.createSpan({ cls: "grill-meta grill-home-open", text: d.openNote ? `Open note: ${d.openNote}` : "" });
+	bar.createSpan({ cls: "grill-meta grill-home-open", text: d.under ?? (d.openNote ? `Open note: ${d.openNote}` : "") });
 	const send = bar.createEl("button", { text: d.sendLabel, cls: "mod-cta grill-primary-cta grill-home-send", attr: { type: "button" } });
 	const go = (): void => {
 		if (send.disabled) return;
