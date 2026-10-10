@@ -1,5 +1,13 @@
 # Changelog
 
+## 7.1.2
+
+- **Out of credits, with the packs right there.** When Grill Cloud credits run out, a
+  pop-up now offers the packs where you are. Before, a notice pointed to settings and
+  was gone in seconds.
+- **It waits for the payment.** Pick a pack and it stays up while checkout is open, then
+  closes when the credits arrive.
+
 ## 7.1.1
 
 - **A theme to match.** [Grill, the theme](https://github.com/theadamdanielsson/grill-theme)
