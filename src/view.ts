@@ -3266,7 +3266,7 @@ export class SessionView extends ItemView {
 			}
 		}
 		const stuck = row.createDiv({ cls: "grill-answer-stuck" });
-		if (hints.length) {
+		if (hints.length && this.plugin.data.settings.testHints) {
 			const hintLabel = (): string => (hintsUsed === 0 ? "Hint" : hintsUsed >= hints.length ? "No more hints" : `Hint ${hintsUsed + 1} of ${hints.length}`);
 			const hintBtn = stuck.createEl("button", { text: hintLabel(), cls: "grill-hint-btn" });
 			hintBtn.onclick = () => {

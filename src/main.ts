@@ -160,6 +160,9 @@ interface GrillSettings {
 	/** Play short synthesized sound cues on each answer + at session end, with a
 	 * confetti burst on a perfect session. On by default. */
 	sounds: boolean;
+	/** Offer the hints written with each question while it is being answered. Off: a
+	 * test is a test, and help is asked for in words, which is recorded as help. */
+	testHints: boolean;
 	/** Read-aloud voice language: "" auto-detects per question from its text, an
 	 * explicit code (e.g. "it") always uses that language regardless of the question. */
 	ttsLanguage: string;
@@ -331,6 +334,7 @@ function defaultSettings(): GrillSettings {
 		questionFormats: "mixed",
 		sessionDebrief: true,
 		sounds: true,
+		testHints: false,
 		ttsLanguage: "",
 		ttsVoiceURI: "",
 		naturalVoice: true,
@@ -426,6 +430,7 @@ export default class GrillPlugin extends Plugin {
 		if (s.questionFormats === "write" || s.questionFormats === "mixed" || s.questionFormats === "mc") settings.questionFormats = s.questionFormats;
 		if (typeof s.sessionDebrief === "boolean") settings.sessionDebrief = s.sessionDebrief;
 		if (typeof s.sounds === "boolean") settings.sounds = s.sounds;
+		if (typeof s.testHints === "boolean") settings.testHints = s.testHints;
 		if (typeof s.ttsLanguage === "string") settings.ttsLanguage = s.ttsLanguage;
 		if (typeof s.ttsVoiceURI === "string") settings.ttsVoiceURI = s.ttsVoiceURI;
 		if (s.naturalVoice === false) settings.naturalVoice = false;
@@ -3213,6 +3218,18 @@ export class GrillSettingTab extends PluginSettingTab {
 								s.questionFormats = v === "write" ? "write" : v === "mc" ? "mc" : "mixed";
 								await this.plugin.persist();
 							}),
+					),
+			},
+			{
+				name: "Hints in tests",
+				desc: "Offer a hint while you answer. Using one lowers what a correct answer counts for.",
+				aliases: ["hint", "help", "clue"],
+				build: (setting) =>
+					setting.addToggle((t) =>
+						t.setValue(s.testHints).onChange(async (v) => {
+							s.testHints = v;
+							await this.plugin.persist();
+						}),
 					),
 			},
 			{
