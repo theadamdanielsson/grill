@@ -32,6 +32,8 @@ export interface HomeData {
 	recent: HomeRecent[];
 	/** The note open beside the pane, when it can be studied. */
 	openNote: string | null;
+	/** Draws into the room left between the recent list and the suggestions. */
+	fill?(host: HTMLElement): void;
 	/** What was typed, trimmed; empty when Send was pressed on an empty box. */
 	send(text: string): void;
 	showProgress(): void;
@@ -82,7 +84,8 @@ export function renderChatHome(screen: HTMLElement, d: HomeData): void {
 
 	// Whatever height is left goes here, so the suggestions and the box sit at the foot
 	// of the pane.
-	screen.createDiv({ cls: "grill-home-space" });
+	const space = screen.createDiv({ cls: "grill-home-space" });
+	d.fill?.(space);
 
 	if (d.suggestions.length) {
 		const list = screen.createDiv({ cls: "grill-home-suggestions" });

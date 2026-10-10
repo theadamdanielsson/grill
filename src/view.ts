@@ -1729,6 +1729,8 @@ export class SessionView extends ItemView {
 				return { title: f.basename, meta: score ? String(score) : "", open: () => void this.app.workspace.getLeaf(false).openFile(f) };
 			}),
 			openNote: openNote?.basename ?? null,
+			// The room between what was done and what to do next: when it was done.
+			fill: (host) => this.renderHeatmap(host),
 			send: (text) => {
 				if (!text) return begin(null, false);
 				const found = matchScope(text, eligible);
@@ -1775,6 +1777,8 @@ export class SessionView extends ItemView {
 		this.cloudRedraw = () => {
 			if (host.isConnected) fill();
 		};
+		// Sessions spend credits, so look again each time this is drawn.
+		void this.plugin.refreshCloud().then(() => host.isConnected && fill());
 	}
 
 	private recentSessions(): TFile[] {
@@ -3063,15 +3067,21 @@ export class SessionView extends ItemView {
 		const isMatch = q.type === "match" && !!q.pairs && q.pairs.length >= 2;
 		const blankInputs: HTMLInputElement[] = [];
 		if (isBlank) {
-			// Plain text, not markdown: each blank splits the surrounding text around a
-			// live input, which markdown rendering can't be interleaved with reliably.
+			// Each blank splits the text around a live input. A stretch with a formula or
+			// other markup in it is rendered, kept inline (see .grill-blank-text); a plain
+			// stretch stays plain text, which keeps its spacing against the input exactly.
+			const stretch = (text: string): void => {
+				if (!text) return;
+				if (/[$*`\[]/.test(text)) this.md(text, qEl.createSpan({ cls: "grill-blank-text" }), q.node);
+				else qEl.createSpan({ text });
+			};
 			let cursor = 0;
 			for (const m of blankMatches) {
-				qEl.createSpan({ text: q.question.slice(cursor, m.index) });
+				stretch(q.question.slice(cursor, m.index));
 				blankInputs.push(qEl.createEl("input", { cls: "grill-blank-input", attr: { type: "text" } }));
 				cursor = (m.index ?? 0) + m[0].length;
 			}
-			qEl.createSpan({ text: q.question.slice(cursor) });
+			stretch(q.question.slice(cursor));
 		} else {
 			this.md(q.question, qEl, q.node);
 		}
@@ -3397,7 +3407,7 @@ export class SessionView extends ItemView {
 	private threadStrip(wrap: HTMLElement, endable = true): boolean {
 		if (!this.plugin.data.settings.threadView) return false;
 		const strip = wrap.createDiv({ cls: "grill-thread-strip" });
-		strip.createSpan({ cls: "grill-thread-mode", text: this.replayMode ? "Redo" : "Test" });
+		strip.createSpan({ cls: "grill-thread-kind", text: this.replayMode ? "Redo" : "Test" });
 		strip.createSpan({ cls: "grill-thread-count", text: `${Math.min(this.idx + 1, this.targetCount)} of ${this.targetCount}` });
 		if (endable) {
 			const end = strip.createEl("button", { cls: "grill-thread-end", text: "End session" });

@@ -2862,10 +2862,10 @@ textarea.grill-mgmt-field {
   --interactive-accent: var(--grill-accent, #ff8c2b);
   --interactive-accent-hover: var(--grill-flame, #ff7a22);
 }
+/* What is in the frame takes the pane's width, as the home screen does. The reading
+   width the plain session screens keep made a narrow column in a wide pane. */
 .grill-wrap.grill-thread-frame > * {
-  max-width: 40em;
-  margin-left: auto;
-  margin-right: auto;
+  max-width: none;
 }
 
 /* The thread view's layout: a strip saying what is running, the finished questions,
@@ -2883,7 +2883,7 @@ textarea.grill-mgmt-field {
   align-items: center;
   gap: 0.9em;
 }
-.grill-thread-mode {
+.grill-thread-kind {
   font-family: "Grill Pixel", var(--font-monospace);
   font-size: 0.62em;
   letter-spacing: 0.06em;
@@ -3119,4 +3119,52 @@ textarea.grill-mgmt-field {
 .grill-view button.grill-home-link:hover {
   color: var(--grill-ink-gold, #ffd23f);
   text-decoration: underline;
+}
+
+/* Obsidian's status bar sits over the foot of the pane: keep what is there clear of it. */
+.grill-wrap.grill-thread-frame {
+  padding-bottom: 2.8em;
+}
+.grill-arcade-screen.grill-home {
+  padding-bottom: 2.8em;
+}
+/* The review heatmap in the room between the recent list and the suggestions: it takes
+ * the height that is left, up to a size where the days still read as days. */
+.grill-home-space {
+  display: flex;
+  flex-direction: column;
+  max-height: 24em;
+}
+.grill-home-space > .grill-card {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.grill-home-space .grill-heatmap-wrap {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 7em;
+}
+.grill-home-space .grill-heatmap {
+  flex: 1 1 auto;
+  grid-template-rows: repeat(7, minmax(0, 1fr));
+}
+.grill-home-space .grill-heatmap .grill-hm-cell {
+  aspect-ratio: auto;
+  height: auto;
+  min-height: 7px;
+}
+.grill-home-suggestions {
+  margin-top: 1.1em;
+}
+/* A rendered stretch of a fill-in-the-blank question stays in the line with its blanks. */
+.grill-blank-text p {
+  display: inline;
+  margin: 0;
+}
+.grill-blank-text + .grill-blank-input,
+.grill-blank-input + .grill-blank-text {
+  margin-left: 0.3em;
 }
