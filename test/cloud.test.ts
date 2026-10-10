@@ -765,7 +765,7 @@ test("the onboarding panel and the home screen ask for the balance without ever 
 	await settle();
 	assert.equal(plugin.cloudState, "ok");
 	assert.equal(seen.length, 1, "asked once, then drawn from what it heard");
-	view.cloudCounter(fakeEl());
+	view.creditsRing(fakeEl());
 	await settle();
 	assert.equal(seen.length, 2);
 	assert.ok(seen.every((r) => r.method === "GET" && r.path === "/balance"));
@@ -781,7 +781,7 @@ test("the onboarding panel and the home screen ask for the balance without ever 
 	plugin.data.settings.apiKeys.grillcloud = "junk";
 	plugin.cloudState = "unknown";
 	view.renderOnboarding(1);
-	view.cloudCounter(fakeEl());
+	view.creditsRing(fakeEl());
 	await settle();
 	assert.equal(seen.length, 2);
 
@@ -789,7 +789,6 @@ test("the onboarding panel and the home screen ask for the balance without ever 
 	plugin.data.settings.apiKeys.grillcloud = "";
 	view.renderOnboarding(1);
 	view.renderCloudPanel(fakeEl());
-	view.whatsNew(fakeEl());
 	await settle();
 	assert.equal(seen.length, 2);
 

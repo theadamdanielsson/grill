@@ -3346,3 +3346,10 @@ textarea.grill-mgmt-field {
 .grill-misc-actions {
   gap: 0.9em;
 }
+
+/* On the progress screen the heatmap's days keep a fixed height: square days grow with
+ * the pane's width, and in a wide pane twelve weeks took most of the screen. */
+.grill-dashboard-screen .grill-heatmap .grill-hm-cell {
+  aspect-ratio: auto;
+  height: 1.15em;
+}

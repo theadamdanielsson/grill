@@ -40,7 +40,7 @@ import {
 	trueRetentionLine,
 } from "./concepts";
 import { collectNoteImages, ImageInput, hasEmbeddedImage } from "./images";
-import { extractPdfTextCached, hasEmbeddedPdf, noteStudyText } from "./pdf";
+import { extractPdfTextCached, noteStudyText } from "./pdf";
 import { hashStr, mapWithConcurrency, safeSlice } from "./text";
 import {
 	buildDueDateHistogram,
@@ -73,7 +73,7 @@ import {
 	SessionDebrief,
 	topMisconceptions,
 } from "./debrief";
-import { dueFiles, filesForScope, listFolders, listTags, matchScope, Scope, untestedFiles } from "./scope";
+import { dueFiles, listFolders, matchScope, untestedFiles } from "./scope";
 import { CONFIDENCE_LEVELS, calibrationLine, pushCalibration } from "./calibration";
 import { celebrate, playSfx } from "./sfx";
 import { stopSpeaking, toSpeechText, ttsAvailable } from "./tts";
@@ -1270,7 +1270,7 @@ export class SessionView extends ItemView {
 		el.toggleClass("grill-arcade-mode", arcade);
 		// With the thread view on, the session screens sit in the cabinet's frame too:
 		// the still one, without the glow or the scanlines (see .grill-thread-frame).
-		const framed = !arcade && !!this.plugin.data.settings.threadView;
+		const framed = !arcade;
 		el.toggleClass("grill-thread-mode", framed);
 		const wrap = el.createDiv({ cls: "grill-wrap" });
 		wrap.toggleClass("grill-compact", this.narrow);
@@ -1311,39 +1311,6 @@ export class SessionView extends ItemView {
 		return this.app.vault.getMarkdownFiles().filter((f) => !this.plugin.isExcluded(f.path));
 	}
 
-	/** On Grill Cloud, the home screen has a credit counter in the corner of the
-	 * cabinet, like the credits on an arcade machine. It turns ember when the balance
-	 * may not cover another session, and opens settings, which is where credits are
-	 * added: nothing is ever sold on the screens where studying happens. Nothing is
-	 * shown, or asked of the server, on any other provider. */
-	private cloudCounter(screen: HTMLElement): void {
-		const s = this.plugin.data.settings;
-		if (!cloudEnabled() || s.provider !== "grillcloud" || !s.apiKeys.grillcloud) return;
-		if (s.questionSource !== "ai" && s.gradingMode !== "ai") return;
-		// Inside the GRILL mark's own line, so the two sit on one baseline at any size.
-		const counter = (screen.querySelector<HTMLElement>(".grill-arcade-mark") ?? screen).createEl("a", { cls: "grill-cloud-counter" });
-		counter.onclick = () => this.plugin.openSettings();
-		const fill = (): void => {
-			counter.empty();
-			const credits = this.plugin.cloudCredits;
-			const state = this.plugin.cloudState;
-			if (state !== "ok" && state !== "none") return;
-			if (state === "ok" && credits === null) return;
-			const low = state === "none" || (credits ?? 0) < lowBalance(s.cloudUsage);
-			counter.toggleClass("is-low", low);
-			counter.setAttr("aria-label", low ? "Grill Cloud credits are low. Open settings to add more." : "Grill Cloud credits. Open settings.");
-			counter.createSpan({ cls: "grill-cloud-counter-label", text: "Credits" });
-			counter.createSpan({ cls: "grill-cloud-counter-number", text: (credits ?? 0).toLocaleString("en-US") });
-		};
-		fill();
-		// A purchase landing while this screen is up changes the number in place.
-		this.cloudRedraw = () => {
-			if (counter.isConnected) fill();
-		};
-		// Sessions spend credits, so look again each time this is drawn.
-		void this.plugin.refreshCloud().then(() => counter.isConnected && fill());
-	}
-
 	/** Under a session's summary: what it used and what's left. A receipt. */
 	private cloudReceipt(parent: HTMLElement, used: number): void {
 		const s = this.plugin.data.settings;
@@ -1355,61 +1322,6 @@ export class SessionView extends ItemView {
 		line.createSpan({ text: " " });
 		const more = line.createEl("a", { text: "Add more in settings" });
 		more.onclick = () => this.plugin.openSettings();
-	}
-
-	/** Shown once on the home screen to everyone who had Grill before 7.0: what is new,
-	 * in three lines. Someone with no way to AI questions set up (no key, no Ollama) is
-	 * offered Grill Cloud right there, with what it sends said before anything is; for
-	 * everyone else it is just the news. Either way one press puts it away for good.
-	 * New installs never see it: setup has just told them all of this. */
-	private whatsNew(parent: HTMLElement): void {
-		const s = this.plugin.data.settings;
-		if (!cloudEnabled() || s.dismissedOffers.includes(NEW_IN_7)) return;
-		const box = parent.createDiv({ cls: "grill-cloud-offer grill-whats-new" });
-		box.createDiv({ cls: "grill-cloud-offer-title", text: "New in Grill 7.0" });
-		const news = box.createDiv({ cls: "grill-cloud-facts" });
-		const item = (lead: string, rest: string): void => {
-			const el = news.createDiv({ cls: "grill-cloud-fact" });
-			el.createEl("strong", { text: lead });
-			el.appendText(` ${rest}`);
-		};
-		const done = async (): Promise<void> => {
-			s.dismissedOffers = [...new Set([...s.dismissedOffers, NEW_IN_7])];
-			await this.plugin.persist();
-		};
-		const none = !s.apiKeys.grillcloud && this.plugin.llmConfig() === null;
-		item("Grill Cloud.", none ? "AI questions and grading with no API key. Start free below." : "AI questions and grading with no API key. It's in settings if you ever want it.");
-		item("Explain this, then keep asking.", "One button explains an answer, and you can ask follow-ups underneath.");
-		item("A natural voice.", "Press the speaker on a question or an explanation to hear it read.");
-		if (none) {
-			// No key and no Ollama: the headline of 7.0 is for exactly this person.
-			const go = this.renderCloudPanel(box.createDiv());
-			go.onclick = async () => {
-				go.disabled = true;
-				go.setText("Setting up...");
-				let message = "Something went wrong. Try again.";
-				try {
-					message = await this.plugin.startCloud();
-				} catch (e) {
-					console.error("Grill: couldn't start Grill Cloud", e);
-				}
-				new Notice(`Grill: ${message}`, 8000);
-				// Not reached: leave it up to try again.
-				if (this.plugin.cloudState !== "ok" && this.plugin.cloudState !== "none") {
-					go.disabled = false;
-					go.setText("Start free");
-					return;
-				}
-				await done();
-				this.plugin.refreshStatusBar();
-				this.renderStart();
-			};
-		}
-		const close = box.createEl("a", { cls: "grill-chip-link", text: none ? "Not now" : "Got it" });
-		close.onclick = async () => {
-			await done();
-			box.remove();
-		};
 	}
 
 	private renderStart(): void {
@@ -1445,290 +1357,7 @@ export class SessionView extends ItemView {
 		};
 		showCounts(eligible);
 
-		if (this.plugin.data.settings.threadView) {
-			this.chatHome(screen, eligible, statsEl);
-			return;
-		}
-
-		// Highest-intent action first: one tap straight into the due queue. Mobile
-		// has no status bar, so this is the due signal there too.
-		// `due` (notes) seeds which notes' concepts get extracted for the session;
-		// the button's own count is concept-level, matching what that session
-		// actually queues (see GrillPlugin.dueCount's doc comment) rather than the
-		// smaller number of notes that merely CONTAIN a due concept.
-		const due = dueFiles(eligible, this.plugin.concepts);
-		const dueNames = new Set(due.map((f) => f.basename));
-		const dueNow = dueConceptCount(this.plugin.concepts, (note) => dueNames.has(note));
-		// The due-CTA row (and the manage-questions pencil riding alongside it) only makes
-		// sense once there's actually history to act on — a brand new vault with nothing
-		// ever reviewed has no due queue AND an empty question bank, so there's nothing
-		// for either button to do yet. Once something HAS been reviewed, though, the row
-		// stays up even at zero due (relabeled "No reviews for now") rather than vanishing
-		// and reappearing — the pencil's target (the question bank) doesn't go away just
-		// because you're caught up today.
-		const everReviewed = Object.values(this.plugin.concepts).some((cm) => conceptTested(cm));
-		if (everReviewed) {
-			// The pencil is a full separate button (not clipped into the due-CTA's edge —
-			// that made it read as a bare icon and cut its own hover highlight off against
-			// the due-CTA's rounded corner). Two CSS-only attempts at matching its height to
-			// the due-CTA's own (shared font-size/padding math, then an absolute-positioned
-			// overlay) each made things worse — an icon-only button just doesn't produce the
-			// same line-box height as a text button from the same font-size/padding. Once
-			// both buttons actually exist in the DOM below, the due-CTA's real rendered
-			// height is read directly and applied to the pencil — an exact match with
-			// nothing left to approximate.
-			const ctaRow = screen.createDiv({ cls: "grill-cta-row" });
-			const cta = ctaRow.createEl("button", {
-				text: dueNow ? `Review ${dueNow} due now` : "No reviews for now",
-				cls: "mod-cta grill-due-cta",
-			});
-			if (dueNow) {
-				cta.onclick = () => {
-					this.sessionScope = due;
-					this.dueOnly = true;
-					void this.startSession();
-				};
-			} else {
-				cta.disabled = true;
-			}
-			const manageBtn = ctaRow.createEl("button", { cls: "grill-manage-btn", attr: { "aria-label": "Manage questions" } });
-			setIcon(manageBtn, "pencil");
-			manageBtn.onclick = () => void this.renderManageQuestions();
-			manageBtn.style.height = `${cta.offsetHeight}px`;
-		}
-
-		// The primary action, right after the due-CTA and nothing else — no scope picker
-		// between them, and its own onclick never reads any scope state: "Get grilled"
-		// always means the full engine-picked mix, unconditionally, whatever's ticked or
-		// clicked anywhere else on this screen. Scoping used to sit here, between the two
-		// main buttons, and used to relabel this exact button ("Grill N selected") based
-		// on ambient state a stray click elsewhere could set — which visually reads as
-		// "part of the flow" regardless of being collapsed by default: the very fact
-		// something sits next to the primary CTA implies it belongs there (progressive
-		// disclosure's own framing — see NN/G). Established SRS prior art agrees: Anki's
-		// deck screen is Study Now alone, with Custom Study a distinct, clearly secondary
-		// button below it that builds a whole separate temporary deck rather than
-		// modifying the main flow; obsidian-spaced-repetition doesn't even surface
-		// scoping in its main review command, only as an entirely separate one. Custom
-		// study now lives below this button as its own bounded section with its own
-		// commit action, same reasoning: the default, no-scope path (the engine picking
-		// due + fresh material itself) is what most sessions should be, and it shouldn't
-		// be readable-past or accidentally tickable into misfiring.
-		this.cloudRedraw = null;
-		this.whatsNew(screen);
-		this.cloudCounter(screen);
-		const grillBtn = screen.createEl("button", { text: "Get grilled", cls: "mod-cta grill-start-btn grill-primary-cta" });
-		grillBtn.onclick = () => {
-			this.sessionScope = null;
-			this.dueOnly = false;
-			void this.startSession();
-		};
-
-		// Custom study: tick any combination of folders, tags, the current note, or
-		// "Untested", to draw a session from exactly that instead of the engine's own
-		// mix. Ticked scopes combine by union. A bounded card with its own header, its
-		// own preview line, and its own commit button — deliberately NOT a relabeling of
-		// "Get grilled" above: the selection lives in a closure-local variable, not
-		// instance state, so nothing outside this card can read or set it, and nothing
-		// happens until "Study N selected" is actually clicked. Collapsed by default —
-		// the map below is the main focus, not this picker.
-		const active = this.app.workspace.getActiveFile();
-		const activeEligible = !!active && active.extension === "md" && !this.plugin.isExcluded(active.path);
-		const folders = listFolders(eligible);
-		const tags = listTags(this.app);
-		const untested = untestedFiles(eligible, this.plugin.concepts);
-		const hasScopeOptions = activeEligible || untested.length > 0 || folders.length > 0 || tags.length > 0;
-
-		if (hasScopeOptions) {
-			const customStudyCard = screen.createDiv({ cls: "grill-card grill-custom-study" });
-			const scopeHeader = customStudyCard.createDiv({ cls: "grill-scope-header grill-scope-toggle" });
-			scopeHeader.createSpan({ cls: "grill-section-label", text: "Custom study" });
-			// A dropdown-style caret, not a collapse arrow: signals "this opens a list of
-			// options" the way a native <select> would, right next to the label it opens.
-			scopeHeader.createSpan({ cls: "grill-scope-caret", text: "▾" });
-			const scopeSummary = scopeHeader.createSpan({ cls: "grill-meta grill-scope-summary", text: "Whole vault" });
-
-			const scopeBox = customStudyCard.createDiv({ cls: "grill-onboard-folders grill-scope-collapsed" });
-			// Siblings of scopeBox, not children of it: scopeBox clips to a fixed peek
-			// height while collapsed (see .grill-scope-collapsed), so a commit button
-			// living inside it could end up invisible right after ticking a box in the
-			// collapsed peek. Living just below it, they're always reachable.
-			const scopePreview = customStudyCard.createDiv({ cls: "grill-meta grill-scope-preview" });
-			const commitBtn = customStudyCard.createEl("button", { text: "Study selected", cls: "grill-secondary-btn grill-scope-commit" });
-			commitBtn.addClass("grill-hidden");
-
-			let scopedFiles: TFile[] | null = null;
-			const previewScope = (files: TFile[] | null, summary: string): void => {
-				scopedFiles = files;
-				scopeSummary.setText(summary);
-				this.mapRebuild?.(files ? new Set(files.map((f) => f.basename)) : null);
-				if (files) {
-					showCounts(files);
-					const counts = { untested: 0, struggling: 0, known: 0 };
-					for (const f of files) counts[statusOf(map[f.basename])]++;
-					scopePreview.setText(
-						`${files.length} note${files.length === 1 ? "" : "s"} — ${counts.known} known, ${counts.struggling} learning, ${counts.untested} untested`,
-					);
-					commitBtn.setText(`Study ${files.length} selected`);
-					commitBtn.removeClass("grill-hidden");
-				} else {
-					showCounts(eligible);
-					scopePreview.setText("");
-					commitBtn.addClass("grill-hidden");
-				}
-			};
-			commitBtn.onclick = () => {
-				if (scopedFiles?.length) void this.startScopedSession(scopedFiles, false);
-			};
-			const checked: Scope[] = [];
-			// Notes among `untested` confirmed to have nothing Grill can quiz at all (no
-			// extractable text structure, and — unless occlusion is on — no image either).
-			// Starts empty (so the checkbox's initial count matches `untested.length`
-			// exactly) and fills in once the async check below resolves; `recompute`
-			// reads it by closure, so a scope resolved after that point already excludes
-			// them, no separate wiring needed.
-			let untestableBasenames = new Set<string>();
-			const recompute = (): void => {
-				if (!checked.length) {
-					previewScope(null, "Whole vault");
-					return;
-				}
-				const byPath = new Map<string, TFile>();
-				for (const scope of checked) {
-					for (const f of filesForScope(this.app, scope, eligible, this.plugin.concepts, untestableBasenames)) {
-						byPath.set(f.path, f);
-					}
-				}
-				// "filter(s)", not "selected": the button below already says "Study N
-				// selected" for the resolved file count — reusing the same word here for a
-				// different number (how many boxes are ticked) read as two contradictory
-				// answers to "how many are selected?" sitting a few lines apart.
-				previewScope([...byPath.values()], `${checked.length} filter${checked.length === 1 ? "" : "s"}`);
-			};
-			const addScopeRow = (parent: HTMLElement, label: string, scope: Scope): { row: HTMLElement; cb: HTMLInputElement; lbl: HTMLElement } => {
-				const row = parent.createDiv({ cls: "grill-onboard-row" });
-				const cb = row.createEl("input", { attr: { type: "checkbox" } });
-				cb.onchange = () => {
-					if (cb.checked) checked.push(scope);
-					else {
-						const i = checked.findIndex((s) => s.kind === scope.kind && s.id === scope.id);
-						if (i >= 0) checked.splice(i, 1);
-					}
-					recompute();
-				};
-				const lbl = row.createEl("label", { text: label });
-				lbl.onclick = () => cb.click();
-				return { row, cb, lbl };
-			};
-
-			if (activeEligible && active) {
-				addScopeRow(scopeBox, `Current note: ${active.basename}`, { kind: "note", id: active.path });
-			}
-			// Labeled "Study only untested", not bare "Untested", so it doesn't read as the
-			// same control as the map's "Untested" filter chip below (renderMap) — that one
-			// only ever narrows what the map draws; this one picks the session's scope.
-			if (untested.length) {
-				const untestedScope: Scope = { kind: "untested", id: "untested" };
-				const { row: untestedRow, cb: untestedCb, lbl: untestedLbl } = addScopeRow(
-					scopeBox,
-					`Study only untested (${untested.length})`,
-					untestedScope,
-				);
-				// `untested` is mastery-derived only (never tested), which says nothing about
-				// whether any of those notes actually have anything extractable — a note that's
-				// all images and link stubs reads as "untested" forever, not "unquizzable". This
-				// note-by-note check (extraction is synchronous once the text's in hand; only the
-				// read itself is async) is what makes that distinction, scoped to just this ≤tens
-				// of notes bucket rather than the whole vault so it stays cheap. See scope.ts's
-				// untestedFiles for where the result actually gets applied.
-				//
-				// "Quizzable" here means IN PRINCIPLE, deliberately independent of whether image
-				// occlusion happens to be switched on. It used to read `enableOcclusion`, which
-				// made this number move for a reason that has nothing to do with studying: turning
-				// occlusion on reclassified every note with an embed as quizzable, so a vault of
-				// screenshot-stub notes watched its Untested count jump (1 -> 6 in a real vault)
-				// straight after a session, as though finishing one had un-learned five notes.
-				// A note's material doesn't appear and vanish with a setting; only Grill's current
-				// ability to reach it does, and the end-of-session offer is what addresses that.
-				void (async () => {
-					const untestable = new Set<string>();
-					for (const f of untested) {
-						// Both checks are metadata-only (no file read, no PDF parse). An embedded
-						// image is occlusion material; an embedded PDF is text material via pdf.ts,
-						// which the raw-markdown extraction below can't see on its own — a
-						// `![[worksheet.pdf]]` note is one of the most quizzable things in a vault
-						// and used to be filed as unquizzable. Image embeds are checked with
-						// hasEmbeddedImage rather than a bare embeds count so a PDF-only note isn't
-						// mistaken for occlusion material (occlusion reads raster images only).
-						if (hasEmbeddedImage(this.app, f) || hasEmbeddedPdf(this.app, f)) continue;
-						const text = await this.app.vault.cachedRead(f);
-						if (extractConcepts(f.basename, text, this.plugin.data.settings.questionFormats).length === 0) {
-							untestable.add(f.basename);
-						}
-					}
-					if (!untestable.size) return;
-					untestableBasenames = untestable;
-					// Keep the top stat tiles honest too — same correction, same reasoning —
-					// but only while they're still showing the whole vault: a scoped preview
-					// (`scopedFiles` set) already computed its own counts off a different file
-					// list, which this isn't in a position to correct. Notes is corrected
-					// alongside Untested so the four tiles still add up: subtracting a note from
-					// one total and not the other is what made 167 notes read as 2 + 158 + 6.
-					if (scopedFiles === null) {
-						const rawUntested = eligible.filter((f) => statusOf(map[f.basename]) === "untested").length;
-						untestedStat.setText(String(rawUntested - untestable.size));
-						notesStat.setText(String(eligible.length - untestable.size));
-					}
-					const testableCount = untested.length - untestable.size;
-					if (testableCount === 0) {
-						untestedRow.remove();
-						if (untestedCb.checked) {
-							const i = checked.findIndex((s) => s.kind === "untested");
-							if (i >= 0) checked.splice(i, 1);
-							recompute();
-						}
-						return;
-					}
-					untestedLbl.setText(`Study only untested (${testableCount})`);
-					if (untestedCb.checked) recompute();
-				})();
-			}
-			if (folders.length) {
-				scopeBox.createDiv({ cls: "grill-scope-group", text: "Folders" });
-				for (const path of folders) addScopeRow(scopeBox, path, { kind: "folder", id: path });
-			}
-			if (tags.length) {
-				scopeBox.createDiv({ cls: "grill-scope-group", text: "Tags" });
-				for (const t of tags) addScopeRow(scopeBox, `${t.tag} (${t.count})`, { kind: "tag", id: t.tag });
-			}
-			scopeHeader.onclick = () => {
-				scopeBox.toggleClass("grill-scope-collapsed", !scopeBox.hasClass("grill-scope-collapsed"));
-			};
-		}
-
-		// The learning graph: your notes, coloured in by what you've proven you know.
-		const mapWrap = screen.createDiv({ cls: "grill-map-wrap" });
-		void this.renderMap(mapWrap);
-
-		// Full-width ghost CTA, same shape as the due-review button above (mod-cta
-		// grill-due-cta): a small underlined text link undersold this next to the
-		// arcade-styled buttons surrounding it. Ghost, not the solid grill-primary-cta
-		// treatment, since starting a session is still the screen's actual primary action.
-		const dashBtn = screen.createEl("button", { text: "View your progress", cls: "mod-cta grill-due-cta grill-dash-link" });
-		dashBtn.onclick = () => this.showDashboard();
-
-		const recent = this.recentSessions();
-		if (recent.length) {
-			screen.createDiv({ cls: "grill-section-label", text: "Recent sessions" });
-			const list = screen.createDiv({ cls: "grill-recent" });
-			for (const f of recent) {
-				const fm = this.app.metadataCache.getFileCache(f)?.frontmatter;
-				const row = list.createDiv({ cls: "grill-recent-row" });
-				row.createSpan({ text: f.basename });
-				if (fm?.score) row.createSpan({ cls: "grill-meta", text: String(fm.score) });
-				row.onclick = () => void this.app.workspace.getLeaf(false).openFile(f);
-			}
-		}
+		this.chatHome(screen, eligible, statsEl);
 	}
 
 	/** The note of the most recent Learn conversation, if no session has tested it since.
@@ -2216,7 +1845,7 @@ export class SessionView extends ItemView {
 		const learnDir = `${this.plugin.data.settings.folder}/Learn/`;
 		return this.app.vault
 			.getMarkdownFiles()
-			.filter((f) => f.path.startsWith(dir) || (this.plugin.data.settings.threadView && f.path.startsWith(learnDir)))
+			.filter((f) => f.path.startsWith(dir) || f.path.startsWith(learnDir))
 			.sort((a, b) => b.stat.ctime - a.stat.ctime)
 			.slice(0, 5);
 	}
@@ -2628,12 +2257,14 @@ export class SessionView extends ItemView {
 		const activeAll = top.filter((c) => c.status === "active");
 		const beatenAll = top.filter((c) => c.status === "resolved");
 		const active = activeAll.slice(0, MISC_SHOWN_CAP);
-		const beaten = beatenAll.slice(0, MISC_SHOWN_CAP);
 
 		screen.createDiv({ cls: "grill-section-label", text: "What you keep getting wrong" });
 		const miscCard = screen.createDiv({ cls: "grill-card" });
 		if (!active.length) {
-			miscCard.createDiv({ cls: "grill-meta", text: "Nothing recurring yet. It builds up as the grader spots patterns." });
+			miscCard.createDiv({
+				cls: "grill-meta",
+				text: beatenAll.length ? "Nothing open right now." : "Nothing recurring yet. It builds up as the grader spots patterns.",
+			});
 		} else {
 			const list = miscCard.createDiv({ cls: "grill-misc-list" });
 			for (const c of active) {
@@ -2770,10 +2401,8 @@ export class SessionView extends ItemView {
 		this.renderHeatmap(screen);
 
 		// The map lives here now, off the home screen: one view among the others.
-		if (this.plugin.data.settings.threadView) {
-			screen.createDiv({ cls: "grill-section-label", text: "Map" });
-			void this.renderMap(screen.createDiv({ cls: "grill-map-wrap" }));
-		}
+		screen.createDiv({ cls: "grill-section-label", text: "Map" });
+		void this.renderMap(screen.createDiv({ cls: "grill-map-wrap" }));
 	}
 
 	// ------------------------------------------------------------ manage questions
@@ -3360,7 +2989,7 @@ export class SessionView extends ItemView {
 	 * wait is one line under that question instead of a screen that replaces it: the
 	 * question stays where it is, and what comes back is drawn beneath it. */
 	private async withWaitInThread<T>(title: string, detail: string, work: () => Promise<T>): Promise<T> {
-		const body = this.plugin.data.settings.threadView ? this.contentEl.querySelector<HTMLElement>(".grill-body") : null;
+		const body = this.contentEl.querySelector<HTMLElement>(".grill-body");
 		if (!body || !body.querySelector("[data-grill-q]")) return this.withDebouncedLoading(title, detail, work);
 		let line: HTMLElement | null = null;
 		const timer = window.setTimeout(() => {
@@ -3927,7 +3556,6 @@ export class SessionView extends ItemView {
 	 * through it is, and the way out. Returns whether it drew, which is whether the
 	 * screen under it is in the thread view. */
 	private threadStrip(wrap: HTMLElement, endable = true): boolean {
-		if (!this.plugin.data.settings.threadView) return false;
 		const strip = wrap.createDiv({ cls: "grill-thread-strip" });
 		strip.createSpan({ cls: "grill-thread-kind", text: this.replayMode ? "Redo" : "Test" });
 		strip.createSpan({ cls: "grill-thread-count", text: `${Math.min(this.idx + 1, this.targetCount)} of ${this.targetCount}` });
@@ -3941,7 +3569,6 @@ export class SessionView extends ItemView {
 	/** With the thread view on, the questions already answered this session, one line
 	 * each, above whatever is drawn next. */
 	private threadHistory(wrap: HTMLElement, done: QuestionResult[]): void {
-		if (!this.plugin.data.settings.threadView) return;
 		renderThreadHistory(
 			wrap,
 			done.map((entry, i) => ({ n: i + 1, entry, label: this.verdictLabel(entry) })),
@@ -3954,9 +3581,7 @@ export class SessionView extends ItemView {
 		// In the thread view the question stays where it was and the verdict is drawn
 		// under it. The element itself is carried over, as rendered and as filled in, so
 		// nothing is redrawn above the verdict and the page doesn't jump.
-		const kept = this.plugin.data.settings.threadView
-			? this.contentEl.querySelector<HTMLElement>(`.grill-body > .grill-question[data-grill-q="${this.idx}"]`)
-			: null;
+		const kept = this.contentEl.querySelector<HTMLElement>(`.grill-body > .grill-question[data-grill-q="${this.idx}"]`);
 		const scrolled = this.contentEl.scrollTop;
 		kept?.remove();
 		const wrap = this.root();
@@ -4084,7 +3709,7 @@ export class SessionView extends ItemView {
 		// What was sent was graded as an answer but wasn't meant as one. Only where the
 		// answer was typed: a picked choice is never anything but an answer.
 		// The other way round too: what was meant as an answer was read as a question.
-		if (this.plugin.data.settings.threadView && this.pendingOverride && (!r.gaveUp || r.askedForHelp) && this.typedAnswer(this.questions[this.idx])) {
+		if (this.pendingOverride && (!r.gaveUp || r.askedForHelp) && this.typedAnswer(this.questions[this.idx])) {
 			const back = quiet.createEl("button", { text: r.askedForHelp ? "That was my answer" : "That wasn't my answer", cls: "grill-quiet-btn" });
 			back.onclick = () => {
 				back.disabled = true;
@@ -6079,7 +5704,7 @@ export class SessionView extends ItemView {
 	/** True when what is typed for this question may be a question about it instead of
 	 * an answer: the thread view, and a question answered in free writing. */
 	private mayAsk(q: Question): boolean {
-		return !!this.plugin.data.settings.threadView && (!q.type || q.type === "write");
+		return !q.type || q.type === "write";
 	}
 
 	/** The student asked about the question instead of answering it. They get a full

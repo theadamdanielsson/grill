@@ -100,10 +100,6 @@ interface GrillSettings {
 	 * isn't a choice worth a row. Kept as a field so an install that turned it off
 	 * stays off; the same applies to `linkSessions` and `sessionDebrief` below. */
 	showProgress: boolean;
-	/** The session drawn as a thread: finished questions stay above the one in hand.
-	 * On. A command switches it, not a settings row, while the old screens remain to
-	 * compare against. */
-	threadView: boolean;
 	/** Wiki-link session transcripts to the quizzed notes. On; see `showProgress`. */
 	linkSessions: boolean;
 	/** Vault folders to exclude from sessions (relative paths). */
@@ -317,7 +313,6 @@ function defaultSettings(): GrillSettings {
 		questionsPerSession: 5,
 		folder: "Grill",
 		showProgress: true,
-		threadView: true,
 		linkSessions: true,
 		excludedFolders: [],
 		includedFolders: [],
@@ -408,7 +403,6 @@ export default class GrillPlugin extends Plugin {
 		if (typeof s.questionsPerSession === "number") settings.questionsPerSession = s.questionsPerSession;
 		if (typeof s.folder === "string" && s.folder.trim()) settings.folder = s.folder.trim();
 		if (typeof s.showProgress === "boolean") settings.showProgress = s.showProgress;
-		if (typeof s.threadView === "boolean") settings.threadView = s.threadView;
 		if (typeof s.linkSessions === "boolean") settings.linkSessions = s.linkSessions;
 		if (Array.isArray(s.excludedFolders))
 			settings.excludedFolders = s.excludedFolders.filter((v): v is string => typeof v === "string");
@@ -625,15 +619,6 @@ export default class GrillPlugin extends Plugin {
 			callback: () => void this.clearQuestionCache(),
 		});
 		this.addCommand({
-			id: "toggle-thread-view",
-			name: "Switch the thread view on or off (preview)",
-			callback: async () => {
-				this.data.settings.threadView = !this.data.settings.threadView;
-				await this.persist();
-				new Notice(`Grill: thread view ${this.data.settings.threadView ? "on" : "off"}. It applies from the next question.`);
-			},
-		});
-		this.addCommand({
 			id: "export-review-log",
 			name: "Export review log as CSV",
 			callback: () => void this.exportReviewLog(),
@@ -741,7 +726,7 @@ export default class GrillPlugin extends Plugin {
 			// Catch up is offered, instead of starting on the whole pile.
 			this.statusBar.onClickEvent(() => {
 				const n = this.dueCount();
-				const pile = this.data.settings.threadView && n > CATCH_UP;
+				const pile = n > CATCH_UP;
 				void (n > 0 && !pile ? this.startDueSession() : this.activateView());
 			});
 		}
@@ -1133,7 +1118,7 @@ export default class GrillPlugin extends Plugin {
 		const n = this.dueCount();
 		// A backlog isn't counted out in the corner of every window: past what one
 		// catch-up session takes, it says there are reviews, not how many.
-		const pile = this.data.settings.threadView && n > CATCH_UP;
+		const pile = n > CATCH_UP;
 		this.statusBar.setText(n > 0 ? (pile ? "Grill: reviews due" : `Grill: ${n} due`) : "Grill");
 	}
 
@@ -2326,7 +2311,6 @@ export class GrillSettingTab extends PluginSettingTab {
 			retiredCloudKeys: s.retiredCloudKeys,
 			cloudUsage: s.cloudUsage,
 			cloudRing: s.cloudRing,
-			threadView: s.threadView,
 			cloudGone: s.cloudGone,
 			conceptsMigrated: s.conceptsMigrated,
 			legacyDefaultsMigrated: s.legacyDefaultsMigrated,

@@ -52,8 +52,6 @@ export interface HomeData {
 	showQuestions(): void;
 }
 
-const SVG = "http://www.w3.org/2000/svg";
-
 /** How much is left, as a ring with no number on it: a balance that ticks down in
  * view while you study is a distraction, a ring that slowly empties is not. */
 export function renderCreditsRing(parent: HTMLElement, c: HomeCredits): void {
@@ -63,17 +61,8 @@ export function renderCreditsRing(parent: HTMLElement, c: HomeCredits): void {
 	const r = 8;
 	const around = 2 * Math.PI * r;
 	const svg = btn.createSvg("svg", { attr: { viewBox: "0 0 24 24", width: "22", height: "22", "aria-hidden": "true" } });
-	const ring = (cls: string): SVGElement => {
-		const el = document.createElementNS(SVG, "circle");
-		el.setAttribute("cx", "12");
-		el.setAttribute("cy", "12");
-		el.setAttribute("r", String(r));
-		el.setAttribute("fill", "none");
-		el.setAttribute("stroke-width", "4");
-		el.setAttribute("class", cls);
-		svg.appendChild(el);
-		return el;
-	};
+	const ring = (cls: string): SVGElement =>
+		svg.createSvg("circle", { cls, attr: { cx: "12", cy: "12", r: String(r), fill: "none", "stroke-width": "4" } });
 	ring("grill-credits-track");
 	const left = ring("grill-credits-left");
 	const share = Math.max(0, Math.min(1, c.left));
