@@ -2669,3 +2669,66 @@ textarea.grill-mgmt-field {
 .grill-arcade-screen .grill-cloud-legal a:hover {
   color: var(--grill-ink-gold, #ffd23f);
 }
+
+/* Out of credits: the pop-up is the card itself, so the modal around it is only a
+   holder. "Not now" and Escape close it; Obsidian's own cross would sit on the frame. */
+.modal.grill-refill-modal {
+  width: min(27em, 92vw);
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.grill-refill-modal .modal-close-button {
+  display: none;
+}
+.grill-refill.grill-arcade-screen {
+  padding: 1.5em 1.6em 1.4em;
+}
+.grill-refill .grill-arcade-mark {
+  text-align: left;
+}
+.grill-refill-title {
+  margin: 0 0 0.3em;
+  font-size: var(--font-ui-large, 1.25em);
+  color: var(--grill-ink, #ffe98a);
+}
+.grill-refill-packs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+  margin-top: 1em;
+}
+.grill-refill-packs:empty {
+  display: none;
+}
+.grill-refill-packs .grill-refill-pack {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.2em 1em;
+  width: 100%;
+  height: auto;
+  padding: 0.75em 0.9em;
+  white-space: normal;
+  text-align: left;
+}
+.grill-refill-price {
+  font-size: var(--font-ui-smaller, 0.8em);
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+.grill-refill-stop {
+  margin-top: 1em;
+}
+.grill-refill-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3em 1.2em;
+  margin-top: 1em;
+  font-size: var(--font-ui-small, 0.87em);
+}
+.grill-refill-links a {
+  color: var(--grill-ink-accent, #ff8c2b);
+  cursor: pointer;
+}

@@ -1001,14 +1001,15 @@ export class SessionView extends ItemView {
 	private keptAnswer: { idx: number; text: string } | null = null;
 
 	/** Show what went wrong with a model call. Grill Cloud's errors are plain sentences
-	 * already; when buying credits would fix it, the notice has a Top up button. */
+	 * already; when buying credits would fix it, the packs are offered then and there. */
 	private tellError(e: unknown, tail = ""): void {
 		const message = (e as Error)?.message ?? "Something went wrong.";
 		if (!(e instanceof CloudError && e.needsCredits)) {
 			new Notice(`Grill: ${message}${tail}`, e instanceof CloudError ? 10000 : 8000);
 			return;
 		}
-		// Credits are bought in settings, never here: this is where studying happens.
+		if (this.plugin.offerRefill(e.code, tail.trim())) return;
+		// Nothing is on sale right now (or the server can't say): point at settings.
 		const notice = new Notice(
 			createFragment((f) => {
 				f.createSpan({ text: `Grill: ${message}${tail} ` });
@@ -5244,7 +5245,7 @@ export class SessionView extends ItemView {
 				misconceptionTag = g.misconceptionTag;
 			} catch (e) {
 				if (epoch !== this.sessionEpoch) return;
-				this.tellError(e);
+				this.tellError(e, " Your answer is still in the box.");
 				// The answer was typed once already: put it back, don't make them retype it.
 				this.keptAnswer = { idx: this.idx, text: answer };
 				this.renderQuestion();

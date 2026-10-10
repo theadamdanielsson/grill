@@ -136,9 +136,18 @@ export class Setting {
 	}
 }
 export class Modal {
+	app: any;
 	contentEl: any = fakeEl();
-	open(): void {}
-	close(): void {}
+	modalEl: any = fakeEl();
+	constructor(app?: any) {
+		this.app = app;
+	}
+	open(): void {
+		(this as any).onOpen?.();
+	}
+	close(): void {
+		(this as any).onClose?.();
+	}
 }
 
 export const MarkdownRenderer = { render: async () => undefined, renderMarkdown: async () => undefined };

@@ -17,6 +17,7 @@ import { configureFSRSWeights, MasteryMap } from "./mastery";
 import { CalPoint, isCalPoint } from "./calibration";
 import { LLMConfig, offeredProviders, PROVIDERS, ProviderId, Question, listModels, migrateLegacyModels, synthesizeArc, testModel } from "./llm";
 import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, CloudPack, cloudAccount, cloudBalance, cloudSpeech, cloudCheckoutUrl, cloudDelete, cloudEnabled, cloudStart, creditsInWords, isCloudKey, newCloudKey, packLabel, usageInWords } from "./cloud";
+import { RefillModal } from "./refill";
 import { ConceptMap, dueConceptCount, migrateResetScheduling, rebalanceDueDates, reconcileConcepts } from "./concepts";
 import { pairKey } from "./bridges";
 import {
@@ -1955,6 +1956,15 @@ export default class GrillPlugin extends Plugin {
 		this.retireCloudKey();
 		await this.persist();
 		this.tellCloud();
+	}
+
+	/** Offer the packs in a pop-up, where credits ran short: `code` is the server's
+	 * reason, `tail` anything worth adding (an answer that was kept). False when
+	 * nothing is on sale right now, so the caller can say it some other way. */
+	offerRefill(code: string, tail = ""): boolean {
+		if (!this.cloudCanBuy) return false;
+		RefillModal.show(this, code, tail);
+		return true;
 	}
 
 	/** Open the checkout page for one pack (the largest, if none is named) for this
