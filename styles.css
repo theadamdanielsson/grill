@@ -2790,12 +2790,38 @@ textarea.grill-mgmt-field {
   flex-shrink: 0;
 }
 .grill-thread-body {
-  padding: 0 0.7em 0.7em;
+  padding: 0.7em;
   border-top: 1px solid var(--background-modifier-border);
 }
-.grill-thread-body .grill-quiet-btn {
-  margin-left: 0;
-  padding-left: 0;
+.grill-thread-body > * + * {
+  margin-top: 0.6em;
+}
+.grill-thread-body .grill-block-label {
+  margin-top: 1em;
+}
+.grill-thread-body .grill-feedback-line + .grill-feedback-line {
+  margin-top: 0.4em;
+}
+.grill-thread-body p {
+  margin: 0;
+}
+/* A link in the body's own voice, not a filled button under the answer. */
+.grill-view button.grill-thread-open {
+  display: block;
+  height: auto;
+  margin: 1em 0 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  cursor: pointer;
+}
+.grill-view button.grill-thread-open:hover {
+  background: transparent;
+  color: var(--text-accent);
+  text-decoration: underline;
 }
 
 /* The session screens in the cabinet's frame, for the thread view: the same gold

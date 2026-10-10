@@ -46,12 +46,18 @@ export function renderThreadHistory(parent: HTMLElement, segments: ThreadSegment
 				body.createDiv({ cls: "grill-block-label", text: "Your answer" });
 				host.md(`> ${seg.entry.answer.split("\n").join("\n> ")}`, body.createDiv({ cls: "grill-your-answer" }), seg.entry.node);
 			}
-			if (seg.entry.feedback) host.md(seg.entry.feedback, body.createDiv({ cls: "grill-feedback" }), seg.entry.node);
+			if (seg.entry.feedback) {
+				// One block per line the grader wrote, as on the feedback screen.
+				const fb = body.createDiv({ cls: "grill-feedback" });
+				for (const line of seg.entry.feedback.split("\n").map((l) => l.trim()).filter(Boolean)) {
+					host.md(line, fb.createDiv({ cls: "grill-feedback-line" }), seg.entry.node);
+				}
+			}
 			if (seg.entry.verdict !== "correct" && seg.entry.modelAnswer) {
 				body.createDiv({ cls: "grill-block-label", text: "Expected answer" });
 				host.md(seg.entry.modelAnswer, body.createDiv({ cls: "grill-model-answer" }), seg.entry.node);
 			}
-			const open = body.createEl("button", { cls: "grill-quiet-btn", text: "Open note" });
+			const open = body.createEl("button", { cls: "grill-thread-open", text: "Open note" });
 			open.onclick = () => host.openNote(seg.entry.node);
 		});
 	}
