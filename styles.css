@@ -3210,3 +3210,12 @@ textarea.grill-mgmt-field {
   height: auto;
   padding: 0 1.3em;
 }
+/* The expected answer's label, with its read-aloud button at the end of the line. */
+.grill-review-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.grill-review-head .grill-tts-btn {
+  margin: 0;
+}

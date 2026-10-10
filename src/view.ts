@@ -3505,7 +3505,14 @@ export class SessionView extends ItemView {
 		const showHelp = !pendingExtension && (this.canExplain(r) || !!r.explanation || !!r.discussion?.length);
 		if (showExpectedAnswer) {
 			const reviewCard = card.createDiv({ cls: "grill-flow-card grill-review-card" });
-			reviewCard.createDiv({ cls: "grill-block-label", text: "Expected answer" });
+			const reviewHead = reviewCard.createDiv({ cls: "grill-review-head" });
+			reviewHead.createDiv({ cls: "grill-block-label", text: "Expected answer" });
+			// Its own button: the one on the verdict reads everything, and after asking
+			// for help the expected answer is the one thing left to hear.
+			const expected = toSpeechText(r.modelAnswer);
+			if (expected && (ttsAvailable() || this.plugin.naturalVoiceSource())) {
+				this.hearButton(reviewHead, expected, "Read the expected answer aloud");
+			}
 			this.md(r.modelAnswer, reviewCard.createDiv({ cls: "grill-model-answer" }), r.node);
 			if (this.questions[this.idx].type === "occlusion") {
 				this.renderOcclusionImage(reviewCard, this.questions[this.idx], true);
