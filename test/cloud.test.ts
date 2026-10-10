@@ -385,7 +385,7 @@ test("settings: Grill Cloud has the first section, says what it is before it sta
 	// and nothing but the offer.
 	assert.deepEqual(sections()[0], { heading: "Grill Cloud", names: ["Grill Cloud"] });
 	assert.equal(sections()[1].heading, "Your own key or Ollama");
-	assert.ok(sections().find((sec) => sec.heading === "Studying")!.names[0] === "Study mode");
+	assert.ok(sections().find((sec) => sec.heading === "Studying")!.names[0] === "Questions and grading");
 	const before = draw(tab, "Grill Cloud");
 	assert.match(before.desc(), /nothing to set up/);
 	// What it costs, what it needs and where notes go are said before anything is sent.

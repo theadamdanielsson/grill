@@ -69,7 +69,7 @@ puts you back in the section above.
 
 ## The truly free option: no model at all
 
-You don't even need a local model. In settings set **Study mode** to *Fully offline — no
+You don't even need a local model. In settings set **Questions and grading** to *Fully offline — no
 key*. Grill builds questions from your notes' own
 structure (bold terms, highlights, headings, `Term: definition` lines, existing flashcards)
 and you grade yourself Again / Hard / Good / Easy. Same spaced-repetition schedule as AI mode,

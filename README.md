@@ -65,7 +65,7 @@ Prefer to pay a model provider directly? Pick "use my own API key or Ollama" on 
 <a name="with-no-ai-at-all"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="docs/icons/screen-dark.svg"><img src="docs/icons/screen.svg" height="20" alt=""></picture> With no AI at all
 
-Questions you've already written work without any model. A `> [!grill]` callout is asked exactly as you wrote it, and flashcards in your notes are used as they are: Spaced Repetition's `==cloze==` and `::`/`?` separators, and Anki's `{{c1::…}}` clozes. Grill can also pull simple questions straight from a note's structure (bold terms, headings, "Term: definition" lines). You grade yourself, the same spaced-repetition schedule applies, and nothing is sent anywhere. Set "Study mode" to "Fully offline" in settings. It's a fallback, not the main event: the questions are only as good as your notes are structured, and nothing marks your writing.
+Questions you've already written work without any model. A `> [!grill]` callout is asked exactly as you wrote it, and flashcards in your notes are used as they are: Spaced Repetition's `==cloze==` and `::`/`?` separators, and Anki's `{{c1::…}}` clozes. Grill can also pull simple questions straight from a note's structure (bold terms, headings, "Term: definition" lines). You grade yourself, the same spaced-repetition schedule applies, and nothing is sent anywhere. Set "Questions and grading" to "Fully offline" in settings. It's a fallback, not the main event: the questions are only as good as your notes are structured, and nothing marks your writing.
 
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="docs/icons/page-dark.svg"><img src="docs/icons/page.svg" height="20" alt=""></picture> Documentation
 

@@ -2586,9 +2586,9 @@ export class GrillSettingTab extends PluginSettingTab {
 
 		const ai: Row[] = [
 			{
-				name: "Study mode",
+				name: "Questions and grading",
 				desc: "Where questions come from and who marks them.",
-				aliases: ["offline", "grading", "no key", "self grade"],
+				aliases: ["study mode", "offline", "grading", "no key", "self grade"],
 				build: (setting) =>
 					setting.addDropdown((d) =>
 						d
@@ -3286,8 +3286,8 @@ export class GrillSettingTab extends PluginSettingTab {
 			},
 		];
 
-		// Study mode is about how you study, not which model runs it.
-		const studyMode = ai.splice(ai.findIndex((r) => r.name === "Study mode"), 1);
+		// Questions and grading is about how you study, not which model runs it.
+		const studyMode = ai.splice(ai.findIndex((r) => r.name === "Questions and grading"), 1);
 		return [
 			...(cloudRows.length ? [{ heading: "Grill Cloud", rows: cloudRows }] : []),
 			// Grill Cloud picks the model itself.
