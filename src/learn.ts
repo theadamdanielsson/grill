@@ -226,3 +226,54 @@ export function rankNotes(question: string, notes: LearnNote[], k = 5, prefer = 
 		.slice(0, k)
 		.map((s) => s.n);
 }
+
+/** A note as the vault map lists it. */
+export interface VaultNote extends LearnNote {
+	folder: string;
+	/** How many other notes link to this one. */
+	linksIn: number;
+	/** How the student is doing on it, in a word or two. */
+	status: string;
+}
+
+/** Every note in the vault on a line: its name, where it is, how many notes link to
+ * it and how the student is doing on it. Small enough to send with every question, and
+ * what lets an answer speak about the vault as a whole or point at a note it wasn't
+ * given in full. Always in the same order, so it is read from the provider's cache. */
+export function vaultMap(notes: VaultNote[], cap = 40_000): string {
+	const lines = [...notes]
+		.sort((a, b) => a.folder.localeCompare(b.folder) || a.name.localeCompare(b.name))
+		.map((n) => `- ${n.name} [${n.folder || "top level"}; linked from ${n.linksIn}; ${n.status}]`);
+	return `MAP OF EVERY NOTE (${notes.length}), as name [folder; how many notes link to it; how the student is doing]:\n${safeSlice(lines.join("\n"), cap)}`;
+}
+
+/** The notes themselves, for a question about the vault as a whole: as many in full as
+ * fit `budget` characters. When they all fit they go in a fixed order (folder, then
+ * name), so the same text is sent every time and a provider's cache can serve it at a
+ * fraction of the price after the first question. When they don't, the most linked-to
+ * notes go first, since those are the ones the rest lean on. */
+export function vaultNotes(notes: VaultNote[], budget: number): { text: string; included: number } {
+	const bodies = notes.map((n) => ({ n, text: stripFrontmatter(n.text) })).filter((b) => b.text);
+	const total = bodies.reduce((sum, b) => sum + b.text.length + b.n.name.length + 6, 0);
+	const fits = total <= budget;
+	bodies.sort(fits ? (a, b) => a.n.folder.localeCompare(b.n.folder) || a.n.name.localeCompare(b.n.name) : (a, b) => b.n.linksIn - a.n.linksIn || a.n.name.localeCompare(b.n.name));
+	const parts: string[] = [];
+	let used = 0;
+	for (const b of bodies) {
+		const block = `'${b.n.name}':\n${b.text}`;
+		if (used + block.length > budget) continue;
+		parts.push(block);
+		used += block.length + 2;
+	}
+	return { text: `NOTES IN FULL (${parts.length} of ${notes.length}):\n${parts.join("\n\n")}`, included: parts.length };
+}
+
+/** Whether a question is about particular notes or about the notes as a whole. It is
+ * about particular notes when one of the notes it matched is named for something the
+ * question says: "why does inflation matter?" and a note called Inflation. A question
+ * like "which notes are the backbone of the course?" shares only everyday words with
+ * the text of some notes, names none of them, and is about the vault. */
+export function namesANote(question: string, matched: string[]): boolean {
+	const terms = new Set(contentTerms(question));
+	return matched.some((name) => contentTerms(name).some((w) => terms.has(w)));
+}

@@ -261,3 +261,38 @@ test("the open note wins a near tie, and loses to a clearly better match", () =>
 	assert.equal(ranked("what measures it", close[1])[0], close[1]);
 	assert.equal(ranked("explain the multiplier", "GDP deflator")[0], "Multiplier");
 });
+
+import { vaultMap, vaultNotes } from "../src/learn";
+
+const vn = (name: string, folder: string, linksIn: number, text: string, status = "learning"): any => ({ name, folder, linksIn, text, status });
+const VAULT_NOTES = [vn("Output", "Ch1", 9, "Output is GDP."), vn("Inflation", "Ch1", 4, "Prices rising."), vn("Appendix", "", 0, "---\nx: 1\n---\n"), vn("CPI", "Ch2", 2, "A price index.", "known")];
+
+test("the map lists every note, in the same order every time", () => {
+	const map = vaultMap(VAULT_NOTES);
+	assert.match(map, /^MAP OF EVERY NOTE \(4\)/);
+	assert.match(map, /- CPI \[Ch2; linked from 2; known\]/);
+	assert.match(map, /- Appendix \[top level; linked from 0; learning\]/);
+	assert.equal(map, vaultMap([...VAULT_NOTES].reverse()));
+});
+
+test("a vault that fits is sent whole, in a fixed order", () => {
+	const all = vaultNotes(VAULT_NOTES, 10_000);
+	assert.equal(all.included, 3); // the empty note has nothing to send
+	assert.equal(all.text, vaultNotes([...VAULT_NOTES].reverse(), 10_000).text);
+	assert.ok(all.text.indexOf("'Inflation'") < all.text.indexOf("'Output'"));
+});
+
+test("a vault that doesn't fit sends its most linked-to notes", () => {
+	const some = vaultNotes(VAULT_NOTES, 30);
+	assert.equal(some.included, 1);
+	assert.match(some.text, /'Output':\nOutput is GDP\./);
+	assert.doesNotMatch(some.text, /Inflation/);
+});
+
+import { namesANote } from "../src/learn";
+
+test("a question is about particular notes when it names one of them", () => {
+	assert.equal(namesANote("why do economists care about inflation?", ["Inflation", "Price level"]), true);
+	assert.equal(namesANote("tell me which notes form the backbone of the course", ["Extra Sheet D - Chapter 14 (Challenges of Growth)", "Deflation Spiral"]), false);
+	assert.equal(namesANote("explain this", []), false);
+});

@@ -840,7 +840,8 @@ export class GrillStore {
 			`provider: ${meta.provider}`,
 			`model: ${meta.model}`,
 			"---",
-			`# Learn: [[${note}]]`,
+			// A conversation about the notes as a whole has no one note to link to.
+			note === "Your notes" ? "# Learn: your notes" : `# Learn: [[${note}]]`,
 			"",
 		];
 		for (const turn of turns) {
