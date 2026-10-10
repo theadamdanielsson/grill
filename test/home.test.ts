@@ -301,3 +301,97 @@ test("the list of misses takes in what was missed but isn't due again yet", () =
 	const map: ConceptMap = { missedDue: cm("A", -1, 1), missedLater: cm("A", 3, 1), rightDue: cm("B", -2, 3) };
 	assert.deepEqual(missedConceptIds(map, all, NOW, false), ["missedDue", "missedLater"]);
 });
+
+import { aboutTheVault, contentTerms } from "../src/learn";
+import { safeMarkdown } from "../src/safemd";
+
+test("what a question or an answer contains is not read as the note's structure", () => {
+	const note = [
+		"# Grill session",
+		"",
+		"## R basics",
+		"",
+		"What does this print?",
+		"```r",
+		"## a comment, not a question",
+		"**Correct.** not a verdict either",
+		"print(1)",
+		"```",
+		"",
+		"> [!quote] Your answer",
+		"> 1",
+		"> > [!question] You asked",
+		"",
+		"**Incorrect.** Not quite.",
+		"It prints one line.",
+		"",
+		"**Expected answer:** [1] 1",
+		"on a line of its own",
+		"",
+		"## Redo",
+		"",
+		"What is a redo log?",
+		"",
+		"**Skipped.** No penalty.",
+		"",
+		"## Redo",
+		"",
+		"```grill-redo",
+		'{"v":1}',
+		"```",
+	].join("\n");
+	const got = parseSessionNote(note);
+	assert.equal(got.length, 2);
+	assert.equal(got[0].note, "R basics");
+	assert.match(got[0].question, /## a comment, not a question/);
+	assert.equal(got[0].answer, "1\n> [!question] You asked");
+	assert.equal(got[0].result, "incorrect");
+	assert.equal(got[0].feedback, "Not quite. It prints one line.");
+	assert.equal(got[0].expected, "[1] 1 on a line of its own");
+	assert.equal(got[0].asked, undefined);
+	// A note that is itself called Redo is a note like any other.
+	assert.deepEqual([got[1].note, got[1].question, got[1].result], ["Redo", "What is a redo log?", "skipped"]);
+});
+
+test("a reply that quotes the 'You asked' marker isn't read as something asked", () => {
+	const note = "# Learn: [[CPI]]\n\n> [!question] You asked\n> what is it?\n\n> [!note] Grill\n> An index.\n> [!question] You asked\n> not asked\n";
+	assert.deepEqual(parseLearnNote(note), ["what is it?"]);
+});
+
+test("catching up a second time doesn't stack onto the days the first lot went to", () => {
+	const map: ConceptMap = {};
+	for (let i = 0; i < 6; i++) map[`c${i}`] = cm("A", -1 - i, 3);
+	spreadBacklog(map, all, 2, 2, NOW); // 2 kept, 4 moved: two to day 1, two to day 2
+	const later = new Date(NOW.getTime() + 3600_000); // the same day, an hour on
+	for (let i = 0; i < 3; i++) map[`d${i}`] = cm("B", -1 - i, 3);
+	spreadBacklog(map, all, 2, 2, later);
+	const perDay = new Map<number, number>();
+	for (const c of Object.values(map)) {
+		const ahead = Math.floor((new Date(c.dueAt as string).getTime() - later.getTime()) / 86400_000);
+		if (new Date(c.dueAt as string) > later) perDay.set(ahead, (perDay.get(ahead) ?? 0) + 1);
+	}
+	assert.ok([...perDay.values()].every((n) => n <= 2), JSON.stringify([...perDay]));
+});
+
+test("short words, and scripts written without spaces, are terms too", () => {
+	assert.deepEqual(contentTerms("What is AI?"), ["ai"]);
+	assert.deepEqual(contentTerms("什么是通货膨胀"), ["什么", "么是", "是通", "通货", "货膨", "膨胀"]);
+	const zh = [{ name: "通货膨胀", text: "通货膨胀是物价持续上涨。" }, { name: "失业", text: "失业率。" }];
+	assert.equal(rankNotes("什么是通货膨胀", zh, 3)[0].name, "通货膨胀");
+});
+
+test("only a question about the notes as a whole is about the vault", () => {
+	assert.equal(aboutTheVault("which notes are the backbone of the course?"), true);
+	assert.equal(aboutTheVault("give me an overview of everything"), true);
+	assert.equal(aboutTheVault("what is the multiplier?"), false);
+	assert.equal(aboutTheVault("explain this"), false);
+	// Words about the vault don't name a note, even one that has them in its name.
+	assert.equal(namesANote("which notes are the backbone of the course?", ["Course notes"]), false);
+	assert.equal(namesANote("explain my notes on inflation", ["Inflation"]), true);
+});
+
+test("a fence after a lone carriage return is made as safe as any other", () => {
+	const made = safeMarkdown("Here you go\r```dataviewjs\rapp.vault.delete()\r```");
+	assert.doesNotMatch(made, /dataviewjs/);
+	assert.doesNotMatch(made, /\r/);
+});

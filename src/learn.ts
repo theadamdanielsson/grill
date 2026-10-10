@@ -64,55 +64,75 @@ const RESULTS: Record<string, PastAnswer["result"]> = {
 };
 
 /** Read the questions and answers back out of a session note. It reads exactly what
- * the store writes (a heading per question naming its note, the question, the answer
- * as a quote, the verdict in bold, the expected answer), and nothing after "Redo". */
+ * the store writes: a heading per question naming its note, the question, the answer
+ * as a quote, the verdict in bold, the expected answer. What a question or an answer
+ * happens to contain must not be mistaken for that structure, since what comes out is
+ * told to a model as the student's history:
+ * - a line starting "## " inside a code block is code, not the next question;
+ * - a callout marker or a verdict only counts after an empty line, which is where the
+ *   store puts them, and where quoted text never is;
+ * - "Redo" ends the note only when the redo block follows it, so a note that is itself
+ *   called Redo is read like any other. */
 export function parseSessionNote(text: string): PastAnswer[] {
+	const lines = text.split(/\r?\n/);
 	const out: PastAnswer[] = [];
 	let cur: PastAnswer | null = null;
-	let part: "question" | "answer" | "asked" | "after" = "question";
-	for (const line of text.split(/\r?\n/)) {
-		const head = /^## (.+)$/.exec(line);
-		if (head) {
-			if (cur) out.push(cur);
-			const name = head[1].trim().replace(/^\[\[(.+?)\]\]$/, "$1");
-			if (name === "Redo") {
-				cur = null;
-				break;
+	let part: "question" | "answer" | "asked" | "feedback" | "expected" | "after" = "question";
+	let fenced = false;
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i];
+		const afterBlank = i === 0 || lines[i - 1].trim() === "";
+		if (/^\s*(```|~~~)/.test(line)) fenced = !fenced;
+		else if (!fenced) {
+			const head = /^## (.+)$/.exec(line);
+			if (head) {
+				const name = head[1].trim().replace(/^\[\[(.+?)\]\]$/, "$1");
+				const next = lines.slice(i + 1).find((l) => l.trim() !== "") ?? "";
+				if (name === "Redo" && next.startsWith("```grill-redo")) break;
+				if (cur) out.push(cur);
+				cur = { note: name, question: "", answer: "", result: "skipped", feedback: "", expected: "" };
+				part = "question";
+				continue;
 			}
-			cur = { note: name, question: "", answer: "", result: "skipped", feedback: "", expected: "" };
-			part = "question";
-			continue;
 		}
 		if (!cur) continue;
-		if (line.startsWith("> [!quote] Your answer")) {
-			part = "answer";
-			continue;
+		if (!fenced && afterBlank) {
+			if (line.startsWith("> [!quote] Your answer")) {
+				part = "answer";
+				continue;
+			}
+			if (line.startsWith("> [!question] You asked")) {
+				(cur.asked ??= []).push("");
+				part = "asked";
+				continue;
+			}
+			const verdict = /^\*\*(Correct|Partially correct|Incorrect|Skipped)\.\*\*\s*(.*)$/.exec(line);
+			if (verdict) {
+				cur.result = RESULTS[verdict[1]];
+				cur.feedback = verdict[2].trim();
+				part = "feedback";
+				continue;
+			}
+			const expected = /^\*\*Expected answer:\*\*\s*(.*)$/.exec(line);
+			if (expected) {
+				cur.expected = expected[1].trim();
+				part = "expected";
+				continue;
+			}
 		}
-		if (line.startsWith("> [!question] You asked")) {
-			(cur.asked ??= []).push("");
-			part = "asked";
-			continue;
-		}
-		const verdict = /^\*\*(Correct|Partially correct|Incorrect|Skipped)\.\*\*\s*(.*)$/.exec(line);
-		if (verdict) {
-			cur.result = RESULTS[verdict[1]];
-			cur.feedback = verdict[2].trim();
-			part = "after";
-			continue;
-		}
-		const expected = /^\*\*Expected answer:\*\*\s*(.*)$/.exec(line);
-		if (expected) {
-			cur.expected = expected[1].trim();
-			continue;
-		}
-		if (part === "question" && line.trim()) cur.question += (cur.question ? "\n" : "") + line;
-		else if (part === "answer") {
+		if (part === "question") {
+			if (line.trim() || fenced) cur.question += (cur.question ? "\n" : "") + line;
+		} else if (part === "answer") {
 			if (line.startsWith(">")) cur.answer += (cur.answer ? "\n" : "") + line.replace(/^> ?/, "");
 			else if (line.trim()) part = "after";
 		} else if (part === "asked" && cur.asked) {
 			const at = cur.asked.length - 1;
 			if (line.startsWith(">")) cur.asked[at] += (cur.asked[at] ? " " : "") + line.replace(/^> ?/, "").trim();
 			else part = "after";
+		} else if (part === "feedback" || part === "expected") {
+			// Either can run over several lines; an empty line ends it.
+			if (!line.trim()) part = "after";
+			else cur[part] += (cur[part] ? " " : "") + line.trim();
 		}
 	}
 	if (cur) out.push(cur);
@@ -166,28 +186,44 @@ export function learnRecord(r: LearnRecordInput, cap = 6000): string {
 	return safeSlice(lines.join("\n"), cap);
 }
 
-/** The questions asked in a saved Learn conversation: each "You asked" block, in order. */
+/** The questions asked in a saved Learn conversation: each "You asked" block, in order.
+ * The marker only counts after an empty line, which is where the store writes it; a
+ * reply that happens to quote the same words sits inside a quote, after a quoted line. */
 export function parseLearnNote(text: string): string[] {
+	const lines = text.split(/\r?\n/);
 	const out: string[] = [];
 	let open = false;
-	for (const line of text.split(/\r?\n/)) {
-		if (line.startsWith("> [!question] You asked")) {
+	lines.forEach((line, i) => {
+		if (line.startsWith("> [!question] You asked") && (i === 0 || lines[i - 1].trim() === "")) {
 			out.push("");
 			open = true;
 		} else if (open && line.startsWith(">")) {
 			out[out.length - 1] += (out[out.length - 1] ? " " : "") + line.replace(/^> ?/, "").trim();
 		} else open = false;
-	}
+	});
 	return out.filter(Boolean);
 }
 
 const STOP = new Set(
-	"a an and are as at be but by can did do does for from had has have how i if in into is it its me my not of on or so than that the their them then there these they this to was we were what when where which who why will with would you your about tell explain more".split(" "),
+	"a an and are as at be but by can did do does for from had has have how i if in into is it its me my no not of on or so than that the their them then there these they this to up us was we were what when where which who why will with would you your about tell explain more".split(" "),
 );
+
+/** Scripts written without spaces between words. A run of them is not one word; it is
+ * taken two characters at a time, which is how a question and a note come to share
+ * terms in Chinese, Japanese or Thai. */
+const UNSPACED = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}]/u;
 
 /** The words of a question or a note that say what it is about. */
 export function contentTerms(text: string): string[] {
-	return (text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).filter((w) => w.length > 2 && !STOP.has(w));
+	const out: string[] = [];
+	for (const w of text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []) {
+		if (UNSPACED.test(w)) {
+			const chars = [...w];
+			if (chars.length === 1) out.push(w);
+			for (let k = 0; k + 1 < chars.length; k++) out.push(chars[k] + chars[k + 1]);
+		} else if (w.length > 1 && !STOP.has(w)) out.push(w);
+	}
+	return out;
 }
 
 /** The notes a question is most likely about, best first: plain term matching, no
@@ -205,10 +241,12 @@ export function rankNotes(question: string, notes: LearnNote[], k = 5, prefer = 
 		return { n, tf, len: words.length, name: new Set(contentTerms(n.name)) };
 	});
 	const avgLen = bags.reduce((sum, b) => sum + b.len, 0) / bags.length || 1;
+	// In how many notes each term of the question appears: worked out once.
+	const inNotes = new Map(terms.map((t) => [t, bags.reduce((c, x) => c + (x.tf.has(t) || x.name.has(t) ? 1 : 0), 0)] as const));
 	const scored = bags.map((b) => {
 		let score = 0;
 		for (const t of terms) {
-			const df = bags.reduce((c, x) => c + (x.tf.has(t) || x.name.has(t) ? 1 : 0), 0);
+			const df = inNotes.get(t) ?? 0;
 			if (!df) continue;
 			const idf = Math.log(1 + notes.length / df);
 			// A term's count levels off, and counts for less in a long note, so a long
@@ -268,12 +306,22 @@ export function vaultNotes(notes: VaultNote[], budget: number): { text: string; 
 	return { text: `NOTES IN FULL (${parts.length} of ${notes.length}):\n${parts.join("\n\n")}`, included: parts.length };
 }
 
-/** Whether a question is about particular notes or about the notes as a whole. It is
- * about particular notes when one of the notes it matched is named for something the
- * question says: "why does inflation matter?" and a note called Inflation. A question
- * like "which notes are the backbone of the course?" shares only everyday words with
- * the text of some notes, names none of them, and is about the vault. */
+/** Words that are about a collection of notes, not about what any one of them says. */
+const VAULT_WORDS = new Set(
+	"note notes vault course subject module everything overall overview whole syllabus topic topics chapter chapters backbone structure summary summarise summarize big picture outline".split(" "),
+);
+
+/** Whether a question is about the notes as a whole: "which notes are the backbone of
+ * the course?", "give me an overview of everything". Read from its words, in English;
+ * a question in another language is taken to be about its topic. */
+export function aboutTheVault(question: string): boolean {
+	return contentTerms(question).some((w) => VAULT_WORDS.has(w));
+}
+
+/** Whether a question names one of the notes it matched: "why does inflation matter?"
+ * and a note called Inflation. Words about the vault itself don't count, so "which
+ * notes are the backbone of the course?" does not name a note called "Course notes". */
 export function namesANote(question: string, matched: string[]): boolean {
-	const terms = new Set(contentTerms(question));
+	const terms = new Set(contentTerms(question).filter((w) => !VAULT_WORDS.has(w)));
 	return matched.some((name) => contentTerms(name).some((w) => terms.has(w)));
 }

@@ -90,6 +90,10 @@ function safeFences(text: string): string {
 /** Make text a model wrote safe to render as Markdown, or to write into a note. */
 export function safeMarkdown(text: string): string {
 	if (!text) return text;
+	// A lone carriage return ends a line to a Markdown renderer and to the editor, but
+	// not to a split on "\n": a fence after one was left as it came. Every line ending
+	// is made the one the rules below read.
+	text = text.replace(/\r\n?/g, "\n");
 	return (
 		safeFences(text)
 			// HTML: a "<" that would open a tag no longer does.

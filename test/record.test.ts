@@ -190,3 +190,25 @@ test("a redo changes nothing in the record", () =>
 		assert.deepEqual(view.concepts[ID], before);
 		assert.deepEqual(plugin.mastery, {});
 	}));
+
+test("taking an answer back takes its confidence point and its resolved misconception with it", () =>
+	frozen(async () => {
+		const { view, plugin } = makeView();
+		const q = start(view, plugin);
+		plugin.data.calibration = [{ c: 0.5, ok: 1 }];
+		view.registry = { tag: { tag: "tag", label: "x", aliases: [], notes: ["N"], count: 2, firstSeen: "a", lastSeen: "b", status: "active" } };
+
+		await view.applyGrade(q, "correct", null, undefined, 0);
+		view.pendingConfidence = 1;
+		view.captureConfidence("correct");
+		view.pendingOverride.resolved = { tag: "tag", status: "active", lastSeen: "b" };
+		view.registry.tag.status = "resolved";
+		assert.equal(plugin.data.calibration.length, 2);
+
+		const r = { question: q.question, verdict: "correct", answer: "" };
+		view.results = [r];
+		await view.takeBackAnswer(r);
+
+		assert.deepEqual(plugin.data.calibration, [{ c: 0.5, ok: 1 }]);
+		assert.deepEqual([view.registry.tag.status, view.registry.tag.lastSeen], ["active", "b"]);
+	}));

@@ -80,7 +80,7 @@ import { stopSpeaking, toSpeechText, ttsAvailable } from "./tts";
 import { SessionEntry } from "./store";
 import { renderThreadHistory } from "./thread";
 import { renderChatHome, renderCreditsRing, type HomeMode, type HomeSuggestion } from "./home";
-import { learnContext, learnRecord, namesANote, parseLearnNote, parseSessionNote, rankNotes, sessionTitle, vaultMap, vaultNotes, type PastAnswer } from "./learn";
+import { aboutTheVault, learnContext, learnRecord, namesANote, parseLearnNote, parseSessionNote, rankNotes, sessionTitle, vaultMap, vaultNotes, type PastAnswer } from "./learn";
 import { safeDiagram, safeMarkdown } from "./safemd";
 
 /** Mermaid's drawing, made fit to be shown as an image: well-formed XML, with a size
@@ -329,6 +329,9 @@ const LEARN_ASKED_SENT = 8;
  * about 50,000 tokens, inside what Grill Cloud accepts and what a hosted model reads at
  * once; the second is for a model run on the student's own machine. */
 const VAULT_CHARS = 200_000;
+/** A conversation about the whole vault sends all of it again with every message, so it
+ * is kept shorter than one about a note. */
+const WHOLE_VAULT_TURNS = 6;
 const VAULT_CHARS_LOCAL = 24_000;
 /** How many questions the background prefetch tries to keep buffered ahead of the one
  * on screen (see prefetchAhead). A single BATCH's worth (2) isn't enough runway: a
@@ -465,6 +468,9 @@ export class SessionView extends ItemView {
 	/** Set with `sessionScope` when a session is to ask only these concepts, as "Retry
 	 * my misses" and "Catch up" do. Read once, when the session picks its questions. */
 	private conceptFilter: Set<string> | null = null;
+	/** True for a session started with a `conceptFilter`. Such a session asks what it
+	 * was given and nothing else: no detour to a prerequisite, no probe on a neighbour. */
+	private filteredSession = false;
 	/** Which side of the home screen is showing. Kept for as long as the pane is open. */
 	private homeMode: HomeMode = "test";
 	/** The Learn conversation in hand, if there is one: the note it is about, what the
@@ -683,6 +689,11 @@ export class SessionView extends ItemView {
 		difficulty: QDifficulty;
 		confidence: number | null;
 		hintsUsed: number;
+		/** Set when this answer also added a calibration point, so taking the answer
+		 * back takes that with it. */
+		calibrated?: boolean;
+		/** Set when this answer marked a misconception resolved: what it was before. */
+		resolved?: { tag: string; status: "active" | "resolved" | "dismissed"; lastSeen: string };
 	} | null = null;
 	/** The choice clicked on a multiple-choice question, captured for `doAction` to
 	 * read as its "answer" — mc has no textarea to read from. */
@@ -1448,13 +1459,22 @@ export class SessionView extends ItemView {
 				label: "Catch up",
 				count: `${CATCH_UP} of ${dueNow}`,
 				run: async () => {
-					// The rest of the pile moves out before the session starts, and is saved
-					// first: a session reads the schedule it finds on disk.
-					const { kept, moved } = spreadBacklog(concepts, isEligible, CATCH_UP, CATCH_UP);
-					if (!(await this.saveOrNotice(this.plugin.store.saveConcepts(concepts)))) return;
+					// Worked out on the schedule as it is on disk now, not as it was when
+					// this pane last loaded it: another device may have reviewed and synced
+					// since, and writing the older copy back would undo that.
+					await this.flush();
+					const fresh = (this.plugin.concepts = await this.plugin.store.loadConcepts());
+					const { kept, moved } = spreadBacklog(fresh, isEligible, CATCH_UP, CATCH_UP);
+					if (!(await this.saveOrNotice(this.plugin.store.saveConcepts(fresh)))) {
+						// Not saved: forget the moves, and draw the screen again as it was.
+						this.plugin.concepts = await this.plugin.store.loadConcepts();
+						this.renderStart();
+						return;
+					}
 					this.plugin.refreshStatusBar();
-					if (moved) new Notice(`Grill: ${kept.length} for now. The other ${moved} come back over the next ${Math.ceil(moved / CATCH_UP)} days.`, 8000);
-					begin(notesOf(kept), true, kept);
+					if (moved) new Notice(`Grill: ${kept.length} for now. The other ${moved} come back over the coming days, ${CATCH_UP} a day at most.`, 8000);
+					const notes = new Set(kept.map((id) => fresh[id]?.note));
+					begin(eligible.filter((f) => notes.has(f.basename)), true, kept);
 				},
 			});
 		} else if (dueNow > 0) {
@@ -1555,8 +1575,10 @@ export class SessionView extends ItemView {
 		vault?: { text: string; reading: string; whole: boolean },
 	): Promise<void> {
 		const cfg = this.plugin.llmConfig();
-		if (!cfg) {
-			new Notice("Grill: Learn needs a model. Choose Grill Cloud or add a key in settings.", 8000);
+		// Someone who has set Grill to use no model, for questions or for grading, has a
+		// saved key sent nowhere: Learn doesn't use it either.
+		if (!cfg || !this.plugin.usesAI()) {
+			new Notice("Grill: Learn needs a model. Under Questions and grading, choose an option that uses AI.", 8000);
 			return;
 		}
 		if (this.dirty || this.bankDirty || this.bridgesDirty) await this.flush();
@@ -1632,8 +1654,8 @@ export class SessionView extends ItemView {
 	 * be about the open note. */
 	private async askVault(text: string, eligible: TFile[], openNote: TFile | null): Promise<void> {
 		const cfg = this.plugin.llmConfig();
-		if (!cfg) {
-			new Notice("Grill: Learn needs a model. Choose Grill Cloud or add a key in settings.", 8000);
+		if (!cfg || !this.plugin.usesAI()) {
+			new Notice("Grill: Learn needs a model. Under Questions and grading, choose an option that uses AI.", 8000);
 			return;
 		}
 		const linksIn = new Map<string, number>();
@@ -1653,14 +1675,20 @@ export class SessionView extends ItemView {
 		const byName = new Map(eligible.map((f) => [f.basename, f] as const));
 		const found = rankNotes(text, notes, 5, openNote?.basename ?? "").flatMap((n) => (byName.has(n.name) ? [byName.get(n.name) as TFile] : []));
 		const map = vaultMap(notes);
-		// A question some notes match is answered from those notes, with the map so the
-		// rest of the vault is known about: a few thousand tokens, not the whole vault.
-		if (found.length && namesANote(text, found.map((f) => f.basename))) {
+		// Three kinds of question. One that matches notes is answered from those notes,
+		// with the map so the rest of the vault is known about: a few thousand tokens.
+		// One that matches nothing ("explain this") is about the note that is open. Only
+		// one that is about the notes as a whole ("which notes are the backbone of the
+		// course?") has all of them read, and it says so on screen.
+		const general = aboutTheVault(text);
+		if (found.length && (!general || namesANote(text, found.map((f) => f.basename)))) {
 			await this.startLearn(found[0], text, found.slice(1), { text: map, reading: "", whole: false });
 			return;
 		}
-		// A question that names no note ("which notes are the backbone of the course?")
-		// is about the vault itself, and that is when all of it is read.
+		if (!general && openNote) {
+			await this.startLearn(openNote, text, [], { text: map, reading: "", whole: false });
+			return;
+		}
 		const anchor = openNote ?? eligible[0];
 		if (!anchor) {
 			new Notice("Grill: there are no notes to read yet.", 8000);
@@ -1754,7 +1782,7 @@ export class SessionView extends ItemView {
 		const L = this.learn;
 		const cfg = this.plugin.llmConfig();
 		if (!L || !cfg) return;
-		if (L.turns.filter((t) => t.role === "student").length >= THREAD_LIMIT) {
+		if (L.turns.filter((t) => t.role === "student").length >= (L.whole ? WHOLE_VAULT_TURNS : THREAD_LIMIT)) {
 			new Notice("Grill: that's a long conversation. Test yourself on it, or start a new one.", 8000);
 			return;
 		}
@@ -2932,7 +2960,7 @@ export class SessionView extends ItemView {
 		const wrap = this.root();
 		// Mid-session in the thread view, what has been answered stays on the page while
 		// the next question is written under it.
-		if (this.results.length && this.targetCount > 0 && this.threadStrip(wrap)) {
+		if (this.results.length && this.targetCount > 0 && this.threadStrip(wrap, false)) {
 			this.progressBar(wrap);
 			this.threadHistory(wrap, this.results);
 		}
@@ -2991,6 +3019,11 @@ export class SessionView extends ItemView {
 	private async withWaitInThread<T>(title: string, detail: string, work: () => Promise<T>): Promise<T> {
 		const body = this.contentEl.querySelector<HTMLElement>(".grill-body");
 		if (!body || !body.querySelector("[data-grill-q]")) return this.withDebouncedLoading(title, detail, work);
+		// The way out of the session is shut for as long as this takes. The question is
+		// still on screen, so the strip's End is too; pressed now it would finish the
+		// session, and what is on its way would then land on a session already written.
+		const end = this.contentEl.querySelector<HTMLButtonElement>(".grill-thread-end");
+		if (end) end.disabled = true;
 		let line: HTMLElement | null = null;
 		const timer = window.setTimeout(() => {
 			line = body.createDiv({ cls: "grill-thread-wait grill-meta", text: `${title}...` });
@@ -3001,6 +3034,7 @@ export class SessionView extends ItemView {
 		} finally {
 			window.clearTimeout(timer);
 			(line as HTMLElement | null)?.remove();
+			if (end?.isConnected) end.disabled = false;
 		}
 	}
 
@@ -3430,7 +3464,11 @@ export class SessionView extends ItemView {
 			const bad = row.createEl("button", { cls: "clickable-icon grill-bad-question-btn", attr: { "aria-label": "Bad question: wrong, broken or nonsensical. Deletes it and moves on, no penalty.", type: "button" } });
 			setIcon(bad, "flag");
 			bad.onclick = () => {
-				card.querySelectorAll("button").forEach((b) => (b.disabled = true));
+				// Counts as the action on this question: nothing typed after it, in either
+				// box, may be sent against a question that is being deleted.
+				if (actionTaken) return;
+				actionTaken = true;
+				card.querySelectorAll<HTMLButtonElement | HTMLTextAreaElement | HTMLInputElement>("button, textarea, input").forEach((b) => (b.disabled = true));
 				void this.reportBadQuestion();
 			};
 		}
@@ -3475,6 +3513,8 @@ export class SessionView extends ItemView {
 				cls: "grill-thread-input",
 				attr: { rows: "2", placeholder: "Ask about it... (Enter to send)", "aria-label": "Ask about this question" },
 			});
+			// What was typed here when a reply failed is still here.
+			if (this.keptAnswer && this.keptAnswer.idx === this.idx) input.value = this.keptAnswer.text;
 			const send = ask.createEl("button", { text: "Ask", cls: "grill-hint-btn" });
 			// Everything for when you are stuck sits together at the foot: ask, take a
 			// hint, or say you don't know, with the flag at the far end.
@@ -3499,6 +3539,8 @@ export class SessionView extends ItemView {
 				}
 			});
 		}
+		// Whichever box it went back into, it is used once: never left for a later question.
+		this.keptAnswer = null;
 		if (ta) {
 			ta.addEventListener("keydown", (e) => {
 				if ((e.metaKey || e.ctrlKey) && e.key === "Enter") doAction(false);
@@ -3634,12 +3676,18 @@ export class SessionView extends ItemView {
 				.join("\n\n"),
 		);
 		if (ttsAvailable() || this.plugin.naturalVoiceSource()) this.hearButton(badgeRow, spoken, "Read this aloud", "grill-tts-feedback");
-		const canMark = r.verdict !== "correct" && this.pendingOverride;
+		// Not for a question that was asked about instead of answered: there is no answer
+		// to call correct.
+		const canMark = r.verdict !== "correct" && !r.askedForHelp && this.pendingOverride;
 		// Same single-use restriction as "Mark correct" (pendingOverride), same
 		// authored/bridge exclusion as the pre-answer version, and skipped on the
 		// route-consent screen — discarding the question there would pull the rug out
 		// from under the yes/no choice being offered below.
 		const canDiscard = !pendingExtension && !this.questions[this.idx].authored && this.pendingOverride;
+		// Overruling a grade saves before it redraws. Until it has, nothing else on this
+		// screen may be pressed: Next in that gap would redraw this result on the next
+		// question.
+		const lock = (): void => this.contentEl.querySelectorAll<HTMLButtonElement>(".grill-body button").forEach((b) => (b.disabled = true));
 		if (!r.gaveUp && r.answer) {
 			verdictCard.createDiv({ cls: "grill-block-label", text: "Your answer" });
 			const ans = verdictCard.createDiv({ cls: "grill-your-answer" });
@@ -3685,7 +3733,7 @@ export class SessionView extends ItemView {
 			if (canMark) {
 				const mark = card.createEl("button", { text: "Mark correct", cls: "grill-quiet-btn grill-mark-alone" });
 				mark.onclick = () => {
-					mark.disabled = true;
+					lock();
 					void this.markCorrect(r);
 				};
 			}
@@ -3712,14 +3760,14 @@ export class SessionView extends ItemView {
 		if (this.pendingOverride && (!r.gaveUp || r.askedForHelp) && this.typedAnswer(this.questions[this.idx])) {
 			const back = quiet.createEl("button", { text: r.askedForHelp ? "That was my answer" : "That wasn't my answer", cls: "grill-quiet-btn" });
 			back.onclick = () => {
-				back.disabled = true;
+				lock();
 				void this.takeBackAnswer(r);
 			};
 		}
 		if (canMark) {
 			const mark = quiet.createEl("button", { text: "Mark correct", cls: "grill-quiet-btn" });
 			mark.onclick = () => {
-				mark.disabled = true;
+				lock();
 				void this.markCorrect(r);
 			};
 		}
@@ -3727,7 +3775,7 @@ export class SessionView extends ItemView {
 			const bad = quiet.createEl("button", { cls: "clickable-icon grill-bad-question-btn", attr: { "aria-label": "Bad question: wrong, broken or nonsensical. Deletes it and moves on, no penalty.", type: "button" } });
 			setIcon(bad, "flag");
 			bad.onclick = () => {
-				bad.disabled = true;
+				lock();
 				void this.discardAnsweredQuestion(r);
 			};
 		}
@@ -5438,16 +5486,13 @@ export class SessionView extends ItemView {
 			// to protect the passive daily flow from being flooded, not to silently trim a
 			// request the student explicitly made.
 			const applyDailyCap = this.sessionScope === null;
-			this.sessionConcepts = pickConcepts(
-				pickable,
-				this.concepts,
-				want,
-				this.dueOnly,
-				new Date(),
-				s.newConceptsPerDay,
-				freshPolicy,
-				applyDailyCap,
-			);
+			this.filteredSession = !!only;
+			// A session given its concepts asks all of them, longest due first: the
+			// usual picking caps how many come from one note, which would make "Retry
+			// all 8" ask four.
+			this.sessionConcepts = only
+				? [...pickable].sort((a, b) => (this.concepts[a.id]?.dueAt ?? "").localeCompare(this.concepts[b.id]?.dueAt ?? ""))
+				: pickConcepts(pickable, this.concepts, want, this.dueOnly, new Date(), s.newConceptsPerDay, freshPolicy, applyDailyCap);
 			if (this.sessionConcepts.length === 0) {
 				const cappedOut =
 					applyDailyCap && blockedByDailyCap(pickable, this.concepts, s.newConceptsPerDay, new Date());
@@ -5559,6 +5604,9 @@ export class SessionView extends ItemView {
 		hintsUsed: number,
 		multiPicks?: string[],
 		matchPicks?: Record<string, string>,
+		// The message is known to be an answer (see takeBackAnswer): the grader is not
+		// asked whether it might be a question.
+		asAnswer = false,
 	): Promise<void> {
 		const q = this.questions[this.idx];
 		let verdict: Verdict;
@@ -5635,7 +5683,7 @@ export class SessionView extends ItemView {
 				const g = await this.withWaitInThread(
 					"Grading your answer",
 					"Checking it against your note and the rubric.",
-					() => this.gradeMaybeCareful(cfg, q, answer, this.mayAsk(q)),
+					() => this.gradeMaybeCareful(cfg, q, answer, !asAnswer && this.mayAsk(q)),
 				);
 				// Another session started while this grade was in flight: it belongs to
 				// state that no longer exists and must not be applied to the new one.
@@ -5665,7 +5713,7 @@ export class SessionView extends ItemView {
 		// routing takes priority — only offer contagion when there's no prerequisite to
 		// offer, so the student is never asked twice in the same turn.
 		let pendingExtension: PendingExtension | null = null;
-		if (verdict === "incorrect") {
+		if (verdict === "incorrect" && !this.filteredSession) {
 			if (this.idx + 1 >= this.targetCount) {
 				const route = this.findPrerequisiteRoute(q.node);
 				if (route) pendingExtension = { kind: "prerequisite", route, fromNote: q.node };
@@ -5680,6 +5728,8 @@ export class SessionView extends ItemView {
 		}
 		// Re-probed a known confusion and got it right: mark it resolved.
 		if (q.targetsMisconception && verdict === "correct" && this.registry[q.targetsMisconception]) {
+			const was = this.registry[q.targetsMisconception];
+			if (this.pendingOverride) this.pendingOverride.resolved = { tag: was.tag, status: was.status, lastSeen: was.lastSeen };
 			resolveMisconception(this.registry, q.targetsMisconception);
 			this.dirty = true;
 		}
@@ -5704,7 +5754,7 @@ export class SessionView extends ItemView {
 	/** True when what is typed for this question may be a question about it instead of
 	 * an answer: the thread view, and a question answered in free writing. */
 	private mayAsk(q: Question): boolean {
-		return !q.type || q.type === "write";
+		return (!q.type || q.type === "write") && !q.missingLink;
 	}
 
 	/** The student asked about the question instead of answering it. They get a full
@@ -6048,6 +6098,17 @@ export class SessionView extends ItemView {
 			}
 		}
 		this.recomputeAggregate(o.note);
+		// What else the answer wrote: its point in the confidence record, and a
+		// misconception it marked resolved.
+		if (o.calibrated) {
+			this.plugin.data.calibration.pop();
+			void this.plugin.persist();
+		}
+		const was = o.resolved;
+		if (was && this.registry[was.tag]) {
+			this.registry[was.tag].status = was.status;
+			this.registry[was.tag].lastSeen = was.lastSeen;
+		}
 	}
 
 	/** True for the question types answered by typing, where a message could be
@@ -6056,11 +6117,13 @@ export class SessionView extends ItemView {
 		return !q.type || q.type === "write" || q.type === "blank";
 	}
 
-	/** "That wasn't my answer": what was sent was read as an answer and graded, but it
-	 * wasn't one. The grade leaves the record as if it had never been given and the
-	 * same question is asked again. Unlike `discardAnsweredQuestion` the question
-	 * stays, in the session and in the bank. Same single-use restriction as "Mark
-	 * correct": only right after the answer that produced it. */
+	/** "That wasn't my answer" / "That was my answer": what was sent was read the wrong
+	 * way. The grade leaves the record as if it had never been given, and the same text
+	 * is then read the other way: as a question, which is answered and recorded as
+	 * needing help, or as an answer, which is graded as one. It is not handed back to be
+	 * typed again, because by now the expected answer has been on screen. Same
+	 * single-use restriction as "Mark correct": only right after the answer that
+	 * produced it. Without a model to read it again, the question is asked afresh. */
 	private async takeBackAnswer(r: QuestionResult): Promise<void> {
 		const o = this.pendingOverride;
 		if (!o) return;
@@ -6070,10 +6133,16 @@ export class SessionView extends ItemView {
 		this.pendingOverride = null;
 		this.dirty = true;
 		await this.flush();
-		// What they typed goes back in the box, to send again or reword.
-		const typed = r.askedForHelp ? r.discussion?.[0]?.text : r.answer;
-		if (typed) this.keptAnswer = { idx: this.idx, text: typed };
-		this.renderQuestion();
+		const q = this.questions[this.idx];
+		const typed = (r.askedForHelp ? r.discussion?.[0]?.text : r.answer) ?? "";
+		const cfg = this.plugin.llmConfig();
+		if (!typed || !cfg || !q) {
+			if (typed) this.keptAnswer = { idx: this.idx, text: typed };
+			this.renderQuestion();
+			return;
+		}
+		if (r.askedForHelp) await this.submitAnswer(typed, false, r.hintsUsed, undefined, undefined, true);
+		else await this.answerAsked(cfg, q, typed, r.hintsUsed);
 	}
 
 	/** Persist all session state at once (concepts, mastery, registry). Called at
@@ -6279,6 +6348,7 @@ export class SessionView extends ItemView {
 		if (this.pendingConfidence === null) return;
 		const ok = verdict === "correct" ? 1 : verdict === "partial" ? 0.5 : 0;
 		pushCalibration(this.plugin.data.calibration, this.pendingConfidence, ok);
+		if (this.pendingOverride) this.pendingOverride.calibrated = true;
 		this.pendingConfidence = null;
 		void this.plugin.persist();
 	}
@@ -6445,6 +6515,8 @@ export class SessionView extends ItemView {
 			}
 		}
 		if (q.targetsMisconception && verdict === "correct" && this.registry[q.targetsMisconception]) {
+			const was = this.registry[q.targetsMisconception];
+			if (this.pendingOverride) this.pendingOverride.resolved = { tag: was.tag, status: was.status, lastSeen: was.lastSeen };
 			resolveMisconception(this.registry, q.targetsMisconception);
 			this.dirty = true;
 		}

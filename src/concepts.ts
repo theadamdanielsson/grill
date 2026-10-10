@@ -677,8 +677,8 @@ export const CATCH_UP = 15;
 
 /** Catch up on a backlog without facing all of it at once. Of everything due, the
  * `keep` most pressing stay due now: misses first, then whatever has waited longest.
- * The rest move out, `perDay` to a day from tomorrow, in that same order, so the pile
- * comes back at a pace that can be kept. Only due dates move; what is known about each
+ * The rest move out, in that same order, to the first coming days that have fewer
+ * than `perDay` due on them, so the pile comes back at a pace that can be kept. Only due dates move; what is known about each
  * concept is untouched. Returns the ids kept and how many were moved. */
 export function spreadBacklog(
 	map: ConceptMap,
@@ -696,8 +696,19 @@ export function spreadBacklog(
 	const kept = due.slice(0, Math.max(0, keep)).map(([id]) => id);
 	const rest = due.slice(kept.length);
 	const each = Math.max(1, perDay);
-	rest.forEach(([, cm], i) => {
-		cm.dueAt = new Date(now.getTime() + (1 + Math.floor(i / each)) * 86400_000).toISOString();
-	});
+	// What is already due on each coming day counts against that day, so catching up
+	// again tomorrow doesn't pile a second lot onto the days the first lot went to.
+	const load = new Map<number, number>();
+	for (const cm of Object.values(map)) {
+		if (!conceptTested(cm) || !cm.dueAt || !isEligible(cm.note)) continue;
+		const ahead = Math.floor((new Date(cm.dueAt).getTime() - now.getTime()) / 86400_000);
+		if (new Date(cm.dueAt) > now && ahead >= 1) load.set(ahead, (load.get(ahead) ?? 0) + 1);
+	}
+	let day = 1;
+	for (const [, cm] of rest) {
+		while ((load.get(day) ?? 0) >= each) day++;
+		load.set(day, (load.get(day) ?? 0) + 1);
+		cm.dueAt = new Date(now.getTime() + day * 86400_000).toISOString();
+	}
 	return { kept, moved: rest.length };
 }
