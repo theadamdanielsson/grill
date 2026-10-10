@@ -130,3 +130,87 @@ test("a session is titled by the notes it covered", () => {
 	assert.equal(sessionTitle(["Output", "Real GDP", "Output", "Nominal GDP", "Redo"]), "Output +2");
 	assert.equal(sessionTitle(["Redo"]), "");
 });
+
+import { learnRecord, parseSessionNote } from "../src/learn";
+
+const SESSION_NOTE = `---
+date: 2026-10-07
+score: 1/3
+type: study session
+---
+# Grill session 2026-10-07 10.41
+> [!summary] Debrief
+> 1 of 3 solid.
+
+## [[Updated IS-relation]]
+
+When the interest rate increases, what happens next?
+
+> [!quote] Your answer
+> Output decreases, which lowers
+> investment and consumption.
+
+**Correct.** Correct.
+
+## Updated IS-relation
+
+Describe how this leads to a larger fall in output.
+
+**Skipped.** No penalty for honesty.
+
+**Expected answer:** The multiplier effect.
+
+## GDP deflator
+
+What is the deflator in 2010?
+
+> [!quote] Your answer
+> 2.0
+
+**Incorrect.** Not quite.
+
+**Expected answer:** 1.044
+
+> [!question] You asked
+> why?
+
+## Redo
+
+\`\`\`grill-redo
+{"v":1,"questions":[{"node":"## Not a heading"}]}
+\`\`\`
+`;
+
+test("a session note reads back as the questions, answers and verdicts it was written from", () => {
+	const got = parseSessionNote(SESSION_NOTE);
+	assert.deepEqual(got, [
+		{ note: "Updated IS-relation", question: "When the interest rate increases, what happens next?", answer: "Output decreases, which lowers\ninvestment and consumption.", result: "correct", feedback: "Correct.", expected: "" },
+		{ note: "Updated IS-relation", question: "Describe how this leads to a larger fall in output.", answer: "", result: "skipped", feedback: "No penalty for honesty.", expected: "The multiplier effect." },
+		{ note: "GDP deflator", question: "What is the deflator in 2010?", answer: "2.0", result: "incorrect", feedback: "Not quite.", expected: "1.044" },
+	]);
+});
+
+test("the record for a note says how it has gone and what was answered", () => {
+	const text = learnRecord({
+		concepts: [
+			{ label: "multiplier", correct: 1, partial: 0, incorrect: 2, lastMissed: true },
+			{ label: "never asked", correct: 0, partial: 0, incorrect: 0, lastMissed: false },
+		],
+		misconceptions: [
+			{ label: "Confuses levels with growth rates", count: 2, status: "active" },
+			{ label: "A grading misfire", count: 1, status: "dismissed" },
+		],
+		answers: parseSessionNote(SESSION_NOTE).filter((a) => a.note === "Updated IS-relation").map((a) => ({ ...a, when: "2026-10-07" })),
+	});
+	assert.match(text, /1 right, 0 partly right, 2 wrong or skipped/);
+	assert.match(text, /- multiplier: 1 \/ 0 \/ 2, last answer missed/);
+	assert.doesNotMatch(text, /never asked/);
+	assert.match(text, /Confuses levels with growth rates \(seen 2 times, still open\)/);
+	assert.doesNotMatch(text, /misfire/);
+	assert.match(text, /2\. \[2026-10-07\] Asked: Describe how this leads/);
+	assert.match(text, /Gave no answer \(skipped it or asked for help\)\n   Marked: skipped\. Expected: The multiplier effect\./);
+});
+
+test("a note that was never tested has no record", () => {
+	assert.equal(learnRecord({ concepts: [{ label: "x", correct: 0, partial: 0, incorrect: 0, lastMissed: false }], misconceptions: [], answers: [] }), "");
+});

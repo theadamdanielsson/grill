@@ -40,3 +40,107 @@ export function sessionTitle(headings: string[]): string {
 	if (!notes.length) return "";
 	return notes.length === 1 ? notes[0] : `${notes[0]} +${notes.length - 1}`;
 }
+
+/** One past answer, as a session note records it. */
+export interface PastAnswer {
+	note: string;
+	question: string;
+	/** Empty when nothing was answered: the question was skipped or asked about. */
+	answer: string;
+	result: "correct" | "partial" | "incorrect" | "skipped";
+	feedback: string;
+	expected: string;
+	/** The session's date, YYYY-MM-DD, when the caller knows it. */
+	when?: string;
+}
+
+const RESULTS: Record<string, PastAnswer["result"]> = {
+	Correct: "correct",
+	"Partially correct": "partial",
+	Incorrect: "incorrect",
+	Skipped: "skipped",
+};
+
+/** Read the questions and answers back out of a session note. It reads exactly what
+ * the store writes (a heading per question naming its note, the question, the answer
+ * as a quote, the verdict in bold, the expected answer), and nothing after "Redo". */
+export function parseSessionNote(text: string): PastAnswer[] {
+	const out: PastAnswer[] = [];
+	let cur: PastAnswer | null = null;
+	let part: "question" | "answer" | "after" = "question";
+	for (const line of text.split(/\r?\n/)) {
+		const head = /^## (.+)$/.exec(line);
+		if (head) {
+			if (cur) out.push(cur);
+			const name = head[1].trim().replace(/^\[\[(.+?)\]\]$/, "$1");
+			if (name === "Redo") {
+				cur = null;
+				break;
+			}
+			cur = { note: name, question: "", answer: "", result: "skipped", feedback: "", expected: "" };
+			part = "question";
+			continue;
+		}
+		if (!cur) continue;
+		if (line.startsWith("> [!quote] Your answer")) {
+			part = "answer";
+			continue;
+		}
+		const verdict = /^\*\*(Correct|Partially correct|Incorrect|Skipped)\.\*\*\s*(.*)$/.exec(line);
+		if (verdict) {
+			cur.result = RESULTS[verdict[1]];
+			cur.feedback = verdict[2].trim();
+			part = "after";
+			continue;
+		}
+		const expected = /^\*\*Expected answer:\*\*\s*(.*)$/.exec(line);
+		if (expected) {
+			cur.expected = expected[1].trim();
+			continue;
+		}
+		if (part === "question" && line.trim()) cur.question += (cur.question ? "\n" : "") + line;
+		else if (part === "answer") {
+			if (line.startsWith(">")) cur.answer += (cur.answer ? "\n" : "") + line.replace(/^> ?/, "");
+			else if (line.trim()) part = "after";
+		}
+	}
+	if (cur) out.push(cur);
+	return out.filter((a) => a.question);
+}
+
+export interface LearnRecordInput {
+	concepts: Array<{ label: string; correct: number; partial: number; incorrect: number; lastMissed: boolean }>;
+	misconceptions: Array<{ label: string; count: number; status: string }>;
+	/** Newest first. */
+	answers: PastAnswer[];
+}
+
+/** What Grill has on record about one note, in words a model can answer from: how each
+ * concept has gone, the confusions the grader has named, and the most recent answers
+ * as they were given. Empty when the note has never been tested. Cut to `cap`. */
+export function learnRecord(r: LearnRecordInput, cap = 4000): string {
+	const tested = r.concepts.filter((c) => c.correct + c.partial + c.incorrect > 0);
+	if (!tested.length && !r.answers.length && !r.misconceptions.length) return "";
+	const lines: string[] = [];
+	if (tested.length) {
+		const sum = (k: "correct" | "partial" | "incorrect"): number => tested.reduce((n, c) => n + c[k], 0);
+		lines.push(`Answers so far on this note: ${sum("correct")} right, ${sum("partial")} partly right, ${sum("incorrect")} wrong or skipped.`);
+		lines.push("By concept (right / partly / wrong):");
+		for (const c of tested) lines.push(`- ${c.label}: ${c.correct} / ${c.partial} / ${c.incorrect}${c.lastMissed ? ", last answer missed" : ""}`);
+	}
+	const active = r.misconceptions.filter((m) => m.status !== "dismissed");
+	if (active.length) {
+		lines.push("Confusions the grader has named here:");
+		for (const m of active) lines.push(`- ${m.label} (seen ${m.count} time${m.count === 1 ? "" : "s"}, ${m.status === "resolved" ? "since resolved" : "still open"})`);
+	}
+	if (r.answers.length) {
+		lines.push("Recent answers, newest first:");
+		r.answers.forEach((a, i) => {
+			const said = a.answer ? `Answered: ${a.answer.replace(/\s+/g, " ")}` : "Gave no answer (skipped it or asked for help)";
+			lines.push(`${i + 1}.${a.when ? ` [${a.when}]` : ""} Asked: ${a.question.replace(/\s+/g, " ")}`);
+			lines.push(`   ${said}`);
+			lines.push(`   Marked: ${a.result}.${a.result !== "correct" && a.expected ? ` Expected: ${a.expected.replace(/\s+/g, " ")}` : ""}`);
+		});
+	}
+	return safeSlice(lines.join("\n"), cap);
+}

@@ -78,7 +78,7 @@ import { stopSpeaking, toSpeechText, ttsAvailable } from "./tts";
 import { SessionEntry } from "./store";
 import { renderThreadHistory } from "./thread";
 import { renderChatHome, renderCreditsRing, type HomeMode, type HomeSuggestion } from "./home";
-import { learnContext, sessionTitle } from "./learn";
+import { learnContext, learnRecord, parseSessionNote, sessionTitle, type PastAnswer } from "./learn";
 import { safeDiagram, safeMarkdown } from "./safemd";
 
 /** Mermaid's drawing, made fit to be shown as an image: well-formed XML, with a size
@@ -320,6 +320,10 @@ const ONBOARD_NOTE_CONCEPTS = 3;
 const CHECKPOINT_MS = 3000;
 /** Catch up: how many of a backlog stay due now, and how many come back each day after. */
 const CATCH_UP = 15;
+/** Learn: how many of the latest session notes are read for past answers on a note, and
+ * how many of those answers are sent. */
+const LEARN_SESSIONS_READ = 40;
+const LEARN_ANSWERS_SENT = 10;
 /** How many questions the background prefetch tries to keep buffered ahead of the one
  * on screen (see prefetchAhead). A single BATCH's worth (2) isn't enough runway: a
  * couple of quick MC/TF answers can outrun one model round-trip, so goToQuestion's own
@@ -463,6 +467,8 @@ export class SessionView extends ItemView {
 		note: TFile;
 		noteText: string;
 		linkedText: string;
+		/** What Grill has on record about this note: see `learnRecord`. */
+		record: string;
 		turns: ThreadTurn[];
 		startedAt: Date;
 		persona: string;
@@ -1831,9 +1837,45 @@ export class SessionView extends ItemView {
 		const links = Object.keys(this.app.metadataCache.resolvedLinks[note.path] ?? {}).flatMap((path) => (eligible.has(path) ? [eligible.get(path) as TFile] : []));
 		const read = async (f: TFile): Promise<{ name: string; text: string }> => ({ name: f.basename, text: await this.app.vault.cachedRead(f) });
 		const ctx = learnContext(await read(note), await Promise.all(links.slice(0, 8).map(read)));
-		this.learn = { note, ...ctx, turns: [], startedAt: new Date(), persona: instr.persona, instructions: instr.preferences };
+		const record = await this.recordFor(note.basename);
+		this.learn = { note, ...ctx, record, turns: [], startedAt: new Date(), persona: instr.persona, instructions: instr.preferences };
 		this.renderLearn();
 		if (firstAsk) await this.askLearn(firstAsk);
+	}
+
+	/** What Grill has on record about a note, for Learn to answer from: how its concepts
+	 * have gone, the confusions named on it, and the last answers given, read back from
+	 * the most recent session notes. */
+	private async recordFor(noteName: string): Promise<string> {
+		const concepts = Object.values(this.plugin.concepts)
+			.filter((cm) => cm.note === noteName)
+			.map((cm) => {
+				const last = cm.reviewLog?.[cm.reviewLog.length - 1];
+				return { label: cm.label, correct: cm.correct, partial: cm.partial, incorrect: cm.incorrect, lastMissed: last ? last.rating === 1 : cm.incorrect > 0 && cm.streak === 0 };
+			});
+		let misconceptions: Array<{ label: string; count: number; status: string }> = [];
+		try {
+			misconceptions = Object.values(await this.plugin.store.loadRegistry())
+				.filter((m) => m.notes.includes(noteName))
+				.map((m) => ({ label: m.label, count: m.count, status: m.status }));
+		} catch {
+			// The record is still worth giving without them.
+		}
+		const dir = `${this.plugin.data.settings.folder}/Sessions/`;
+		const sessions = this.app.vault
+			.getMarkdownFiles()
+			.filter((f) => f.path.startsWith(dir))
+			.sort((a, b) => b.stat.ctime - a.stat.ctime)
+			.slice(0, LEARN_SESSIONS_READ);
+		const answers: PastAnswer[] = [];
+		for (const f of sessions) {
+			if (answers.length >= LEARN_ANSWERS_SENT) break;
+			const when = this.app.metadataCache.getFileCache(f)?.frontmatter?.date;
+			for (const a of parseSessionNote(await this.app.vault.cachedRead(f))) {
+				if (a.note === noteName && answers.length < LEARN_ANSWERS_SENT) answers.push({ ...a, when: typeof when === "string" ? when : undefined });
+			}
+		}
+		return learnRecord({ concepts, misconceptions, answers });
 	}
 
 	private renderLearn(): void {
@@ -1911,7 +1953,7 @@ export class SessionView extends ItemView {
 		waiting?.scrollIntoView({ block: "nearest" });
 		this.contentEl.querySelectorAll<HTMLButtonElement | HTMLTextAreaElement>(".grill-learn button, .grill-learn textarea").forEach((b) => (b.disabled = true));
 		try {
-			const reply = await learnFromNotes(cfg, L.note.basename, L.noteText, L.linkedText, L.turns.slice(0, -1), text, L.persona, L.instructions);
+			const reply = await learnFromNotes(cfg, L.note.basename, L.noteText, L.linkedText, L.turns.slice(0, -1), text, L.persona, L.instructions, L.record);
 			if (this.learn !== L) return;
 			L.turns.push(reply);
 			this.renderLearn();
