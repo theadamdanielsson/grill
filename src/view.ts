@@ -1,6 +1,6 @@
 /** Quiz session side panel. */
 
-import { ItemView, loadMermaid, MarkdownRenderer, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
+import { ItemView, loadMermaid, MarkdownRenderer, Modal, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
 import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, cloudEnabled, creditsInWords, lowBalance, usageInWords } from "./cloud";
 import { adjudicateBridges, ConceptTarget, contentWords, debriefSession, discussQuestion, embedTexts, explainQuestion, formatSatisfies, generateQuestions, Grade, CloudError, gradeAnswer, learnFromNotes, LLMConfig, offeredProviders, PROVIDERS, ProviderId, Question, supportsEmbeddings, supportsVision, testModel, ThreadTurn, Verdict } from "./llm";
@@ -4055,6 +4055,7 @@ export class SessionView extends ItemView {
 		const el = block();
 		if (!picture) return written(el);
 		const holder = el.createDiv({ cls: "grill-diagram" });
+		this.zoomOnClick(holder);
 		picture.addEventListener(
 			"error",
 			() => {
@@ -4127,6 +4128,28 @@ export class SessionView extends ItemView {
 			holder.empty();
 			holder.createEl("img", { attr: { src: this.app.vault.getResourcePath(dest) } });
 		}
+		this.zoomOnClick(holder);
+	}
+
+	/** A picture in a reply is shown small, beside the text it goes with. Clicking it
+	 * shows it large, over the pane; clicking again, or Escape, puts it away. */
+	private zoomOnClick(holder: HTMLElement): void {
+		holder.addClass("grill-zoomable");
+		holder.addEventListener("click", (e) => {
+			const hit = e.target instanceof HTMLElement ? e.target.closest("img") : null;
+			const img = hit ?? holder.querySelector("img");
+			if (!img?.src) return;
+			e.preventDefault();
+			e.stopPropagation();
+			const modal = new Modal(this.app);
+			modal.modalEl.addClass("grill-zoom-modal");
+			// A diagram is drawn in the light palette and turned over for a dark theme where
+			// it sits; it needs the same here.
+			if (holder.hasClass("grill-diagram")) modal.contentEl.addClass("grill-diagram");
+			modal.contentEl.createEl("img", { attr: { src: img.src, alt: img.alt ?? "" } });
+			modal.contentEl.onclick = () => modal.close();
+			modal.open();
+		});
 	}
 
 	/** Render an occlusion question's image: a plain `<img>` (same

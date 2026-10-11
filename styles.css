@@ -3353,3 +3353,42 @@ textarea.grill-mgmt-field {
   aspect-ratio: auto;
   height: 1.15em;
 }
+
+/* Pictures in a reply (a diagram, an image from the note) sit centred under the text,
+ * and open large when clicked. */
+.grill-diagram {
+  text-align: center;
+}
+.grill-diagram img,
+.grill-diagram svg {
+  margin-left: auto;
+  margin-right: auto;
+}
+.grill-note-images {
+  justify-content: center;
+}
+.grill-note-images img {
+  max-height: 300px;
+}
+.grill-zoomable img {
+  cursor: zoom-in;
+}
+.modal.grill-zoom-modal {
+  width: auto;
+  max-width: 94vw;
+  max-height: 94vh;
+  padding: var(--size-4-3, 12px);
+}
+.grill-zoom-modal .modal-content {
+  display: flex;
+  justify-content: center;
+  margin: 0;
+  cursor: zoom-out;
+}
+.grill-zoom-modal .modal-content img {
+  max-width: 90vw;
+  max-height: 86vh;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
