@@ -1722,7 +1722,11 @@ export class SessionView extends ItemView {
 		// One that matches nothing ("explain this") is about the note that is open. Only
 		// one that is about the notes as a whole ("which notes are the backbone of the
 		// course?") has all of them read, and it says so on screen.
-		const general = aboutTheVault(text);
+		// "Add more detail to this note" is about the note that is open, whatever other
+		// words it uses. And Claude Code finds what it needs itself: nothing is gained by
+		// reading the vault out to it first.
+		const thisNote = !!openNote && /\b(this|the|my|current|open)\s+note\b/i.test(text);
+		const general = aboutTheVault(text) && !thisNote && !this.agentProgram();
 		const named = namesANote(text, found.map((f) => f.basename));
 		// The open note's chip was left on the message: that is the note it is about,
 		// unless the message names another. Notes that match its words come along.

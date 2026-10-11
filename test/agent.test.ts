@@ -77,3 +77,32 @@ test("a reply kept as a note is named by its first line, in a form a file can ha
 	assert.equal(replyTitle("***"), "");
 	assert.ok(replyTitle("word ".repeat(40)).length <= 60);
 });
+
+import { acceptPaneSignals, pathWith } from "../src/agent";
+test("an abort signal Node doesn't recognise no longer stops the engine starting", () => {
+	const refuses = Object.assign(
+		(...args: unknown[]) => {
+			if (args.length > 1) throw new TypeError('The "eventTargets" argument must be an instance of EventEmitter or EventTarget.');
+			return "set";
+		},
+		{} as { grillPatched?: boolean },
+	);
+	const events = { setMaxListeners: refuses as typeof refuses & ((...a: unknown[]) => unknown) };
+	acceptPaneSignals(events);
+	const signal = { aborted: false, addEventListener: () => undefined, removeEventListener: () => undefined };
+	assert.equal(events.setMaxListeners(50, signal), undefined);
+	assert.equal(events.setMaxListeners(50), "set");
+	// Anything that isn't a signal still fails as it should.
+	assert.throws(() => events.setMaxListeners(50, { not: "a signal" }), TypeError);
+	const once = events.setMaxListeners;
+	acceptPaneSignals(events);
+	assert.equal(events.setMaxListeners, once, "patched once");
+});
+
+test("the program is started with the folders a terminal would have", () => {
+	const p = pathWith("/usr/bin:/bin", "/opt/homebrew/bin/claude", "/Users/a", "darwin").split(":");
+	assert.equal(p[0], "/opt/homebrew/bin");
+	assert.ok(p.includes("/usr/local/bin") && p.includes("/Users/a/.local/bin"));
+	assert.equal(new Set(p).size, p.length, "no folder twice");
+	assert.equal(pathWith("C:\\Windows", "C:\\Users\\a\\.local\\bin\\claude.exe", "C:\\Users\\a", "win32").split(";")[0], "C:\\Users\\a\\.local\\bin");
+});
