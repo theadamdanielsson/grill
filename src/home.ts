@@ -32,24 +32,25 @@ export interface HomeCredits {
 	open(): void;
 }
 
-export type HomeMode = "learn" | "test";
+export type HomeMode = "chat" | "test";
 
 export interface HomeData {
-	/** Learn: you ask and Grill explains, nothing graded. Test: Grill asks and it counts. */
+	/** Chat: you ask or say what to do, nothing graded. Test: Grill asks and it counts. */
 	mode: HomeMode;
 	setMode(mode: HomeMode): void;
 	suggestions: HomeSuggestion[];
-	recent: HomeRecent[];
-	/** The note open beside the pane, when it can be studied. */
+	/** The conversation or session last had, to pick up from. */
+	last: HomeRecent | null;
+	/** The note open beside the pane, when it can be read. It rides along with what is
+	 * typed, as a chip that can be taken off. */
 	openNote: string | null;
-	/** Said under the box in place of the open note, when the box isn't about it. */
-	under?: string;
-	/** Draws into the room left between the recent list and the suggestions. */
-	fill?(host: HTMLElement): void;
+	/** What answers: its name, a line on what it can do, and the way to change it. */
+	engine: { name: string; note: string; open(): void };
 	placeholder: string;
 	sendLabel: string;
-	/** What was typed, trimmed; empty when Send was pressed on an empty box. */
-	send(text: string): void;
+	/** What was typed, trimmed (empty when Send was pressed on an empty box), and
+	 * whether the open note's chip was still on. */
+	send(text: string, withOpenNote: boolean): void;
 	showProgress(): void;
 	showQuestions(): void;
 }
@@ -72,35 +73,25 @@ export function renderCreditsRing(parent: HTMLElement, c: HomeCredits): void {
 	left.setAttribute("transform", "rotate(-90 12 12)");
 }
 
-/** Everything on the home screen under the four tiles. */
+/** Everything on the home screen under the tiles: one panel with the two modes as tabs
+ * across its top, what the record suggests, and the box. The box is the screen: it takes
+ * whatever height is left, at the foot, where a chat's box is. The rows above it are
+ * suggestions, a few things the record has a reason to point at, not the way in. */
 export function renderChatHome(screen: HTMLElement, d: HomeData): void {
-	if (d.recent.length) {
-		screen.createDiv({ cls: "grill-section-label", text: "Recent" });
-		const list = screen.createDiv({ cls: "grill-recent" });
-		for (const item of d.recent) {
-			const row = list.createDiv({ cls: "grill-recent-row" });
-			row.createSpan({ text: item.title });
-			if (item.meta) row.createSpan({ cls: "grill-meta", text: item.meta });
-			row.onclick = () => item.open();
-		}
-	}
-
-	// Whatever height is left goes here, so the suggestions and the box sit at the foot
-	// of the pane.
-	const space = screen.createDiv({ cls: "grill-home-space" });
-	d.fill?.(space);
-
-	const modes = screen.createDiv({ cls: "grill-home-modes", attr: { role: "group", "aria-label": "Mode" } });
-	for (const [mode, label] of [["learn", "Learn"], ["test", "Test"]] as const) {
+	const panel = screen.createDiv({ cls: "grill-home-panel" });
+	const modes = panel.createDiv({ cls: "grill-home-modes", attr: { role: "group", "aria-label": "Mode" } });
+	for (const [mode, label] of [["chat", "Chat"], ["test", "Test"]] as const) {
 		const b = modes.createEl("button", { cls: "grill-home-mode", text: label, attr: { type: "button", "aria-pressed": String(d.mode === mode) } });
 		b.toggleClass("is-on", d.mode === mode);
 		b.onclick = () => {
 			if (d.mode !== mode) d.setMode(mode);
 		};
 	}
+	const body = panel.createDiv({ cls: "grill-home-body" });
 
 	if (d.suggestions.length) {
-		const list = screen.createDiv({ cls: "grill-home-suggestions" });
+		const list = body.createDiv({ cls: "grill-home-suggestions" });
+		list.createDiv({ cls: "grill-home-label", text: "Suggestions" });
 		for (const s of d.suggestions) {
 			const row = list.createEl("button", { cls: "grill-home-suggestion", attr: { type: "button" } });
 			const words = row.createSpan({ cls: "grill-home-suggestion-words" });
@@ -119,18 +110,43 @@ export function renderChatHome(screen: HTMLElement, d: HomeData): void {
 		}
 	}
 
-	const box = screen.createDiv({ cls: "grill-home-box" });
+	if (d.last) {
+		const last = d.last;
+		const row = body.createEl("button", { cls: "grill-home-last", attr: { type: "button" } });
+		const what = row.createSpan();
+		what.createSpan({ cls: "grill-meta", text: "Last: " });
+		what.createSpan({ text: last.title });
+		if (last.meta) row.createSpan({ cls: "grill-meta", text: last.meta });
+		row.onclick = () => last.open();
+	}
+
+	const box = body.createDiv({ cls: "grill-home-box" });
+	let withOpenNote = !!d.openNote;
+	if (d.openNote) {
+		const chips = box.createDiv({ cls: "grill-home-chips" });
+		const chip = chips.createSpan({ cls: "grill-home-chip" });
+		chip.createSpan({ text: d.openNote });
+		const off = chip.createEl("button", { cls: "grill-home-chip-off", text: "x", attr: { type: "button", "aria-label": `Leave ${d.openNote} out of this message` } });
+		off.onclick = () => {
+			withOpenNote = false;
+			chips.remove();
+		};
+	}
 	const input = box.createEl("textarea", {
 		cls: "grill-home-input",
-		attr: { rows: "2", placeholder: d.placeholder, "aria-label": d.mode === "learn" ? "What to ask about" : "What to be tested on" },
+		attr: { placeholder: d.placeholder, "aria-label": d.mode === "chat" ? "Message" : "What to be tested on" },
 	});
 	const bar = box.createDiv({ cls: "grill-home-bar" });
-	bar.createSpan({ cls: "grill-meta grill-home-open", text: d.under ?? (d.openNote ? `Open note: ${d.openNote}` : "") });
+	const engine = bar.createEl("button", { cls: "grill-home-engine", attr: { type: "button", "aria-label": `Answered by ${d.engine.name}. Change in settings` } });
+	engine.createSpan({ cls: "grill-home-engine-dot" });
+	engine.createSpan({ text: d.engine.name });
+	engine.onclick = () => d.engine.open();
 	const send = bar.createEl("button", { text: d.sendLabel, cls: "mod-cta grill-primary-cta grill-home-send", attr: { type: "button" } });
+	if (d.engine.note) box.createDiv({ cls: "grill-meta grill-home-engine-note", text: d.engine.note });
 	const go = (): void => {
 		if (send.disabled) return;
 		send.disabled = true;
-		d.send(input.value.trim());
+		d.send(input.value.trim(), withOpenNote);
 		// A message that matched nothing leaves the screen up: let them try again.
 		window.setTimeout(() => {
 			if (send.isConnected) send.disabled = false;

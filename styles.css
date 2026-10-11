@@ -3429,3 +3429,214 @@ textarea.grill-mgmt-field {
   border: 1px solid var(--background-modifier-border);
   color: var(--text-muted);
 }
+
+/* ---------------------------------------------------------------- home as a chat */
+/* The home screen is a chat with the record above it. The tiles shrink to one slim row,
+ * and under them sits one panel: the two modes as tabs across its top, what the record
+ * suggests, and the box, which takes whatever height is left, at the foot. */
+.grill-home .grill-start-stats {
+  margin: 0.6em 0 0.9em;
+}
+.grill-home .grill-start-stats .grill-stat {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: baseline;
+  column-gap: 0.55em;
+  padding: 0.5em 0.4em 0.4em;
+}
+.grill-home .grill-start-stats .grill-stat-value {
+  font-size: 0.95em;
+}
+.grill-home .grill-start-stats .grill-stat-label {
+  margin-top: 0;
+}
+.grill-home-panel {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--grill-ember-dark, #5c1400);
+  background: var(--grill-screen, #140b07);
+}
+.grill-home-panel > .grill-home-modes {
+  gap: 0;
+  margin-top: 0;
+  border-bottom: 1px solid var(--grill-ember-dark, #5c1400);
+}
+.grill-view .grill-home-panel > .grill-home-modes button.grill-home-mode,
+.grill-view .grill-home-panel > .grill-home-modes button.grill-home-mode:hover {
+  padding: 0.95em 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--grill-ink-dim, #c9a875);
+}
+.grill-view .grill-home-panel > .grill-home-modes button.grill-home-mode:hover {
+  color: var(--grill-ink, #ffe98a);
+}
+.grill-view .grill-home-panel > .grill-home-modes button.grill-home-mode.is-on,
+.grill-view .grill-home-panel > .grill-home-modes button.grill-home-mode.is-on:hover {
+  border-bottom-color: var(--grill-accent, #ff8c2b);
+  background: rgba(255, 122, 34, 0.09);
+  color: var(--grill-ink-gold, #ffd23f);
+}
+.grill-home-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8em;
+  min-height: 0;
+  padding: 0.9em 1em 1em;
+}
+.grill-home-label {
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold, 600);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--grill-ink-dim, #c9a875);
+}
+/* Suggestions are rows in a list, not the way in: no fill, and less height than the box. */
+.grill-view .grill-home-panel button.grill-home-suggestion,
+.grill-view .grill-home-panel button.grill-home-suggestion:hover {
+  min-height: 2.5em;
+  padding: 0.45em 0.8em;
+  background: transparent;
+}
+.grill-view .grill-home-panel button.grill-home-suggestion:hover {
+  background: rgba(255, 122, 34, 0.09);
+}
+.grill-home-suggestion-words {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.grill-view button.grill-home-last,
+.grill-view button.grill-home-last:hover {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.8em;
+  width: 100%;
+  height: auto;
+  min-height: 2em;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--grill-ink, #ffe98a);
+  font-size: var(--font-ui-small);
+  text-align: left;
+  cursor: pointer;
+}
+.grill-view button.grill-home-last > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.grill-view button.grill-home-last > .grill-meta {
+  flex-shrink: 0;
+}
+.grill-view button.grill-home-last:hover {
+  color: var(--grill-ink-gold, #ffd23f);
+}
+/* The box: the largest thing on the screen. The frame is the box; the field inside it
+ * has no border of its own and grows with the pane. */
+.grill-home-panel .grill-home-box {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6em;
+  min-height: 15em;
+  margin-top: 0;
+  padding: 0.8em 0.9em;
+  border: 2px solid var(--grill-accent, #ff8c2b);
+  background: var(--grill-screen-deep, #0f0904);
+}
+.grill-home-panel .grill-home-box:focus-within {
+  border-color: var(--grill-gold, #ffd23f);
+}
+.grill-view .grill-home-panel .grill-home-input,
+.grill-view .grill-home-panel .grill-home-input:focus,
+.grill-view .grill-home-panel .grill-home-input:hover {
+  flex: 1 1 auto;
+  min-height: 6em;
+  padding: 0.2em 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 1.12em;
+  line-height: 1.5;
+}
+.grill-home-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4em;
+}
+.grill-home-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  max-width: 100%;
+  padding: 0.2em 0.3em 0.2em 0.65em;
+  border: 1px solid var(--grill-ember-dark, #5c1400);
+  color: var(--grill-ink, #ffe98a);
+  font-size: var(--font-ui-small);
+}
+.grill-home-chip > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.grill-view button.grill-home-chip-off,
+.grill-view button.grill-home-chip-off:hover {
+  flex-shrink: 0;
+  width: 1.9em;
+  height: 1.9em;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--grill-ink-dim, #c9a875);
+  cursor: pointer;
+}
+.grill-view button.grill-home-chip-off:hover {
+  color: var(--grill-ink-gold, #ffd23f);
+}
+.grill-home-panel .grill-home-bar {
+  margin-top: 0;
+  padding-bottom: 0;
+}
+.grill-view button.grill-home-engine,
+.grill-view button.grill-home-engine:hover {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55em;
+  min-width: 0;
+  height: auto;
+  min-height: 2.4em;
+  padding: 0 0.75em;
+  border: 1px solid var(--grill-ember-dark, #5c1400);
+  background: transparent;
+  box-shadow: none;
+  color: var(--grill-ink, #ffe98a);
+  font-size: var(--font-ui-small);
+  cursor: pointer;
+}
+.grill-view button.grill-home-engine:hover {
+  border-color: var(--grill-accent, #ff8c2b);
+}
+.grill-home-engine-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  background: var(--grill-gold, #ffd23f);
+}
+.grill-home-engine-note {
+  font-size: var(--font-ui-smaller);
+}
+.grill-home > .grill-home-foot {
+  margin-top: 0.8em;
+}

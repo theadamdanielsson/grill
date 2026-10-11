@@ -473,7 +473,7 @@ export class SessionView extends ItemView {
 	 * was given and nothing else: no detour to a prerequisite, no probe on a neighbour. */
 	private filteredSession = false;
 	/** Which side of the home screen is showing. Kept for as long as the pane is open. */
-	private homeMode: HomeMode = "test";
+	private homeMode: HomeMode = "chat";
 	/** The Learn conversation in hand, if there is one: the note it is about, what the
 	 * model is given to read, and what has been said. */
 	private learn: {
@@ -1424,7 +1424,7 @@ export class SessionView extends ItemView {
 		};
 		const begin = (scope: TFile[] | null, dueOnly: boolean, only: string[] | null = null): void => this.beginTest(scope, dueOnly, only);
 
-		const learning = this.homeMode === "learn";
+		const learning = this.homeMode === "chat";
 		const active = this.app.workspace.getActiveFile();
 		const openNote = active && active.extension === "md" && !this.plugin.isExcluded(active.path) ? active : null;
 		const suggestions: HomeSuggestion[] = [];
@@ -1522,7 +1522,7 @@ export class SessionView extends ItemView {
 			if (asked && asked !== openNote) {
 				suggestions.push({
 					label: `Test what I asked about: ${asked.basename}`,
-					detail: `Asked about in Learn, not tested since. ${howItHasGone(asked.basename)}`,
+					detail: `Asked about in Chat, not tested since. ${howItHasGone(asked.basename)}`,
 					run: () => begin([asked], false),
 					check: async () => ((await this.enoughToTest(asked)) ? null : "Too short to test"),
 				});
@@ -1545,42 +1545,38 @@ export class SessionView extends ItemView {
 				this.renderStart();
 			},
 			suggestions,
-			// Titled by what was studied, with when and how it went beside it.
-			recent: this.recentSessions().map((f) => {
-				const cache = this.app.metadataCache.getFileCache(f);
-				const fm = cache?.frontmatter;
-				const learned = fm?.type === "learn";
-				const title = learned
-					? String(fm?.note ?? "")
-					: sessionTitle((cache?.headings ?? []).filter((h) => h.level === 2).map((h) => h.heading));
-				const when = typeof fm?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(fm.date) ? `${Number(fm.date.slice(8))} ${MONTHS[Number(fm.date.slice(5, 7)) - 1]}` : "";
-				const how = learned ? "Learn" : fm?.score ? String(fm.score) : "";
-				return {
-					title: title || f.basename,
-					meta: [when, how].filter(Boolean).join(" · "),
-					open: () => void this.app.workspace.getLeaf(false).openFile(f),
-				};
-			}),
+			// The last conversation or session, titled by what it was about, with when and
+			// how it went beside it.
+			last:
+				this.recentSessions()
+					.slice(0, 1)
+					.map((f) => {
+						const cache = this.app.metadataCache.getFileCache(f);
+						const fm = cache?.frontmatter;
+						const chatted = fm?.type === "learn";
+						const title = chatted
+							? String(fm?.note ?? "")
+							: sessionTitle((cache?.headings ?? []).filter((h) => h.level === 2).map((h) => h.heading));
+						const when = typeof fm?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(fm.date) ? `${Number(fm.date.slice(8))} ${MONTHS[Number(fm.date.slice(5, 7)) - 1]}` : "";
+						const how = chatted ? "Chat" : fm?.score ? `Test, ${String(fm.score)}` : "";
+						return {
+							title: title || f.basename,
+							meta: [when, how].filter(Boolean).join(" · "),
+							open: () => void this.app.workspace.getLeaf(false).openFile(f),
+						};
+					})[0] ?? null,
 			openNote: openNote?.basename ?? null,
-			under: learning ? "Reads the notes your question is about" : undefined,
-			placeholder: learning ? "Ask anything about your notes" : "Say what to test, or just press Get grilled",
-			sendLabel: learning ? "Ask" : "Get grilled",
-			// The room between what was done and what to do next: when it was done. Only
-			// when there is room: in a short pane it would push the box out of view, and
-			// the box is what the screen is for.
-			fill: (host) => {
-				this.renderHeatmap(host);
-				window.requestAnimationFrame(() => {
-					if (host.isConnected && this.contentEl.scrollHeight > this.contentEl.clientHeight + 4) host.empty();
-				});
-			},
-			send: (text) => {
+			engine: this.engineForHome(),
+			placeholder: learning ? "Ask anything, or say what to do" : "Say what to test, or just press Get grilled",
+			sendLabel: learning ? "Send" : "Get grilled",
+			send: (text, withOpenNote) => {
 				if (learning) {
 					if (!text) {
 						new Notice("Grill: type what you want to ask.", 5000);
 						return;
 					}
-					void this.askVault(text, eligible, openNote);
+					// With its chip taken off, the open note is not what this is about.
+					void this.askVault(text, eligible, withOpenNote ? openNote : null);
 					return;
 				}
 				if (!text) return begin(null, false);
@@ -1599,6 +1595,18 @@ export class SessionView extends ItemView {
 		});
 	}
 
+	/** What answers in Chat, for the button under the box: its name, a line on what it
+	 * can do, and settings as the place to change it. */
+	private engineForHome(): { name: string; note: string; open(): void } {
+		const s = this.plugin.data.settings;
+		const open = (): void => this.plugin.openSettings();
+		if (!this.plugin.llmConfig() || !this.plugin.usesAI()) {
+			return { name: "No model", note: "Tests come from your notes as they are. Chat needs a model: choose one in settings.", open };
+		}
+		if (s.provider === "grillcloud") return { name: "Grill Cloud", note: "No setup. Answers from your notes and your record. Uses credits.", open };
+		return { name: s.provider === "custom" ? "Your endpoint" : PROVIDERS[s.provider].label.replace(/ \(.*$/, ""), note: "Runs on your own key. Answers from your notes and your record.", open };
+	}
+
 	/** Learn: a conversation about one note, with nothing graded. The note and the
 	 * notes it links to are read once, here, and sent with every message. */
 	private async startLearn(
@@ -1611,7 +1619,7 @@ export class SessionView extends ItemView {
 		// Someone who has set Grill to use no model, for questions or for grading, has a
 		// saved key sent nowhere: Learn doesn't use it either.
 		if (!cfg || !this.plugin.usesAI()) {
-			new Notice("Grill: Learn needs a model. Under Questions and grading, choose an option that uses AI.", 8000);
+			new Notice("Grill: Chat needs a model. Under Questions and grading, choose an option that uses AI.", 8000);
 			return;
 		}
 		if (this.dirty || this.bankDirty || this.bridgesDirty) await this.flush();
@@ -1688,7 +1696,7 @@ export class SessionView extends ItemView {
 	private async askVault(text: string, eligible: TFile[], openNote: TFile | null): Promise<void> {
 		const cfg = this.plugin.llmConfig();
 		if (!cfg || !this.plugin.usesAI()) {
-			new Notice("Grill: Learn needs a model. Under Questions and grading, choose an option that uses AI.", 8000);
+			new Notice("Grill: Chat needs a model. Under Questions and grading, choose an option that uses AI.", 8000);
 			return;
 		}
 		const linksIn = new Map<string, number>();
@@ -1742,7 +1750,7 @@ export class SessionView extends ItemView {
 		if (!L) return this.renderStart();
 		const wrap = this.root();
 		const strip = wrap.createDiv({ cls: "grill-thread-strip" });
-		strip.createSpan({ cls: "grill-thread-kind", text: "Learn" });
+		strip.createSpan({ cls: "grill-thread-kind", text: "Chat" });
 		if (L.whole) strip.createSpan({ cls: "grill-thread-count", text: "Your notes" });
 		else {
 			const name = strip.createSpan({ cls: "grill-thread-count grill-chip-link", text: L.note.basename });
