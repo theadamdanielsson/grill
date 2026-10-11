@@ -1,5 +1,29 @@
 # Changelog
 
+## 8.0.1
+
+- **A rewrite starts from the whole note.** Chat reads a note in full before it
+  rewrites it, so properties and the end of a long note are no longer at risk. A note
+  too long to read whole is changed in parts. The card for a rewrite says how many
+  lines the note has now and how many it will have.
+- **What Chat writes into a note is made inert.** Remote pictures, HTML and blocks a
+  plugin would run are written as plain text, in edits, new notes, Insert at cursor and
+  Save as note. What your note already had is left as it was.
+- **Always allow covers one kind of change.** Allowing edits does not allow rewrites or
+  new notes, and it lasts for the chat. With Claude Code it is kept for the session
+  only.
+- **Stop stops.** Nothing further is asked of the model after Stop, and a chat left
+  open is stopped and saved when its pane closes or a test starts.
+- **A turn that broke off after changing something is kept**, with a line saying so,
+  and each message is sent with the note as it reads now.
+- **Coming from the mode without AI.** Someone who used Grill without AI and has a key
+  saved is asked before that model is used.
+- **Fewer repeated requests.** A slow or failed reply is no longer asked for three
+  times, and a change too long for one request is not sent again and again.
+- Notes with Windows line endings can be edited across lines. New notes are not made
+  in hidden folders or under odd names. Claude Code and Codex start from a Windows path
+  with a space in it.
+
 ## 8.0.0
 
 - **Grill is a chat now.** The home screen opens on a chat box with two tabs, Chat and
