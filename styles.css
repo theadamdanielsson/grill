@@ -3420,3 +3420,12 @@ textarea.grill-mgmt-field {
 .grill-thread-frame *:not(.checkbox-container):not(.checkbox-container *) {
   border-radius: 0 !important;
 }
+
+/* A question's type, in the Questions list: an outlined label. As a fill it took the
+ * frame's border colour, which is dark on a light ground too, under lettering that a
+ * light theme also makes dark: unreadable there. An outline reads on either ground. */
+.grill-thread-frame .grill-mgmt-type-chip {
+  background: transparent;
+  border: 1px solid var(--background-modifier-border);
+  color: var(--text-muted);
+}
