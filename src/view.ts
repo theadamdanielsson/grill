@@ -1889,7 +1889,7 @@ export class SessionView extends ItemView {
 		const turnsEl = this.contentEl.querySelector<HTMLElement>(".grill-learn-turns");
 		const waiting = turnsEl?.createDiv({ cls: "grill-thread-turn is-tutor is-waiting" });
 		waiting?.createDiv({ cls: "grill-thread-who", text: "Grill" });
-		waiting?.createDiv({ cls: "grill-thread-text grill-meta", text: "Reading your note..." });
+		waiting?.createDiv({ cls: "grill-thread-text grill-meta", text: this.agentProgram() || this.modelHasTools() ? "Working..." : "Reading your note..." });
 		waiting?.scrollIntoView({ block: "nearest" });
 		this.contentEl.querySelectorAll<HTMLButtonElement | HTMLTextAreaElement>(".grill-learn button, .grill-learn textarea").forEach((b) => (b.disabled = true));
 		try {
@@ -1934,6 +1934,9 @@ export class SessionView extends ItemView {
 				program && waiting
 					? await this.askAgent(L, program, text, waiting, live)
 					: await this.askModel(cfg as LLMConfig, L, text, waiting, live);
+			if (this.learn !== L) return;
+			// A turn that changed the note may have made it long enough to be tested on.
+			if (reply.activity && !L.whole) L.testable = await this.enoughToTest(L.note);
 			if (this.learn !== L) return;
 			L.turns.push(reply);
 			this.renderLearn();

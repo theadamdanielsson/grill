@@ -131,7 +131,10 @@ export function permissionAsk(tool: string, input: Input, title?: string): Permi
 		ask.added = lines(text(input.content));
 		ask.always = "Always allow edits in this chat";
 	} else if (tool === "Bash") {
+		// The command is shown in full below; the heading only says what kind of thing it is.
+		ask.title = "Run a command";
 		ask.detail = text(input.command);
+		ask.always = "Always allow this command in this chat";
 	} else if (tool === "WebFetch") {
 		ask.detail = text(input.url);
 	} else if (tool === "WebSearch") {

@@ -29,7 +29,7 @@ test("a permission card shows the lines that go and the lines that come", () => 
 	assert.equal(long.added.length, 13);
 	assert.equal(long.added.at(-1), "… 18 more lines");
 	const bash = permissionAsk("Bash", { command: "git status" }, "Claude wants to run git status");
-	assert.equal(bash.title, "Claude wants to run git status");
+	assert.equal(bash.title, "Run a command");
 	assert.equal(bash.detail, "git status");
 	assert.deepEqual(bash.added, []);
 });
