@@ -52,7 +52,7 @@ test("a reply is handed over as it grows, however the chunks are cut", async () 
 	// Cut in the middle of a line and in the middle of a multi-byte character's worth of text.
 	const chunks = [sse.slice(0, 37), sse.slice(37, 120), sse.slice(120)];
 	const got = await streamText(call("anthropic"), run(answering(chunks), heard));
-	assert.deepEqual(got, { text: "The multiplier", truncated: false });
+	assert.deepEqual(got, { text: "The multiplier", truncated: false, calls: [] });
 	assert.deepEqual(heard, ["The mul", "The multiplier"]);
 });
 

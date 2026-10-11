@@ -130,9 +130,77 @@ export function streamCall(cfg: LLMConfig, p: StreamPrompt, o: StreamOptions = {
 	}
 }
 
+/** A tool the model asks to have used: which one, with what. */
+export interface ToolCall {
+	id: string;
+	name: string;
+	input: Record<string, unknown>;
+}
+
+/** Part of a tool call as it arrives: which call it belongs to, and what it adds. */
+interface CallPart {
+	index: number;
+	id?: string;
+	name?: string;
+	args?: string;
+}
+
+/** A tool the model may ask for, described once for every provider. */
+export interface ToolSpec {
+	name: string;
+	description: string;
+	/** JSON Schema of its input. */
+	input: Record<string, unknown>;
+}
+
+/** One step of a conversation in which tools are used, in no provider's shape. */
+export type ToolMsg =
+	| { role: "assistant"; text: string; calls: ToolCall[] }
+	| { role: "tool"; results: Array<{ id: string; content: string; failed?: boolean }> };
+
+/** The request for the next step of a conversation that may use tools: the prompt as
+ * `streamCall` sends it, then the steps so far. Null for a provider that isn't asked
+ * this way; the caller then answers without tools. */
+export function toolStreamCall(cfg: LLMConfig, p: StreamPrompt, steps: ToolMsg[], tools: ToolSpec[], o: StreamOptions = {}): StreamCall | null {
+	const call = streamCall(cfg, p, o);
+	if (!call || (call.kind !== "anthropic" && call.kind !== "chat")) return null;
+	const messages = call.body.messages as unknown[];
+	if (call.kind === "anthropic") {
+		call.body.tools = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.input }));
+		for (const step of steps) {
+			if (step.role === "assistant") {
+				messages.push({
+					role: "assistant",
+					content: [...(step.text ? [{ type: "text", text: step.text }] : []), ...step.calls.map((c) => ({ type: "tool_use", id: c.id, name: c.name, input: c.input }))],
+				});
+			} else {
+				messages.push({
+					role: "user",
+					content: step.results.map((r) => ({ type: "tool_result", tool_use_id: r.id, content: r.content, ...(r.failed ? { is_error: true } : {}) })),
+				});
+			}
+		}
+		return call;
+	}
+	call.body.tools = tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.input } }));
+	for (const step of steps) {
+		if (step.role === "assistant") {
+			messages.push({
+				role: "assistant",
+				content: step.text || null,
+				tool_calls: step.calls.map((c) => ({ id: c.id, type: "function", function: { name: c.name, arguments: JSON.stringify(c.input) } })),
+			});
+		} else {
+			for (const r of step.results) messages.push({ role: "tool", tool_call_id: r.id, content: r.content });
+		}
+	}
+	return call;
+}
+
 /** What one piece of a stream said. */
 export interface StreamPiece {
 	text?: string;
+	callParts?: CallPart[];
 	truncated?: boolean;
 	/** The provider reported a failure inside the stream. */
 	error?: string;
@@ -162,6 +230,10 @@ export function readPiece(kind: StreamKind, payload: unknown): StreamPiece {
 		case "anthropic": {
 			const delta = obj(j.delta);
 			if (j.type === "content_block_delta" && delta?.type === "text_delta") piece.text = str(delta.text);
+			const index = typeof j.index === "number" ? j.index : 0;
+			const block = obj(j.content_block);
+			if (j.type === "content_block_start" && block?.type === "tool_use") piece.callParts = [{ index, id: str(block.id), name: str(block.name) }];
+			if (j.type === "content_block_delta" && delta?.type === "input_json_delta") piece.callParts = [{ index, args: str(delta.partial_json) }];
 			if (j.type === "message_delta") {
 				if (delta?.stop_reason === "max_tokens") piece.truncated = true;
 				if (delta?.stop_reason === "refusal") piece.error = "The model declined this request (safety refusal).";
@@ -169,6 +241,8 @@ export function readPiece(kind: StreamKind, payload: unknown): StreamPiece {
 			// Not streamed after all: the whole message.
 			if (j.type === "message" && Array.isArray(j.content)) {
 				piece.text = j.content.map((b) => (obj(b)?.type === "text" ? str(obj(b)?.text) : "")).join("");
+				const uses = j.content.map(obj).filter((b) => b?.type === "tool_use");
+				if (uses.length) piece.callParts = uses.map((b, i) => ({ index: i, id: str(b?.id), name: str(b?.name), args: JSON.stringify(b?.input ?? {}) }));
 				if (j.stop_reason === "max_tokens") piece.truncated = true;
 			}
 			break;
@@ -178,6 +252,18 @@ export function readPiece(kind: StreamKind, payload: unknown): StreamPiece {
 			const text = str(obj(choice?.delta)?.content) || str(obj(choice?.message)?.content);
 			if (text) piece.text = text;
 			if (choice?.finish_reason === "length") piece.truncated = true;
+			const asked = obj(choice?.delta)?.tool_calls ?? obj(choice?.message)?.tool_calls;
+			if (Array.isArray(asked)) {
+				piece.callParts = asked.map((c, i) => {
+					const call = obj(c);
+					const fn = obj(call?.function);
+					const part: CallPart = { index: typeof call?.index === "number" ? call.index : i };
+					if (str(call?.id)) part.id = str(call?.id);
+					if (str(fn?.name)) part.name = str(fn?.name);
+					if (str(fn?.arguments)) part.args = str(fn?.arguments);
+					return part;
+				});
+			}
 			break;
 		}
 		case "gemini": {
@@ -224,6 +310,27 @@ export function withoutThinking(text: string): string {
 export interface StreamResult {
 	text: string;
 	truncated: boolean;
+	/** The tools the model asked for, in order. Empty for a plain reply. */
+	calls: ToolCall[];
+}
+
+/** Put the parts of each tool call together. A call whose arguments don't parse is
+ * kept with none, so the model is told its request was unreadable instead of the turn
+ * being lost. */
+function assemble(parts: Map<number, { id: string; name: string; args: string }>): ToolCall[] {
+	return [...parts.entries()]
+		.sort((a, b) => a[0] - b[0])
+		.filter(([, c]) => c.name)
+		.map(([index, c]) => {
+			let input: Record<string, unknown> = {};
+			try {
+				const parsed: unknown = c.args.trim() ? JSON.parse(c.args) : {};
+				if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) input = parsed as Record<string, unknown>;
+			} catch {
+				input = { __unreadable: c.args.slice(0, 200) };
+			}
+			return { id: c.id || `call_${index}`, name: c.name, input };
+		});
 }
 
 export interface StreamRun {
@@ -255,6 +362,16 @@ export async function streamText(call: StreamCall, run: StreamRun): Promise<Stre
 	run.signal?.addEventListener("abort", left);
 	let text = "";
 	let truncated = false;
+	const parts = new Map<number, { id: string; name: string; args: string }>();
+	const note = (piece: StreamPiece): void => {
+		for (const part of piece.callParts ?? []) {
+			const call = parts.get(part.index) ?? { id: "", name: "", args: "" };
+			if (part.id) call.id = part.id;
+			if (part.name) call.name = part.name;
+			if (part.args) call.args += part.args;
+			parts.set(part.index, call);
+		}
+	};
 	const shown = (): string => (call.kind === "ollama" ? withoutThinking(text) : text);
 	const take = (payload: string): void => {
 		let parsed: unknown;
@@ -267,6 +384,7 @@ export async function streamText(call: StreamCall, run: StreamRun): Promise<Stre
 		if (piece.credits !== undefined || piece.cost !== undefined) run.onCloud?.(piece.credits, piece.cost);
 		if (piece.error) throw new Error(piece.error);
 		if (piece.truncated) truncated = true;
+		note(piece);
 		if (piece.text) {
 			text += piece.text;
 			run.onText(shown());
@@ -292,10 +410,11 @@ export async function streamText(call: StreamCall, run: StreamRun): Promise<Stre
 			// Answered, but whole. It has been paid for, so it is used, not asked again.
 			const whole = readPiece(call.kind, await resp.json().catch(() => null));
 			if (whole.error) throw new Error(whole.error);
-			if (!whole.text) throw new StreamUnavailable("an empty reply");
-			text = whole.text;
-			run.onText(shown());
-			return { text: shown(), truncated: !!whole.truncated };
+			note(whole);
+			if (!whole.text && !parts.size) throw new StreamUnavailable("an empty reply");
+			text = whole.text ?? "";
+			if (text) run.onText(shown());
+			return { text: shown(), truncated: !!whole.truncated, calls: assemble(parts) };
 		}
 		const reader = resp.body.getReader();
 		const decoder = new TextDecoder();
@@ -313,12 +432,13 @@ export async function streamText(call: StreamCall, run: StreamRun): Promise<Stre
 			takeLines(`${pending}\n`, call.kind).payloads.forEach(take);
 		} catch (e) {
 			if (run.signal?.aborted) throw e;
-			if (!shown()) throw new StreamUnavailable(timedOut ? "no answer in time" : "broke off before it began");
+			if (!shown() && !parts.size) throw new StreamUnavailable(timedOut ? "no answer in time" : "broke off before it began");
 			if (e instanceof Error && e.name !== "AbortError" && !(e instanceof TypeError)) throw e;
 			throw new Error(timedOut ? "The reply stopped arriving part way through. Try again." : "The reply broke off part way through. Try again.");
 		}
-		if (!shown()) throw new StreamUnavailable("an empty reply");
-		return { text: shown(), truncated };
+		const calls = assemble(parts);
+		if (!shown() && !calls.length) throw new StreamUnavailable("an empty reply");
+		return { text: shown(), truncated, calls };
 	} finally {
 		window.clearTimeout(timer);
 		run.signal?.removeEventListener("abort", left);

@@ -3,7 +3,7 @@
 import { ItemView, loadMermaid, MarkdownRenderer, Modal, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
 import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, cloudEnabled, creditsInWords, lowBalance, usageInWords } from "./cloud";
-import { adjudicateBridges, ConceptTarget, contentWords, debriefSession, discussQuestion, embedTexts, explainQuestion, formatSatisfies, generateQuestions, Grade, CloudError, cleanDiagram, cleanText, gradeAnswer, learnFromNotes, LLMConfig, replyInProgress, offeredProviders, PROVIDERS, ProviderId, Question, supportsEmbeddings, supportsVision, testModel, ThreadTurn, Verdict } from "./llm";
+import { adjudicateBridges, ConceptTarget, contentWords, debriefSession, discussQuestion, embedTexts, explainQuestion, formatSatisfies, generateQuestions, Grade, CloudError, cleanDiagram, cleanText, gradeAnswer, learnFromNotes, learnWithTools, LLMConfig, replyInProgress, offeredProviders, PROVIDERS, ProviderId, Question, supportsEmbeddings, supportsVision, testModel, ThreadTurn, Verdict } from "./llm";
 import { detectOcclusionRegions } from "./ocr";
 import {
 	Concept,
@@ -82,7 +82,8 @@ import { listSome, missesLine, noteLine, shortDate } from "./suggest";
 import { renderChatHome, renderCreditsRing, type HomeMode, type HomeSuggestion } from "./home";
 import { aboutTheVault, learnContext, learnRecord, namesANote, parseLearnNote, parseSessionNote, rankNotes, replyTitle, sessionTitle, vaultMap, vaultNotes, type PastAnswer } from "./learn";
 import { safeDiagram, safeMarkdown } from "./safemd";
-import { activitySummary, agentBrief, AGENT_LEVELS, findProgram, PermissionAnswer, runAgent } from "./agent";
+import { activitySummary, AgentEvent, agentBrief, AGENT_LEVELS, findProgram, PermissionAnswer, PermissionAsk, runAgent } from "./agent";
+import type { VaultPort } from "./vaulttools";
 
 /** Mermaid's drawing, made fit to be shown as an image: well-formed XML, with a size
  * of its own. Null if it isn't a drawing (Mermaid draws its errors as one too).
@@ -1535,7 +1536,7 @@ export class SessionView extends ItemView {
 					})[0] ?? null,
 			openNote: openNote?.basename ?? null,
 			engine: this.engineForHome(),
-			level: learning && this.agentProgram() ? this.levelForHome() : null,
+			level: learning && (this.agentProgram() || this.modelHasTools()) ? this.levelForHome() : null,
 			placeholder: learning ? "Ask anything, or say what to do" : "Say what to test, or just press Get grilled",
 			sendLabel: learning ? "Send" : "Get grilled",
 			send: (text, withOpenNote) => {
@@ -1921,7 +1922,7 @@ export class SessionView extends ItemView {
 			const reply =
 				program && waiting
 					? await this.askAgent(L, program, text, waiting, live)
-					: await learnFromNotes(cfg as LLMConfig, L.note.basename, L.noteText, L.linkedText, L.turns.slice(0, -1), text, L.persona, L.instructions, L.record, L.vault, live);
+					: await this.askModel(cfg as LLMConfig, L, text, waiting, live);
 			if (this.learn !== L) return;
 			L.turns.push(reply);
 			this.renderLearn();
@@ -1936,32 +1937,20 @@ export class SessionView extends ItemView {
 		}
 	}
 
-	/** One turn answered by Claude Code. What it does is listed above the reply as it
-	 * happens; when it needs permission, a card asks in the conversation and the turn
-	 * waits on the answer. */
-	private async askAgent(
-		L: NonNullable<SessionView["learn"]>,
-		program: string,
-		text: string,
+	/** What a working turn shows above its reply: each thing done, as it is done, and a
+	 * card in the conversation when permission is needed, on which the turn waits. The
+	 * same for Claude Code and for a model using Grill's own vault tools. */
+	private turnUi(
 		waiting: HTMLElement,
 		live: { onText(soFar: string): void; signal: AbortSignal },
-	): Promise<ThreadTurn> {
-		const base = (this.app.vault.adapter as { getBasePath?: () => string }).getBasePath?.();
-		if (!base) throw new Error("Claude Code needs a vault that is a folder on this computer.");
+	): { onEvent(e: AgentEvent): void; ask(req: PermissionAsk): Promise<PermissionAnswer> } {
 		const body = waiting.querySelector<HTMLElement>(".grill-thread-text");
 		const activity = createDiv({ cls: "grill-agent-activity" });
 		waiting.insertBefore(activity, body);
 		const stop = waiting.createEl("button", { cls: "grill-hint-btn grill-agent-stop", text: "Stop", attr: { type: "button" } });
 		stop.onclick = () => this.learnStop?.abort();
 		const keepInView = (el: HTMLElement): void => el.scrollIntoView({ block: "nearest" });
-		const result = await runAgent({
-			prompt: text,
-			cwd: base,
-			program,
-			level: this.plugin.data.settings.agentLevel,
-			resume: L.agentSession,
-			append: agentBrief(L.whole ? "" : L.note.path, L.record, L.instructions),
-			signal: live.signal,
+		return {
 			onEvent: (e) => {
 				if (e.kind === "text") return live.onText(replyInProgress(e.soFar));
 				activity.createDiv({ cls: "grill-meta grill-agent-line", text: e.line });
@@ -1992,6 +1981,96 @@ export class SessionView extends ItemView {
 					keepInView(card);
 					once.focus();
 				}),
+		};
+	}
+
+	/** The vault as Grill's own tools see it: the notes Grill is allowed to read, and
+	 * nothing of Grill's own or of an excluded folder written to. */
+	private vaultPort(): VaultPort {
+		const vault = this.app.vault;
+		const file = (path: string): TFile | null => {
+			const f = vault.getAbstractFileByPath(path);
+			return f instanceof TFile ? f : null;
+		};
+		return {
+			notes: () => this.allEligible().map((f) => f.path),
+			read: async (path) => {
+				const f = file(path);
+				return f && !this.plugin.isExcluded(path) ? vault.read(f) : null;
+			},
+			write: async (path, content) => {
+				const f = file(path);
+				if (!f) throw new Error("The note is no longer there.");
+				await vault.modify(f, content);
+			},
+			create: async (path, content) => {
+				const dir = path.split("/").slice(0, -1).join("/");
+				if (dir && !vault.getAbstractFileByPath(dir)) await vault.createFolder(dir);
+				await vault.create(path, content);
+			},
+			exists: (path) => !!vault.getAbstractFileByPath(path),
+			locked: (path) => this.plugin.isExcluded(path),
+		};
+	}
+
+	/** Whether the model behind Chat can be given the vault tools. */
+	private modelHasTools(): boolean {
+		const cfg = this.plugin.llmConfig();
+		if (!cfg) return false;
+		if (cfg.provider === "grillcloud") return cloud.streams && cloud.tools;
+		return cfg.provider === "anthropic" || cfg.provider === "openai" || cfg.provider === "deepseek" || cfg.provider === "custom";
+	}
+
+	/** One turn answered by the chosen model: with the vault tools where it can use
+	 * them, plainly where it can't. */
+	private async askModel(
+		cfg: LLMConfig,
+		L: NonNullable<SessionView["learn"]>,
+		text: string,
+		waiting: HTMLElement | null | undefined,
+		live: { onText(soFar: string): void; signal: AbortSignal },
+	): Promise<ThreadTurn> {
+		const said = L.turns.slice(0, -1);
+		if (waiting && this.modelHasTools()) {
+			const ui = this.turnUi(waiting, live);
+			const done = await learnWithTools(cfg, L.note.basename, L.noteText, L.linkedText, said, text, L.persona, L.instructions, L.record, L.vault, live, {
+				port: this.vaultPort(),
+				level: this.plugin.data.settings.agentLevel,
+				onEvent: ui.onEvent,
+				ask: ui.ask,
+			});
+			if (done) {
+				const { tools, seconds, ...turn } = done;
+				// A reply that used nothing is a reply: no line saying it worked for 3s.
+				return tools.length ? { ...turn, activity: activitySummary(tools, seconds) } : turn;
+			}
+		}
+		return learnFromNotes(cfg, L.note.basename, L.noteText, L.linkedText, said, text, L.persona, L.instructions, L.record, L.vault, live);
+	}
+
+	/** One turn answered by Claude Code. What it does is listed above the reply as it
+	 * happens; when it needs permission, a card asks in the conversation and the turn
+	 * waits on the answer. */
+	private async askAgent(
+		L: NonNullable<SessionView["learn"]>,
+		program: string,
+		text: string,
+		waiting: HTMLElement,
+		live: { onText(soFar: string): void; signal: AbortSignal },
+	): Promise<ThreadTurn> {
+		const base = (this.app.vault.adapter as { getBasePath?: () => string }).getBasePath?.();
+		if (!base) throw new Error("Claude Code needs a vault that is a folder on this computer.");
+		const ui = this.turnUi(waiting, live);
+		const result = await runAgent({
+			prompt: text,
+			cwd: base,
+			program,
+			level: this.plugin.data.settings.agentLevel,
+			resume: L.agentSession,
+			append: agentBrief(L.whole ? "" : L.note.path, L.record, L.instructions),
+			signal: live.signal,
+			onEvent: ui.onEvent,
+			ask: ui.ask,
 		});
 		L.agentSession = result.sessionId || L.agentSession;
 		// A diagram, when one was asked for, is lifted out to be drawn the way every other is.
