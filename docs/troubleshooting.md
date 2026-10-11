@@ -7,11 +7,25 @@ be. This explains the actual mechanics behind the common ones, not just "try tog
 
 ## "Couldn't find concepts to quiz in these notes"
 
-No-key ("From my notes") mode builds questions only from structure it can find: bold terms,
-`==highlights==`, headings with real prose under them, `Term: definition` lines, formulas, and
-any flashcards you've already written (Obsidian Spaced Repetition or Anki cloze syntax). A note
-that's mostly unstructured prose gives it nothing to work with. Either add some structure, or
-switch **Questions and grading** to one of the AI options, which can write questions from prose directly.
+The notes in scope have too little in them to ask about. Grill draws concepts from headings with prose under them, bold terms, `==highlights==`, `Term: definition` lines, formulas, and any flashcards you have already written. A note of a sentence or two yields too few for a session, and the home screen says so when the open note is too short to test. Add to the note, or widen the scope.
+
+## Chat says it cannot edit my notes
+
+The engine answering has no tools. Gemini and Ollama answer in text only, so they can offer a version to paste and nothing more. Grill Cloud, keys for Anthropic, OpenAI and DeepSeek, OpenAI-compatible endpoints, Claude Code and Codex can all change notes. Switch with the engine button under the chat box, and check that the level beside it is Safe or Auto: at Plan, nothing may be changed.
+
+## The engine button opens settings, or Claude Code or Codex will not start
+
+The button steps through the engines found on this computer, and opens settings when only the model is available. Grill looks for Claude Code and Codex in the usual install folders. If yours is elsewhere, give the full path under Claude Code location or Codex location in settings; `which claude` or `which codex` in a terminal prints it.
+
+A message that the program is not signed in means what it says: open a terminal, run `claude` or `codex`, and sign in there. Grill uses that sign-in and has none of its own. These engines run on desktop only.
+
+## Chat changed a note and I want the old text back
+
+A change made through Chat is an ordinary edit, shown on the permission card before it is made unless the level is Auto. Grill keeps no copy of the earlier text. Obsidian's File recovery (Settings → Core plugins) holds snapshots of recent versions, and your sync history or version control holds more.
+
+## A Chat reply arrives all at once
+
+Replies are shown as they are written wherever the provider allows a request to be read in pieces from inside Obsidian. Where it does not (some OpenAI-compatible endpoints and local proxies), Grill falls back to fetching the reply whole. Nothing is lost; it appears later.
 
 ## A note I aced doesn't turn green
 
@@ -38,7 +52,7 @@ themselves to the actual backlog instead of the generic session-length setting.
 
 ## The same question keeps coming back
 
-This is by design: once the AI (or no-key mode) writes a question for a concept, Grill reuses that
+This is by design: once Grill writes a question for a concept, it reuses that
 exact text on every later review of it, indefinitely — never silently reworded. If you want to
 change how a specific question reads, edit it directly (see below); if you want everything to get
 a fresh pass, the command palette's **"Grill: Clear cached questions"** forces the next review of
@@ -62,14 +76,7 @@ that spread out over more sessions, not instantly.
 
 ## A cached question is wrong, and I don't want to just delete it
 
-Open the pencil icon on the home screen (next to "Review N due now" — it's there even at
-zero due, as long as you've reviewed something before) for **Manage questions**: every
-AI-generated or no-key cached question, grouped by note and searchable, each one editable
-in place — question text, the expected answer, hints, rubric, and for multiple-choice/
-select-all/match questions the full choice or pair list. Editing doesn't reset that
-concept's progress or scheduling, the same as editing a note doesn't. This only covers
-generated/cached questions, not questions you've written yourself in a `> [!grill]`
-callout — those are just text in your note, so edit them there directly. "Bad question"
+Open **Questions** from the foot of the home screen. It lists every question Grill has written, with a view of those last missed, each editable in place: the question text, the expected answer, hints and rubric, and for multiple-choice, select-all and matching questions the choices or pairs. Editing leaves that concept's progress and schedule as they were. Questions you wrote yourself in a `> [!grill]` callout are text in your note and are edited there. "Bad question"
 mid-review is still the fastest path if you just want it gone rather than fixed.
 
 ## A model quizzed me on a chapter title or section name, not real material

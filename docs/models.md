@@ -55,7 +55,7 @@ Pick by how much RAM you have. Bigger is better at grading; the tags are Ollama 
 
 | Your RAM | Pull this | Reality |
 |---|---|---|
-| **8 GB** | `qwen3:4b` or `llama3.2:3b` | Runs, but grading is rough. Consider self-grade mode instead. |
+| **8 GB** | `qwen3:4b` or `llama3.2:3b` | Runs, but grading is rough. Grill Cloud's free credits will serve you better. |
 | **16 GB** | **`qwen3:8b`** | The sweet spot for a laptop. Verified on an M4/16GB: valid structured grades in **3–9s** each, correct misconception tags, sane verdicts. This is the recommended no-key model. |
 | **24–32 GB** | `qwen3:14b` or `gpt-oss:20b` | Meaningfully better grading, still comfortable. |
 | **32 GB+** | `qwen3:32b`, `gpt-oss:20b`, or `glm-4:9b` | Closest a local model gets to the hosted ones. |
@@ -67,17 +67,11 @@ puts you back in the section above.
 
 ---
 
-## The truly free option: no model at all
+## For Chat: Claude Code or Codex
 
-You don't even need a local model. In settings set **Questions and grading** to *Fully offline — no
-key*. Grill builds questions from your notes' own
-structure (bold terms, highlights, headings, `Term: definition` lines, existing flashcards)
-and you grade yourself Again / Hard / Good / Easy. Same spaced-repetition schedule as AI mode,
-nothing sent anywhere, nothing to run. It's only as good as your notes are structured, but it
-costs nothing and works offline.
+Chat can also run on the Claude Code or Codex installed on your computer, under your own sign-in, which draws on the plan you already pay for. These engines answer in Chat only: tests are still written and graded by the provider chosen above. Set the engine with the button under the chat box, or under Chat engine in settings. Desktop only.
 
-You can also mix: AI (or local) writes the questions, you grade yourself. Half the model work,
-and you still see your own answer judged against the expected one.
+In Chat, the model matters in a second way. Grill Cloud and keys for Anthropic, OpenAI, DeepSeek and OpenAI-compatible endpoints can read, search and change notes; Gemini and Ollama answer in text only.
 
 ---
 
@@ -86,4 +80,5 @@ and you still see your own answer judged against the expected one.
 - **Want the best, don't mind paying:** `claude-sonnet-5-5`.
 - **Want cheap and hosted:** `deepseek-flash` or `gemini-3.8-flash`.
 - **Want no key, have a normal laptop:** Ollama + `qwen3:8b`.
-- **Want nothing to install or pay:** self-grade mode with local question generation.
+- **Want nothing to install:** Grill Cloud, free to try.
+- **Want Chat on a plan you already pay for:** Claude Code or Codex.

@@ -1,5 +1,44 @@
 # Changelog
 
+## 8.0.0
+
+- **Grill is a chat now.** The home screen opens on a chat box with two tabs, Chat and
+  Test. Chat is for asking and for getting things done in your notes. Test is where
+  Grill asks and it counts.
+- **Chat works in your vault.** It can read, search, edit, rewrite and create notes, and
+  it shows each step as it takes it. A change to a note is shown on a card first, with
+  Allow once, Always allow and Deny.
+- **Three permission levels.** Safe asks before a change. Plan reads and proposes. Auto
+  edits notes without asking.
+- **It knows what you got wrong.** Chat is given your record on the note: how each
+  concept has gone, what you answered before, what you asked about. Explanations start
+  from there.
+- **Run it on Claude Code or Codex.** Chat can run on the program installed on your
+  computer, with your own sign-in. Desktop only. Tests still use Grill Cloud, your key
+  or Ollama.
+- **Grill Cloud and your own key can do it too.** On Grill Cloud, Anthropic, OpenAI,
+  DeepSeek and OpenAI-compatible endpoints, Chat uses Grill's own note tools. These
+  work on a phone.
+- **Replies appear as they are written.** And a reply can be inserted at the cursor or
+  saved as a note.
+- **Suggestions from your record.** The home screen offers a few places to start, each
+  with a fact beside it: what you last missed, what is not tested yet, the note you
+  have open.
+- **Sessions read as a thread.** Finished questions fold away above the one in hand,
+  and feedback sits under its question.
+- **Ask in the middle of a test.** Type a question in the answer box and Grill answers
+  it. The record notes that you needed help.
+- **Hints are off unless you turn them on.** A setting brings them back.
+- **Catch up, and Retry my misses.** A backlog is spread over the coming days in one
+  press. Missed questions can be retried on their own.
+- **One screen for questions.** What you last missed, and everything Grill has written,
+  each editable.
+- **The map moved to Progress.** The home screen is for starting; the map is with the
+  rest of your progress.
+- **The mode with no AI is gone.** Grill needs a model for questions and grading: Grill
+  Cloud, your own key, or Ollama. If you studied with no AI, pick one of those to
+  carry on. Your schedule and history are kept.
+
 ## 7.1.2
 
 - **Out of credits, with the packs right there.** When Grill Cloud credits run out, a
