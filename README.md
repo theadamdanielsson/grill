@@ -4,7 +4,7 @@ I take a lot of notes to learn new material, and I needed a way to learn them mo
 
 ![Grill's home screen: suggestions from your record above the chat box](docs/screenshot-home-8.png)
 
-## <picture><source media="(prefers-color-scheme: dark)" srcset="docs/icons/play-dark.svg"><img src="docs/icons/play.svg" height="20" alt=""></picture> How to use it
+## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/play-dark.svg"><img src="docs/icons/play.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> How to use it
 
 1. **Start free.** On first run, press Start free. That is Grill Cloud: no API key, no sign-up, and a few free credits to try it. You can use your own API key, Ollama, Claude Code or Codex instead.
 2. **Chat.** Ask about the note you have open, or tell Grill what to do with it. It can explain, summarise, find things across the vault, and edit or create notes, asking your permission before a change.
@@ -14,7 +14,7 @@ The home screen suggests where to go from your record: the questions you last mi
 
 ![A reply built from the record: what was answered correctly, what was skipped, and what to understand next](docs/screenshot-chat-record.png)
 
-## <img src="docs/icons/flame.svg" height="24" alt=""> What you get
+## <img src="docs/icons/flame.svg" height="24" alt="" style="display:inline;height:24px;width:auto"> What you get
 
 - **A chat that works in your vault:** it reads, searches, edits and creates notes over several steps, and shows each step as it happens. Three permission levels decide when it has to ask: Safe, Plan and Auto.
 - **A record behind every reply:** per-concept scheduling, your past answers and the confusions Grill has named are given to the chat, so an explanation starts from what you got wrong.
@@ -42,7 +42,7 @@ How each of these works is described in **[docs/features.md](docs/features.md)**
 ![A partially correct answer, graded with specific feedback and the expected answer](docs/screenshot-feedback.png)
 
 <a name="grill-cloud"></a>
-## <picture><source media="(prefers-color-scheme: dark)" srcset="docs/icons/cloud-dark.svg"><img src="docs/icons/cloud.svg" height="20" alt=""></picture> Grill Cloud
+## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/cloud-dark.svg"><img src="docs/icons/cloud.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> Grill Cloud
 
 Grill Cloud is the easiest way to use Grill. Press Start free and it answers in Chat, writes the questions, grades your answers and explains them, with no API key and no sign-up. Grill makes a key on your device and, while each day's free credits last, you get some to try it.
 
@@ -60,7 +60,7 @@ There is nothing to look after. Grill makes a key on your device when you press 
 Used credits cannot be refunded. Unused ones can if you ask within 14 days. Grill Cloud is for people 18 and over.
 
 <a name="with-claude-code-or-codex"></a>
-## <picture><source media="(prefers-color-scheme: dark)" srcset="docs/icons/screen-dark.svg"><img src="docs/icons/screen.svg" height="20" alt=""></picture> With Claude Code or Codex
+## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/screen-dark.svg"><img src="docs/icons/screen.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> With Claude Code or Codex
 
 Chat can run on the Claude Code or Codex already installed on your computer. Grill starts the program as it is, in your vault, and shows what it does; the sign-in is the one you made in a terminal, and Grill never sees it. As a result, Chat draws on the plan you already pay Anthropic or OpenAI for, within whatever that plan allows for use outside the provider's own apps.
 
@@ -68,18 +68,18 @@ The button under the chat box steps through the engines found on your computer, 
 
 Two limits apply. First, this works on desktop only, since there is a program to run. Second, these engines answer in Chat; tests are still written and graded by Grill Cloud, your own key or Ollama.
 
-## <picture><source media="(prefers-color-scheme: dark)" srcset="docs/icons/key-dark.svg"><img src="docs/icons/key.svg" height="20" alt=""></picture> With your own key
+## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/key-dark.svg"><img src="docs/icons/key.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> With your own key
 
 To pay a model provider directly, pick "use my own API key or Ollama" on first run, or choose a provider in settings. Grill works the same on Claude, GPT, Gemini, DeepSeek or any OpenAI-compatible endpoint, and on a local model through Ollama, where nothing leaves your machine. Your notes go straight from your machine to the provider you chose; my server is not involved. On Anthropic, OpenAI, DeepSeek and OpenAI-compatible endpoints, Chat can also read, search and change notes. Which model to pick is covered in [docs/models.md](docs/models.md).
 
-## <picture><source media="(prefers-color-scheme: dark)" srcset="docs/icons/page-dark.svg"><img src="docs/icons/page.svg" height="20" alt=""></picture> Documentation
+## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/page-dark.svg"><img src="docs/icons/page.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> Documentation
 
 - **[docs/features.md](docs/features.md)**: how Chat, the permission levels, scheduling, the record, custom questions and PDFs work.
 - **[docs/privacy.md](docs/privacy.md)**: what leaves your machine, where it goes, and what Grill stores.
 - **[docs/models.md](docs/models.md)**: which model to use, by budget and by how much RAM your machine has.
 - **[docs/troubleshooting.md](docs/troubleshooting.md)**: the mechanics behind the common "is this a bug" questions.
 
-## <picture><source media="(prefers-color-scheme: dark)" srcset="docs/icons/ask-dark.svg"><img src="docs/icons/ask.svg" height="20" alt=""></picture> Worth knowing before you install
+## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/ask-dark.svg"><img src="docs/icons/ask.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> Worth knowing before you install
 
 - Grill needs a model: [Grill Cloud](#grill-cloud), your own API key, or Ollama. Earlier versions had a mode with no AI; 8.0 removes it.
 - It is only as good as your notes. Half-written notes make half-baked questions.
@@ -87,7 +87,7 @@ To pay a model provider directly, pick "use my own API key or Ollama" on first r
 - A chat that can edit your notes can edit them badly. Safe is the default level, every change is shown before it is made, and a vault under version control or sync history can undo one.
 - Local models are the weak link: good for privacy, weaker on questions and grading.
 
-## <picture><source media="(prefers-color-scheme: dark)" srcset="docs/icons/check-dark.svg"><img src="docs/icons/check.svg" height="20" alt=""></picture> Requirements
+## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/check-dark.svg"><img src="docs/icons/check.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> Requirements
 
 - **Obsidian 1.8.0 or newer.** Grill checks this on load and won't run on an older build.
 - **Desktop or mobile.** Writing long answers is easier with a keyboard, and Claude Code and Codex are desktop only.
@@ -98,7 +98,7 @@ To pay a model provider directly, pick "use my own API key or Ollama" on first r
 - **Optionally, for Chat:** Claude Code or Codex installed and signed in.
 - No account with Grill itself.
 
-## <picture><source media="(prefers-color-scheme: dark)" srcset="docs/icons/install-dark.svg"><img src="docs/icons/install.svg" height="20" alt=""></picture> Installation
+## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/install-dark.svg"><img src="docs/icons/install.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> Installation
 
 Website: [grill.onbridger.com](https://grill.onbridger.com)
 
@@ -117,7 +117,7 @@ then drop `main.js`, `manifest.json`, and `styles.css` into `<vault>/.obsidian/p
 
 After installing, open Grill (the flame icon, or the "Open Grill" command). First run asks how your questions should be written, then starts you on the note you have open.
 
-## <picture><source media="(prefers-color-scheme: dark)" srcset="docs/icons/cross-dark.svg"><img src="docs/icons/cross.svg" height="20" alt=""></picture> Troubleshooting
+## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/cross-dark.svg"><img src="docs/icons/cross.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> Troubleshooting
 
 The common ones are below; the full list is in [docs/troubleshooting.md](docs/troubleshooting.md).
 
@@ -140,4 +140,4 @@ Grill talks only to the model provider you configure. There are no analytics, th
 
 MIT
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="docs/fire-dark.svg"><img src="docs/fire.svg" alt=""></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/fire-dark.svg"><img src="docs/fire.svg" alt=""></picture>
