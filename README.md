@@ -1,4 +1,4 @@
-![Grill: your notes, quizzed, inside your knowledge graph](docs/hero.svg)
+![Grill: your notes, your AI, your weak spots](docs/hero.svg)
 
 I take a lot of notes to learn new material, and I needed a way to learn them more deeply. Grill is a chat that works inside your Obsidian vault and keeps a record of what you know. It tests you on your own notes, grades what you write, and schedules each concept with spaced repetition. In turn, the chat answers from that record: it knows which questions you missed, which you skipped, and what you asked about last week.
 
