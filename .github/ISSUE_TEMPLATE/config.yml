@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or idea
+    url: https://github.com/theadamdanielsson/grill/discussions
+    about: How to do something, or a feature you would like. Read the pinned post first.
+  - name: Payments and credits
+    url: https://github.com/theadamdanielsson/grill#grill-cloud
+    about: Handled by email at inquiries@onbridger.com, from the address you paid with.
+  - name: Security problem
+    url: https://github.com/theadamdanielsson/grill/security/advisories/new
+    about: Report it privately. Please do not open a public issue.

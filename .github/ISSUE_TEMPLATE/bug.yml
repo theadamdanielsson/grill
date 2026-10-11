@@ -1,0 +1,73 @@
+name: Bug report
+description: Something in Grill is broken or behaves wrongly.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Read [troubleshooting](https://github.com/theadamdanielsson/grill/blob/main/docs/troubleshooting.md) first. Never paste an API key or your Grill Cloud key, and check your screenshots for them.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what Grill did instead.
+    validations:
+      required: true
+  - type: input
+    id: grill
+    attributes:
+      label: Grill version
+      placeholder: "8.0.0"
+    validations:
+      required: true
+  - type: input
+    id: obsidian
+    attributes:
+      label: Obsidian version
+      placeholder: "1.12.4"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Device
+      options:
+        - macOS
+        - Windows
+        - Linux
+        - iPhone or iPad
+        - Android
+    validations:
+      required: true
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Engine or provider
+      options:
+        - Grill Cloud
+        - Anthropic key
+        - OpenAI key
+        - Gemini key
+        - DeepSeek key
+        - Ollama
+        - Custom endpoint
+        - Claude Code
+        - Codex
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      description: Leave empty on Grill Cloud.
+  - type: textarea
+    id: console
+    attributes:
+      label: Console errors
+      description: Open the console with Ctrl/Cmd-Shift-I and paste anything red.
+      render: text
+  - type: textarea
+    id: shots
+    attributes:
+      label: Screenshots
+      description: A picture of the panel usually helps more than a description.
