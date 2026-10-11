@@ -1,6 +1,6 @@
 /**
  * Tools that let the model behind Chat work in the vault: read a note, search and list
- * notes, change a note, make a new one.
+ * notes, change part of a note or rewrite it, make a new one.
  *
  * The model only asks. Everything is done here, in the plugin, through Obsidian, so it
  * works with any provider that can ask for a tool and on a phone as on a desktop. A
@@ -53,6 +53,17 @@ export const VAULT_TOOLS: ToolSpec[] = [
 		},
 	},
 	{
+		name: "write_note",
+		description:
+			"Replace everything in a note with new content. For a rewrite, a restructure, or a change that touches most of the note; for a small change use edit_note. Read the note first, and keep what the student did not ask to change.",
+		input: {
+			type: "object",
+			properties: { path, content: { type: "string", description: "The whole note as it should now read." } },
+			required: ["path", "content"],
+			additionalProperties: false,
+		},
+	},
+	{
 		name: "create_note",
 		description: "Make a new note. Fails if something is already at that path.",
 		input: {
@@ -66,8 +77,8 @@ export const VAULT_TOOLS: ToolSpec[] = [
 
 /** Said to the model with the tools: what they are for and how to use them well. */
 export const TOOL_RULES =
-	"You can work in the student's vault with tools: read_note, search_notes and list_notes to look, edit_note and create_note to change things. " +
-	"Look before you answer when the notes you were given don't cover the question. Change a note only when asked to, read it first, and keep each edit as small as the request allows. " +
+	"You can work in the student's vault with tools: read_note, search_notes and list_notes to look, edit_note (a part of a note), write_note (the whole of it) and create_note to change things. " +
+	"Look before you answer when the notes you were given don't cover the question. Change a note only when asked to, read it first, and let the request decide between a small edit and rewriting the note. " +
 	"The student may be asked to allow a change; if they decline, don't try it again another way. When you have changed something, say in a sentence what you changed and where.";
 
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
@@ -92,11 +103,11 @@ export function resolveNote(port: VaultPort, asked: string): { path: string } | 
 }
 
 /** Which tools change the vault, and so may need permission. */
-export const changes = (name: string): boolean => name === "edit_note" || name === "create_note";
+export const changes = (name: string): boolean => name === "edit_note" || name === "write_note" || name === "create_note";
 
 /** The name Claude Code gives the same kind of work, so one summary line serves both. */
 export function likeClaudeCode(name: string): string {
-	return name === "read_note" ? "Read" : name === "search_notes" ? "Grep" : name === "list_notes" ? "LS" : name === "edit_note" ? "Edit" : name === "create_note" ? "Write" : name;
+	return name === "read_note" ? "Read" : name === "search_notes" ? "Grep" : name === "list_notes" ? "LS" : name === "edit_note" ? "Edit" : name === "write_note" || name === "create_note" ? "Write" : name;
 }
 
 /** One line for what a call does, as it is listed above the reply. */
@@ -111,6 +122,8 @@ export function toolLine(call: ToolCall): string {
 			return str(call.input.folder) ? `List ${str(call.input.folder)}` : "List the notes";
 		case "edit_note":
 			return `Edit ${file || "a note"}`;
+		case "write_note":
+			return `Rewrite ${file || "a note"}`;
 		case "create_note":
 			return `Create ${file || "a note"}`;
 		default:
@@ -123,7 +136,7 @@ export function toolAsk(call: ToolCall): PermissionAsk {
 	if (call.name === "edit_note") {
 		return permissionAsk("Edit", { file_path: str(call.input.path), old_string: str(call.input.old_text), new_string: str(call.input.new_text) }, `Edit ${leaf(str(call.input.path))}`);
 	}
-	return permissionAsk("Write", { file_path: str(call.input.path), content: str(call.input.content) }, `Create ${leaf(str(call.input.path))}`);
+	return permissionAsk("Write", { file_path: str(call.input.path), content: str(call.input.content) }, `${call.name === "write_note" ? "Rewrite" : "Create"} ${leaf(str(call.input.path))}`);
 }
 
 export interface ToolOutcome {
@@ -194,6 +207,16 @@ export async function runTool(port: VaultPort, call: ToolCall): Promise<ToolOutc
 				if (count > 1) return fail(`old_text appears ${count} times in the note. Include more of the surrounding text so it matches once.`);
 				await port.write(at.path, text.replace(before, () => after));
 				return { content: `Changed ${at.path}.` };
+			}
+			case "write_note": {
+				const at = resolveNote(port, str(call.input.path));
+				if ("error" in at) return fail(at.error);
+				if (port.locked(at.path)) return fail(`"${at.path}" is one of Grill's own files or is excluded, and is not changed from here.`);
+				const content = str(call.input.content);
+				if (!content.trim()) return fail("The new content is empty. A note is not emptied from here.");
+				if ((await port.read(at.path)) === content) return fail("That is what the note already says: nothing to change.");
+				await port.write(at.path, content);
+				return { content: `Rewrote ${at.path}.` };
 			}
 			case "create_note": {
 				const want = str(call.input.path).trim().replace(/^\/+/, "");

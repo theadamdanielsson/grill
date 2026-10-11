@@ -210,3 +210,18 @@ test("the steps of a turn are sent in each provider's own shape", () => {
 	assert.equal(toolStreamCall({ provider: "gemini", apiKey: "k", model: "g" }, p, steps, tools), null);
 	assert.equal(toolStreamCall({ provider: "grillcloud", apiKey: "k", model: "m" }, p, steps, tools), null, "not until its server says it can");
 });
+
+test("a note can be rewritten whole, but not emptied, and not one of Grill's own", async () => {
+	const v = notes();
+	assert.equal((await runTool(v, call("write_note", { path: "IS", content: "# IS\nAll new." }))).content, "Rewrote Macro/IS.md.");
+	assert.equal(v.files["Macro/IS.md"], "# IS\nAll new.");
+	assert.equal((await runTool(v, call("write_note", { path: "IS", content: "  " }))).failed, true);
+	assert.equal((await runTool(v, call("write_note", { path: "IS", content: "# IS\nAll new." }))).failed, true);
+	assert.equal((await runTool(v, call("write_note", { path: "Nope", content: "x" }))).failed, true);
+	assert.equal(toolAsk(call("write_note", { path: "Macro/IS.md", content: "a\nb" })).title, "Rewrite IS.md");
+	// It needs permission like any change.
+	let asks = 0;
+	await runToolChat({ ...scripted([{ text: "", calls: [call("write_note", { path: "IS", content: "x" })] }, { text: "ok" }]), port: v, level: "safe", onEvent: () => undefined, ask: async () => (asks++, "deny") });
+	assert.equal(asks, 1);
+	assert.equal(v.files["Macro/IS.md"], "# IS\nAll new.");
+});
