@@ -214,7 +214,11 @@ export async function runCodexTurn(run: CodexRun, wire: CodexWire): Promise<Agen
 
 	const stop = (): void => {
 		if (threadId) wire.send(JSON.stringify({ jsonrpc: "2.0", id: nextId++, method: "turn/interrupt", params: { threadId, turnId } }));
-		failed?.(new DOMException("Stopped.", "AbortError"));
+		const e = new DOMException("Stopped.", "AbortError");
+		// A request it has not answered yet is not waited on either.
+		for (const p of waiting.values()) p.no(e);
+		waiting.clear();
+		failed?.(e);
 	};
 	run.signal?.addEventListener("abort", stop, { once: true });
 	try {
@@ -297,7 +301,9 @@ export async function runCodex(run: CodexRun & { program: string }): Promise<Age
 	const shim = /\.(cmd|bat)$/i.test(run.program);
 	let child: Child;
 	try {
-		child = cp.spawn(run.program, ["app-server", "--listen", "stdio://"], {
+		// Through a shell the command is read as written: a path with a space in it
+		// (a Windows user name) has to be quoted.
+		child = cp.spawn(shim ? `"${run.program}"` : run.program, ["app-server", "--listen", "stdio://"], {
 			cwd: run.cwd,
 			env: { ...proc.env, PATH: pathWith(proc.env.PATH ?? "", run.program, home, proc.platform) },
 			stdio: ["pipe", "pipe", "pipe"],

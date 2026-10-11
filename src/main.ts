@@ -1,6 +1,7 @@
 import {
 	App,
 	Events,
+	Modal,
 	Notice,
 	Platform,
 	Plugin,
@@ -155,6 +156,10 @@ interface GrillSettings {
 	/** Offer the hints written with each question while it is being answered. Off: a
 	 * test is a test, and help is asked for in words, which is recorded as help. */
 	testHints: boolean;
+	/** False for someone who came from the mode without AI (removed in 8.0) with a key
+	 * saved, until they have said the model may be used: nothing of theirs is sent to a
+	 * provider they had chosen not to use, just because the plugin was updated. */
+	modelAgreed: boolean;
 	/** What answers in Chat: the model chosen for questions and grading, or the Claude
 	 * Code installed on this computer, which can read and change the vault. */
 	chatEngine: "model" | "claudecode" | "codex";
@@ -333,6 +338,7 @@ function defaultSettings(): GrillSettings {
 		sessionDebrief: true,
 		sounds: true,
 		testHints: false,
+		modelAgreed: true,
 		chatEngine: "model",
 		claudePath: "",
 		codexPath: "",
@@ -430,6 +436,11 @@ export default class GrillPlugin extends Plugin {
 		if (typeof s.sessionDebrief === "boolean") settings.sessionDebrief = s.sessionDebrief;
 		if (typeof s.sounds === "boolean") settings.sounds = s.sounds;
 		if (typeof s.testHints === "boolean") settings.testHints = s.testHints;
+		// 7.x had modes that used no model for questions, for grading, or for either.
+		// Whoever was on one is asked before 8.0 sends anything: see `askToUseModel`.
+		const old = s as { questionSource?: unknown; gradingMode?: unknown };
+		if (typeof s.modelAgreed === "boolean") settings.modelAgreed = s.modelAgreed;
+		else if (old.questionSource === "local" || old.gradingMode === "self") settings.modelAgreed = false;
 		if (s.chatEngine === "model" || s.chatEngine === "claudecode" || s.chatEngine === "codex") settings.chatEngine = s.chatEngine;
 		if (typeof s.claudePath === "string") settings.claudePath = s.claudePath;
 		if (typeof s.codexPath === "string") settings.codexPath = s.codexPath;
@@ -871,6 +882,7 @@ export default class GrillPlugin extends Plugin {
 		});
 
 		this.app.workspace.onLayoutReady(() => {
+			this.askToUseModel();
 			void (async () => {
 				this.mastery = await this.store.loadMastery();
 				this.concepts = await this.store.loadConcepts();
@@ -1487,9 +1499,30 @@ export default class GrillPlugin extends Plugin {
 		}
 	}
 
+	/** Someone who used Grill without AI is asked before a model is used for them. True
+	 * when the question is still open (and has just been put), so the caller can leave
+	 * off instead of saying a key is missing. */
+	askToUseModel(): boolean {
+		const s = this.data.settings;
+		if (s.modelAgreed) return false;
+		s.modelAgreed = true;
+		const usable = !!this.llmConfig();
+		s.modelAgreed = false;
+		if (!usable) {
+			// Nothing saved that could be used: there is nothing to agree to, only to say.
+			s.modelAgreed = true;
+			void this.persist();
+			new Notice("Grill 8 needs a model: the mode without AI was removed. Start free with Grill Cloud or add a key in settings. Your schedule and questions are kept.", 15000);
+			return false;
+		}
+		ModelAgreeModal.show(this, PROVIDERS[s.provider].label);
+		return true;
+	}
+
 	/** Active provider config for LLM calls; null if a needed key is missing. */
 	llmConfig(): LLMConfig | null {
 		const s = this.data.settings;
+		if (!s.modelAgreed) return null;
 		const info = PROVIDERS[s.provider];
 		const apiKey = s.apiKeys[s.provider];
 		if (info.needsKey && !apiKey) return null;
@@ -2306,6 +2339,7 @@ export class GrillSettingTab extends PluginSettingTab {
 			includedFolders: s.includedFolders,
 			excludedFolders: s.excludedFolders,
 			onboarded: s.onboarded,
+			modelAgreed: s.modelAgreed,
 			dismissedOffers: s.dismissedOffers,
 			retiredCloudKeys: s.retiredCloudKeys,
 			cloudUsage: s.cloudUsage,
@@ -3378,5 +3412,43 @@ export class GrillSettingTab extends PluginSettingTab {
 		details.createEl("summary", { text: `${TUNING_NAME} — you shouldn't need any of this` });
 		details.createEl("p", { cls: "setting-item-description", text: TUNING_DESC });
 		for (const r of this.tuningRows()) renderRow(details, r);
+	}
+}
+
+/** Asked once of someone who used Grill without AI before 8.0 and has a key saved:
+ * whether that model may now be used. Until they say yes, nothing is sent. */
+class ModelAgreeModal extends Modal {
+	private static up: ModelAgreeModal | null = null;
+
+	static show(plugin: GrillPlugin, provider: string): void {
+		if (ModelAgreeModal.up) return;
+		new ModelAgreeModal(plugin, provider).open();
+	}
+
+	private constructor(
+		private plugin: GrillPlugin,
+		private provider: string,
+	) {
+		super(plugin.app);
+	}
+
+	onOpen(): void {
+		ModelAgreeModal.up = this;
+		this.titleEl.setText("Grill 8 uses a model");
+		this.contentEl.createEl("p", { text: `The mode without AI was removed in 8.0. From here on, Chat and tests send your notes to ${this.provider}.` });
+		this.contentEl.createEl("p", { text: "Your schedule and your questions are kept." });
+		const row = this.contentEl.createDiv({ cls: "modal-button-container" });
+		const yes = row.createEl("button", { cls: "mod-cta", text: `Use ${this.provider}` });
+		yes.onclick = () => {
+			this.plugin.data.settings.modelAgreed = true;
+			void this.plugin.persist();
+			this.close();
+		};
+		row.createEl("button", { text: "Not now" }).onclick = () => this.close();
+	}
+
+	onClose(): void {
+		ModelAgreeModal.up = null;
+		this.contentEl.empty();
 	}
 }

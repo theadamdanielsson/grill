@@ -116,7 +116,9 @@ test("Learn keeps what it sends within its budget", () => {
 	const long = "x".repeat(50_000);
 	const linked = Array.from({ length: 9 }, (_, i) => ({ name: `L${i}`, text: long }));
 	const ctx = learnContext({ name: "N", text: long }, linked, { note: 100, linked: 10, maxLinked: 3 });
-	assert.equal(ctx.noteText.length, 100);
+	assert.equal(ctx.noteText.split("\n\n")[0].length, 100);
+	assert.match(ctx.noteText, /\[The note goes on: 49900 more characters not shown\.\]$/, "a cut note says it was cut");
+	assert.equal(learnContext({ name: "N", text: "short" }, []).noteText, "short");
 	assert.equal(ctx.linkedText.split("\n\n").length, 3);
 	assert.ok(ctx.linkedText.length < 100);
 });

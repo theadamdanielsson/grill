@@ -74,6 +74,8 @@ import { replyTitle } from "../src/learn";
 test("a reply kept as a note is named by its first line, in a form a file can have", () => {
 	assert.equal(replyTitle("## The **multiplier**: why it is 1/(1-c)?"), "The multiplier why it is 1(1-c)");
 	assert.equal(replyTitle("See [[IS relation|the IS note]] for $Y = C + I$."), "See IS relation for");
+	assert.equal(replyTitle("CON"), "", "a name Windows keeps for itself");
+	assert.equal(replyTitle(".hidden start"), "hidden start");
 	assert.equal(replyTitle("***"), "");
 	assert.ok(replyTitle("word ".repeat(40)).length <= 60);
 });

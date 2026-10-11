@@ -21,7 +21,10 @@ export function stripFrontmatter(raw: string): string {
 /** The note, and the notes it links to, cut to size. Linked notes that are empty once
  * stripped are left out, and no more than `maxLinked` are sent, in the order given. */
 export function learnContext(main: LearnNote, linked: LearnNote[], caps = LEARN_CAPS): { noteText: string; linkedText: string } {
-	const noteText = safeSlice(stripFrontmatter(main.text), caps.note);
+	const whole = stripFrontmatter(main.text);
+	const cut = safeSlice(whole, caps.note);
+	// Said when it is not all there, so a reply (or a change) is not made as if it were.
+	const noteText = cut.length < whole.length ? `${cut}\n\n[The note goes on: ${whole.length - cut.length} more characters not shown.]` : cut;
 	const parts: string[] = [];
 	for (const n of linked) {
 		if (parts.length >= caps.maxLinked) break;
@@ -346,7 +349,11 @@ export function replyTitle(firstLine: string): string {
 		.replace(/\s+/g, " ")
 		.trim()
 		.replace(/[.:;,]+$/, "")
-		.trim();
+		.trim()
+		.replace(/^[.\s]+/, "")
+		.replace(/[\p{Cc}\p{Cf}]/gu, "");
+	// Names Windows keeps for itself can't be a file's name there.
+	if (/^(con|prn|aux|nul|com\d|lpt\d)$/i.test(plain)) return "";
 	if (plain.length <= 60) return plain;
 	const cut = plain.slice(0, 60);
 	return cut.slice(0, cut.lastIndexOf(" ") > 20 ? cut.lastIndexOf(" ") : 60).trim();

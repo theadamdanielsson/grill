@@ -126,6 +126,10 @@ test("a turn that fails, a program that dies and a stop each end the turn with a
 	const hangs = server(() => stop.abort());
 	await assert.rejects(runCodexTurn(base({ signal: stop.signal }), hangs.wire), (e: Error) => e.name === "AbortError");
 	assert.equal(hangs.got.at(-1)?.method, "turn/interrupt");
+	// Stopped while a request it never answers is still out: the turn ends all the same.
+	const early = new AbortController();
+	const mute: CodexWire = { send: () => queueMicrotask(() => early.abort()), onLine: () => undefined, onClose: () => undefined, close: () => undefined };
+	await assert.rejects(runCodexTurn(base({ signal: early.signal }), mute), (e: Error) => e.name === "AbortError");
 	const silent = server((c) => finish(c));
 	await assert.rejects(runCodexTurn(base(), silent.wire), /without saying anything/);
 });

@@ -287,7 +287,9 @@ function startProgram(o: SpawnOptions): SpawnedProcess {
 	if (!req) throw new Error("Claude Code can only be run on desktop.");
 	const cp = req("child_process") as { spawn(cmd: string, args: string[], opts: Record<string, unknown>): { kill(sig?: string): boolean; stdin: unknown; stdout: unknown } };
 	const windowsShim = /\.(cmd|bat)$/i.test(o.command);
-	const child = cp.spawn(o.command, o.args, { cwd: o.cwd, env: o.env, stdio: ["pipe", "pipe", "ignore"], windowsHide: true, ...(windowsShim ? { shell: true } : {}) });
+	// Through a shell the command is read as written: a path with a space in it (a
+	// Windows user name) has to be quoted.
+	const child = cp.spawn(windowsShim ? `"${o.command}"` : o.command, o.args, { cwd: o.cwd, env: o.env, stdio: ["pipe", "pipe", "ignore"], windowsHide: true, ...(windowsShim ? { shell: true } : {}) });
 	const kill = (): void => void child.kill("SIGTERM");
 	if (o.signal.aborted) kill();
 	else o.signal.addEventListener("abort", kill, { once: true });
@@ -312,7 +314,9 @@ export async function runAgent(run: AgentRun): Promise<AgentResult> {
 	const canUseTool: CanUseTool = async (tool, input, o) => {
 		const answer = await run.ask(permissionAsk(tool, input, (o as { title?: string }).title));
 		if (answer === "deny") return { behavior: "deny", message: "The user declined this." };
-		const updated: PermissionUpdate[] | undefined = answer === "always" ? o.suggestions : undefined;
+		// "Always" is for this chat: whatever the program suggests remembering is kept
+		// for the session only, never written to the user's or the vault's settings.
+		const updated: PermissionUpdate[] | undefined = answer === "always" ? o.suggestions?.map((s) => ({ ...s, destination: "session" })) : undefined;
 		return { behavior: "allow", updatedInput: input, ...(updated?.length ? { updatedPermissions: updated } : {}) };
 	};
 	const options: Options = {

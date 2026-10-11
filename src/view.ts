@@ -501,6 +501,8 @@ export class SessionView extends ItemView {
 		startedAt: Date;
 		persona: string;
 		instructions: string;
+		/** The kinds of change the student has said to always allow in this chat. */
+		allowed: Set<string>;
 		/** Claude Code's own conversation, to go on with on the next message. */
 		agentSession?: string;
 	} | null = null;
@@ -1624,30 +1626,52 @@ export class SessionView extends ItemView {
 		vault?: { text: string; reading: string; whole: boolean },
 	): Promise<void> {
 		const cfg = this.plugin.llmConfig();
-		// Someone who has set Grill to use no model, for questions or for grading, has a
-		// saved key sent nowhere: Learn doesn't use it either.
 		if (!this.agentProgram() && !cfg) {
+			if (this.plugin.askToUseModel()) return;
 			new Notice("Grill: Chat needs a model. Start Grill Cloud or add a key in settings.", 8000);
 			return;
 		}
 		if (this.dirty || this.bankDirty || this.bridgesDirty) await this.flush();
 		const instr = await this.plugin.store.loadInstructions();
+		const ctx = vault?.whole ? { noteText: "", linkedText: "" } : await this.learnNotes(note, also);
+		const record = vault?.whole ? "" : await this.recordFor(note.basename);
+		const testable = !vault?.whole && (await this.enoughToTest(note));
+		this.learn = { note, also, reading: vault?.reading ?? "", vault: vault?.text ?? "", whole: !!vault?.whole, ...ctx, record, testable, turns: [], startedAt: new Date(), persona: instr.persona, instructions: instr.preferences, allowed: new Set() };
+		this.renderLearn();
+		if (firstAsk) await this.askLearn(firstAsk);
+	}
+
+	/** The note a conversation is about and the notes that go with it, as they read now,
+	 * cut to size for a message. */
+	private async learnNotes(note: TFile, also: TFile[]): Promise<{ noteText: string; linkedText: string }> {
 		const eligible = new Map(this.allEligible().map((f) => [f.path, f] as const));
 		const links = Object.keys(this.app.metadataCache.resolvedLinks[note.path] ?? {}).flatMap((path) => (eligible.has(path) ? [eligible.get(path) as TFile] : []));
 		const read = async (f: TFile): Promise<{ name: string; text: string }> => ({ name: f.basename, text: await this.app.vault.cachedRead(f) });
 		// Asked of the whole vault: the notes that matched come first and get more room
 		// each than a linked note does, then whatever the main note links to.
 		const others = [...also, ...links.filter((f) => !also.includes(f))].filter((f) => f !== note);
-		const ctx = vault?.whole
-			? { noteText: "", linkedText: "" }
-			: also.length
-				? learnContext(await read(note), await Promise.all(others.slice(0, 6).map(read)), { note: 9000, linked: 3500, maxLinked: 6 })
-				: learnContext(await read(note), await Promise.all(links.slice(0, 8).map(read)));
-		const record = vault?.whole ? "" : await this.recordFor(note.basename);
-		const testable = !vault?.whole && (await this.enoughToTest(note));
-		this.learn = { note, also, reading: vault?.reading ?? "", vault: vault?.text ?? "", whole: !!vault?.whole, ...ctx, record, testable, turns: [], startedAt: new Date(), persona: instr.persona, instructions: instr.preferences };
-		this.renderLearn();
-		if (firstAsk) await this.askLearn(firstAsk);
+		return also.length
+			? learnContext(await read(note), await Promise.all(others.slice(0, 6).map(read)), { note: 9000, linked: 3500, maxLinked: 6 })
+			: learnContext(await read(note), await Promise.all(links.slice(0, 8).map(read)));
+	}
+
+	/** Leave a conversation that is under way without ending it by hand: whatever is
+	 * still being written is stopped, and what was said is kept as a note. */
+	private async leaveLearn(): Promise<void> {
+		const L = this.learn;
+		this.learn = null;
+		this.learnStop?.abort();
+		if (!L || !L.turns.some((t) => t.role === "tutor")) return;
+		const cfg = this.plugin.llmConfig();
+		try {
+			await this.plugin.store.saveLearnThread(L.whole ? "Your notes" : L.note.basename, L.turns, {
+				provider: cfg?.provider ?? "",
+				model: cfg?.provider === "grillcloud" ? "hosted" : (cfg?.model ?? ""),
+				startedAt: L.startedAt,
+			});
+		} catch (e) {
+			console.error("Grill: the chat could not be saved", e);
+		}
 	}
 
 	/** What Grill has on record about a note, for Learn to answer from: how its concepts
@@ -1704,6 +1728,7 @@ export class SessionView extends ItemView {
 	private async askVault(text: string, eligible: TFile[], openNote: TFile | null): Promise<void> {
 		const cfg = this.plugin.llmConfig();
 		if (!this.agentProgram() && !cfg) {
+			if (this.plugin.askToUseModel()) return;
 			new Notice("Grill: Chat needs a model. Start Grill Cloud or add a key in settings.", 8000);
 			return;
 		}
@@ -1865,7 +1890,8 @@ export class SessionView extends ItemView {
 			new Notice("Grill: open the note you want it in, in editing view, and try again.", 6000);
 			return;
 		}
-		editor.replaceSelection(text);
+		// A model wrote it: made inert before it is part of a note (see safemd.ts).
+		editor.replaceSelection(safeMarkdown(text));
 		new Notice("Grill: inserted.", 2500);
 	}
 
@@ -1877,7 +1903,7 @@ export class SessionView extends ItemView {
 		let path = `${folder}${title}.md`;
 		for (let n = 2; this.app.vault.getAbstractFileByPath(path); n++) path = `${folder}${title} ${n}.md`;
 		try {
-			const file = await this.app.vault.create(path, `${text}\n\nFrom a chat about [[${beside.basename}]].\n`);
+			const file = await this.app.vault.create(path, `${safeMarkdown(text)}\n\nFrom a chat about [[${beside.basename}]].\n`);
 			await this.app.workspace.getLeaf("tab").openFile(file);
 		} catch {
 			new Notice("Grill: couldn't save that as a note.", 6000);
@@ -1896,6 +1922,16 @@ export class SessionView extends ItemView {
 		if (!program && L.turns.filter((t) => t.role === "student").length >= (L.whole ? WHOLE_VAULT_TURNS : THREAD_LIMIT)) {
 			new Notice("Grill: that's a long conversation. Test yourself on it, or start a new one.", 8000);
 			return;
+		}
+		// The note as it reads now: it may have been changed since the last message, by
+		// the chat or by hand.
+		if (!L.whole) {
+			try {
+				Object.assign(L, await this.learnNotes(L.note, L.also));
+			} catch {
+				// What was read before still serves.
+			}
+			if (this.learn !== L) return;
 		}
 		const asked: ThreadTurn = { role: "student", text };
 		L.turns.push(asked);
@@ -1957,8 +1993,21 @@ export class SessionView extends ItemView {
 			this.contentEl.querySelector(".grill-learn-turns")?.lastElementChild?.scrollIntoView({ block: "nearest" });
 		} catch (e) {
 			if (this.learn !== L) return;
+			const stopped = (e as Error)?.name === "AbortError";
+			// A turn that had already done things is kept, with a line saying it did not
+			// finish: sent again as if nothing had happened, it would do them twice.
+			const worked = !!waiting?.querySelector(".grill-agent-line");
+			if (worked) {
+				L.turns.push({
+					role: "tutor",
+					text: `${stopped ? "Stopped part way through." : "I stopped part way through."} Some of what you asked may already be done: check the note before asking again.`,
+				});
+				if (!stopped) this.tellError(e);
+				this.renderLearn();
+				return;
+			}
 			L.turns.splice(L.turns.indexOf(asked), 1);
-			this.tellError(e);
+			if (!stopped) this.tellError(e);
 			this.renderLearn();
 			const input = this.contentEl.querySelector<HTMLTextAreaElement>(".grill-learn .grill-thread-input");
 			if (input) input.value = text;
@@ -2037,7 +2086,9 @@ export class SessionView extends ItemView {
 				await vault.create(path, content);
 			},
 			exists: (path) => !!vault.getAbstractFileByPath(path),
-			locked: (path) => this.plugin.isExcluded(path),
+			// Grill's own folder under any spelling of its case: on most computers
+			// "grill/" and "Grill/" are one folder.
+			locked: (path) => this.plugin.isExcluded(path) || path.toLowerCase().startsWith(`${this.plugin.data.settings.folder.toLowerCase()}/`),
 		};
 	}
 
@@ -2066,7 +2117,11 @@ export class SessionView extends ItemView {
 				level: this.plugin.data.settings.agentLevel,
 				onEvent: ui.onEvent,
 				ask: ui.ask,
+				allowed: L.allowed,
 			});
+			// Could not be opened as a stream: asked once more, whole, which is the request
+			// that knows how to say what a provider refused and why.
+			if (done === "unopened") return learnFromNotes(cfg, L.note.basename, L.noteText, L.linkedText, said, text, L.persona, L.instructions, L.record, L.vault);
 			if (done) {
 				const { tools, seconds, ...turn } = done;
 				// A reply that used nothing is a reply: no line saying it worked for 3s.
@@ -2111,18 +2166,8 @@ export class SessionView extends ItemView {
 	 * test on the note it was about, which is how what was explained gets checked. */
 	private async endLearn(test: boolean): Promise<void> {
 		const L = this.learn;
-		this.learn = null;
-		this.learnStop?.abort();
-		if (!L) return this.renderStart();
-		const cfg = this.plugin.llmConfig();
-		if (L.turns.some((t) => t.role === "tutor")) {
-			await this.plugin.store.saveLearnThread(L.whole ? "Your notes" : L.note.basename, L.turns, {
-				provider: cfg?.provider ?? "",
-				model: cfg?.provider === "grillcloud" ? "hosted" : (cfg?.model ?? ""),
-				startedAt: L.startedAt,
-			});
-		}
-		if (!test) return this.renderStart();
+		await this.leaveLearn();
+		if (!L || !test) return this.renderStart();
 		this.sessionScope = [L.note, ...L.also];
 		this.dueOnly = false;
 		this.conceptFilter = null;
@@ -2478,6 +2523,7 @@ export class SessionView extends ItemView {
 
 	/** Open the progress dashboard (called by the command and start-screen link). */
 	showDashboard(): void {
+		void this.leaveLearn();
 		void this.renderDashboard();
 	}
 
@@ -4784,6 +4830,7 @@ export class SessionView extends ItemView {
 	 * (status bar, "Review due notes" command); "Grill this note/folder" is a
 	 * full scoped session, never due-only. */
 	async startScopedSession(files: TFile[], dueOnly = false): Promise<void> {
+		await this.leaveLearn();
 		this.sessionScope = files;
 		this.dueOnly = dueOnly;
 		await this.startSession();
@@ -4796,9 +4843,11 @@ export class SessionView extends ItemView {
 		const s = this.plugin.data.settings;
 		const cfg = this.plugin.llmConfig();
 		if (!cfg) {
+			if (this.plugin.askToUseModel()) return;
 			new Notice("Grill: redoing a session needs a model to grade it. Start Grill Cloud or add a key in settings.", 8000);
 			return;
 		}
+		await this.leaveLearn();
 		const qs = questions.filter((q) => q && q.question && !q.missingLink);
 		if (!qs.length) {
 			new Notice("Grill: no questions to redo in this session.");
@@ -5503,6 +5552,7 @@ export class SessionView extends ItemView {
 		const s = this.plugin.data.settings;
 		const cfg = this.plugin.llmConfig();
 		if (!cfg) {
+			if (this.plugin.askToUseModel()) return;
 			// A one-click way out, not just instructions to go find it in Settings: this is
 			// the exact dead end a fresh no-key install used to hit on its very first "Get
 			// grilled" click, before onboarding asked about AI vs. offline — this covers
@@ -6497,6 +6547,9 @@ export class SessionView extends ItemView {
 		this.confettiStop?.();
 		this.confettiStop = null;
 		stopSpeaking();
+		// A chat left open is stopped and kept: a program started for it is not left
+		// running, and editing, behind a pane that is gone.
+		await this.leaveLearn();
 		await this.flush();
 	}
 

@@ -419,3 +419,19 @@ test("the definitions never throw into Obsidian's loader", async () => {
 	plugin.data = null;
 	assert.deepEqual(tab.getSettingDefinitions(), []);
 });
+
+test("someone who used Grill without AI is asked before their saved key is used", async () => {
+	const disk = { data: { settings: { provider: "anthropic", apiKeys: { anthropic: "sk-ant-live" }, models: { anthropic: "claude-sonnet-5-5" }, questionSource: "local", gradingMode: "self" } } as any };
+	const kc = keychain();
+	const first = await boot(disk, kc);
+	assert.equal(first.plugin.llmConfig(), null, "nothing is sent until they say so");
+	assert.equal(disk.data.settings.modelAgreed, false);
+	// Still held back on the next launch, when the old settings are no longer on disk.
+	const second = await boot(disk, kc);
+	assert.equal(second.plugin.llmConfig(), null);
+	second.plugin.data.settings.modelAgreed = true;
+	assert.equal(second.plugin.llmConfig().apiKey, "sk-ant-live");
+	// Someone who was using a model all along is not asked anything.
+	const other = { data: { settings: { provider: "anthropic", apiKeys: { anthropic: "sk-ant-live" }, models: { anthropic: "claude-sonnet-5-5" }, questionSource: "ai", gradingMode: "ai" } } as any };
+	assert.equal((await boot(other, keychain())).plugin.llmConfig().apiKey, "sk-ant-live");
+});

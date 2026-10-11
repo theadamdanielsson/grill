@@ -347,6 +347,8 @@ export interface StreamRun {
 /** Ask, and read the reply as it is written. Throws `StreamUnavailable` while nothing
  * has been written; after that, an ordinary error saying the reply broke off. */
 export async function streamText(call: StreamCall, run: StreamRun): Promise<StreamResult> {
+	// Stopped before it was sent: a signal already used up tells no listener.
+	if (run.signal?.aborted) throw new DOMException("Stopped.", "AbortError");
 	const send = run.fetch ?? fetch;
 	const stop = new AbortController();
 	let timedOut = false;
