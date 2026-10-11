@@ -3,7 +3,7 @@
 import { ItemView, loadMermaid, MarkdownRenderer, Modal, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
 import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, cloudEnabled, creditsInWords, lowBalance, usageInWords } from "./cloud";
-import { adjudicateBridges, ConceptTarget, contentWords, debriefSession, discussQuestion, embedTexts, explainQuestion, formatSatisfies, generateQuestions, Grade, CloudError, gradeAnswer, learnFromNotes, LLMConfig, offeredProviders, PROVIDERS, ProviderId, Question, supportsEmbeddings, supportsVision, testModel, ThreadTurn, Verdict } from "./llm";
+import { adjudicateBridges, ConceptTarget, contentWords, debriefSession, discussQuestion, embedTexts, explainQuestion, formatSatisfies, generateQuestions, Grade, CloudError, cleanDiagram, cleanText, gradeAnswer, learnFromNotes, LLMConfig, replyInProgress, offeredProviders, PROVIDERS, ProviderId, Question, supportsEmbeddings, supportsVision, testModel, ThreadTurn, Verdict } from "./llm";
 import { detectOcclusionRegions } from "./ocr";
 import {
 	Concept,
@@ -81,8 +81,9 @@ import { SessionEntry } from "./store";
 import { renderThreadHistory } from "./thread";
 import { listSome, missesLine, noteLine, shortDate } from "./suggest";
 import { renderChatHome, renderCreditsRing, type HomeMode, type HomeSuggestion } from "./home";
-import { aboutTheVault, learnContext, learnRecord, namesANote, parseLearnNote, parseSessionNote, rankNotes, sessionTitle, vaultMap, vaultNotes, type PastAnswer } from "./learn";
+import { aboutTheVault, learnContext, learnRecord, namesANote, parseLearnNote, parseSessionNote, rankNotes, replyTitle, sessionTitle, vaultMap, vaultNotes, type PastAnswer } from "./learn";
 import { safeDiagram, safeMarkdown } from "./safemd";
+import { activitySummary, agentBrief, AGENT_LEVELS, findProgram, PermissionAnswer, runAgent } from "./agent";
 
 /** Mermaid's drawing, made fit to be shown as an image: well-formed XML, with a size
  * of its own. Null if it isn't a drawing (Mermaid draws its errors as one too).
@@ -500,6 +501,8 @@ export class SessionView extends ItemView {
 		startedAt: Date;
 		persona: string;
 		instructions: string;
+		/** Claude Code's own conversation, to go on with on the next message. */
+		agentSession?: string;
 	} | null = null;
 	/** Due-queue sessions (status bar, "Review N due"): only due/struggling
 	 * concepts, never padded with untested/known ones to fill a full session. */
@@ -1569,6 +1572,7 @@ export class SessionView extends ItemView {
 					})[0] ?? null,
 			openNote: openNote?.basename ?? null,
 			engine: this.engineForHome(),
+			level: learning && this.agentProgram() ? this.levelForHome() : null,
 			placeholder: learning ? "Ask anything, or say what to do" : "Say what to test, or just press Get grilled",
 			sendLabel: learning ? "Send" : "Get grilled",
 			send: (text, withOpenNote) => {
@@ -1601,12 +1605,43 @@ export class SessionView extends ItemView {
 	 * can do, and settings as the place to change it. */
 	private engineForHome(): { name: string; note: string; open(): void } {
 		const s = this.plugin.data.settings;
-		const open = (): void => this.plugin.openSettings();
+		const program = Platform.isDesktopApp ? findProgram(s.claudePath) : null;
+		// With Claude Code on this computer, the button switches between it and the model.
+		const open = program
+			? (): void => {
+					s.chatEngine = s.chatEngine === "claudecode" ? "model" : "claudecode";
+					void this.plugin.persist();
+					this.renderStart();
+				}
+			: (): void => this.plugin.openSettings();
+		if (program && s.chatEngine === "claudecode") {
+			return { name: "Claude Code", note: "Runs on your own Claude Code and its sign-in. Reads and changes the whole vault.", open };
+		}
 		if (!this.plugin.llmConfig() || !this.plugin.usesAI()) {
 			return { name: "No model", note: "Tests come from your notes as they are. Chat needs a model: choose one in settings.", open };
 		}
 		if (s.provider === "grillcloud") return { name: "Grill Cloud", note: "No setup. Answers from your notes and your record. Uses credits.", open };
 		return { name: s.provider === "custom" ? "Your endpoint" : PROVIDERS[s.provider].label.replace(/ \(.*$/, ""), note: "Runs on your own key. Answers from your notes and your record.", open };
+	}
+
+	/** The installed Claude Code, when Chat is set to run on it and it can: null otherwise. */
+	private agentProgram(): string | null {
+		const s = this.plugin.data.settings;
+		return Platform.isDesktopApp && s.chatEngine === "claudecode" ? findProgram(s.claudePath) : null;
+	}
+
+	private levelForHome(): { name: string; says: string; next(): void } {
+		const s = this.plugin.data.settings;
+		const at = Math.max(0, AGENT_LEVELS.findIndex((l) => l.id === s.agentLevel));
+		return {
+			name: AGENT_LEVELS[at].name,
+			says: AGENT_LEVELS[at].says,
+			next: () => {
+				s.agentLevel = AGENT_LEVELS[(at + 1) % AGENT_LEVELS.length].id;
+				void this.plugin.persist();
+				this.renderStart();
+			},
+		};
 	}
 
 	/** Learn: a conversation about one note, with nothing graded. The note and the
@@ -1620,7 +1655,7 @@ export class SessionView extends ItemView {
 		const cfg = this.plugin.llmConfig();
 		// Someone who has set Grill to use no model, for questions or for grading, has a
 		// saved key sent nowhere: Learn doesn't use it either.
-		if (!cfg || !this.plugin.usesAI()) {
+		if (!this.agentProgram() && (!cfg || !this.plugin.usesAI())) {
 			new Notice("Grill: Chat needs a model. Under Questions and grading, choose an option that uses AI.", 8000);
 			return;
 		}
@@ -1697,7 +1732,7 @@ export class SessionView extends ItemView {
 	 * be about the open note. */
 	private async askVault(text: string, eligible: TFile[], openNote: TFile | null): Promise<void> {
 		const cfg = this.plugin.llmConfig();
-		if (!cfg || !this.plugin.usesAI()) {
+		if (!this.agentProgram() && (!cfg || !this.plugin.usesAI())) {
 			new Notice("Grill: Chat needs a model. Under Questions and grading, choose an option that uses AI.", 8000);
 			return;
 		}
@@ -1738,7 +1773,7 @@ export class SessionView extends ItemView {
 			return;
 		}
 		// A local model reads far less at once than a hosted one.
-		const budget = cfg.provider === "ollama" || cfg.provider === "custom" ? VAULT_CHARS_LOCAL : VAULT_CHARS;
+		const budget = cfg?.provider === "ollama" || cfg?.provider === "custom" ? VAULT_CHARS_LOCAL : VAULT_CHARS;
 		const full = vaultNotes(notes, budget);
 		await this.startLearn(anchor, text, [], {
 			text: `${map}\n\n${full.text}`,
@@ -1814,9 +1849,50 @@ export class SessionView extends ItemView {
 		head.createSpan({ text: turn.role === "student" ? "You" : "Grill" });
 		const spoken = toSpeechText(turn.text);
 		if (turn.role === "tutor" && spoken && (ttsAvailable() || this.plugin.naturalVoiceSource())) this.hearButton(head, spoken, "Read this aloud");
+		if (turn.activity) el.createDiv({ cls: "grill-meta grill-agent-summary", text: turn.activity });
 		const body = el.createDiv({ cls: "grill-thread-text" });
 		this.md(turn.text, body, L.note.path);
 		if (turn.diagram) await this.renderDiagramBlock(body, turn.diagram);
+		if (turn.role !== "tutor" || !turn.text) return;
+		// What can be done with a reply: put it in the note, or keep it as one.
+		const acts = el.createDiv({ cls: "grill-reply-acts" });
+		const act = (label: string, run: () => void | Promise<void>): void => {
+			const b = acts.createEl("button", { cls: "grill-home-link", text: label, attr: { type: "button" } });
+			b.onclick = () => void run();
+		};
+		act("Insert at cursor", () => this.insertInNote(turn.text));
+		act("Save as note", () => this.saveReplyAsNote(turn.text, L.note));
+	}
+
+	/** Put a reply into the note being written: at the cursor of the Markdown note last
+	 * worked in, which is the one beside this pane. */
+	private insertInNote(text: string): void {
+		const leaf = this.app.workspace
+			.getLeavesOfType("markdown")
+			.map((l) => l as WorkspaceLeaf & { activeTime?: number })
+			.sort((a, b) => (b.activeTime ?? 0) - (a.activeTime ?? 0))[0];
+		const editor = (leaf?.view as { editor?: { replaceSelection(text: string): void } } | undefined)?.editor;
+		if (!editor) {
+			new Notice("Grill: open the note you want it in, in editing view, and try again.", 6000);
+			return;
+		}
+		editor.replaceSelection(text);
+		new Notice("Grill: inserted.", 2500);
+	}
+
+	/** Keep a reply as a note of its own, beside the note it was about, and open it. */
+	private async saveReplyAsNote(text: string, beside: TFile): Promise<void> {
+		const first = text.split("\n").find((l) => l.trim()) ?? "";
+		const title = replyTitle(first) || `About ${beside.basename}`;
+		const folder = beside.parent && beside.parent.path !== "/" ? `${beside.parent.path}/` : "";
+		let path = `${folder}${title}.md`;
+		for (let n = 2; this.app.vault.getAbstractFileByPath(path); n++) path = `${folder}${title} ${n}.md`;
+		try {
+			const file = await this.app.vault.create(path, `${text}\n\nFrom a chat about [[${beside.basename}]].\n`);
+			await this.app.workspace.getLeaf("tab").openFile(file);
+		} catch {
+			new Notice("Grill: couldn't save that as a note.", 6000);
+		}
 	}
 
 	/** Send one message in the Learn conversation. Nothing is kept if the reply fails:
@@ -1824,8 +1900,11 @@ export class SessionView extends ItemView {
 	private async askLearn(text: string): Promise<void> {
 		const L = this.learn;
 		const cfg = this.plugin.llmConfig();
-		if (!L || !cfg) return;
-		if (L.turns.filter((t) => t.role === "student").length >= (L.whole ? WHOLE_VAULT_TURNS : THREAD_LIMIT)) {
+		const program = this.agentProgram();
+		if (!L || (!cfg && !program)) return;
+		// Claude Code keeps its own conversation and reads what it needs each turn, so
+		// the limit that keeps a resent conversation affordable doesn't apply to it.
+		if (!program && L.turns.filter((t) => t.role === "student").length >= (L.whole ? WHOLE_VAULT_TURNS : THREAD_LIMIT)) {
 			new Notice("Grill: that's a long conversation. Test yourself on it, or start a new one.", 8000);
 			return;
 		}
@@ -1869,13 +1948,17 @@ export class SessionView extends ItemView {
 				}
 			};
 			this.learnStop = new AbortController();
-			const reply = await learnFromNotes(cfg, L.note.basename, L.noteText, L.linkedText, L.turns.slice(0, -1), text, L.persona, L.instructions, L.record, L.vault, {
-				onText: (soFar) => {
+			const live = {
+				onText: (soFar: string): void => {
 					latest = soFar;
 					void draw();
 				},
 				signal: this.learnStop.signal,
-			});
+			};
+			const reply =
+				program && waiting
+					? await this.askAgent(L, program, text, waiting, live)
+					: await learnFromNotes(cfg as LLMConfig, L.note.basename, L.noteText, L.linkedText, L.turns.slice(0, -1), text, L.persona, L.instructions, L.record, L.vault, live);
 			if (this.learn !== L) return;
 			L.turns.push(reply);
 			this.renderLearn();
@@ -1888,6 +1971,77 @@ export class SessionView extends ItemView {
 			const input = this.contentEl.querySelector<HTMLTextAreaElement>(".grill-learn .grill-thread-input");
 			if (input) input.value = text;
 		}
+	}
+
+	/** One turn answered by Claude Code. What it does is listed above the reply as it
+	 * happens; when it needs permission, a card asks in the conversation and the turn
+	 * waits on the answer. */
+	private async askAgent(
+		L: NonNullable<SessionView["learn"]>,
+		program: string,
+		text: string,
+		waiting: HTMLElement,
+		live: { onText(soFar: string): void; signal: AbortSignal },
+	): Promise<ThreadTurn> {
+		const base = (this.app.vault.adapter as { getBasePath?: () => string }).getBasePath?.();
+		if (!base) throw new Error("Claude Code needs a vault that is a folder on this computer.");
+		const body = waiting.querySelector<HTMLElement>(".grill-thread-text");
+		const activity = createDiv({ cls: "grill-agent-activity" });
+		waiting.insertBefore(activity, body);
+		const stop = waiting.createEl("button", { cls: "grill-hint-btn grill-agent-stop", text: "Stop", attr: { type: "button" } });
+		stop.onclick = () => this.learnStop?.abort();
+		const keepInView = (el: HTMLElement): void => el.scrollIntoView({ block: "nearest" });
+		const result = await runAgent({
+			prompt: text,
+			cwd: base,
+			program,
+			level: this.plugin.data.settings.agentLevel,
+			resume: L.agentSession,
+			append: agentBrief(L.whole ? "" : L.note.path, L.record, L.instructions),
+			signal: live.signal,
+			onEvent: (e) => {
+				if (e.kind === "text") return live.onText(replyInProgress(e.soFar));
+				activity.createDiv({ cls: "grill-meta grill-agent-line", text: e.line });
+				keepInView(activity);
+			},
+			ask: (req) =>
+				new Promise<PermissionAnswer>((answer) => {
+					const card = activity.createDiv({ cls: "grill-agent-ask" });
+					const head = card.createDiv({ cls: "grill-agent-ask-head" });
+					head.createSpan({ cls: "grill-agent-ask-title", text: `Permission required: ${req.title}` });
+					const status = head.createSpan({ cls: "grill-meta", text: "Waiting for you" });
+					const diff = card.createDiv({ cls: "grill-agent-diff" });
+					for (const line of req.removed) diff.createDiv({ cls: "grill-agent-removed", text: line });
+					for (const line of req.added) diff.createDiv({ cls: "grill-agent-added", text: line });
+					if (req.detail) diff.createEl("code", { cls: "grill-agent-detail", text: req.detail });
+					const row = card.createDiv({ cls: "grill-agent-ask-row" });
+					const decide = (a: PermissionAnswer, said: string): void => {
+						row.remove();
+						status.setText(said);
+						answer(a);
+					};
+					const once = row.createEl("button", { cls: "mod-cta", text: "Allow once", attr: { type: "button" } });
+					once.onclick = () => decide("once", "Allowed");
+					row.createEl("button", { text: req.always, attr: { type: "button" } }).onclick = () => decide("always", "Allowed for this chat");
+					row.createEl("button", { text: "Deny", attr: { type: "button" } }).onclick = () => decide("deny", "Denied. Nothing was changed");
+					// Leaving the conversation with a card open is a no.
+					live.signal.addEventListener("abort", () => answer("deny"), { once: true });
+					keepInView(card);
+					once.focus();
+				}),
+		});
+		L.agentSession = result.sessionId || L.agentSession;
+		// A diagram, when one was asked for, is lifted out to be drawn the way every other is.
+		let diagram = "";
+		const said = cleanText(
+			result.text.replace(/```mermaid\s*\n([\s\S]*?)```/g, (_, src: string) => {
+				if (!diagram) diagram = cleanDiagram(src);
+				return "";
+			}),
+		);
+		const turn: ThreadTurn = { role: "tutor", text: said, activity: activitySummary(result.tools, result.seconds) };
+		if (diagram) turn.diagram = diagram;
+		return turn;
 	}
 
 	/** Leave the Learn conversation, keeping it as a note. `test`: go straight into a

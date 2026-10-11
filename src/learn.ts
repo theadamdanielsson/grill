@@ -325,3 +325,20 @@ export function namesANote(question: string, matched: string[]): boolean {
 	const terms = new Set(contentTerms(question).filter((w) => !VAULT_WORDS.has(w)));
 	return matched.some((name) => contentTerms(name).some((w) => terms.has(w)));
 }
+
+/** A file name for a reply kept as a note: its first line without Markdown's marks or
+ * the characters a file name can't hold, cut at a word. Empty when nothing is left. */
+export function replyTitle(firstLine: string): string {
+	const plain = firstLine
+		.replace(/^#+\s*/, "")
+		.replace(/\$[^$]*\$/g, "")
+		.replace(/\[\[([^\]|]*)(\|[^\]]*)?\]\]/g, "$1")
+		.replace(/[*_`#[\]\\/:?"<>|^]/g, "")
+		.replace(/\s+/g, " ")
+		.trim()
+		.replace(/[.:;,]+$/, "")
+		.trim();
+	if (plain.length <= 60) return plain;
+	const cut = plain.slice(0, 60);
+	return cut.slice(0, cut.lastIndexOf(" ") > 20 ? cut.lastIndexOf(" ") : 60).trim();
+}

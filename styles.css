@@ -3640,3 +3640,99 @@ textarea.grill-mgmt-field {
 .grill-home > .grill-home-foot {
   margin-top: 0.8em;
 }
+
+/* ---------------------------------------------------------------- claude code in chat */
+/* The buttons under the box that say what answers and at which permission level. */
+.grill-home-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4em;
+  min-width: 0;
+}
+.grill-view button.grill-home-level,
+.grill-view button.grill-home-level:hover {
+  color: var(--grill-ink-gold, #ffd23f);
+}
+/* What Claude Code did, listed above its reply as it happens, and in one line after. */
+.grill-agent-activity {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25em;
+  margin-bottom: 0.6em;
+}
+.grill-agent-activity:empty {
+  display: none;
+}
+.grill-agent-line,
+.grill-agent-summary {
+  font-size: var(--font-ui-small);
+}
+.grill-agent-summary {
+  margin-bottom: 0.5em;
+}
+.grill-view button.grill-agent-stop {
+  margin-top: 0.6em;
+}
+/* Permission required: what it wants to do, the lines that go and come, and the answer. */
+.grill-agent-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6em;
+  margin: 0.4em 0;
+  padding: 0.75em 0.9em;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+}
+.grill-agent-ask-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.4em 0.8em;
+}
+.grill-agent-ask-title {
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold, 600);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-accent);
+  overflow-wrap: anywhere;
+}
+.grill-agent-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+  font-size: var(--font-ui-small);
+  line-height: 1.45;
+}
+.grill-agent-diff:empty {
+  display: none;
+}
+.grill-agent-removed,
+.grill-agent-added,
+.grill-agent-detail {
+  padding: 0.3em 0.5em;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.grill-agent-removed {
+  background: rgba(255, 90, 31, 0.1);
+  text-decoration: line-through;
+}
+.grill-agent-added {
+  background: rgba(255, 210, 63, 0.1);
+}
+.grill-agent-ask-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+}
+.grill-view .grill-agent-ask-row button {
+  min-height: 2.5em;
+}
+.grill-reply-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.2em;
+  margin-top: 0.5em;
+}

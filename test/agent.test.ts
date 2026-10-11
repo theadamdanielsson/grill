@@ -69,3 +69,11 @@ test("Claude Code is looked for where it is usually installed", () => {
 	assert.equal(programPlaces("/Users/a", "darwin", {})[0], "/Users/a/.local/bin/claude");
 	assert.ok(programPlaces("C:\\Users\\a", "win32", { APPDATA: "C:\\Users\\a\\AppData\\Roaming" }).includes("C:\\Users\\a\\AppData\\Roaming\\npm\\claude.cmd"));
 });
+
+import { replyTitle } from "../src/learn";
+test("a reply kept as a note is named by its first line, in a form a file can have", () => {
+	assert.equal(replyTitle("## The **multiplier**: why it is 1/(1-c)?"), "The multiplier why it is 1(1-c)");
+	assert.equal(replyTitle("See [[IS relation|the IS note]] for $Y = C + I$."), "See IS relation for");
+	assert.equal(replyTitle("***"), "");
+	assert.ok(replyTitle("word ".repeat(40)).length <= 60);
+});

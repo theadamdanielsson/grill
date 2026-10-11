@@ -159,6 +159,13 @@ interface GrillSettings {
 	/** Offer the hints written with each question while it is being answered. Off: a
 	 * test is a test, and help is asked for in words, which is recorded as help. */
 	testHints: boolean;
+	/** What answers in Chat: the model chosen for questions and grading, or the Claude
+	 * Code installed on this computer, which can read and change the vault. */
+	chatEngine: "model" | "claudecode";
+	/** Where Claude Code is, when it isn't in one of the usual places. */
+	claudePath: string;
+	/** Claude Code's permission level in Chat. */
+	agentLevel: "safe" | "plan" | "auto";
 	/** Read-aloud voice language: "" auto-detects per question from its text, an
 	 * explicit code (e.g. "it") always uses that language regardless of the question. */
 	ttsLanguage: string;
@@ -330,6 +337,9 @@ function defaultSettings(): GrillSettings {
 		sessionDebrief: true,
 		sounds: true,
 		testHints: false,
+		chatEngine: "model",
+		claudePath: "",
+		agentLevel: "safe",
 		ttsLanguage: "",
 		ttsVoiceURI: "",
 		naturalVoice: true,
@@ -425,6 +435,9 @@ export default class GrillPlugin extends Plugin {
 		if (typeof s.sessionDebrief === "boolean") settings.sessionDebrief = s.sessionDebrief;
 		if (typeof s.sounds === "boolean") settings.sounds = s.sounds;
 		if (typeof s.testHints === "boolean") settings.testHints = s.testHints;
+		if (s.chatEngine === "model" || s.chatEngine === "claudecode") settings.chatEngine = s.chatEngine;
+		if (typeof s.claudePath === "string") settings.claudePath = s.claudePath;
+		if (s.agentLevel === "safe" || s.agentLevel === "plan" || s.agentLevel === "auto") settings.agentLevel = s.agentLevel;
 		if (typeof s.ttsLanguage === "string") settings.ttsLanguage = s.ttsLanguage;
 		if (typeof s.ttsVoiceURI === "string") settings.ttsVoiceURI = s.ttsVoiceURI;
 		if (s.naturalVoice === false) settings.naturalVoice = false;
@@ -3225,6 +3238,33 @@ export class GrillSettingTab extends PluginSettingTab {
 							s.testHints = v;
 							await this.plugin.persist();
 						}),
+					),
+			},
+			{
+				name: "Chat with Claude Code",
+				desc: "Chat runs on the Claude Code installed on this computer, with your own sign-in. It can read and change the whole vault. Desktop only.",
+				aliases: ["claude code", "agent", "engine", "subscription"],
+				build: (setting) =>
+					setting.addToggle((t) =>
+						t.setValue(s.chatEngine === "claudecode").onChange(async (v) => {
+							s.chatEngine = v ? "claudecode" : "model";
+							await this.plugin.persist();
+						}),
+					),
+			},
+			{
+				name: "Claude Code location",
+				desc: "Leave empty to have it found. Fill in the full path if Chat says it could not be started.",
+				aliases: ["claude path", "binary", "executable"],
+				build: (setting) =>
+					setting.addText((t) =>
+						t
+							.setPlaceholder("Found automatically")
+							.setValue(s.claudePath)
+							.onChange(async (v) => {
+								s.claudePath = v.trim();
+								await this.plugin.persist();
+							}),
 					),
 			},
 			{

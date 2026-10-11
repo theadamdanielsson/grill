@@ -46,6 +46,9 @@ export interface HomeData {
 	openNote: string | null;
 	/** What answers: its name, a line on what it can do, and the way to change it. */
 	engine: { name: string; note: string; open(): void };
+	/** Claude Code's permission level, when it is what answers: its name, what it
+	 * means, and a step to the next one. */
+	level?: { name: string; says: string; next(): void } | null;
 	placeholder: string;
 	sendLabel: string;
 	/** What was typed, trimmed (empty when Send was pressed on an empty box), and
@@ -137,10 +140,16 @@ export function renderChatHome(screen: HTMLElement, d: HomeData): void {
 		attr: { placeholder: d.placeholder, "aria-label": d.mode === "chat" ? "Message" : "What to be tested on" },
 	});
 	const bar = box.createDiv({ cls: "grill-home-bar" });
-	const engine = bar.createEl("button", { cls: "grill-home-engine", attr: { type: "button", "aria-label": `Answered by ${d.engine.name}. Change in settings` } });
+	const picks = bar.createDiv({ cls: "grill-home-picks" });
+	const engine = picks.createEl("button", { cls: "grill-home-engine", attr: { type: "button", "aria-label": `Answered by ${d.engine.name}. Change in settings` } });
 	engine.createSpan({ cls: "grill-home-engine-dot" });
 	engine.createSpan({ text: d.engine.name });
 	engine.onclick = () => d.engine.open();
+	if (d.level) {
+		const level = d.level;
+		const b = picks.createEl("button", { cls: "grill-home-engine grill-home-level", text: level.name, attr: { type: "button", "aria-label": `Permission level: ${level.name}. ${level.says}` } });
+		b.onclick = () => level.next();
+	}
 	const send = bar.createEl("button", { text: d.sendLabel, cls: "mod-cta grill-primary-cta grill-home-send", attr: { type: "button" } });
 	if (d.engine.note) box.createDiv({ cls: "grill-meta grill-home-engine-note", text: d.engine.note });
 	const go = (): void => {

@@ -1938,6 +1938,8 @@ export interface ThreadTurn {
 	diagram?: string;
 	/** ...or point at the one image in the note that it is about (its vault path). */
 	imagePath?: string;
+	/** What Claude Code did to write this turn, in one line. */
+	activity?: string;
 }
 
 const DISCUSS_RULES = `The student has just answered a quiz question on their own note and been graded. They are now asking you a follow-up. You are their tutor in a short conversation under that question.
