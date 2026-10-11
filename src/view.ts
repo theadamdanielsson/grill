@@ -1723,7 +1723,14 @@ export class SessionView extends ItemView {
 		// one that is about the notes as a whole ("which notes are the backbone of the
 		// course?") has all of them read, and it says so on screen.
 		const general = aboutTheVault(text);
-		if (found.length && (!general || namesANote(text, found.map((f) => f.basename)))) {
+		const named = namesANote(text, found.map((f) => f.basename));
+		// The open note's chip was left on the message: that is the note it is about,
+		// unless the message names another. Notes that match its words come along.
+		if (openNote && !general && !named) {
+			await this.startLearn(openNote, text, found.filter((f) => f !== openNote).slice(0, 4), { text: map, reading: "", whole: false });
+			return;
+		}
+		if (found.length && (!general || named)) {
 			await this.startLearn(found[0], text, found.slice(1), { text: map, reading: "", whole: false });
 			return;
 		}
