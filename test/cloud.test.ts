@@ -385,7 +385,6 @@ test("settings: Grill Cloud has the first section, says what it is before it sta
 	// and nothing but the offer.
 	assert.deepEqual(sections()[0], { heading: "Grill Cloud", names: ["Grill Cloud"] });
 	assert.equal(sections()[1].heading, "Your own key or Ollama");
-	assert.ok(sections().find((sec) => sec.heading === "Studying")!.names[0] === "Questions and grading");
 	const before = draw(tab, "Grill Cloud");
 	assert.match(before.desc(), /nothing to set up/);
 	// What it costs, what it needs and where notes go are said before anything is sent.
@@ -979,14 +978,14 @@ test("a deleted key stays deleted on every device", async () => {
 test("a Start free that doesn't get through leaves things as they were, and asking again gets the free credits", async () => {
 	cloud.url = URL;
 	const { state, seen } = server({ down: true });
-	const { plugin } = await boot({ provider: "openai", questionSource: "local", gradingMode: "self" });
+	const { plugin } = await boot({ provider: "openai" });
 	assert.match(await plugin.startCloud(), /Couldn't reach Grill Cloud/);
 	const s = plugin.data.settings;
-	assert.deepEqual([s.provider, s.questionSource, s.gradingMode], ["openai", "local", "self"], "not left on a mode that can't work");
+	assert.equal(s.provider, "openai", "not left on a provider that can't work");
 	assert.ok(isCloudKey(s.apiKeys.grillcloud), "the key is kept for the next try");
 	state.down = false;
 	assert.match(await plugin.startCloud(), /25 free credits/);
-	assert.deepEqual([s.provider, s.questionSource, s.gradingMode], ["grillcloud", "ai", "ai"]);
+	assert.equal(s.provider, "grillcloud");
 	assert.equal(seen.filter((r) => r.path === "/start").length, 2);
 });
 
@@ -1197,15 +1196,11 @@ test("first run offers the open note only when there is enough in it to ask abou
 		return view;
 	};
 	const s = plugin.data.settings;
-	s.questionSource = "ai";
 	assert.equal((await open("Econ/Demand.md", structured).firstNote())?.path, "Econ/Demand.md");
 	assert.equal(await open("Econ/Demand.md", prose).firstNote(), null, "a note with a question or two in it");
 	assert.equal(await open("Econ/Demand.md", structured, { "excalidraw-plugin": "parsed" }).firstNote(), null, "a drawing");
 	assert.equal(await open(`${s.folder}/Session.md`, structured).firstNote(), null, "Grill's own files");
 	assert.equal(await open("Econ/Demand.pdf", structured).firstNote(), null);
-	// Offline, only what a question can be built from without a model counts.
-	s.questionSource = "local";
-	assert.equal(await open("Econ/Demand.md", prose).firstNote(), null);
 	s.includedFolders = ["School"];
 	assert.equal(await open("Econ/Demand.md", structured).firstNote(), null, "outside Grill's folders");
 });

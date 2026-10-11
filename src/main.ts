@@ -141,10 +141,6 @@ interface GrillSettings {
 	 * (see view.ts's renderOffers), not as a settings toggle. Desktop-only for now (see
 	 * view.ts's appendOcclusionConcepts). */
 	enableOcclusion: boolean;
-	/** Where questions come from: an LLM, or the note's own structure (no key). */
-	questionSource: "ai" | "local";
-	/** How answers are graded: an LLM, or the user grades themselves (no key). */
-	gradingMode: "ai" | "self";
 	/** Question formats: plain free-response only, or a mix that also includes
 	 * multiple-choice and fill-in-the-blank. "Mixed" costs a bit more prompt (AI mode)
 	 * per generation call, so it's a real toggle, not baked in unconditionally. */
@@ -331,8 +327,6 @@ function defaultSettings(): GrillSettings {
 		cloudGone: [],
 		sendImages: true,
 		enableOcclusion: false,
-		questionSource: "ai",
-		gradingMode: "ai",
 		questionFormats: "mixed",
 		sessionDebrief: true,
 		sounds: true,
@@ -429,8 +423,6 @@ export default class GrillPlugin extends Plugin {
 			settings.dismissedOffers = s.dismissedOffers.filter((v): v is string => typeof v === "string");
 		if (typeof s.sendImages === "boolean") settings.sendImages = s.sendImages;
 		if (typeof s.enableOcclusion === "boolean") settings.enableOcclusion = s.enableOcclusion;
-		if (s.questionSource === "ai" || s.questionSource === "local") settings.questionSource = s.questionSource;
-		if (s.gradingMode === "ai" || s.gradingMode === "self") settings.gradingMode = s.gradingMode;
 		if (s.questionFormats === "write" || s.questionFormats === "mixed" || s.questionFormats === "mc") settings.questionFormats = s.questionFormats;
 		if (typeof s.sessionDebrief === "boolean") settings.sessionDebrief = s.sessionDebrief;
 		if (typeof s.sounds === "boolean") settings.sounds = s.sounds;
@@ -761,10 +753,7 @@ export default class GrillPlugin extends Plugin {
 			const btn = box.createEl("button", { text: `Redo this quiz (${n} question${n === 1 ? "" : "s"})`, cls: "mod-cta" });
 			box.createSpan({
 				cls: "grill-meta grill-redo-note",
-				text:
-					this.data.settings.gradingMode === "ai"
-						? "Same questions, no AI to regenerate. AI still grades your answers."
-						: "Same questions, and you grade yourself. No cost.",
+				text: "Same questions, nothing new written. Your answers are graded again.",
 			});
 			btn.onclick = () => void this.startReplay(questions);
 		});
@@ -1133,14 +1122,6 @@ export default class GrillPlugin extends Plugin {
 		// catch-up session takes, it says there are reviews, not how many.
 		const pile = n > CATCH_UP;
 		this.statusBar.setText(n > 0 ? (pile ? "Grill: reviews due" : `Grill: ${n} due`) : "Grill");
-	}
-
-	/** Whether a session touches the model at all — questions, grading, or both. Single
-	 * source of truth for "does this session need a key" / "is an AI debrief possible",
-	 * so the two call sites don't each re-derive the same `questionSource === "ai" ||
-	 * gradingMode === "ai"` check and risk drifting apart. */
-	usesAI(): boolean {
-		return this.data.settings.questionSource === "ai" || this.data.settings.gradingMode === "ai";
 	}
 
 	/** Debounce a single file's concept re-extraction so a burst of "modify" events
@@ -1880,11 +1861,8 @@ export default class GrillPlugin extends Plugin {
 			const usable = shared && !s.retiredCloudKeys.includes(shared) && !this.cloudGone.has(shared) && !s.cloudGone.includes(sharedId) && !this.deviceCloudGone().includes(sharedId);
 			s.apiKeys.grillcloud = usable ? shared : newCloudKey();
 		}
-		const was = { provider: s.provider, questionSource: s.questionSource, gradingMode: s.gradingMode };
+		const was = { provider: s.provider };
 		s.provider = "grillcloud";
-		// Grill Cloud is for AI questions and AI grading: turning it on turns those on.
-		s.questionSource = "ai";
-		s.gradingMode = "ai";
 		await this.persist();
 		// That save reads the file first, and may have found another device's key there.
 		const key = s.apiKeys.grillcloud;
@@ -2606,43 +2584,7 @@ export class GrillSettingTab extends PluginSettingTab {
 		const inKeychain = this.plugin.keys.available;
 
 		// ------------------------------------------------------------ AI
-		// One control where there used to be two independent dropdowns (questionSource +
-		// gradingMode). All four combinations they could express are still here — including
-		// notes-built questions with AI marking, the cheapest way to get graded feedback —
-		// but as four named ways to study rather than a matrix the reader has to multiply
-		// out themselves. Same wording as the onboarding cards, so the choice made there is
-		// recognisable here.
-		const MODES: Record<string, { source: "ai" | "local"; grading: "ai" | "self" }> = {
-			ai: { source: "ai", grading: "ai" },
-			"ai-self": { source: "ai", grading: "self" },
-			"local-ai": { source: "local", grading: "ai" },
-			local: { source: "local", grading: "self" },
-		};
-		const mode =
-			Object.keys(MODES).find((k) => MODES[k].source === s.questionSource && MODES[k].grading === s.gradingMode) ?? "ai";
-
 		const ai: Row[] = [
-			{
-				name: "Questions and grading",
-				desc: "Where questions come from and who marks them.",
-				aliases: ["study mode", "offline", "grading", "no key", "self grade"],
-				build: (setting) =>
-					setting.addDropdown((d) =>
-						d
-							.addOption("ai", "AI writes and grades")
-							.addOption("ai-self", "AI writes, I grade myself")
-							.addOption("local-ai", "From my notes, AI grades")
-							.addOption("local", "Fully offline — no key")
-							.setValue(mode)
-							.onChange(async (v) => {
-								const picked = MODES[v] ?? MODES.ai;
-								s.questionSource = picked.source;
-								s.gradingMode = picked.grading;
-								await this.plugin.persist();
-								this.rerender();
-							}),
-					),
-			},
 			{
 				name: "Provider",
 				desc: (cloudEnabled() && p === "grillcloud" ? "Grill Cloud is in use. " : "") + "Whose model to use with your own key. Ollama runs on your machine.",
@@ -2800,8 +2742,6 @@ export class GrillSettingTab extends PluginSettingTab {
 							.setCta()
 							.onClick(async () => {
 								s.provider = "grillcloud";
-								s.questionSource = "ai";
-								s.gradingMode = "ai";
 								await this.plugin.persist();
 								this.rerender();
 							}),

@@ -11,7 +11,6 @@ import {
 	extractConcepts,
 	extractConceptsCached,
 	localQuestionForConcept,
-	localQuestions,
 	selectRelevantText,
 	selectRelevantTextSemantic,
 } from "./generate-local";
@@ -394,7 +393,6 @@ interface QuestionResult extends SessionEntry {
 interface PrereqRoute {
 	concept: Concept;
 	prereqNote: string;
-	local: boolean;
 }
 
 /** A misconception-contagion candidate: the same confusion the student just showed on
@@ -867,17 +865,7 @@ export class SessionView extends ItemView {
 		}
 
 		if (step === 1) {
-			const useAI = (): void => {
-				s.questionSource = "ai";
-				s.gradingMode = "ai";
-			};
-			const offline = async (): Promise<void> => {
-				s.questionSource = "local";
-				s.gradingMode = "self";
-				await this.plugin.persist();
-				this.renderOnboarding(2);
-			};
-			if (own) {
+			if (own || !cloudEnabled()) {
 				// A key of one's own: the same fields the settings tab writes.
 				screen.createDiv({ cls: "grill-section-label", text: "Your own key or Ollama" });
 				screen.createEl("p", { cls: "grill-meta", text: "AI writes and grades questions from your notes, on a model you pay for or run yourself." });
@@ -887,27 +875,12 @@ export class SessionView extends ItemView {
 					// Pick up a value typed but not yet blurred.
 					screen.querySelectorAll("input").forEach((i) => i.dispatchEvent(new Event("change")));
 					if (s.provider === "grillcloud") s.provider = "anthropic";
-					useAI();
 					await this.plugin.persist();
 					this.renderOnboarding(2);
 				};
 				return;
 			}
 			screen.createDiv({ cls: "grill-section-label", text: "How should Grill write your questions?" });
-			if (!cloudEnabled()) {
-				const box = screen.createDiv({ cls: "grill-mode-choice" });
-				const card = (title: string, text: string): HTMLElement => {
-					const el = box.createDiv({ cls: "grill-mode-card" });
-					el.createDiv({ cls: "grill-mode-title", text: title });
-					el.createDiv({ cls: "grill-meta", text });
-					return el;
-				};
-				card("AI-powered", "AI writes and grades questions from your notes. Uses your own API key, or a local model through Ollama.").onclick = () =>
-					this.renderOnboarding(1, true);
-				card("Fully offline", "Questions built from your notes' own structure, graded by you. No key, no cost, nothing leaves your vault.").onclick = () =>
-					void offline();
-				return;
-			}
 			const panel = screen.createDiv({ cls: "grill-cloud-panel" });
 			const go = this.renderCloudPanel(panel, true);
 			// With a key already here (set up before, or arrived by sync): show what's on
@@ -926,14 +899,13 @@ export class SessionView extends ItemView {
 				// (again): a first try that didn't get through must not cost the free credits.
 				if (s.apiKeys.grillcloud && this.plugin.cloudState === "ok") {
 					s.provider = "grillcloud";
-					useAI();
 					await this.plugin.persist();
 					this.renderOnboarding(2);
 					return;
 				}
 				go.disabled = true;
 				go.setText("Setting up...");
-				const was = { provider: s.provider, questionSource: s.questionSource, gradingMode: s.gradingMode };
+				const was = { provider: s.provider };
 				let message = "Something went wrong. Try again.";
 				try {
 					message = await this.plugin.startCloud();
@@ -951,14 +923,11 @@ export class SessionView extends ItemView {
 				}
 				this.renderOnboarding(this.plugin.cloudState === "ok" ? 2 : 1);
 			};
-			// The other two ways, plainly there, one click each.
+			// The other way, plainly there, one click.
 			const others = screen.createDiv({ cls: "grill-onboard-others" });
 			others.createSpan({ cls: "grill-meta", text: "Or " });
 			const mine = others.createEl("a", { text: "use my own API key or Ollama" });
 			mine.onclick = () => this.renderOnboarding(1, true);
-			others.createSpan({ cls: "grill-meta", text: ", or " });
-			const none = others.createEl("a", { text: "study offline with no AI" });
-			none.onclick = () => void offline();
 			return;
 		}
 
@@ -1078,8 +1047,7 @@ export class SessionView extends ItemView {
 			if (fm && ("excalidraw-plugin" in fm || "kanban-plugin" in fm)) return null;
 			const s = this.plugin.data.settings;
 			const concepts = extractConcepts(f.basename, await this.app.vault.cachedRead(f), s.questionFormats);
-			const usable = s.questionSource === "local" ? concepts.filter((c) => c.local) : concepts;
-			return usable.length >= ONBOARD_NOTE_CONCEPTS ? f : null;
+			return concepts.length >= ONBOARD_NOTE_CONCEPTS ? f : null;
 		} catch {
 			return null;
 		}
@@ -1092,8 +1060,7 @@ export class SessionView extends ItemView {
 		const s = this.plugin.data.settings;
 		try {
 			const concepts = extractConcepts(f.basename, await this.app.vault.cachedRead(f), s.questionFormats);
-			const usable = s.questionSource === "local" ? concepts.filter((c) => c.local) : concepts;
-			return usable.length >= ONBOARD_NOTE_CONCEPTS;
+			return concepts.length >= ONBOARD_NOTE_CONCEPTS;
 		} catch {
 			return true;
 		}
@@ -1550,8 +1517,7 @@ export class SessionView extends ItemView {
 				this.renderStart();
 			},
 			suggestions,
-			// The last conversation or session, titled by what it was about, with when and
-			// how it went beside it.
+			// The last conversation or session, titled by what it was about.
 			last:
 				this.recentSessions()
 					.slice(0, 1)
@@ -1562,11 +1528,8 @@ export class SessionView extends ItemView {
 						const title = chatted
 							? String(fm?.note ?? "")
 							: sessionTitle((cache?.headings ?? []).filter((h) => h.level === 2).map((h) => h.heading));
-						const when = typeof fm?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(fm.date) ? `${Number(fm.date.slice(8))} ${MONTHS[Number(fm.date.slice(5, 7)) - 1]}` : "";
-						const how = chatted ? "Chat" : fm?.score ? `Test, ${String(fm.score)}` : "";
 						return {
 							title: title || f.basename,
-							meta: [when, how].filter(Boolean).join(" · "),
 							open: () => void this.app.workspace.getLeaf(false).openFile(f),
 						};
 					})[0] ?? null,
@@ -1601,9 +1564,9 @@ export class SessionView extends ItemView {
 		});
 	}
 
-	/** What answers in Chat, for the button under the box: its name, a line on what it
-	 * can do, and settings as the place to change it. */
-	private engineForHome(): { name: string; note: string; open(): void } {
+	/** What answers in Chat, for the button under the box: its name, and the way to
+	 * change it. */
+	private engineForHome(): { name: string; open(): void } {
 		const s = this.plugin.data.settings;
 		const program = Platform.isDesktopApp ? findProgram(s.claudePath) : null;
 		// With Claude Code on this computer, the button switches between it and the model.
@@ -1615,13 +1578,13 @@ export class SessionView extends ItemView {
 				}
 			: (): void => this.plugin.openSettings();
 		if (program && s.chatEngine === "claudecode") {
-			return { name: "Claude Code", note: "Runs on your own Claude Code and its sign-in. Reads and changes the whole vault.", open };
+			return { name: "Claude Code", open };
 		}
-		if (!this.plugin.llmConfig() || !this.plugin.usesAI()) {
-			return { name: "No model", note: "Tests come from your notes as they are. Chat needs a model: choose one in settings.", open };
+		if (!this.plugin.llmConfig()) {
+			return { name: "No model", open };
 		}
-		if (s.provider === "grillcloud") return { name: "Grill Cloud", note: "No setup. Answers from your notes and your record. Uses credits.", open };
-		return { name: s.provider === "custom" ? "Your endpoint" : PROVIDERS[s.provider].label.replace(/ \(.*$/, ""), note: "Runs on your own key. Answers from your notes and your record.", open };
+		if (s.provider === "grillcloud") return { name: "Grill Cloud", open };
+		return { name: s.provider === "custom" ? "Your endpoint" : PROVIDERS[s.provider].label.replace(/ \(.*$/, ""), open };
 	}
 
 	/** The installed Claude Code, when Chat is set to run on it and it can: null otherwise. */
@@ -1655,8 +1618,8 @@ export class SessionView extends ItemView {
 		const cfg = this.plugin.llmConfig();
 		// Someone who has set Grill to use no model, for questions or for grading, has a
 		// saved key sent nowhere: Learn doesn't use it either.
-		if (!this.agentProgram() && (!cfg || !this.plugin.usesAI())) {
-			new Notice("Grill: Chat needs a model. Under Questions and grading, choose an option that uses AI.", 8000);
+		if (!this.agentProgram() && !cfg) {
+			new Notice("Grill: Chat needs a model. Start Grill Cloud or add a key in settings.", 8000);
 			return;
 		}
 		if (this.dirty || this.bankDirty || this.bridgesDirty) await this.flush();
@@ -1732,8 +1695,8 @@ export class SessionView extends ItemView {
 	 * be about the open note. */
 	private async askVault(text: string, eligible: TFile[], openNote: TFile | null): Promise<void> {
 		const cfg = this.plugin.llmConfig();
-		if (!this.agentProgram() && (!cfg || !this.plugin.usesAI())) {
-			new Notice("Grill: Chat needs a model. Under Questions and grading, choose an option that uses AI.", 8000);
+		if (!this.agentProgram() && !cfg) {
+			new Notice("Grill: Chat needs a model. Start Grill Cloud or add a key in settings.", 8000);
 			return;
 		}
 		const linksIn = new Map<string, number>();
@@ -2072,7 +2035,6 @@ export class SessionView extends ItemView {
 	private creditsRing(screen: HTMLElement): void {
 		const s = this.plugin.data.settings;
 		if (!cloudEnabled() || s.provider !== "grillcloud" || !s.apiKeys.grillcloud) return;
-		if (s.questionSource !== "ai" && s.gradingMode !== "ai") return;
 		const host = (screen.querySelector<HTMLElement>(".grill-arcade-mark") ?? screen).createSpan({ cls: "grill-credits-host" });
 		const fill = (): void => {
 			host.empty();
@@ -2767,7 +2729,7 @@ export class SessionView extends ItemView {
 					empty.createDiv({
 						cls: "grill-meta",
 						text:
-							"Cached AI-generated (and no-key/local) questions show up here once you've reviewed some. " +
+							"Questions Grill has written show up here once you've reviewed some. " +
 							"Authored \"> [!grill]\" questions aren't listed here — edit those directly in the note.",
 					});
 				}
@@ -3389,12 +3351,11 @@ export class SessionView extends ItemView {
 		return leaked / nameWords.size >= 0.5;
 	}
 
-	/** Is this question one of the sampled ones? Self-graded answers are excluded: the
-	 * grade there is the student's own verdict, so comparing their confidence against it
-	 * measures nothing. Replays are excluded because they don't record calibration at all
-	 * (see captureConfidence) — asking would be a tap that goes nowhere. */
-	private askConfidenceNow(selfGrade: boolean): boolean {
-		if (selfGrade || this.replayMode) return false;
+	/** Is this question one of the sampled ones? Replays are excluded because they don't
+	 * record calibration at all (see captureConfidence) — asking would be a tap that goes
+	 * nowhere. */
+	private askConfidenceNow(): boolean {
+		if (this.replayMode) return false;
 		return this.idx % SessionView.CONFIDENCE_EVERY === 0;
 	}
 
@@ -3509,7 +3470,6 @@ export class SessionView extends ItemView {
 			this.hearButton(card, speakText, "Read question aloud");
 		}
 
-		const selfGrade = this.plugin.data.settings.gradingMode === "self";
 		const hintBox = card.createDiv({ cls: "grill-hintbox" });
 		let hintsUsed = 0;
 		const hints = [q.hints.tier1, q.hints.tier2, q.hints.tier3].filter(Boolean);
@@ -3638,11 +3598,9 @@ export class SessionView extends ItemView {
 				cls: "grill-answer",
 				attr: {
 					rows: thread ? "3" : "5",
-					placeholder: selfGrade
-						? "Answer from memory, or just think it through, then reveal... (Cmd/Ctrl+Enter)"
-						: this.mayAsk(q)
-							? "Answer from memory, or ask about it... (Cmd/Ctrl+Enter to send)"
-							: "Answer from memory... (Cmd/Ctrl+Enter to submit)",
+					placeholder: this.mayAsk(q)
+						? "Answer from memory, or ask about it... (Cmd/Ctrl+Enter to send)"
+						: "Answer from memory... (Cmd/Ctrl+Enter to submit)",
 				},
 			});
 			// An answer whose marking failed (a dropped connection, no credits) is still here.
@@ -3656,12 +3614,12 @@ export class SessionView extends ItemView {
 		const row = card.createDiv({ cls: "grill-btn-row grill-answer-bar" });
 		const main = row.createDiv({ cls: "grill-answer-main" });
 		if (!isMc && !isTf) {
-			const submit = main.createEl("button", { text: selfGrade ? "Show answer" : thread ? "Send" : "Submit", cls: "mod-cta grill-submit-btn" });
+			const submit = main.createEl("button", { text: thread ? "Send" : "Submit", cls: "mod-cta grill-submit-btn" });
 			submit.onclick = () => doAction(false);
 		}
-		// Confidence check (AI grading only): predict how sure you are before the grade
-		// lands, so calibration compares your confidence to an objective mark.
-		if (this.askConfidenceNow(selfGrade)) {
+		// Confidence check: predict how sure you are before the grade lands, so
+		// calibration compares your confidence to an objective mark.
+		if (this.askConfidenceNow()) {
 			const conf = main.createDiv({ cls: "grill-confidence" });
 			conf.setAttr("role", "group");
 			conf.setAttr("aria-label", "How sure are you?");
@@ -3726,21 +3684,13 @@ export class SessionView extends ItemView {
 				else if (isBlank) answer = blankInputs.map((el) => el.value.trim()).join(" / ");
 				else answer = ta?.value.trim() ?? "";
 			}
-			if (selfGrade) this.revealForSelfGrade(answer, giveUp, hintsUsed);
-			else
-				void this.submitAnswer(
-					answer,
-					giveUp,
-					hintsUsed,
-					isMulti ? [...multiSelected] : undefined,
-					isMatch ? matchPicks : undefined,
-				);
+			void this.submitAnswer(answer, giveUp, hintsUsed, isMulti ? [...multiSelected] : undefined, isMatch ? matchPicks : undefined);
 		};
 		skip.onclick = () => doAction(true);
 		// A question answered by picking or by filling blanks has no box to ask in, so
 		// the thread view gives it one. Whatever is typed here can only be a question:
 		// it goes straight to an answer, with no call to decide what it was.
-		const askCfg = thread && !ta && !selfGrade && !this.replayMode && !q.missingLink ? this.plugin.llmConfig() : null;
+		const askCfg = thread && !ta && !this.replayMode && !q.missingLink ? this.plugin.llmConfig() : null;
 		if (askCfg) {
 			const ask = card.createDiv({ cls: "grill-thread-ask" });
 			const input = ask.createEl("textarea", {
@@ -4454,14 +4404,13 @@ export class SessionView extends ItemView {
 		}
 		const s = this.plugin.data.settings;
 		const cfg = this.plugin.llmConfig();
-		const usedAI = this.plugin.usesAI();
 		const sessionNodes = [...new Set(this.results.map((r) => r.node))];
 
 		let debrief = deterministicDebrief(this.results);
 		// Grades are on disk before the debrief call, not after it: a slow or failing
 		// debrief model call must never be what stands between the user and their save.
 		await this.flush();
-		if (cfg && usedAI && s.sessionDebrief && sessionNodes.length > 0) {
+		if (cfg && s.sessionDebrief && sessionNodes.length > 0) {
 			try {
 				const reg = this.registry;
 				const rawTags = this.results
@@ -4517,8 +4466,8 @@ export class SessionView extends ItemView {
 		const note = await this.plugin.store.writeSessionNote(
 			this.results,
 			{
-				provider: usedAI && cfg ? cfg.provider : "local",
-				model: usedAI && cfg ? cfg.model : "deterministic",
+				provider: cfg ? cfg.provider : "local",
+				model: cfg ? cfg.model : "deterministic",
 				startedAt: this.sessionStart,
 				dueOnly: this.dueOnly,
 			},
@@ -4746,8 +4695,8 @@ export class SessionView extends ItemView {
 	async startReplay(questions: Question[]): Promise<void> {
 		const s = this.plugin.data.settings;
 		const cfg = this.plugin.llmConfig();
-		if (s.gradingMode === "ai" && !cfg) {
-			new Notice('Grill: to redo with AI grading, set an API key, or switch grading to "I mark myself".', 8000);
+		if (!cfg) {
+			new Notice("Grill: redoing a session needs a model to grade it. Start Grill Cloud or add a key in settings.", 8000);
 			return;
 		}
 		const qs = questions.filter((q) => q && q.question && !q.missingLink);
@@ -5452,9 +5401,8 @@ export class SessionView extends ItemView {
 		// record of what sessions cost, then start counting this one from nothing.
 		await this.plugin.noteCloudSession();
 		const s = this.plugin.data.settings;
-		const needsKey = this.plugin.usesAI();
 		const cfg = this.plugin.llmConfig();
-		if (needsKey && !cfg) {
+		if (!cfg) {
 			// A one-click way out, not just instructions to go find it in Settings: this is
 			// the exact dead end a fresh no-key install used to hit on its very first "Get
 			// grilled" click, before onboarding asked about AI vs. offline — this covers
@@ -5477,17 +5425,7 @@ export class SessionView extends ItemView {
 						e.preventDefault();
 						this.plugin.openSettings();
 					};
-					frag.appendText(", or ");
-					const link = frag.createEl("a", { text: "switch to no-key mode" });
-					link.onclick = async (e) => {
-						e.preventDefault();
-						s.questionSource = "local";
-						s.gradingMode = "self";
-						await this.plugin.persist();
-						new Notice('Grill: switched to no-key mode. Click "Get grilled" again.', 6000);
-						this.renderStart();
-					};
-					frag.appendText(" now.");
+					frag.appendText(" to get questions.");
 				}),
 				10000,
 			);
@@ -5569,7 +5507,7 @@ export class SessionView extends ItemView {
 			};
 			const seed = pickCandidates(orderedNames, this.plugin.mastery, notesCap, priority, freshPolicy);
 			const names = expandSelectionWithLinks(this.app, seed, byName, this.plugin.mastery, notesCap);
-			const vision = !!cfg && s.questionSource === "ai" && s.sendImages && supportsVision(cfg.provider, cfg.model);
+			const vision = !!cfg && s.sendImages && supportsVision(cfg.provider, cfg.model);
 			this.sessionVision = vision;
 			// Desktop-only for now: Tesseract.js's worker+WASM combination is unverified on
 			// mobile's webview, so occlusion silently no-ops there rather than risking a
@@ -5678,7 +5616,7 @@ export class SessionView extends ItemView {
 			// session still runs fine (the model is told to quiz text only), but silently
 			// — with no visible sign the toggle isn't doing anything for this model, it
 			// reads as "images are broken" rather than "this model doesn't support vision".
-			if (cfg && s.questionSource === "ai" && s.sendImages && !supportsVision(cfg.provider, cfg.model) && this.notesWithUnsentImages.size > 0) {
+			if (cfg && s.sendImages && !supportsVision(cfg.provider, cfg.model) && this.notesWithUnsentImages.size > 0) {
 				new Notice(
 					`Grill: ${cfg.model} can't read images, so this session will quiz on text only. Switch to a vision model (Claude, GPT-4o/5, Gemini, or a vision Ollama model) to include them.`,
 					8000,
@@ -5734,8 +5672,7 @@ export class SessionView extends ItemView {
 			// A session given its concepts asks all of them, whatever the usual length.
 			const want = only ? Math.max(1, only.size) : this.dueOnly ? NO_MEANINGFUL_CAP : Math.max(1, s.questionsPerSession);
 
-			// No-key mode can only use concepts that carry a deterministic question.
-			const pickable = (s.questionSource === "local" ? allConcepts.filter((c) => c.local) : allConcepts).filter((c) => !only || only.has(c.id));
+			const pickable = allConcepts.filter((c) => !only || only.has(c.id));
 			// The daily new-concept cap only governs the unscoped default flow ("Get
 			// grilled", sessionScope null) — a deliberately scoped pick ("Grill this
 			// note/folder", a committed Custom Study selection) isn't throttled by it, same
@@ -5762,9 +5699,7 @@ export class SessionView extends ItemView {
 						? s.newConceptsPerDay === 0
 							? `Grill: nothing due, and new concepts per day is set to 0 — "Get grilled" won't introduce new material. Raise it under Settings → Study intensity (or Tuning, for the exact number), or use "Review N due now" / "Grill this note/folder" instead.`
 							: `Grill: that's all the new material for today — you've hit your daily limit of ${s.newConceptsPerDay} new concepts. Come back tomorrow, or raise it under Settings → Study intensity.`
-						: s.questionSource === "local"
-							? "Grill: couldn't build questions from these notes' structure. Add some bold terms, headings, definitions or formulas, or switch questions to AI."
-							: "Grill: couldn't find concepts to quiz in these notes.",
+						: "Grill: couldn't find concepts to quiz in these notes.",
 					10000,
 				);
 				this.renderStart();
@@ -5796,15 +5731,6 @@ export class SessionView extends ItemView {
 					activeMisconception,
 				};
 			});
-
-			if (s.questionSource === "local") {
-				this.questions = localQuestions(this.sessionConcepts, this.targetCount, (c) =>
-					conceptTargetDifficulty(this.concepts[c.id]),
-				);
-				this.progressTotal = this.targetCount;
-				this.renderQuestion();
-				return;
-			}
 
 			// Missing-link finder: append a capstone of confirmed connections (AI only).
 			// Restricted to a deliberately scoped session — "Grill this note/folder" or a
@@ -6121,67 +6047,6 @@ export class SessionView extends ItemView {
 		let shared = 0;
 		for (const w of expected) if (given.has(w)) shared++;
 		return shared / expected.size < SessionView.THIN_ANSWER_RATIO;
-	}
-
-	/** Self-grade path: reveal the answer, then let the user rate their own recall. */
-	private revealForSelfGrade(answer: string, gaveUp: boolean, hintsUsed: number): void {
-		const wrap = this.root();
-		this.progressBar(wrap);
-		const q = this.questions[this.idx];
-		const card = wrap.createDiv({ cls: "grill-body" });
-		const meta = card.createDiv({ cls: "grill-meta-row" });
-		meta.createSpan({ cls: "grill-meta", text: `Question ${this.idx + 1} of ${this.targetCount}` });
-		const chip = meta.createSpan({ cls: "grill-chip grill-chip-link", text: q.node });
-		chip.onclick = () => this.openNote(q.node);
-		chip.setAttr("aria-label", "Open note");
-
-		const qEl = card.createDiv({ cls: "grill-question grill-question-small" });
-		this.md(q.question, qEl, q.node);
-
-		const revealCard = card.createDiv({ cls: "grill-flow-card grill-review-card" });
-		if (!gaveUp && answer) {
-			revealCard.createDiv({ cls: "grill-block-label", text: "Your answer" });
-			const ans = revealCard.createDiv({ cls: "grill-your-answer" });
-			this.md(`> ${answer.split("\n").join("\n> ")}`, ans, q.node);
-		}
-		revealCard.createDiv({ cls: "grill-block-label", text: "Answer" });
-		this.md(q.modelAnswer, revealCard.createDiv({ cls: "grill-model-answer" }), q.node);
-		if (q.type === "occlusion") this.renderOcclusionImage(revealCard, q, true);
-
-		// Self-grade never scores until a rating button below is clicked, so this is
-		// still "before answering" as far as the schedule is concerned — same simple
-		// delete-and-move-on as the pre-answer version, no snapshot to restore.
-		if (!q.authored) {
-			const badRow = card.createDiv({ cls: "grill-btn-row" });
-			const badBtn = badRow.createEl("button", { text: "Bad question", cls: "grill-quiet-btn" });
-			badBtn.setAttribute("title", "Wrong, broken, or nonsensical — delete it and move on, no penalty");
-			badBtn.onclick = () => {
-				badRow.querySelectorAll("button").forEach((b) => (b.disabled = true));
-				void this.reportBadQuestion();
-			};
-		}
-
-		card.createDiv({ cls: "grill-meta grill-selfgrade-prompt", text: "How did you do?" });
-		const rateRow = card.createDiv({ cls: "grill-btn-row grill-selfgrade-row" });
-		const buttons: { label: string; rating: Rating; cls: string }[] = [
-			{ label: "Again", rating: 1, cls: "grill-rate-again" },
-			{ label: "Hard", rating: 2, cls: "grill-rate-hard" },
-			{ label: "Good", rating: 3, cls: "grill-rate-good" },
-			{ label: "Easy", rating: 4, cls: "grill-rate-easy" },
-		];
-		// If they gave up, nudge toward Again but leave the choice to them.
-		for (const b of buttons) {
-			const el = rateRow.createEl("button", { text: b.label, cls: `grill-rate-btn ${b.cls}` });
-			if (gaveUp && b.rating === 1) el.addClass("mod-cta");
-			el.onclick = () => {
-				// One grade per question: the next question can take a moment to load, and a
-				// second tap on these still-live buttons used to grade that unseen question.
-				rateRow.querySelectorAll("button").forEach((btn) => (btn.disabled = true));
-				void this.recordSelfGrade(b.rating, answer, gaveUp, hintsUsed);
-			};
-		}
-
-		if (q.missingLink && q.connectTo) this.offerLink(card, q.node, q.connectTo);
 	}
 
 	/** Record one graded answer: update the concept's schedule, bump the note's
@@ -6646,7 +6511,6 @@ export class SessionView extends ItemView {
 		if (this.routesUsed >= MAX_ROUTES) return null;
 		const file = this.byName.get(fromNote);
 		if (!file) return null;
-		const local = this.plugin.data.settings.questionSource === "local";
 		const planned = new Set(this.targets.map((t) => t.conceptId));
 		// Weakest-first, same as before; among equally-weak candidates, prefer the one
 		// more heavily depended-upon by other session notes (shoring it up pays off
@@ -6659,9 +6523,9 @@ export class SessionView extends ItemView {
 		for (const p of prereqs) {
 			if (this.noteWeakness(p) === 2) break; // sorted weakest-first: the rest are known
 			const concept = (this.conceptsByNote.get(p) ?? []).find(
-				(c) => !planned.has(c.id) && (!local || c.local) && statusOf(this.concepts[c.id]) !== "known",
+				(c) => !planned.has(c.id) && statusOf(this.concepts[c.id]) !== "known",
 			);
-			if (concept) return { concept, prereqNote: p, local };
+			if (concept) return { concept, prereqNote: p };
 		}
 		return null;
 	}
@@ -6671,7 +6535,7 @@ export class SessionView extends ItemView {
 	 * Returns false if a question couldn't actually be built for it, in which case nothing
 	 * was committed. */
 	private commitRoutedTarget(route: PrereqRoute, fromNote: string): boolean {
-		if (!this.insertRoutedTarget(route.concept, fromNote, route.local)) return false;
+		if (!this.insertRoutedTarget(route.concept, fromNote)) return false;
 		this.routedNotes.add(route.prereqNote);
 		this.routesUsed += 1;
 		return true;
@@ -6679,7 +6543,7 @@ export class SessionView extends ItemView {
 
 	/** Splice a routed prerequisite concept in as the next question, preserving the
 	 * targets<->questions position coupling. Returns false if it couldn't build one. */
-	private insertRoutedTarget(concept: Concept, fromNote: string, local: boolean): boolean {
+	private insertRoutedTarget(concept: Concept, fromNote: string): boolean {
 		const target: ConceptTarget = {
 			conceptId: concept.id,
 			note: concept.note,
@@ -6688,20 +6552,10 @@ export class SessionView extends ItemView {
 			targetDifficulty: "easy", // a shaky foundation: plain recall
 			routedFrom: fromNote,
 		};
-		if (local) {
-			// No lazy generation in no-key mode: build the deterministic question now
-			// and splice it in as the very next question. Matches the AI path's explicit
-			// "easy" above — a shaky-foundation prerequisite check, not a stretch question.
-			const built = localQuestions([concept], 1, () => "easy");
-			if (!built.length) return false; // no deterministic question for this concept
-			built[0].routedFrom = fromNote;
-			this.questions.splice(this.idx + 1, 0, built[0]);
-		} else {
-			// AI mode: put the prerequisite at the front of the not-yet-generated plan
-			// so it is the next question written. `questions` is not positionally coupled
-			// to `targets`, so this cannot desync a prefetch that is already in flight.
-			this.targets.splice(this.planCursor, 0, target);
-		}
+		// The prerequisite goes at the front of the not-yet-generated plan so it is the
+		// next question written. `questions` is not positionally coupled to `targets`, so
+		// this cannot desync a prefetch that is already in flight.
+		this.targets.splice(this.planCursor, 0, target);
 		this.targetCount += 1;
 		return true;
 	}
@@ -6721,7 +6575,6 @@ export class SessionView extends ItemView {
 	 * without a model in the loop. Does not mutate any session state. */
 	private findContagionRoute(fromNote: string, tag: string): ContagionRoute | null {
 		if (this.replayMode) return null;
-		if (this.plugin.data.settings.questionSource === "local") return null;
 		if (this.contagionUsed >= MAX_CONTAGION) return null;
 		const planned = new Set(this.targets.map((t) => t.conceptId));
 		const neighbors = (this.sessionNeighbors.get(fromNote) ?? [])
@@ -6755,52 +6608,4 @@ export class SessionView extends ItemView {
 		this.contagionUsed += 1;
 	}
 
-	private async recordSelfGrade(rating: Rating, answer: string, gaveUp: boolean, hintsUsed: number): Promise<void> {
-		const q = this.questions[this.idx];
-		const verdict: Verdict = rating === 1 ? "incorrect" : rating === 2 ? "partial" : "correct";
-		if (this.plugin.data.settings.sounds) playSfx(verdict);
-		await this.applyGrade(q, verdict, rating, undefined);
-		// Self-grade never produces a misconceptionTag (no AI grader call), so contagion
-		// can't trigger here — only prerequisite routing applies to this path.
-		let pendingRoute: PendingExtension | null = null;
-		if (verdict === "incorrect") {
-			if (this.idx + 1 >= this.targetCount) {
-				const route = this.findPrerequisiteRoute(q.node);
-				if (route) pendingRoute = { kind: "prerequisite", route, fromNote: q.node };
-			} else {
-				this.maybeRouteToPrerequisite(q.node);
-			}
-		}
-		if (q.targetsMisconception && verdict === "correct" && this.registry[q.targetsMisconception]) {
-			const was = this.registry[q.targetsMisconception];
-			if (this.pendingOverride) this.pendingOverride.resolved = { tag: was.tag, status: was.status, lastSeen: was.lastSeen };
-			resolveMisconception(this.registry, q.targetsMisconception);
-			this.dirty = true;
-		}
-		this.plugin.refreshStatusBar();
-		this.results.push({
-			node: q.node,
-			question: q.question,
-			answer,
-			verdict,
-			gaveUp,
-			feedback: "",
-			modelAnswer: q.modelAnswer,
-			hintsUsed,
-			missingLink: q.missingLink,
-			connectTo: q.connectTo,
-		});
-		if (pendingRoute) this.renderRouteConsent(pendingRoute);
-		else await this.goToQuestion(this.idx + 1);
-	}
-
-	/** Standalone version of the route-consent step for the self-grade path, which has
-	 * no separate feedback screen to append into (see `renderRouteConsentInto` for the
-	 * AI-graded path's inline version). */
-	private renderRouteConsent(pending: PendingExtension): void {
-		const wrap = this.root();
-		this.progressBar(wrap);
-		const card = wrap.createDiv({ cls: "grill-body" });
-		this.renderRouteConsentInto(card, pending);
-	}
 }

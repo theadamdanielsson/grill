@@ -1560,24 +1560,6 @@ settings:
   margin-right: 0.75em;
 }
 
-/* Self-grade rating buttons */
-.grill-selfgrade-prompt {
-  margin-top: 1em;
-  margin-bottom: 0.4em;
-}
-.grill-selfgrade-row {
-  display: flex;
-  gap: 0.4em;
-}
-.grill-rate-btn {
-  flex: 1;
-  border-top: 2px solid transparent;
-}
-.grill-rate-again { border-top-color: var(--grill-incorrect, var(--color-red)); }
-.grill-rate-hard { border-top-color: var(--grill-partial, var(--color-orange)); }
-.grill-rate-good { border-top-color: var(--grill-correct, var(--color-green)); }
-.grill-rate-easy { border-top-color: var(--color-blue); }
-
 .grill-nokey-note {
   border-left: 2px solid var(--grill-correct);
   padding-left: 0.75em;
@@ -3634,9 +3616,6 @@ textarea.grill-mgmt-field {
   height: 8px;
   background: var(--grill-gold, #ffd23f);
 }
-.grill-home-engine-note {
-  font-size: var(--font-ui-smaller);
-}
 .grill-home > .grill-home-foot {
   margin-top: 0.8em;
 }
@@ -3735,4 +3714,30 @@ textarea.grill-mgmt-field {
   flex-wrap: wrap;
   gap: 1.2em;
   margin-top: 0.5em;
+}
+
+/* Progress and Questions: two buttons across the foot of the home screen, drawn like
+ * the rest of Grill's buttons. */
+.grill-home > .grill-home-foot {
+  gap: 0.55em;
+}
+.grill-view button.grill-home-nav,
+.grill-view button.grill-home-nav:hover {
+  flex: 1 1 0;
+  height: auto;
+  padding: 0.85em 0;
+  border: 2px solid var(--grill-flame, #ff7a22);
+  background: var(--grill-screen-deep, #0f0904);
+  box-shadow: none;
+  color: var(--grill-ink, #ffe98a);
+  font-family: "Grill Pixel", var(--font-monospace);
+  font-size: 0.62em;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.grill-view button.grill-home-nav:hover {
+  border-color: var(--grill-gold, #ffd23f);
+  background: rgba(255, 122, 34, 0.09);
+  color: var(--grill-ink-gold, #ffd23f);
 }

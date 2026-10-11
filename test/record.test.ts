@@ -8,7 +8,7 @@ import { SessionView } from "../src/view";
 function makeView() {
 	const plugin = {
 		data: {
-			settings: { gradingMode: "ai", questionSource: "ai", sounds: false, showProgress: false, desiredRetention: 90, easyDays: [] },
+			settings: { sounds: false, showProgress: false, desiredRetention: 90, easyDays: [] },
 		},
 		mastery: {} as Record<string, any>,
 		concepts: {} as Record<string, any>,
@@ -22,7 +22,6 @@ function makeView() {
 			loadInstructions: async () => ({ persona: "", preferences: "" }),
 			hasReadProtected: () => false,
 		},
-		usesAI: () => true,
 		llmConfig: () => null,
 		noteCloudSession: async () => 0,
 		takeCloudSpend: () => 0,

@@ -20,7 +20,6 @@ export interface HomeSuggestion {
 
 export interface HomeRecent {
 	title: string;
-	meta: string;
 	open(): void;
 }
 
@@ -44,8 +43,8 @@ export interface HomeData {
 	/** The note open beside the pane, when it can be read. It rides along with what is
 	 * typed, as a chip that can be taken off. */
 	openNote: string | null;
-	/** What answers: its name, a line on what it can do, and the way to change it. */
-	engine: { name: string; note: string; open(): void };
+	/** What answers: its name, and the way to change it. */
+	engine: { name: string; open(): void };
 	/** Claude Code's permission level, when it is what answers: its name, what it
 	 * means, and a step to the next one. */
 	level?: { name: string; says: string; next(): void } | null;
@@ -119,7 +118,6 @@ export function renderChatHome(screen: HTMLElement, d: HomeData): void {
 		const what = row.createSpan();
 		what.createSpan({ cls: "grill-meta", text: "Last: " });
 		what.createSpan({ text: last.title });
-		if (last.meta) row.createSpan({ cls: "grill-meta", text: last.meta });
 		row.onclick = () => last.open();
 	}
 
@@ -151,7 +149,6 @@ export function renderChatHome(screen: HTMLElement, d: HomeData): void {
 		b.onclick = () => level.next();
 	}
 	const send = bar.createEl("button", { text: d.sendLabel, cls: "mod-cta grill-primary-cta grill-home-send", attr: { type: "button" } });
-	if (d.engine.note) box.createDiv({ cls: "grill-meta grill-home-engine-note", text: d.engine.note });
 	const go = (): void => {
 		if (send.disabled) return;
 		send.disabled = true;
@@ -171,7 +168,7 @@ export function renderChatHome(screen: HTMLElement, d: HomeData): void {
 
 	const foot = screen.createDiv({ cls: "grill-home-foot" });
 	const link = (text: string, run: () => void): void => {
-		const b = foot.createEl("button", { cls: "grill-home-link", text, attr: { type: "button" } });
+		const b = foot.createEl("button", { cls: "grill-home-nav", text, attr: { type: "button" } });
 		b.onclick = run;
 	};
 	link("Progress", d.showProgress);

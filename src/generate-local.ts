@@ -1082,20 +1082,3 @@ export function localQuestionForConcept(c: Concept, difficulty: QDifficulty = "m
 			: {}),
 	};
 }
-
-/** Render no-key questions for already-selected concepts, in order, up to count.
- * `difficultyOf`, when given, seeds each question's difficulty from the concept's own
- * scheduling state instead of the flat "medium" default — see `localQuestionForConcept`. */
-export function localQuestions(
-	concepts: Concept[],
-	count: number,
-	difficultyOf?: (c: Concept) => QDifficulty,
-): Question[] {
-	const out: Question[] = [];
-	for (const c of concepts) {
-		if (out.length >= count) break;
-		const q = localQuestionForConcept(c, difficultyOf?.(c));
-		if (q) out.push(q);
-	}
-	return out;
-}

@@ -17,7 +17,7 @@ function makeView(opts: { failSaves?: number; readProtected?: boolean } = {}) {
 		saves.push({ what, data: JSON.parse(JSON.stringify(data)) });
 	};
 	const plugin = {
-		data: { settings: { gradingMode: "self", questionSource: "local", sounds: false, showProgress: false } },
+		data: { settings: { sounds: false, showProgress: false } },
 		mastery: {},
 		concepts: {},
 		store: {
@@ -30,8 +30,7 @@ function makeView(opts: { failSaves?: number; readProtected?: boolean } = {}) {
 			loadInstructions: async () => ({ persona: "", preferences: "" }),
 			hasReadProtected: () => opts.readProtected ?? false,
 		},
-		usesAI: () => true,
-		llmConfig: () => null,
+		llmConfig: () => ({ provider: "anthropic", apiKey: "k", model: "m" }),
 		noteCloudSession: async () => 0,
 		takeCloudSpend: () => 0,
 		isExcluded: () => false,
