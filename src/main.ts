@@ -157,9 +157,11 @@ interface GrillSettings {
 	testHints: boolean;
 	/** What answers in Chat: the model chosen for questions and grading, or the Claude
 	 * Code installed on this computer, which can read and change the vault. */
-	chatEngine: "model" | "claudecode";
+	chatEngine: "model" | "claudecode" | "codex";
 	/** Where Claude Code is, when it isn't in one of the usual places. */
 	claudePath: string;
+	/** Where Codex is, when it isn't in one of the usual places. */
+	codexPath: string;
 	/** Claude Code's permission level in Chat. */
 	agentLevel: "safe" | "plan" | "auto";
 	/** Read-aloud voice language: "" auto-detects per question from its text, an
@@ -333,6 +335,7 @@ function defaultSettings(): GrillSettings {
 		testHints: false,
 		chatEngine: "model",
 		claudePath: "",
+		codexPath: "",
 		agentLevel: "safe",
 		ttsLanguage: "",
 		ttsVoiceURI: "",
@@ -427,8 +430,9 @@ export default class GrillPlugin extends Plugin {
 		if (typeof s.sessionDebrief === "boolean") settings.sessionDebrief = s.sessionDebrief;
 		if (typeof s.sounds === "boolean") settings.sounds = s.sounds;
 		if (typeof s.testHints === "boolean") settings.testHints = s.testHints;
-		if (s.chatEngine === "model" || s.chatEngine === "claudecode") settings.chatEngine = s.chatEngine;
+		if (s.chatEngine === "model" || s.chatEngine === "claudecode" || s.chatEngine === "codex") settings.chatEngine = s.chatEngine;
 		if (typeof s.claudePath === "string") settings.claudePath = s.claudePath;
+		if (typeof s.codexPath === "string") settings.codexPath = s.codexPath;
 		if (s.agentLevel === "safe" || s.agentLevel === "plan" || s.agentLevel === "auto") settings.agentLevel = s.agentLevel;
 		if (typeof s.ttsLanguage === "string") settings.ttsLanguage = s.ttsLanguage;
 		if (typeof s.ttsVoiceURI === "string") settings.ttsVoiceURI = s.ttsVoiceURI;
@@ -3183,15 +3187,20 @@ export class GrillSettingTab extends PluginSettingTab {
 					),
 			},
 			{
-				name: "Chat with Claude Code",
-				desc: "Chat runs on the Claude Code installed on this computer, with your own sign-in. It can read and change the whole vault. Desktop only.",
-				aliases: ["claude code", "agent", "engine", "subscription"],
+				name: "Chat engine",
+				desc: "What answers in Chat. Claude Code and Codex run the program installed on this computer, with your own sign-in, and can read and change the whole vault. Desktop only.",
+				aliases: ["claude code", "codex", "agent", "engine", "subscription", "chatgpt"],
 				build: (setting) =>
-					setting.addToggle((t) =>
-						t.setValue(s.chatEngine === "claudecode").onChange(async (v) => {
-							s.chatEngine = v ? "claudecode" : "model";
-							await this.plugin.persist();
-						}),
+					setting.addDropdown((d) =>
+						d
+							.addOption("model", "The model chosen above")
+							.addOption("claudecode", "Claude Code")
+							.addOption("codex", "Codex")
+							.setValue(s.chatEngine)
+							.onChange(async (v) => {
+								s.chatEngine = v === "claudecode" || v === "codex" ? v : "model";
+								await this.plugin.persist();
+							}),
 					),
 			},
 			{
@@ -3205,6 +3214,21 @@ export class GrillSettingTab extends PluginSettingTab {
 							.setValue(s.claudePath)
 							.onChange(async (v) => {
 								s.claudePath = v.trim();
+								await this.plugin.persist();
+							}),
+					),
+			},
+			{
+				name: "Codex location",
+				desc: "Leave empty to have it found. Fill in the full path if Chat says it could not be started.",
+				aliases: ["codex path", "binary", "executable"],
+				build: (setting) =>
+					setting.addText((t) =>
+						t
+							.setPlaceholder("Found automatically")
+							.setValue(s.codexPath)
+							.onChange(async (v) => {
+								s.codexPath = v.trim();
 								await this.plugin.persist();
 							}),
 					),

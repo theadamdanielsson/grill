@@ -1,0 +1,356 @@
+/**
+ * Codex as the engine behind Chat.
+ *
+ * Like the Claude Code engine (agent.ts), this runs a program that is already on the
+ * user's machine, signed in however they signed it in, with the vault as its working
+ * folder. Grill starts `codex app-server` as it is and talks to it over its own
+ * protocol (JSON-RPC, one message a line); it never reads, stores or forwards a login.
+ *
+ * What Codex may do, and when it must ask, is Codex's own machinery: a sandbox and an
+ * approval policy. Grill's three levels choose among Codex's own settings and draw
+ * what comes back on the same activity list and permission card as the other engines.
+ *
+ * The protocol and the way to launch it follow Claudian (github.com/YishenTu/claudian, MIT).
+ */
+import { AgentEvent, AgentLevel, AgentResult, PermissionAnswer, PermissionAsk, pathWith } from "./agent";
+
+type Loose = Record<string, unknown>;
+const obj = (v: unknown): Loose | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Loose) : null);
+const str = (v: unknown): string => (typeof v === "string" ? v : "");
+const leaf = (path: string): string => path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? path;
+const clip = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+
+/** Codex's own settings for each of Grill's levels. Safe: it may read, and asks before
+ * anything else. Plan: it may read, and nothing is asked because nothing may change.
+ * Auto: it may change files in the vault, and asks before reaching outside it. */
+export function codexPolicy(level: AgentLevel): { approvalPolicy: string; sandbox: string } {
+	if (level === "plan") return { approvalPolicy: "never", sandbox: "read-only" };
+	if (level === "auto") return { approvalPolicy: "on-request", sandbox: "workspace-write" };
+	return { approvalPolicy: "on-request", sandbox: "read-only" };
+}
+
+/** A line each way, however they are carried: the program's pipes, or a stand-in. */
+export interface CodexWire {
+	send(line: string): void;
+	onLine(take: (line: string) => void): void;
+	/** Called once if the other end goes away, with what it last said on its error stream. */
+	onClose(gone: (why: string) => void): void;
+	close(): void;
+}
+
+export interface CodexRun {
+	prompt: string;
+	/** The vault: where it reads and writes. */
+	cwd: string;
+	level: AgentLevel;
+	/** The conversation to go on with, from an earlier turn's result. */
+	resume?: string;
+	/** Said ahead of the first message: where it is, who for, what Grill has on record. */
+	brief?: string;
+	signal?: AbortSignal;
+	onEvent(e: AgentEvent): void;
+	ask(req: PermissionAsk): Promise<PermissionAnswer>;
+}
+
+/** The name Claude Code gives the same kind of work, so one summary line serves all. */
+function likeClaudeCode(itemType: string): string {
+	return itemType === "commandExecution" ? "Bash" : itemType === "fileChange" ? "Edit" : itemType === "webSearch" ? "WebSearch" : "Other";
+}
+
+interface Change {
+	path: string;
+	diff: string;
+}
+
+function changesOf(item: Loose): Change[] {
+	return (Array.isArray(item.changes) ? item.changes : []).map((c) => ({ path: str(obj(c)?.path), diff: str(obj(c)?.diff) }));
+}
+
+/** One line for something Codex did or is about to do. */
+export function codexLine(item: Loose): string | null {
+	switch (item.type) {
+		case "commandExecution":
+			return `Run ${clip(str(item.command).split("\n")[0], 80)}`.trim();
+		case "fileChange": {
+			const files = changesOf(item).map((c) => leaf(c.path)).filter(Boolean);
+			return files.length ? `Edit ${files.slice(0, 3).join(", ")}${files.length > 3 ? ` and ${files.length - 3} more` : ""}` : "Edit a file";
+		}
+		case "webSearch":
+			return `Search the web for "${clip(str(item.query), 60)}"`;
+		case "mcpToolCall":
+			return `Use ${str(item.server)} ${str(item.tool)}`.trim();
+		default:
+			return null;
+	}
+}
+
+/** The lines a patch takes out and puts in, for the permission card. */
+export function diffLines(diff: string, most = 12): { removed: string[]; added: string[] } {
+	const removed: string[] = [];
+	const added: string[] = [];
+	for (const line of diff.split("\n")) {
+		if (/^(\+\+\+|---|@@|diff |index )/.test(line)) continue;
+		if (line.startsWith("-") && line.slice(1).trim()) removed.push(line.slice(1));
+		else if (line.startsWith("+") && line.slice(1).trim()) added.push(line.slice(1));
+	}
+	const cut = (all: string[]): string[] => (all.length > most ? [...all.slice(0, most), `… ${all.length - most} more lines`] : all);
+	return { removed: cut(removed), added: cut(added) };
+}
+
+const DECISION: Record<PermissionAnswer, string> = { once: "accept", always: "acceptForSession", deny: "decline" };
+
+/** Run one turn over a wire that is already open. Throws with a sentence fit to show. */
+export async function runCodexTurn(run: CodexRun, wire: CodexWire): Promise<AgentResult> {
+	const began = Date.now();
+	let nextId = 1;
+	const waiting = new Map<number, { yes(v: unknown): void; no(e: Error): void }>();
+	const tools: string[] = [];
+	/** File changes Codex has announced, by item, so an approval request can show them. */
+	const announced = new Map<string, Change[]>();
+	let text = "";
+	let lastMessage = "";
+	let threadId = run.resume ?? "";
+	let turnId = "";
+	let finished: ((v: void) => void) | null = null;
+	let failed: ((e: Error) => void) | null = null;
+	const done = new Promise<void>((yes, no) => {
+		finished = yes;
+		failed = no;
+	});
+	// Nothing waits on `done` until the turn has started; a failure before then is
+	// reported by the request that was in flight.
+	done.catch(() => undefined);
+
+	const request = <T>(method: string, params: unknown): Promise<T> =>
+		new Promise<T>((yes, no) => {
+			const id = nextId++;
+			waiting.set(id, { yes: yes as (v: unknown) => void, no });
+			wire.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
+		});
+	const answer = (id: unknown, result: unknown): void => wire.send(JSON.stringify({ jsonrpc: "2.0", id, result }));
+	const refuse = (id: unknown, message: string): void => wire.send(JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32601, message } }));
+
+	const asked = async (id: unknown, method: string, params: Loose): Promise<void> => {
+		if (method === "item/commandExecution/requestApproval") {
+			const command = str(params.command);
+			const a = await run.ask({ tool: "Bash", title: "Run a command", removed: [], added: [], detail: command || str(params.reason), always: "Always allow this in this chat" });
+			return answer(id, { decision: DECISION[a] });
+		}
+		if (method === "item/fileChange/requestApproval") {
+			const changes = announced.get(str(params.itemId)) ?? [];
+			const lines = changes.map((c) => diffLines(c.diff));
+			const files = changes.map((c) => leaf(c.path)).filter(Boolean);
+			const a = await run.ask({
+				tool: "Edit",
+				title: files.length ? `Edit ${files.slice(0, 3).join(", ")}` : "Edit a file",
+				removed: lines.flatMap((l) => l.removed),
+				added: lines.flatMap((l) => l.added),
+				detail: lines.some((l) => l.removed.length || l.added.length) ? "" : str(params.reason),
+				always: "Always allow edits in this chat",
+			});
+			return answer(id, { decision: DECISION[a] });
+		}
+		// Anything else it might ask of its host (more permissions, a question, a tool
+		// Grill doesn't offer) is not something this chat can answer.
+		refuse(id, `Grill does not handle ${method}.`);
+	};
+
+	const told = (method: string, params: Loose): void => {
+		const item = obj(params.item);
+		if (method === "item/agentMessage/delta") {
+			text += str(params.delta);
+			run.onEvent({ kind: "text", soFar: text });
+		} else if (method === "item/started" && item) {
+			if (item.type === "agentMessage" && text && !text.endsWith("\n")) text += "\n\n";
+			if (item.type === "fileChange") announced.set(str(item.id), changesOf(item));
+			const line = codexLine(item);
+			if (line) run.onEvent({ kind: "activity", tool: likeClaudeCode(str(item.type)), line });
+		} else if (method === "item/completed" && item) {
+			if (item.type === "agentMessage") lastMessage = str(item.text) || lastMessage;
+			if (item.type === "fileChange") announced.set(str(item.id), changesOf(item));
+			// Counted once it has been done, and only if it was: a declined change is not work.
+			const ok = item.status === undefined || item.status === "completed" || item.status === "success";
+			if (ok && codexLine(item)) tools.push(likeClaudeCode(str(item.type)));
+		} else if (method === "turn/started") {
+			turnId = str(obj(params.turn)?.id) || turnId;
+		} else if (method === "turn/completed") {
+			const turn = obj(params.turn);
+			if (turn?.status === "failed") failed?.(new Error(str(obj(turn.error)?.message) || "Codex stopped with an error."));
+			else finished?.();
+		} else if (method === "error" && params.willRetry !== true) {
+			const why = str(obj(params.error)?.message);
+			if (why) failed?.(new Error(why));
+		}
+	};
+
+	wire.onLine((line) => {
+		let m: Loose | null = null;
+		try {
+			m = obj(JSON.parse(line));
+		} catch {
+			return; // not a message: a stray line of log
+		}
+		if (!m) return;
+		if (typeof m.method === "string") {
+			const params = obj(m.params) ?? {};
+			if (m.id !== undefined && m.id !== null) void asked(m.id, m.method, params).catch(() => refuse(m?.id, "That request could not be answered."));
+			else told(m.method, params);
+			return;
+		}
+		const pending = typeof m.id === "number" ? waiting.get(m.id) : undefined;
+		if (!pending) return;
+		waiting.delete(m.id as number);
+		const err = obj(m.error);
+		if (err) pending.no(new Error(str(err.message) || "Codex refused the request."));
+		else pending.yes(m.result);
+	});
+	wire.onClose((why) => {
+		const e = new Error(/log ?in|auth|401|unauthorized/i.test(why) ? "Codex is not signed in. Open a terminal, run codex, and sign in there." : `Codex stopped${why ? `: ${clip(why.trim(), 200)}` : "."}`);
+		for (const p of waiting.values()) p.no(e);
+		waiting.clear();
+		failed?.(e);
+	});
+
+	const stop = (): void => {
+		if (threadId) wire.send(JSON.stringify({ jsonrpc: "2.0", id: nextId++, method: "turn/interrupt", params: { threadId, turnId } }));
+		failed?.(new DOMException("Stopped.", "AbortError"));
+	};
+	run.signal?.addEventListener("abort", stop, { once: true });
+	try {
+		await request("initialize", { clientInfo: { name: "grill", version: "1.0.0" }, capabilities: { experimentalApi: true } });
+		wire.send(JSON.stringify({ jsonrpc: "2.0", method: "initialized" }));
+		const policy = codexPolicy(run.level);
+		const config = { cwd: run.cwd, approvalPolicy: policy.approvalPolicy, approvalsReviewer: "user", sandbox: policy.sandbox };
+		const opened = await request<Loose>(threadId ? "thread/resume" : "thread/start", threadId ? { threadId, ...config } : config);
+		threadId = str(obj(opened?.thread)?.id) || threadId;
+		if (run.signal?.aborted) throw new DOMException("Stopped.", "AbortError");
+		const first = !run.resume && run.brief ? `<context>\n${run.brief}\n</context>\n\n${run.prompt}` : run.prompt;
+		const started = await request<Loose>("turn/start", { threadId, input: [{ type: "text", text: first }], approvalPolicy: policy.approvalPolicy, approvalsReviewer: "user" });
+		turnId = str(obj(started?.turn)?.id) || turnId;
+		await done;
+	} finally {
+		run.signal?.removeEventListener("abort", stop);
+	}
+	const reply = text.trim() || lastMessage.trim();
+	if (!reply) throw new Error("Codex finished without saying anything.");
+	return { text: reply, sessionId: threadId, tools, seconds: (Date.now() - began) / 1000 };
+}
+
+type Need = (name: string) => unknown;
+const need = (): Need | null => (window as unknown as { require?: Need }).require ?? null;
+
+/** Where Codex is usually installed, most likely first: the command-line program, then
+ * the copies the desktop apps carry. */
+export function codexPlaces(home: string, platform: string, env: Record<string, string | undefined>): string[] {
+	if (platform === "win32") {
+		const app = env.APPDATA ?? `${home}\\AppData\\Roaming`;
+		return [`${home}\\.local\\bin\\codex.exe`, `${app}\\npm\\codex.cmd`];
+	}
+	return [
+		`${home}/.local/bin/codex`,
+		"/opt/homebrew/bin/codex",
+		"/usr/local/bin/codex",
+		`${home}/.npm-global/bin/codex`,
+		`${home}/.volta/bin/codex`,
+		`${home}/.bun/bin/codex`,
+		"/Applications/Codex.app/Contents/Resources/codex",
+		`${home}/Applications/Codex.app/Contents/Resources/codex`,
+		"/Applications/ChatGPT.app/Contents/Resources/codex",
+		"/usr/bin/codex",
+	];
+}
+
+/** The installed Codex: the path set in settings if it is there, else the first usual
+ * place that has one. Null on a phone, or when it isn't installed. */
+export function findCodex(setPath: string): string | null {
+	try {
+		const req = need();
+		if (!req) return null;
+		const fs = req("fs") as { existsSync(p: string): boolean };
+		const os = req("os") as { homedir(): string };
+		const proc = req("process") as { platform: string; env: Record<string, string | undefined> };
+		const wanted = setPath.trim();
+		if (wanted) return fs.existsSync(wanted) ? wanted : null;
+		return codexPlaces(os.homedir(), proc.platform, proc.env).find((p) => fs.existsSync(p)) ?? null;
+	} catch {
+		return null;
+	}
+}
+
+interface Child {
+	stdin: { write(s: string): void; end(): void } | null;
+	stdout: { on(e: "data", f: (d: unknown) => void): void; setEncoding?(enc: string): void } | null;
+	stderr: { on(e: "data", f: (d: unknown) => void): void } | null;
+	on(e: "exit" | "error", f: (...a: unknown[]) => void): void;
+	kill(sig?: string): boolean;
+}
+
+/** Start the program and run one turn with it. Each turn has its own process, which
+ * picks the conversation up again by its id; nothing is left running between messages. */
+export async function runCodex(run: CodexRun & { program: string }): Promise<AgentResult> {
+	const req = need();
+	if (!req) throw new Error("Codex can only be run on desktop.");
+	const proc = req("process") as { platform: string; env: Record<string, string | undefined> };
+	const home = (req("os") as { homedir(): string }).homedir();
+	const cp = req("child_process") as { spawn(cmd: string, args: string[], opts: Record<string, unknown>): Child };
+	const shim = /\.(cmd|bat)$/i.test(run.program);
+	let child: Child;
+	try {
+		child = cp.spawn(run.program, ["app-server", "--listen", "stdio://"], {
+			cwd: run.cwd,
+			env: { ...proc.env, PATH: pathWith(proc.env.PATH ?? "", run.program, home, proc.platform) },
+			stdio: ["pipe", "pipe", "pipe"],
+			windowsHide: true,
+			...(shim ? { shell: true } : {}),
+		});
+	} catch {
+		throw new Error("Codex could not be started. Check where it is installed, in settings.");
+	}
+	if (!child.stdin || !child.stdout) throw new Error("Codex could not be started.");
+	let said = "";
+	let pending = "";
+	let closed = false;
+	let take: (line: string) => void = () => undefined;
+	let gone: (why: string) => void = () => undefined;
+	child.stdout.setEncoding?.("utf8");
+	child.stdout.on("data", (d) => {
+		pending += String(d);
+		let at: number;
+		while ((at = pending.indexOf("\n")) >= 0) {
+			const line = pending.slice(0, at).trim();
+			pending = pending.slice(at + 1);
+			if (line) take(line);
+		}
+	});
+	child.stderr?.on("data", (d) => {
+		said = (said + String(d)).slice(-600);
+	});
+	const ended = (why: string): void => {
+		if (closed) return;
+		closed = true;
+		gone(why);
+	};
+	child.on("exit", () => ended(said));
+	child.on("error", () => ended("it could not be started. Check where it is installed, in settings"));
+	const wire: CodexWire = {
+		send: (line) => {
+			if (!closed) child.stdin?.write(`${line}\n`);
+		},
+		onLine: (f) => (take = f),
+		onClose: (f) => (gone = f),
+		close: () => {
+			closed = true;
+			try {
+				child.stdin?.end();
+			} catch {
+				/* already gone */
+			}
+			child.kill("SIGTERM");
+		},
+	};
+	try {
+		return await runCodexTurn(run, wire);
+	} finally {
+		wire.close();
+	}
+}

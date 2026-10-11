@@ -84,6 +84,7 @@ import { aboutTheVault, learnContext, learnRecord, namesANote, parseLearnNote, p
 import { safeDiagram, safeMarkdown } from "./safemd";
 import { activitySummary, AgentEvent, agentBrief, AGENT_LEVELS, findProgram, PermissionAnswer, PermissionAsk, runAgent } from "./agent";
 import type { VaultPort } from "./vaulttools";
+import { findCodex, runCodex } from "./codex";
 
 /** Mermaid's drawing, made fit to be shown as an image: well-formed XML, with a size
  * of its own. Null if it isn't a drawing (Mermaid draws its errors as one too).
@@ -1569,18 +1570,22 @@ export class SessionView extends ItemView {
 	 * change it. */
 	private engineForHome(): { name: string; open(): void } {
 		const s = this.plugin.data.settings;
-		const program = Platform.isDesktopApp ? findProgram(s.claudePath) : null;
-		// With Claude Code on this computer, the button switches between it and the model.
-		const open = program
-			? (): void => {
-					s.chatEngine = s.chatEngine === "claudecode" ? "model" : "claudecode";
-					void this.plugin.persist();
-					this.renderStart();
-				}
-			: (): void => this.plugin.openSettings();
-		if (program && s.chatEngine === "claudecode") {
-			return { name: "Claude Code", open };
-		}
+		// With Claude Code or Codex on this computer, the button steps through what there
+		// is: the model, then each program that is installed.
+		const have: Array<"model" | "claudecode" | "codex"> = ["model"];
+		if (Platform.isDesktopApp && findProgram(s.claudePath)) have.push("claudecode");
+		if (Platform.isDesktopApp && findCodex(s.codexPath)) have.push("codex");
+		const now = have.includes(s.chatEngine) ? s.chatEngine : "model";
+		const open =
+			have.length > 1
+				? (): void => {
+						s.chatEngine = have[(have.indexOf(now) + 1) % have.length];
+						void this.plugin.persist();
+						this.renderStart();
+					}
+				: (): void => this.plugin.openSettings();
+		if (now === "claudecode") return { name: "Claude Code", open };
+		if (now === "codex") return { name: "Codex", open };
 		if (!this.plugin.llmConfig()) {
 			return { name: "No model", open };
 		}
@@ -1588,10 +1593,12 @@ export class SessionView extends ItemView {
 		return { name: s.provider === "custom" ? "Your endpoint" : PROVIDERS[s.provider].label.replace(/ \(.*$/, ""), open };
 	}
 
-	/** The installed Claude Code, when Chat is set to run on it and it can: null otherwise. */
+	/** The installed program Chat is set to run on (Claude Code or Codex), when it is
+	 * there to run: null otherwise. */
 	private agentProgram(): string | null {
 		const s = this.plugin.data.settings;
-		return Platform.isDesktopApp && s.chatEngine === "claudecode" ? findProgram(s.claudePath) : null;
+		if (!Platform.isDesktopApp) return null;
+		return s.chatEngine === "claudecode" ? findProgram(s.claudePath) : s.chatEngine === "codex" ? findCodex(s.codexPath) : null;
 	}
 
 	private levelForHome(): { name: string; says: string; next(): void } {
@@ -2073,19 +2080,12 @@ export class SessionView extends ItemView {
 		live: { onText(soFar: string): void; signal: AbortSignal },
 	): Promise<ThreadTurn> {
 		const base = (this.app.vault.adapter as { getBasePath?: () => string }).getBasePath?.();
-		if (!base) throw new Error("Claude Code needs a vault that is a folder on this computer.");
+		if (!base) throw new Error("This engine needs a vault that is a folder on this computer.");
 		const ui = this.turnUi(waiting, live);
-		const result = await runAgent({
-			prompt: text,
-			cwd: base,
-			program,
-			level: this.plugin.data.settings.agentLevel,
-			resume: L.agentSession,
-			append: agentBrief(L.whole ? "" : L.note.path, L.record, L.instructions),
-			signal: live.signal,
-			onEvent: ui.onEvent,
-			ask: ui.ask,
-		});
+		const s = this.plugin.data.settings;
+		const brief = agentBrief(L.whole ? "" : L.note.path, L.record, L.instructions);
+		const shared = { prompt: text, cwd: base, program, level: s.agentLevel, resume: L.agentSession, signal: live.signal, onEvent: ui.onEvent, ask: ui.ask };
+		const result = s.chatEngine === "codex" ? await runCodex({ ...shared, brief }) : await runAgent({ ...shared, append: brief });
 		L.agentSession = result.sessionId || L.agentSession;
 		// A diagram, when one was asked for, is lifted out to be drawn the way every other is.
 		let diagram = "";
