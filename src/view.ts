@@ -79,6 +79,7 @@ import { celebrate, playSfx } from "./sfx";
 import { stopSpeaking, toSpeechText, ttsAvailable } from "./tts";
 import { SessionEntry } from "./store";
 import { renderThreadHistory } from "./thread";
+import { listSome, missesLine, noteLine, shortDate } from "./suggest";
 import { renderChatHome, renderCreditsRing, type HomeMode, type HomeSuggestion } from "./home";
 import { aboutTheVault, learnContext, learnRecord, namesANote, parseLearnNote, parseSessionNote, rankNotes, sessionTitle, vaultMap, vaultNotes, type PastAnswer } from "./learn";
 import { safeDiagram, safeMarkdown } from "./safemd";
@@ -1428,17 +1429,23 @@ export class SessionView extends ItemView {
 		const openNote = active && active.extension === "md" && !this.plugin.isExcluded(active.path) ? active : null;
 		const suggestions: HomeSuggestion[] = [];
 		const missed = missedConceptIds(concepts, isEligible);
+		// Each suggestion says one thing the record knows about it, under its name.
+		const perNote = new Map<string, number>();
+		const missedLabels = new Map<string, string[]>();
+		for (const id of missed) {
+			const cm = concepts[id];
+			if (!cm || !byName.has(cm.note)) continue;
+			perNote.set(cm.note, (perNote.get(cm.note) ?? 0) + 1);
+			missedLabels.set(cm.note, [...(missedLabels.get(cm.note) ?? []), cm.label]);
+		}
+		const howItHasGone = (note: string): string => noteLine(Object.values(concepts).filter((cm) => cm.note === note));
 		if (learning) {
 			// What was missed is what is worth having explained: the two notes with the
 			// most misses, then the note that is open.
-			const perNote = new Map<string, number>();
-			for (const id of missed) {
-				const n = concepts[id]?.note;
-				if (n && byName.has(n)) perNote.set(n, (perNote.get(n) ?? 0) + 1);
-			}
 			for (const [n, count] of [...perNote].sort((a, b) => b[1] - a[1]).slice(0, 2)) {
 				suggestions.push({
 					label: `Explain what I missed: ${n}`,
+					detail: `Missed: ${listSome([...new Set(missedLabels.get(n) ?? [])])}`,
 					count: String(count),
 					run: () => void this.startLearn(byName.get(n) as TFile, "What have I been getting wrong on this note, and what do I need to understand to fix it?"),
 				});
@@ -1446,17 +1453,19 @@ export class SessionView extends ItemView {
 			if (openNote) {
 				suggestions.push({
 					label: `Walk me through this note: ${openNote.basename}`,
+					detail: howItHasGone(openNote.basename),
 					run: () => void this.startLearn(openNote, "Walk me through the main ideas in this note."),
 				});
 			}
 		}
 		if (!learning && missed.length) {
-			suggestions.push({ label: "Retry my misses", count: String(missed.length), run: () => begin(notesOf(missed), true, missed) });
+			suggestions.push({ label: "Retry my misses", detail: missesLine([...perNote]), count: String(missed.length), run: () => begin(notesOf(missed), true, missed) });
 		}
 		const dueNow = learning ? 0 : dueConceptCount(concepts, isEligible);
 		if (dueNow > CATCH_UP) {
 			suggestions.push({
 				label: "Catch up",
+				detail: `The ${CATCH_UP} most pressing now. The other ${dueNow - CATCH_UP} come back over the coming days`,
 				count: `${CATCH_UP} of ${dueNow}`,
 				run: async () => {
 					// Worked out on the schedule as it is on disk now, not as it was when
@@ -1477,12 +1486,34 @@ export class SessionView extends ItemView {
 					begin(eligible.filter((f) => notes.has(f.basename)), true, kept);
 				},
 			});
-		} else if (dueNow > 0) {
-			suggestions.push({ label: "Review what is due", count: String(dueNow), run: () => begin(dueFiles(eligible, concepts), true) });
+		} else if (dueNow > missed.length) {
+			// Only when it is more than the misses: when everything due is a miss, this
+			// would be the row above it under another name.
+			const oldest = Object.values(concepts)
+				.filter((cm) => isEligible(cm.note) && !!cm.dueAt && new Date(cm.dueAt) <= new Date() && cm.correct + cm.partial + cm.incorrect > 0)
+				.map((cm) => cm.dueAt as string)
+				.sort()[0];
+			suggestions.push({
+				label: "Review what is due",
+				detail: oldest ? `Waiting longest since ${shortDate(oldest)}` : undefined,
+				count: String(dueNow),
+				run: () => begin(dueFiles(eligible, concepts), true),
+			});
 		}
 		const untested = learning ? [] : untestedFiles(eligible, concepts);
 		if (untested.length && untested.length < eligible.length) {
-			suggestions.push({ label: "Something new", count: String(untested.length), run: () => begin(untested, false) });
+			// Named by the notes the rest lean on most: the ones most linked to.
+			const linksIn = new Map<string, number>();
+			for (const targets of Object.values(this.app.metadataCache.resolvedLinks)) {
+				for (const path of Object.keys(targets)) linksIn.set(path, (linksIn.get(path) ?? 0) + 1);
+			}
+			const first = [...untested].sort((a, b) => (linksIn.get(b.path) ?? 0) - (linksIn.get(a.path) ?? 0)).map((f) => f.basename);
+			suggestions.push({
+				label: "Something new",
+				detail: `Not tested yet. The most linked-to: ${listSome(first)}`,
+				count: String(untested.length),
+				run: () => begin(untested, false),
+			});
 		}
 		// What was last asked about in Learn and not tested since: the check that turns
 		// an explanation into something known.
@@ -1491,6 +1522,7 @@ export class SessionView extends ItemView {
 			if (asked && asked !== openNote) {
 				suggestions.push({
 					label: `Test what I asked about: ${asked.basename}`,
+					detail: `Asked about in Learn, not tested since. ${howItHasGone(asked.basename)}`,
 					run: () => begin([asked], false),
 					check: async () => ((await this.enoughToTest(asked)) ? null : "Too short to test"),
 				});
@@ -1499,6 +1531,7 @@ export class SessionView extends ItemView {
 		if (!learning && openNote) {
 			suggestions.push({
 				label: `This note: ${openNote.basename}`,
+				detail: howItHasGone(openNote.basename),
 				run: () => begin([openNote], false),
 				check: async () => ((await this.enoughToTest(openNote)) ? null : "Too short to test"),
 			});

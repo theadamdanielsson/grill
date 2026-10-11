@@ -395,3 +395,22 @@ test("a fence after a lone carriage return is made as safe as any other", () => 
 	assert.doesNotMatch(made, /dataviewjs/);
 	assert.doesNotMatch(made, /\r/);
 });
+
+import { listSome, missesLine, noteLine, shortDate } from "../src/suggest";
+
+test("a suggestion says where the misses are", () => {
+	assert.equal(missesLine([["GDP", 1], ["Updated IS-relation", 4], ["A Linear Consumption Function", 3]]), "Updated IS-relation (4), A Linear Consumption Function (3) and 1 more note");
+	assert.equal(missesLine([["GDP", 2]]), "GDP (2)");
+	assert.equal(listSome(["a", "b", "c", "d", "e"]), "a, b, c and 2 more");
+});
+
+test("a suggestion says how a note has gone", () => {
+	assert.equal(noteLine([]), "Not tested yet");
+	assert.equal(noteLine([cm("N", 3, 0) as any].map((c) => ({ ...c, correct: 0, incorrect: 0 }))), "Not tested yet");
+	const known = { ...cm("N", 30, 3), correct: 3, streak: 3, stability: 40, lastSeen: "2026-10-07T10:00:00.000Z" };
+	const missedLast = { ...cm("N", -1, 1), lastSeen: "2026-10-09T10:00:00.000Z" };
+	const line = noteLine([known, missedLast] as any);
+	assert.match(line, /of 2 concepts known, 1 missed last time\. Last tested 9 Oct$/);
+	assert.equal(shortDate("2026-08-20"), "20 Aug");
+	assert.equal(shortDate("nonsense"), "");
+});

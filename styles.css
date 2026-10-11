@@ -3392,3 +3392,31 @@ textarea.grill-mgmt-field {
   height: auto;
   object-fit: contain;
 }
+
+/* A suggestion's name, and under it the one thing the record says about it. */
+.grill-home-suggestion-words {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2em;
+  min-width: 0;
+}
+.grill-home-suggestion-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-ui-small);
+  color: var(--grill-ink-dim, #c9a875);
+}
+.grill-view button.grill-home-suggestion,
+.grill-view button.grill-home-suggestion:hover {
+  padding-top: 0.6em;
+  padding-bottom: 0.6em;
+}
+
+/* Square corners throughout. Grill is drawn like an arcade cabinet: frames, tiles and
+ * buttons with hard edges. Rounded cards and fields were the theme's habit showing
+ * through, and read as a different product beside the tiles. Checkboxes keep theirs. */
+.grill-arcade-screen *:not(.checkbox-container):not(.checkbox-container *),
+.grill-thread-frame *:not(.checkbox-container):not(.checkbox-container *) {
+  border-radius: 0 !important;
+}

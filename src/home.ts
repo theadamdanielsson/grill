@@ -8,6 +8,8 @@
 
 export interface HomeSuggestion {
 	label: string;
+	/** One line of fact under the name: where the misses are, how the note has gone. */
+	detail?: string;
 	/** Shown at the end of the row: how many questions or notes it covers. */
 	count?: string;
 	run(): void;
@@ -101,7 +103,9 @@ export function renderChatHome(screen: HTMLElement, d: HomeData): void {
 		const list = screen.createDiv({ cls: "grill-home-suggestions" });
 		for (const s of d.suggestions) {
 			const row = list.createEl("button", { cls: "grill-home-suggestion", attr: { type: "button" } });
-			row.createSpan({ cls: "grill-home-suggestion-label", text: s.label });
+			const words = row.createSpan({ cls: "grill-home-suggestion-words" });
+			words.createSpan({ cls: "grill-home-suggestion-label", text: s.label });
+			if (s.detail) words.createSpan({ cls: "grill-home-suggestion-detail", text: s.detail });
 			if (s.count) row.createSpan({ cls: "grill-home-suggestion-count", text: s.count });
 			void s.check?.().then((reason) => {
 				if (!reason || !row.isConnected) return;
