@@ -106,3 +106,11 @@ test("the program is started with the folders a terminal would have", () => {
 	assert.equal(new Set(p).size, p.length, "no folder twice");
 	assert.equal(pathWith("C:\\Windows", "C:\\Users\\a\\.local\\bin\\claude.exe", "C:\\Users\\a", "win32").split(";")[0], "C:\\Users\\a\\.local\\bin");
 });
+
+import { namesInFull } from "../src/learn";
+test("only a note's whole name turns a message away from the open note", () => {
+	assert.equal(namesInFull("add one more definition", "Income side Definition"), false);
+	assert.equal(namesInFull("add one more definition to the income side definition note", "Income side Definition"), true);
+	assert.equal(namesInFull("what is the multiplier?", "Multiplier"), true);
+	assert.equal(namesInFull("anything", ""), false);
+});

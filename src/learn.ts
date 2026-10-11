@@ -326,6 +326,15 @@ export function namesANote(question: string, matched: string[]): boolean {
 	return matched.some((name) => contentTerms(name).some((w) => terms.has(w)));
 }
 
+/** Whether a question spells out a note's whole name: "fix the Income side Definition
+ * note". Stricter than `namesANote`, which one shared word satisfies: this is what it
+ * takes to turn a message away from the note that is open. */
+export function namesInFull(question: string, noteName: string): boolean {
+	const terms = new Set(contentTerms(question));
+	const name = contentTerms(noteName);
+	return name.length > 0 && name.every((w) => terms.has(w));
+}
+
 /** A file name for a reply kept as a note: its first line without Markdown's marks or
  * the characters a file name can't hold, cut at a word. Empty when nothing is left. */
 export function replyTitle(firstLine: string): string {

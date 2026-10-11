@@ -80,7 +80,7 @@ import { SessionEntry } from "./store";
 import { renderThreadHistory } from "./thread";
 import { listSome, missesLine, noteLine, shortDate } from "./suggest";
 import { renderChatHome, renderCreditsRing, type HomeMode, type HomeSuggestion } from "./home";
-import { aboutTheVault, learnContext, learnRecord, namesANote, parseLearnNote, parseSessionNote, rankNotes, replyTitle, sessionTitle, vaultMap, vaultNotes, type PastAnswer } from "./learn";
+import { aboutTheVault, learnContext, learnRecord, namesANote, parseLearnNote, parseSessionNote, namesInFull, rankNotes, replyTitle, sessionTitle, vaultMap, vaultNotes, type PastAnswer } from "./learn";
 import { safeDiagram, safeMarkdown } from "./safemd";
 import { activitySummary, AgentEvent, agentBrief, AGENT_LEVELS, findProgram, PermissionAnswer, PermissionAsk, runAgent } from "./agent";
 import type { VaultPort } from "./vaulttools";
@@ -1737,8 +1737,15 @@ export class SessionView extends ItemView {
 		const named = namesANote(text, found.map((f) => f.basename));
 		// The open note's chip was left on the message: that is the note it is about,
 		// unless the message names another. Notes that match its words come along.
-		if (openNote && !general && !named) {
+		// One shared word is not naming it: "add one more definition" with a note called
+		// "Income side Definition" somewhere in the vault is still about the open note.
+		const other = openNote ? found.find((f) => f !== openNote && namesInFull(text, f.basename)) : undefined;
+		if (openNote && !general && !other) {
 			await this.startLearn(openNote, text, found.filter((f) => f !== openNote).slice(0, 4), { text: map, reading: "", whole: false });
+			return;
+		}
+		if (other && !general) {
+			await this.startLearn(other, text, found.filter((f) => f !== other).slice(0, 4), { text: map, reading: "", whole: false });
 			return;
 		}
 		if (found.length && (!general || named)) {
