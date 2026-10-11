@@ -1,12 +1,15 @@
 import esbuild from "esbuild";
 import process from "process";
+import { builtinModules } from "node:module";
 
 const prod = process.argv[2] === "production";
 
 const ctx = await esbuild.context({
   entryPoints: ["src/main.ts"],
   bundle: true,
-  external: ["obsidian", "electron", "@codemirror/*", "@lezer/*"],
+  // Node's own modules are left as they are: only the Claude Code engine asks for them,
+  // it is loaded on first use, and only on desktop, where Obsidian can supply them.
+  external: ["obsidian", "electron", "@codemirror/*", "@lezer/*", ...builtinModules, ...builtinModules.map((m) => `node:${m}`)],
   format: "cjs",
   // @huggingface/transformers ships conditional exports: a "node" build pulling in
   // native onnxruntime-node/sharp bindings esbuild can't bundle, and a browser build
