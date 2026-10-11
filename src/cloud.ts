@@ -62,6 +62,8 @@ export const cloud = {
 	/** Where the privacy policy and the terms live. */
 	privacyUrl: "https://grill.onbridger.com/privacy",
 	termsUrl: "https://grill.onbridger.com/terms",
+	/** Whether the server has said it can write a Chat reply as a stream. */
+	streams: false,
 	/** Called with the balance whenever the server mentions it. */
 	onCredits: null as ((credits: number) => void) | null,
 	/** Called with what a reply cost, in credits (fractions included). */
@@ -155,6 +157,8 @@ export interface CloudBalance {
 	sales: boolean;
 	/** Whether a natural read-aloud voice can be asked for. */
 	speech?: boolean;
+	/** Whether a Chat reply can be asked for as a stream. */
+	streams?: boolean;
 }
 
 /** The balance. Asks nothing of the server but to look. */

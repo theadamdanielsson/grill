@@ -1845,6 +1845,7 @@ export default class GrillPlugin extends Plugin {
 		this.cloudPurchases = r.data.purchases;
 		this.cloudSales = r.data.sales;
 		this.cloudSpeech = r.data.speech === true;
+		cloud.streams = r.data.streams === true;
 		this.cloudState = r.data.account ? "ok" : "none";
 		this.cloudNote = "";
 	}
@@ -1932,6 +1933,7 @@ export default class GrillPlugin extends Plugin {
 		this.cloudPurchases = r.data.purchases;
 		this.cloudSales = r.data.sales;
 		this.cloudSpeech = r.data.speech === true;
+		cloud.streams = r.data.streams === true;
 		this.cloudState = "ok";
 		await this.linkCloudCheckout(key);
 		this.tellCloud();

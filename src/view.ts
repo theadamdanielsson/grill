@@ -476,6 +476,8 @@ export class SessionView extends ItemView {
 	private homeMode: HomeMode = "chat";
 	/** The Learn conversation in hand, if there is one: the note it is about, what the
 	 * model is given to read, and what has been said. */
+	/** Stops a Chat reply that is still being written when the conversation is left. */
+	private learnStop: AbortController | null = null;
 	private learn: {
 		note: TFile;
 		/** The other notes the answer may draw on, when the question was asked of the
@@ -1837,7 +1839,43 @@ export class SessionView extends ItemView {
 		waiting?.scrollIntoView({ block: "nearest" });
 		this.contentEl.querySelectorAll<HTMLButtonElement | HTMLTextAreaElement>(".grill-learn button, .grill-learn textarea").forEach((b) => (b.disabled = true));
 		try {
-			const reply = await learnFromNotes(cfg, L.note.basename, L.noteText, L.linkedText, L.turns.slice(0, -1), text, L.persona, L.instructions, L.record, L.vault);
+			// The reply is drawn as it is written: each time more arrives, what there is
+			// so far replaces the line that said Grill was reading.
+			const body = waiting?.querySelector<HTMLElement>(".grill-thread-text") ?? null;
+			let latest = "";
+			let drawn = "";
+			let drawing = false;
+			const draw = async (): Promise<void> => {
+				if (drawing || !body) return;
+				drawing = true;
+				try {
+					while (drawn !== latest && body.isConnected) {
+						const now = latest;
+						const page = createDiv();
+						await MarkdownRenderer.render(this.app, safeMarkdown(now), page, L.note.path, this);
+						if (!body.isConnected) break;
+						// Someone reading the end of the reply keeps the end in view; someone
+						// who scrolled up to read is left where they are.
+						const pane = this.contentEl;
+						const atFoot = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 120;
+						body.removeClass("grill-meta");
+						body.replaceChildren(...Array.from(page.childNodes));
+						if (atFoot) pane.scrollTop = pane.scrollHeight;
+						drawn = now;
+						await new Promise((r) => window.setTimeout(r, 80));
+					}
+				} finally {
+					drawing = false;
+				}
+			};
+			this.learnStop = new AbortController();
+			const reply = await learnFromNotes(cfg, L.note.basename, L.noteText, L.linkedText, L.turns.slice(0, -1), text, L.persona, L.instructions, L.record, L.vault, {
+				onText: (soFar) => {
+					latest = soFar;
+					void draw();
+				},
+				signal: this.learnStop.signal,
+			});
 			if (this.learn !== L) return;
 			L.turns.push(reply);
 			this.renderLearn();
@@ -1857,6 +1895,7 @@ export class SessionView extends ItemView {
 	private async endLearn(test: boolean): Promise<void> {
 		const L = this.learn;
 		this.learn = null;
+		this.learnStop?.abort();
 		if (!L) return this.renderStart();
 		const cfg = this.plugin.llmConfig();
 		if (L.turns.some((t) => t.role === "tutor")) {
