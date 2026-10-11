@@ -1,7 +1,7 @@
 {
   "name": "grill",
-  "version": "7.1.2",
-  "description": "Learn what's in your Obsidian notes: Grill quizzes you on your own notes, marks your answers, and colours in a live map of them as you prove what you know. For Obsidian.",
+  "version": "8.0.0",
+  "description": "Chat with your notes and get grilled on them. An AI that reads, edits and tests you on your own notes, and remembers what you got wrong. For Obsidian.",
   "main": "main.js",
   "scripts": {
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
