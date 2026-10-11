@@ -4,8 +4,6 @@ I take a lot of notes to learn new material, and I needed a way to learn them mo
 
 ![Grill's home screen: suggestions from your record above the chat box](docs/screenshot-home-8.png)
 
-<p align="center"><img src="docs/grill-demo.gif" alt="Grill: open it, start a session, answer, get graded with specific feedback"></p>
-
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="docs/icons/play-dark.svg"><img src="docs/icons/play.svg" height="20" alt=""></picture> How to use it
 
 1. **Start free.** On first run, press Start free. That is Grill Cloud: no API key, no sign-up, and a few free credits to try it. You can use your own API key, Ollama, Claude Code or Codex instead.
