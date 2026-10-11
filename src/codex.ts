@@ -97,6 +97,7 @@ export function diffLines(diff: string, most = 12): { removed: string[]; added: 
 	return { removed: cut(removed), added: cut(added) };
 }
 
+const NOT_STARTED = "Codex could not be started. Check where it is installed, in settings.";
 const DECISION: Record<PermissionAnswer, string> = { once: "accept", always: "acceptForSession", deny: "decline" };
 
 /** Run one turn over a wire that is already open. Throws with a sentence fit to show. */
@@ -205,7 +206,7 @@ export async function runCodexTurn(run: CodexRun, wire: CodexWire): Promise<Agen
 		else pending.yes(m.result);
 	});
 	wire.onClose((why) => {
-		const e = new Error(/log ?in|auth|401|unauthorized/i.test(why) ? "Codex is not signed in. Open a terminal, run codex, and sign in there." : `Codex stopped${why ? `: ${clip(why.trim(), 200)}` : "."}`);
+		const e = new Error(why === NOT_STARTED ? NOT_STARTED : /log ?in|auth|401|unauthorized/i.test(why) ? "Codex is not signed in. Open a terminal, run codex, and sign in there." : `Codex stopped${why ? `: ${clip(why.trim(), 200)}` : "."}`);
 		for (const p of waiting.values()) p.no(e);
 		waiting.clear();
 		failed?.(e);
@@ -331,7 +332,7 @@ export async function runCodex(run: CodexRun & { program: string }): Promise<Age
 		gone(why);
 	};
 	child.on("exit", () => ended(said));
-	child.on("error", () => ended("it could not be started. Check where it is installed, in settings"));
+	child.on("error", () => ended(NOT_STARTED));
 	const wire: CodexWire = {
 		send: (line) => {
 			if (!closed) child.stdin?.write(`${line}\n`);
