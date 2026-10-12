@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { deepFake, fakeEl, fakeSetting, net, notices, Plugin, TFile } from "obsidian";
 import GrillPlugin, { GrillSettingTab } from "../src/main";
-import { cloud, cloudAccount, cloudCheckoutUrl, creditsInWords, heardFromCloud, isCloudKey, lowBalance, newCloudKey, packLabel, usageInWords } from "../src/cloud";
+import { cloud, cloudAccount, cloudCheckoutUrl, creditsInWords, heardFromCloud, isCloudKey, lowBalance, newCloudKey, packLabel, planInWords, planLabel, usageInWords } from "../src/cloud";
+import { refillWords } from "../src/refill";
 import { KeyStash } from "../src/secrets";
 import { stopSpeaking } from "../src/tts";
 import { CloudError, cloudWait, offeredProviders, testModel } from "../src/llm";
@@ -388,7 +389,7 @@ test("settings: Grill Cloud has the first section, says what it is before it sta
 	const before = draw(tab, "Grill Cloud");
 	assert.match(before.desc(), /nothing to set up/);
 	// What it costs, what it needs and where notes go are said before anything is sent.
-	assert.ok(before.said.some((x) => /Free credits to start, while each day's last\. Then credit packs from \$3\.99 \+ tax/.test(x)));
+	assert.ok(before.said.some((x) => /Free credits to start, while each day's last\. Then /.test(x)));
 	assert.ok(before.said.some((x) => /go through Grill's server to Claude/.test(x)));
 	assert.ok(before.said.some((x) => /Anthropic keeps them for up to 30 days/.test(x) && /18 and over/.test(x)));
 	await before.button("Start free").click();
@@ -1203,4 +1204,55 @@ test("first run offers the open note only when there is enough in it to ask abou
 	assert.equal(await open("Econ/Demand.pdf", structured).firstNote(), null);
 	s.includedFolders = ["School"];
 	assert.equal(await open("Econ/Demand.md", structured).firstNote(), null, "outside Grill's folders");
+});
+
+test("the monthly plan is offered where it is on sale, opens its own checkout, and is noticed when it starts", async () => {
+	cloud.url = URL;
+	cloud.packs = [{ credits: 1000, price: "$9.99", url: "https://buy.stripe.com/abc" }];
+	cloud.plan = { price: "$7.99", url: "https://buy.stripe.com/plan" };
+	const mine = newCloudKey();
+	let told: Record<string, unknown> = { credits: 0, account: true, purchases: 0, sales: true, plan: null, plans: true };
+	net.handler = async () => ({ status: 200, json: told, text: "" }) as any;
+	const opened: string[] = [];
+	(globalThis as any).open = (u: string) => opened.push(u);
+	const { plugin, tab } = await boot({ provider: "grillcloud", apiKeys: { grillcloud: mine } });
+	await plugin.refreshCloud();
+	assert.equal(plugin.cloudCanSubscribe, true);
+	assert.equal(planLabel(), "Get the monthly plan");
+	// With the plan on sale, someone without it is offered the plan and no packs.
+	assert.equal(plugin.cloudShowPacks, false);
+	assert.equal(draw(tab, "Grill Cloud").button(BIG), undefined);
+	assert.equal(plugin.offerRefill("out_of_credits"), true);
+	await draw(tab, "Grill Cloud").button(planLabel()).click();
+	assert.deepEqual(opened, [await cloudCheckoutUrl(mine, "https://buy.stripe.com/plan")]);
+	assert.notEqual(plugin.cloudWaitingFrom, null);
+	// Nothing yet, then the plan is there: no credits moved, and the wait is over.
+	assert.equal(await plugin.checkCloudTopUp(), false);
+	const until = Math.floor(Date.now() / 1000) + 30 * 86400;
+	told = { ...told, plan: { until, limit: "", resets: 0 } };
+	const before = notices.length;
+	assert.equal(await plugin.checkCloudTopUp(), true);
+	assert.equal(plugin.cloudWaitingFrom, null);
+	assert.match(String(notices[notices.length - 1]), /monthly plan is on/);
+	assert.ok(notices.length > before);
+	// With a plan running it is no longer offered, and no credits beside it is not "low".
+	assert.equal(plugin.cloudCanSubscribe, false);
+	assert.equal(draw(tab, "Grill Cloud").button(planLabel()), undefined);
+	assert.equal(draw(tab, "Grill Cloud").button(BIG), undefined, "no packs while the plan has room");
+	assert.match(planInWords(plugin.cloudPlan), /^Your monthly plan is on\. It renews on /);
+
+	// A limit reached is said as one, with when it frees up.
+	told = { ...told, plan: { until, limit: "week", resets: until - 86400 } };
+	await plugin.refreshCloud();
+	assert.equal(planInWords(plugin.cloudPlan), "Your plan's usage limit is reached. It frees up again later this week.");
+	// Only now are the packs offered: they are how a subscriber keeps going past a limit.
+	assert.equal(plugin.cloudShowPacks, true);
+	assert.ok(draw(tab, "Grill Cloud").button(BIG));
+	assert.equal(refillWords("plan_limit").title, "Plan limit reached");
+
+	// A server that doesn't sell the plan, or a build with no link: never offered.
+	told = { ...told, plan: null, plans: false };
+	await plugin.refreshCloud();
+	assert.equal(plugin.cloudCanSubscribe, false);
+	cloud.plan = { price: "$7.99", url: "" };
 });

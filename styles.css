@@ -2434,7 +2434,8 @@ textarea.grill-mgmt-field {
   /* Lettering on a fill, not on the ground: it stays lit whatever the ground is. */
   color: var(--grill-gold-lit, #ffe98a);
 }
-.grill-arcade-screen .grill-cloud-buy button.mod-cta {
+.grill-arcade-screen .grill-cloud-buy button.mod-cta,
+.grill-arcade-screen .grill-refill-packs button.mod-cta {
   background-image: none;
   background: var(--grill-flame, #ff7a22);
   color: var(--grill-accent-contrast, #140b07);
@@ -2442,13 +2443,86 @@ textarea.grill-mgmt-field {
   border: 0;
   box-shadow: none;
 }
-.grill-arcade-screen .grill-cloud-buy button:not(.mod-cta) {
+.grill-arcade-screen .grill-cloud-buy button:not(.mod-cta),
+.grill-arcade-screen .grill-refill-packs button:not(.mod-cta),
+.grill-arcade-screen button.grill-refill-stop {
   background: transparent;
   color: var(--grill-ink-gold, #ffd23f);
   border: 1px solid var(--grill-ember, #b91c00);
   box-shadow: none;
 }
-.grill-arcade-screen .grill-cloud-buy button:hover {
+/* The monthly plan, offered: a lit panel inside the screen with the price in the
+   wordmark's lettering and one wide button. It is the thing to press on the card. */
+.grill-plan-offer {
+  margin-top: 0.9em;
+  padding: 0.95em 1.05em 1.05em;
+  border: 1px solid var(--grill-gold, #ffd23f);
+  background: linear-gradient(180deg, rgba(255, 122, 34, 0.2), rgba(255, 122, 34, 0.05));
+  box-shadow: 0 0 0 3px var(--grill-ember-dark, #5c1400), 0 0 22px rgba(255, 122, 34, 0.28);
+}
+.grill-refill-packs .grill-plan-offer {
+  margin-top: 0;
+}
+.grill-plan-tag {
+  font-family: "Grill Pixel", var(--font-monospace);
+  font-size: 0.62em;
+  letter-spacing: 0.08em;
+  color: var(--grill-ink-gold, #ffd23f);
+}
+.grill-plan-price-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2em 0.6em;
+  margin: 0.45em 0 0.25em;
+}
+.grill-plan-price {
+  font-family: "Grill Pixel", var(--font-monospace);
+  font-size: 2em;
+  line-height: 1.1;
+  color: var(--grill-ink, #ffe98a);
+  text-shadow: 0 0 2px var(--grill-gold-white, #fff2b0), 0 0 10px var(--grill-flame, #ff7a22), 0 0 20px var(--grill-flame-hot, #ff5a1f);
+}
+.grill-plan-per {
+  color: var(--grill-ink-dim, #c9a875);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: var(--font-ui-smaller, 0.8em);
+}
+.grill-plan-line {
+  color: var(--grill-ink-dim, #c9a875);
+  font-size: var(--font-ui-small, 0.87em);
+}
+.grill-arcade-screen .grill-plan-offer button.grill-plan-go {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-top: 0.9em;
+  padding: 0.8em 1em;
+  background-image: none;
+  background: var(--grill-flame, #ff7a22);
+  color: var(--grill-accent-contrast, #140b07);
+  font-size: 1em;
+  font-weight: var(--font-bold, 700);
+  letter-spacing: 0.02em;
+  text-align: center;
+  border: 0;
+  box-shadow: inset 0 0 0 2px var(--grill-gold-lit, #ffe98a), 0 0 16px rgba(255, 122, 34, 0.5);
+  animation: grill-plan-glow 2.8s ease-in-out infinite;
+}
+.grill-arcade-screen .grill-plan-offer button.grill-plan-go:hover {
+  filter: brightness(1.12);
+}
+@keyframes grill-plan-glow {
+  0%, 100% { box-shadow: inset 0 0 0 2px var(--grill-gold-lit, #ffe98a), 0 0 12px rgba(255, 122, 34, 0.4); }
+  50% { box-shadow: inset 0 0 0 2px var(--grill-gold-lit, #ffe98a), 0 0 24px rgba(255, 122, 34, 0.75); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .grill-arcade-screen .grill-plan-offer button.grill-plan-go { animation: none; }
+}
+.grill-arcade-screen .grill-cloud-buy button:hover,
+.grill-arcade-screen .grill-refill-packs button:hover,
+.grill-arcade-screen button.grill-refill-stop:hover {
   filter: brightness(1.12);
 }
 

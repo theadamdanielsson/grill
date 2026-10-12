@@ -46,18 +46,20 @@ How each of these works is described in **[docs/features.md](docs/features.md)**
 
 Grill Cloud is the easiest way to use Grill. Press Start free and it answers in Chat, writes the questions, grades your answers and explains them, with no API key and no sign-up. Grill makes a key on your device and, while each day's free credits last, you get some to try it.
 
-After that you buy credits when you want them: 400 for $3.99 or 1,100 for $9.99, plus tax where it applies. You pay once per pack. How many credits a session uses depends on how long your notes are and how much you ask of it. Importantly, a Chat turn that works in the vault takes several steps, and each step is charged as a reply, so editing through Chat costs more than asking a question. Grill tells you what each finished session used. Credits appear in Grill a few seconds after you pay, and they do not expire. The checkout is run by Stripe, so the page says "Sold through Link" and your card statement shows Link. Buying happens in Grill's settings and nowhere else.
+After that Grill Cloud is a monthly plan: $7.99 a month, plus tax where it applies, and you can cancel it whenever you like. The plan covers Chat and tests up to usage limits, which apply to any five hours, to any week and to each month. The limits are not given as figures, because what a session uses depends on how long your notes are and how much you ask of it. Importantly, a Chat turn that works in the vault takes several steps, and each step counts as a reply, so editing through Chat uses more than asking a question. When a limit is reached, Grill says so and roughly when it frees up. For anyone who wants to keep going at once, credit packs come up at that point: 400 credits for $3.99 or 1,100 for $9.99. Credits are used only past a limit, and they do not expire.
 
-It runs on Claude Sonnet 5.5, the model Grill recommends for grading.
+The checkout is run by Stripe, so the page says "Sold through Link" and your card statement shows Link. The plan starts in Grill a few seconds after you pay. You cancel it at link.com, signed in with the email address you paid with, and it stays usable until the end of the month already paid for. Buying happens in Grill and nowhere else.
+
+Grill chooses the model behind Grill Cloud for the quality of its grading and keeps it current.
 
 One thing differs from every other way of running Grill. With Grill Cloud, the notes in a session, the images in them, your answers and your custom instructions go through my server to Anthropic. In Chat, the notes the model asks to read go the same way. My server does not keep them: it does not store or log your notes, the questions, or your answers. Anthropic keeps them for up to 30 days to watch for abuse and does not train on them. If you turn on the natural voice, the text being read aloud goes to OpenAI the same way. What my server does store is a short list, set out in the privacy policy.
 
 - [Privacy policy](https://grill.onbridger.com/privacy)
 - [Terms](https://grill.onbridger.com/terms)
 
-There is nothing to look after. Grill makes a key on your device when you press Start free, and that key is your balance. Every vault on the same device shares it, and it follows a synced vault to your other devices. If you ever lose them all, email inquiries@onbridger.com from the address you paid with and I will move your purchased credits to your new install. Settings has the rest under Account, including a Delete account button that erases your balance and usage from my server.
+There is nothing to look after. Grill makes a key on your device when you press Start free, and that key is your balance. Every vault on the same device shares it, and it follows a synced vault to your other devices. If you ever lose them all, email inquiries@onbridger.com from the address you paid with and I will move your plan and your purchased credits to your new install. Settings has the rest under Account, including a Delete account button that erases your balance and usage from my server. Deleting the account does not cancel a plan, so cancel the plan first.
 
-Used credits cannot be refunded. Unused ones can if you ask within 14 days. Grill Cloud is for people 18 and over.
+The first month of a plan is refunded if you ask within 14 days of subscribing. Used credits cannot be refunded, and unused ones can if you ask within 14 days. Grill Cloud is for people 18 and over.
 
 <a name="with-claude-code-or-codex"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/screen-dark.svg"><img src="docs/icons/screen.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> With Claude Code or Codex

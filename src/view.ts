@@ -2,7 +2,7 @@
 
 import { ItemView, loadMermaid, MarkdownRenderer, Modal, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
-import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, cloudEnabled, creditsInWords, lowBalance, usageInWords } from "./cloud";
+import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, cloudEnabled, creditsInWords, lowBalance, planInWords, usageInWords } from "./cloud";
 import { adjudicateBridges, ConceptTarget, contentWords, debriefSession, discussQuestion, embedTexts, explainQuestion, formatSatisfies, generateQuestions, Grade, CloudError, cleanDiagram, cleanText, gradeAnswer, learnFromNotes, learnWithTools, LLMConfig, replyInProgress, offeredProviders, PROVIDERS, ProviderId, Question, supportsEmbeddings, supportsVision, testModel, ThreadTurn, Verdict } from "./llm";
 import { detectOcclusionRegions } from "./ocr";
 import {
@@ -1140,14 +1140,18 @@ export class SessionView extends ItemView {
 			text:
 				state === "none"
 					? "On, with no credits yet. Add credits in settings to begin, or pick another way below."
-					: state === "ok" && credits !== null
-						? `On. ${creditsInWords(credits)}. ${usageInWords(this.plugin.data.settings.cloudUsage)}`
+					: state === "ok" && credits !== null && this.plugin.cloudPlan
+						? `On. ${planInWords(this.plugin.cloudPlan)}${credits > 0 ? ` ${creditsInWords(credits)}.` : ""}`
+						: state === "ok" && credits !== null
+							? `On. ${creditsInWords(credits)}. ${usageInWords(this.plugin.data.settings.cloudUsage)}`
 						: state === "refused" || state === "offline"
 							? this.plugin.cloudNote || "Couldn't reach Grill Cloud."
 							: "Checking your balance...",
 		});
-		if (state === "none" || (state === "ok" && (credits ?? 0) < lowBalance(this.plugin.data.settings.cloudUsage))) {
-			const more = el.createEl("a", { cls: "grill-chip-link", text: "Add credits in settings" });
+		// With a plan running, credits are only low once its limit is reached.
+		const covered = this.plugin.cloudPlan !== null && !this.plugin.cloudPlan.limit;
+		if (state === "none" || (state === "ok" && !covered && (credits ?? 0) < lowBalance(this.plugin.data.settings.cloudUsage))) {
+			const more = el.createEl("a", { cls: "grill-chip-link", text: this.plugin.cloudCanSubscribe ? "Get the monthly plan in settings" : "Add credits in settings" });
 			more.onclick = () => this.plugin.openSettings();
 		}
 		return el.createEl("button", { text: state === "ok" ? "Continue with Grill Cloud" : "Start free", cls: "mod-cta grill-cloud-go grill-primary-cta" });
@@ -1308,7 +1312,7 @@ export class SessionView extends ItemView {
 		line.createSpan({ text: `That session used ${used} ${used === 1 ? "credit" : "credits"}. ${creditsInWords(credits)}.` });
 		if (credits >= lowBalance(s.cloudUsage)) return;
 		line.createSpan({ text: " " });
-		const more = line.createEl("a", { text: "Add more in settings" });
+		const more = line.createEl("a", { text: this.plugin.cloudCanSubscribe ? "Get the monthly plan in settings" : "Add more in settings" });
 		more.onclick = () => this.plugin.openSettings();
 	}
 
@@ -2193,11 +2197,14 @@ export class SessionView extends ItemView {
 				s.cloudRing.last = now;
 				void this.plugin.persist();
 			}
-			const low = state === "none" || now < lowBalance(s.cloudUsage);
+			// A running plan with room left is a full ring, whatever the credits beside it.
+			const plan = this.plugin.cloudPlan;
+			const covered = plan !== null && !plan.limit;
+			const low = !covered && (state === "none" || now < lowBalance(s.cloudUsage));
 			renderCreditsRing(host, {
-				left: now / s.cloudRing.full,
+				left: covered ? 1 : now / s.cloudRing.full,
 				low,
-				label: low ? "Grill Cloud credits are low. Open settings to add more." : "Grill Cloud credits. Open settings.",
+				label: covered ? "Grill Cloud monthly plan. Open settings." : low ? "Grill Cloud credits are low. Open settings to add more." : "Grill Cloud credits. Open settings.",
 				open: () => this.plugin.openSettings(),
 			});
 		};
@@ -5005,6 +5012,7 @@ export class SessionView extends ItemView {
 						this.sessionPersona,
 						this.plugin.data.settings.questionFormats,
 						formatCounts,
+						this.plugin.data.settings.testHints,
 					);
 					console.debug(`Grill: generateQuestions (${batch.length} target(s)) took ${Date.now() - genStart}ms`);
 					// The session this batch was generated for has since been replaced (a new

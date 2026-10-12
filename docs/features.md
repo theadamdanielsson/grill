@@ -14,7 +14,7 @@ A reply is written to the screen as the model produces it. Under each reply, Ins
 
 ## Engines
 
-An engine is what answers in Chat, and the button under the chat box steps through the ones available. Four kinds exist. Grill Cloud needs no setup and uses credits. A key of your own sends requests straight to the provider you chose. Claude Code and Codex run the program installed on your computer, under the sign-in you made there, with the vault as the working folder. Ollama runs a model on your own machine.
+An engine is what answers in Chat, and the button under the chat box steps through the ones available. Four kinds exist. Grill Cloud needs no setup and runs on a monthly plan once the free credits are used. A key of your own sends requests straight to the provider you chose. Claude Code and Codex run the program installed on your computer, under the sign-in you made there, with the vault as the working folder. Ollama runs a model on your own machine.
 
 The engines differ in what they can do in the vault. Grill Cloud and keys for Anthropic, OpenAI, DeepSeek and OpenAI-compatible endpoints use Grill's own note tools, which the plugin carries out through Obsidian; these work on a phone as on a desktop, and they cannot reach outside the vault or into Grill's own folder. Claude Code and Codex bring their own tools, shell commands included, and their own permission systems, which Grill passes through unchanged; they run on desktop only. Gemini and Ollama answer in text and change nothing.
 

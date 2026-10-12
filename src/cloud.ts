@@ -45,6 +45,33 @@ export function lowBalance(history: number[]): number {
 	return history.length ? Math.max(...history) : TYPICAL_SESSION;
 }
 
+/** The monthly plan as the server reports it for an account that has one running. */
+export interface CloudPlan {
+	/** When the period paid for ends, in seconds. */
+	until: number;
+	/** Which of its usage limits is reached, if any: five hours, the week, or the period. */
+	limit: "" | "window" | "week" | "period";
+	/** When room starts to come back under that limit, in seconds. */
+	resets: number;
+}
+
+/** What the plan's button says. The price stands above it, in the offer. */
+export function planLabel(): string {
+	return "Get the monthly plan";
+}
+
+/** When a reached limit frees up, in words. */
+export function planBack(plan: CloudPlan): string {
+	return plan.limit === "period" ? "when your plan renews" : plan.limit === "week" ? "later this week" : "within a few hours";
+}
+
+/** A running plan in words. */
+export function planInWords(plan: CloudPlan): string {
+	if (plan.limit) return `Your plan's usage limit is reached. It frees up again ${planBack(plan)}.`;
+	const day = new Date(plan.until * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+	return `Your monthly plan is on. It renews on ${day}.`;
+}
+
 /** What a pack's button says. */
 export function packLabel(pack: CloudPack): string {
 	return `${pack.credits.toLocaleString("en-US")} credits for ${pack.price} + tax${pack.note ? ` (${pack.note})` : ""}`;
@@ -59,6 +86,8 @@ export const cloud = {
 		{ credits: 400, price: "$3.99", url: "https://buy.stripe.com/dRmeVdcYwh1fazHfaW0ZW02" },
 		{ credits: 1100, price: "$9.99", url: "https://buy.stripe.com/bJefZh1fOcKZcHP0g20ZW00", note: "10% extra" },
 	] as CloudPack[],
+	/** The monthly plan and its Stripe payment link. With no link it isn't offered. */
+	plan: { price: "$7.99", url: "https://buy.stripe.com/28EcN57EcdP323bd2O0ZW03" },
 	/** Where the privacy policy and the terms live. */
 	privacyUrl: "https://grill.onbridger.com/privacy",
 	termsUrl: "https://grill.onbridger.com/terms",
@@ -78,7 +107,7 @@ export const CLOUD_LEAD = "No API key. No sign-up. One click and you're studying
 /** The three things to know before starting, said wherever Grill Cloud is offered. */
 export const CLOUD_FACTS = [
 	"AI writes your questions and grades your answers.",
-	"Free credits to start, while each day's last. Then credit packs from $3.99 + tax.",
+	cloud.plan.url ? `Free credits to start, while each day's last. Then ${cloud.plan.price} + tax a month, cancel anytime.` : "Free credits to start, while each day's last. Then credit packs from $3.99 + tax.",
 	"Your notes go through Grill's server to Claude. Grill's server doesn't store them.",
 ];
 
@@ -157,6 +186,10 @@ export interface CloudBalance {
 	purchases: number;
 	/** Whether credits can be bought right now. */
 	sales: boolean;
+	/** The monthly plan, when one is running for this key. */
+	plan?: CloudPlan | null;
+	/** Whether the plan can be bought right now. */
+	plans?: boolean;
 	/** Whether a natural read-aloud voice can be asked for. */
 	speech?: boolean;
 	/** Whether a Chat reply can be asked for as a stream. */

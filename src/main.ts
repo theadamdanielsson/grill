@@ -17,8 +17,8 @@ import {
 import { configureFSRSWeights, MasteryMap } from "./mastery";
 import { CalPoint, isCalPoint } from "./calibration";
 import { LLMConfig, offeredProviders, PROVIDERS, ProviderId, Question, listModels, migrateLegacyModels, synthesizeArc, testModel } from "./llm";
-import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, CloudPack, cloudAccount, cloudBalance, cloudSpeech, cloudCheckoutUrl, cloudDelete, cloudEnabled, cloudStart, creditsInWords, isCloudKey, newCloudKey, packLabel, usageInWords } from "./cloud";
-import { RefillModal } from "./refill";
+import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, CloudPack, CloudPlan, planInWords, planLabel, cloudAccount, cloudBalance, cloudSpeech, cloudCheckoutUrl, cloudDelete, cloudEnabled, cloudStart, creditsInWords, isCloudKey, newCloudKey, packLabel, usageInWords } from "./cloud";
+import { drawPlanOffer, RefillModal } from "./refill";
 import { CATCH_UP, ConceptMap, dueConceptCount, migrateResetScheduling, rebalanceDueDates, reconcileConcepts } from "./concepts";
 import { pairKey } from "./bridges";
 import {
@@ -1627,6 +1627,12 @@ export default class GrillPlugin extends Plugin {
 	 * can open one at once. Emptied the moment the key changes, so a click can never
 	 * pay into a key no longer held. */
 	cloudPacks: Array<CloudPack & { link: string }> = [];
+	/** The monthly plan running for the key in use, as the server last said. */
+	cloudPlan: CloudPlan | null = null;
+	/** Whether the plan can be bought right now, as the server last said. */
+	private cloudPlans = false;
+	/** The plan's checkout link for the key in use. Emptied with the packs. */
+	private cloudPlanLink = "";
 	/** Keys this session deleted from the server: never taken back from a stale copy. */
 	private cloudGone = new Set<string>();
 	/** Told whenever the balance, the key or a wait changes, so every open Grill view
@@ -1649,16 +1655,33 @@ export default class GrillPlugin extends Plugin {
 		return this.cloudPacks.length > 0 && this.cloudSales && this.cloudState !== "offline" && this.cloudState !== "refused";
 	}
 
+	/** Whether subscribing would work right now: the plan is on sale and this key has none. */
+	get cloudCanSubscribe(): boolean {
+		return this.cloudPlanLink !== "" && this.cloudPlans && this.cloudPlan === null && (this.cloudState === "ok" || this.cloudState === "none");
+	}
+
+	/** Whether the credit packs are offered right now. With the plan on sale they are
+	 * what a subscriber reaches for once a limit is hit, and nothing else: someone
+	 * without the plan is offered the plan. Where no plan is sold, packs are the offer. */
+	get cloudShowPacks(): boolean {
+		if (!this.cloudCanBuy) return false;
+		if (this.cloudPlan !== null) return this.cloudPlan.limit !== "";
+		return !(this.cloudPlanLink !== "" && this.cloudPlans);
+	}
+
 	private async linkCloudCheckout(key: string): Promise<void> {
 		this.cloudPacks = [];
+		this.cloudPlanLink = "";
 		if (!isCloudKey(key)) return;
 		const packs: Array<CloudPack & { link: string }> = [];
 		for (const pack of cloud.packs) {
 			if (pack.url) packs.push({ ...pack, link: await cloudCheckoutUrl(key, pack.url) });
 		}
 		const id = await cloudAccount(key);
+		const planLink = cloud.plan.url ? await cloudCheckoutUrl(key, cloud.plan.url) : "";
 		if (this.data.settings.apiKeys.grillcloud === key) {
 			this.cloudPacks = packs;
+			this.cloudPlanLink = planLink;
 			this.cloudAccountId = id;
 		}
 	}
@@ -1760,6 +1783,8 @@ export default class GrillPlugin extends Plugin {
 
 	private clearCloudState(): void {
 		this.cloudPacks = [];
+		this.cloudPlanLink = "";
+		this.cloudPlan = null;
 		this.cloudCredits = null;
 		this.cloudPurchases = null;
 		this.cloudState = "unknown";
@@ -1875,6 +1900,8 @@ export default class GrillPlugin extends Plugin {
 		this.cloudCredits = r.data.credits;
 		this.cloudPurchases = r.data.purchases;
 		this.cloudSales = r.data.sales;
+		this.cloudPlan = r.data.plan ?? null;
+		this.cloudPlans = r.data.plans === true;
 		this.cloudSpeech = r.data.speech === true;
 		cloud.streams = r.data.streams === true;
 		cloud.tools = r.data.tools === true;
@@ -1934,6 +1961,8 @@ export default class GrillPlugin extends Plugin {
 		// A copy Grill 6.2.0 left in the keychain must not bring it back.
 		this.keys.dropUnkept();
 		this.cloudPacks = [];
+		this.cloudPlanLink = "";
+		this.cloudPlan = null;
 		this.cloudCredits = null;
 		this.cloudPurchases = null;
 		this.cloudState = "unknown";
@@ -1961,6 +1990,8 @@ export default class GrillPlugin extends Plugin {
 		this.cloudCredits = r.data.credits;
 		this.cloudPurchases = r.data.purchases;
 		this.cloudSales = r.data.sales;
+		this.cloudPlan = r.data.plan ?? null;
+		this.cloudPlans = r.data.plans === true;
 		this.cloudSpeech = r.data.speech === true;
 		cloud.streams = r.data.streams === true;
 		cloud.tools = r.data.tools === true;
@@ -2015,7 +2046,7 @@ export default class GrillPlugin extends Plugin {
 	 * reason, `tail` anything worth adding (an answer that was kept). False when
 	 * nothing is on sale right now, so the caller can say it some other way. */
 	offerRefill(code: string, tail = ""): boolean {
-		if (!this.cloudCanBuy) return false;
+		if (!this.cloudShowPacks && !this.cloudCanSubscribe) return false;
 		RefillModal.show(this, code, tail);
 		return true;
 	}
@@ -2033,6 +2064,15 @@ export default class GrillPlugin extends Plugin {
 		this.tellCloud();
 	}
 
+	/** Open the checkout page for the monthly plan for this vault's Grill Cloud account,
+	 * and watch for it to start the way a pack's arrival is watched for. */
+	openCloudPlanCheckout(): void {
+		if (!this.cloudCanSubscribe) return;
+		window.open(this.cloudPlanLink);
+		this.watchCloudTopUp();
+		this.tellCloud();
+	}
+
 	/** Set while a purchase is being waited for: the balance when the wait began. */
 	cloudWaitingFrom: number | null = null;
 	/** The purchase count when the wait began (null until the server has said). A
@@ -2040,6 +2080,8 @@ export default class GrillPlugin extends Plugin {
 	private cloudWaitingPurchases: number | null = null;
 	/** Whether the balance the wait is measured from was a real one. */
 	private cloudWaitingKnown = false;
+	/** Whether a plan was already running when the wait began. */
+	private cloudWaitingPlan = false;
 	/** Told when a waited-for purchase arrives (or the wait ends), so the settings tab
 	 * can redraw and count the number up. */
 	cloudArrived: ((from: number, to: number) => void) | null = null;
@@ -2062,6 +2104,18 @@ export default class GrillPlugin extends Plugin {
 		const to = this.cloudCredits;
 		const purchases = this.cloudPurchases;
 		if (from === null || to === null || purchases === null) return false;
+		// A plan that wasn't running when the wait began is the purchase arriving.
+		if (!this.cloudWaitingPlan && this.cloudPlan !== null) {
+			this.stopCloudWatch(true);
+			new Notice("Grill: your monthly plan is on.", 6000);
+			try {
+				this.cloudArrived?.(to, to);
+			} catch (e) {
+				console.error("Grill: settings failed to redraw", e);
+			}
+			this.tellCloud();
+			return true;
+		}
 		// The wait began before the server had said how many purchases there were. This
 		// first answer is the starting point, unless the balance has already jumped by
 		// a pack's worth: then the purchase beat the first look, and that is an arrival.
@@ -2115,6 +2169,7 @@ export default class GrillPlugin extends Plugin {
 		this.stopCloudWatch(true);
 		this.cloudWaitingFrom = this.cloudCredits ?? 0;
 		this.cloudWaitingKnown = this.cloudCredits !== null;
+		this.cloudWaitingPlan = this.cloudPlan !== null;
 		this.cloudWaitingPurchases = this.cloudState === "ok" || this.cloudState === "none" ? this.cloudPurchases : null;
 		let checks = 0;
 		this.cloudWatchTimer = window.setInterval(() => {
@@ -2682,6 +2737,7 @@ export class GrillSettingTab extends PluginSettingTab {
 		const credits = this.plugin.cloudCredits;
 		const state = this.plugin.cloudState;
 		const waiting = this.plugin.cloudWaitingFrom !== null;
+		const plan = this.plugin.cloudPlan;
 		const usingCloud = p === "grillcloud";
 		const creditsLine = (n: number): string => `${usingCloud ? "In use" : "Not in use"}. ${creditsInWords(n)}.`;
 		const start = (setting: Setting, label: string, cta: boolean): void => {
@@ -2759,8 +2815,10 @@ export class GrillSettingTab extends PluginSettingTab {
 				const known = (state === "ok" || state === "none") && credits !== null;
 				// No number until the server has said one: a placeholder reads as a balance.
 				const figure = body.createDiv({ cls: "grill-cloud-balance" });
-				const number = figure.createSpan({ cls: "grill-cloud-balance-number", text: known ? (credits ?? 0).toLocaleString("en-US") : "" });
-				if (known) figure.createSpan({ cls: "grill-cloud-balance-unit", text: "credits" });
+				// On the plan with no credits beside it, the plan is what there is to show.
+				const onPlanOnly = known && plan !== null && (credits ?? 0) <= 0;
+				const number = figure.createSpan({ cls: "grill-cloud-balance-number", text: onPlanOnly ? "On" : known ? (credits ?? 0).toLocaleString("en-US") : "" });
+				if (known) figure.createSpan({ cls: "grill-cloud-balance-unit", text: onPlanOnly ? "monthly plan" : "credits" });
 				body.createDiv({
 					cls: "grill-meta",
 					text:
@@ -2771,8 +2829,10 @@ export class GrillSettingTab extends PluginSettingTab {
 								: !known
 									? "Checking your balance..."
 									: waiting
-										? "Checkout is open in your browser. Credits show up here a few seconds after you pay."
-										: usage,
+										? "Checkout is open in your browser. It shows up here a few seconds after you pay."
+										: plan
+											? planInWords(plan)
+											: usage,
 				});
 				card.toggleClass("grill-cloud-waiting", waiting);
 				if (!usingCloud) {
@@ -2796,7 +2856,25 @@ export class GrillSettingTab extends PluginSettingTab {
 					);
 				} else {
 					if (state === "none") start(setting, "Try free credits", false);
-					if (this.plugin.cloudCanBuy) {
+					const canSubscribe = this.plugin.cloudCanSubscribe;
+					if (canSubscribe) {
+						// The plan is an offer of its own in the card, with its button inside it.
+						const offer = drawPlanOffer(body);
+						setting.addButton((b) => {
+							b.setButtonText(planLabel())
+								.setCta()
+								.onClick(() => {
+									this.plugin.openCloudPlanCheckout();
+									this.rerender();
+								});
+							if (b.buttonEl) {
+								b.buttonEl.addClass("grill-plan-go");
+								offer.appendChild(b.buttonEl);
+							}
+							return b;
+						});
+					}
+					if (this.plugin.cloudShowPacks) {
 						const packs = this.plugin.cloudPacks;
 						for (const pack of packs) {
 							setting.addButton((b) => {
@@ -2804,11 +2882,13 @@ export class GrillSettingTab extends PluginSettingTab {
 									this.plugin.openCloudCheckout(pack.link);
 									this.rerender();
 								});
-								if (usingCloud && pack === packs[packs.length - 1]) b.setCta();
+								if (usingCloud && !canSubscribe && pack === packs[packs.length - 1]) b.setCta();
 								return b;
 							});
 						}
-						card.createDiv({ cls: "grill-cloud-card-foot", text: "Checkout by Stripe. Credits arrive here in a few seconds." });
+					}
+					if (this.plugin.cloudShowPacks || canSubscribe) {
+						card.createDiv({ cls: "grill-cloud-card-foot", text: canSubscribe ? "Checkout by Stripe." : "Checkout by Stripe. Credits arrive here in a few seconds." });
 					}
 				}
 				// The policies: there when wanted, as a line of small print, not a row of their own.

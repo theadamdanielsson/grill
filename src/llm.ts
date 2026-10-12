@@ -1108,8 +1108,9 @@ export const DEFAULT_PERSONA =
 	"You are Grill, a sharp and encouraging quizmaster running an active-recall session over the student's own notes. You are warm but direct, and you never pad feedback with empty praise.";
 
 /** The question-generation engine: targeting, difficulty, craft, and output shape. Never
- * user-editable; combined with a persona at call time by tutorSystem(). */
-const TUTOR_RULES = `Targeting rules:
+ * user-editable; combined with a persona at call time by tutorSystem(). `hints` is the
+ * "Hints in tests" setting: with it off no hint is ever shown, so none is asked for. */
+const tutorRules = (hints: boolean): string => `Targeting rules:
 - You are given a specific list of CONCEPTS to test, one question each, in the given order. Write a question that tests exactly that concept, grounded in the student's notes.
 - Aim for each concept's stated difficulty.
 - When a concept is marked to re-probe a known confusion, deliberately write the question so that confusion would trip a student who still holds it.
@@ -1135,8 +1136,7 @@ Return exactly one question per concept, in the same order as the concept list. 
 - modelAnswer: the answer you would accept as fully correct, 1-3 sentences.
 - acceptableAnswers: up to 3 short alternative phrasings that also count as correct.
 - commonErrors: up to 3 likely wrong answers, each with a short 'pattern' (what the student might say) and a snake_case 'misconception' tag naming the underlying confusion.
-- hints: tier1 a one-sentence conceptual nudge, tier2 the underlying concept, tier3 a partial step toward the answer. No tier may reveal the answer.
-- targetsMisconception: if the concept was marked to re-probe a confusion, set this to that exact canonical tag. Otherwise set it to an empty string.`;
+${hints ? "- hints: tier1 a one-sentence conceptual nudge, tier2 the underlying concept, tier3 a partial step toward the answer. No tier may reveal the answer.\n" : ""}- targetsMisconception: if the concept was marked to re-probe a confusion, set this to that exact canonical tag. Otherwise set it to an empty string.`;
 
 /** Appended to the user message, never the fixed system prompt, and only when the
  * student has opted into mixed question formats (default: on, but a real toggle —
@@ -1191,7 +1191,7 @@ const formatMixInstructions = (strictMc: boolean): string =>
 
 /** Build the question-generation system prompt: the chosen persona (or the default) on top
  * of the fixed engine rules. An empty/whitespace persona falls back to the default. */
-const tutorSystem = (persona: string): string => `${persona.trim() || DEFAULT_PERSONA}\n\n${TUTOR_RULES}`;
+const tutorSystem = (persona: string, hints: boolean): string => `${persona.trim() || DEFAULT_PERSONA}\n\n${tutorRules(hints)}`;
 
 /** A dynamic steering line appended after FORMAT_MIX_INSTRUCTIONS: without it, a model
  * given full discretion over 'type' reliably gravitates to 'mc'/'blank' and rarely
@@ -1260,7 +1260,7 @@ export interface ConceptTarget {
  * instruction (see FORMAT_MIX_INSTRUCTIONS) but the schema shape itself, so a student
  * who hasn't opted into mc/blank questions pays zero extra request/response tokens
  * for the feature, not just zero prose. */
-function questionsSchema(mixFormats: boolean): Record<string, unknown> {
+function questionsSchema(mixFormats: boolean, hints: boolean): Record<string, unknown> {
 	const properties: Record<string, unknown> = {
 		n: { type: "integer" },
 		question: { type: "string" },
@@ -1301,6 +1301,10 @@ function questionsSchema(mixFormats: boolean): Record<string, unknown> {
 		"hints",
 		"targetsMisconception",
 	];
+	if (!hints) {
+		delete properties.hints;
+		required.splice(required.indexOf("hints"), 1);
+	}
 	if (mixFormats) {
 		properties.type = { type: "string", enum: ["write", "mc", "blank", "tf", "multi", "match"] };
 		properties.choices = { type: "array", items: { type: "string" } };
@@ -1470,6 +1474,7 @@ async function runGenerationPass(
 	persona: string,
 	formatMode: FormatMode,
 	formatCounts: Partial<Record<string, number>>,
+	hints: boolean,
 ): Promise<{ questions: Question[]; defects: Map<number, string> }> {
 	const mixFormats = formatMode !== "write";
 	const varyFormats = formatMode === "mixed";
@@ -1537,7 +1542,7 @@ async function runGenerationPass(
 		// already carries that same [format: X] tag, so there's nothing to vary toward.
 		(mixFormats ? formatMixInstructions(formatMode === "mc") + (varyFormats ? formatNudge(formatCounts) : "") : "");
 	type RawQ = Omit<Question, "node" | "conceptId"> & { n?: number };
-	const data = (await callJSON(cfg, tutorSystem(persona), { cacheable, rest }, questionsSchema(mixFormats), 8000, images)) as {
+	const data = (await callJSON(cfg, tutorSystem(persona, hints), { cacheable, rest }, questionsSchema(mixFormats, hints), 8000, images)) as {
 		questions: RawQ[];
 	};
 	const raw = data.questions ?? [];
@@ -1693,6 +1698,7 @@ export async function generateQuestions(
 	persona: string = DEFAULT_PERSONA,
 	formatMode: FormatMode = "write",
 	formatCounts: Partial<Record<string, number>> = {},
+	hints = true,
 ): Promise<Question[]> {
 	const first = await runGenerationPass(
 		cfg,
@@ -1704,6 +1710,7 @@ export async function generateQuestions(
 		persona,
 		formatMode,
 		formatCounts,
+		hints,
 	);
 	if (first.defects.size === 0) return first.questions;
 	const retryTargets = [...first.defects.entries()].map(([idx, reason]) => ({
@@ -1723,6 +1730,7 @@ export async function generateQuestions(
 		persona,
 		formatMode,
 		formatCounts,
+		hints,
 	);
 	return [...first.questions, ...retry.questions];
 }

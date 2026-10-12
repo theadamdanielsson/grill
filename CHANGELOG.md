@@ -1,5 +1,19 @@
 # Changelog
 
+## 8.1.0
+
+- **Grill Cloud has a monthly plan.** $7.99 a month plus tax covers Chat and tests, and
+  you can cancel anytime. Subscribe from the Grill Cloud card in settings, or from the
+  pop-up when the free credits run out.
+- **The plan has usage limits.** They apply to any five hours, any week and each month.
+  When one is reached, Grill says so and roughly when it frees up.
+- **Credit packs are for going past a limit.** They come up when a plan's limit is
+  reached. Credits you already have still work, and they do not expire.
+- **Hints are written only when hints are on.** With "Hints in tests" off, questions are
+  written without hints, which makes them quicker to write. Questions written that way
+  have no hints if you turn the setting on later.
+- The buttons in the out-of-credits pop-up match the Grill Cloud card.
+
 ## 8.0.1
 
 - **A rewrite starts from the whole note.** Chat reads a note in full before it

@@ -27,6 +27,15 @@ function fakePlugin() {
 		cloudWaitingFrom: null as number | null,
 		cloudCredits: 0,
 		cloudCanBuy: true,
+		cloudShowPacks: true,
+		cloudCanSubscribe: false,
+		cloudPlan: null as null | { until: number; limit: string; resets: number },
+		planOpened: 0,
+		openCloudPlanCheckout: () => {
+			plugin.planOpened++;
+			plugin.cloudWaitingFrom = plugin.cloudCredits;
+			tell();
+		},
 		cloudPacks: [
 			{ credits: 400, price: "$3.99", link: "small" },
 			{ credits: 1100, price: "$9.99", note: "10% extra", link: "large" },
@@ -117,4 +126,35 @@ test("stopping the wait brings the packs back, and the links put it away", () =>
 	again.card().all().find((k: any) => k.tag === "a" && k.text === "Not now").onclick();
 	assert.equal((RefillModal as any).up, null);
 	assert.equal(plugin.cloudListeners.size, 0);
+});
+
+test("someone without the plan is offered the plan alone, and the pop-up closes when it starts", () => {
+	const { plugin, tell } = fakePlugin();
+	plugin.cloudShowPacks = false;
+	plugin.cloudCanSubscribe = true;
+	const { modal, card } = show(plugin, "out_of_credits");
+	assert.deepEqual(buttons(card()).map((b: any) => b.text), ["Get the monthly plan"]);
+	assert.ok(["MONTHLY PLAN", "$7.99", "a month + tax"].every((x) => texts(card()).includes(x)));
+	assert.ok(texts(card()).includes("Get the monthly plan to keep going."));
+	let closed = 0;
+	modal.close = () => void closed++;
+	buttons(card())[0].onclick();
+	assert.equal(plugin.planOpened, 1);
+	// The plan is running and the wait is over: nothing more to ask.
+	plugin.cloudPlan = { until: 1, limit: "", resets: 0 };
+	plugin.cloudCanSubscribe = false;
+	plugin.cloudWaitingFrom = null;
+	tell();
+	assert.equal(closed, 1);
+	modal.onClose();
+});
+
+test("a subscriber at a limit is told when it frees up and offered the packs", () => {
+	const { plugin } = fakePlugin();
+	plugin.cloudPlan = { until: 1, limit: "window", resets: 2 };
+	const { modal, card } = show(plugin, "plan_limit");
+	assert.ok(texts(card()).includes("Plan limit reached"));
+	assert.ok(texts(card()).includes("Your plan's usage limit is reached. It frees up again within a few hours. Add credits to keep going now."));
+	assert.equal(buttons(card()).length, 2);
+	modal.onClose();
 });
