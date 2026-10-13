@@ -150,6 +150,16 @@ export class Modal {
 	}
 }
 
+export class FuzzySuggestModal extends Modal {
+	setPlaceholder(): void {}
+}
+export class Menu {
+	addItem(build: (item: any) => void): this {
+		build(deepFake());
+		return this;
+	}
+	showAtPosition(): void {}
+}
 export const MarkdownRenderer = { render: async () => undefined, renderMarkdown: async () => undefined };
 export function setIcon(): void {}
 export function normalizePath(p: string): string {

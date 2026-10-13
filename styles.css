@@ -3706,6 +3706,32 @@ textarea.grill-mgmt-field {
 .grill-view button.grill-home-level:hover {
   color: var(--grill-ink-gold, #ffd23f);
 }
+/* The passage a question is about, above the box: enough of it to see which part. */
+.grill-learn-quote {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6em;
+  margin-bottom: 0.5em;
+  padding: 0.5em 0.7em;
+  border-left: 3px solid var(--grill-accent, #ff8c2b);
+  background: var(--background-secondary);
+}
+.grill-learn-quote-text {
+  flex: 1;
+  min-width: 0;
+  max-height: 9em;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+}
+/* The model's name can be long: it is cut, the button is not stretched. */
+.grill-home-model-name {
+  max-width: 13em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* What Claude Code did, listed above its reply as it happens, and in one line after. */
 .grill-agent-activity {
   display: flex;

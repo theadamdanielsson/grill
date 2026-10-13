@@ -1,6 +1,8 @@
 import {
 	App,
 	Events,
+	FuzzySuggestModal,
+	Menu,
 	Modal,
 	Notice,
 	Platform,
@@ -12,6 +14,7 @@ import {
 	TFile,
 	TFolder,
 	WorkspaceLeaf,
+	normalizePath,
 	requestUrl,
 } from "obsidian";
 import { configureFSRSWeights, MasteryMap } from "./mastery";
@@ -38,6 +41,7 @@ import { terminateOcrWorker } from "./ocr";
 import { countTrainableReviews, MIN_REVIEWS_FOR_OPTIMIZATION, optimizeFSRSWeights } from "./optimizer";
 import { dueFiles, duplicateBasenames } from "./scope";
 import { KeyStash, secretStore, vaultId } from "./secrets";
+import { CLAUDE_MODELS, NEW_PROMPT, promptMessage, SELECTION_ASKS, SelectionAsk, selectionMessage } from "./selection";
 import { GrillStore } from "./store";
 import { SessionView, VIEW_TYPE } from "./view";
 import type { ColorMode, NumberMode } from "./mapview";
@@ -165,6 +169,8 @@ interface GrillSettings {
 	chatEngine: "model" | "claudecode" | "codex";
 	/** Where Claude Code is, when it isn't in one of the usual places. */
 	claudePath: string;
+	/** Which of Claude Code's models answers in Chat; "" leaves it to Claude Code. */
+	claudeModel: string;
 	/** Where Codex is, when it isn't in one of the usual places. */
 	codexPath: string;
 	/** Claude Code's permission level in Chat. */
@@ -341,6 +347,7 @@ function defaultSettings(): GrillSettings {
 		modelAgreed: true,
 		chatEngine: "model",
 		claudePath: "",
+		claudeModel: "",
 		codexPath: "",
 		agentLevel: "safe",
 		ttsLanguage: "",
@@ -443,6 +450,7 @@ export default class GrillPlugin extends Plugin {
 		else if (old.questionSource === "local" || old.gradingMode === "self") settings.modelAgreed = false;
 		if (s.chatEngine === "model" || s.chatEngine === "claudecode" || s.chatEngine === "codex") settings.chatEngine = s.chatEngine;
 		if (typeof s.claudePath === "string") settings.claudePath = s.claudePath;
+		if (typeof s.claudeModel === "string" && CLAUDE_MODELS.some((m) => m.id === s.claudeModel)) settings.claudeModel = s.claudeModel;
 		if (typeof s.codexPath === "string") settings.codexPath = s.codexPath;
 		if (s.agentLevel === "safe" || s.agentLevel === "plan" || s.agentLevel === "auto") settings.agentLevel = s.agentLevel;
 		if (typeof s.ttsLanguage === "string") settings.ttsLanguage = s.ttsLanguage;
@@ -643,6 +651,63 @@ export default class GrillPlugin extends Plugin {
 			name: "Export review log as CSV",
 			callback: () => void this.exportReviewLog(),
 		});
+		// Chat from text selected in a note: in the command list, and on the editor's
+		// right-click menu while something is selected.
+		for (const ask of SELECTION_ASKS) {
+			this.addCommand({
+				id: `selection-${ask.id}`,
+				name: ask.command,
+				editorCheckCallback: (checking, editor, ctx) => {
+					if (!ctx.file || ctx.file.extension !== "md" || !editor.getSelection().trim()) return false;
+					if (!checking) void this.chatOnSelection(ask.id, ctx.file, editor.getSelection());
+					return true;
+				},
+			});
+		}
+		// Saved prompts: notes in Grill's Prompts folder, run on the note that is open
+		// and on what is selected in it, if anything is.
+		this.addCommand({
+			id: "saved-prompt",
+			name: "Run a saved prompt",
+			checkCallback: (checking) => {
+				const file = this.app.workspace.getActiveFile();
+				if (!file || file.extension !== "md") return false;
+				if (!checking) this.pickSavedPrompt(file, this.app.workspace.activeEditor?.editor?.getSelection() ?? "");
+				return true;
+			},
+		});
+		this.addCommand({
+			id: "new-saved-prompt",
+			name: "New saved prompt",
+			callback: () => void this.newSavedPrompt(),
+		});
+		this.registerEvent(
+			this.app.workspace.on("editor-menu", (menu, editor, info) => {
+				const file = info.file;
+				if (!file || file.extension !== "md" || !editor.getSelection().trim()) return;
+				// One Grill entry that opens to the list, the way Format and Insert do.
+				// Obsidian's menus can do that, though its typings don't say so; where
+				// they can't, the entries go in the menu itself.
+				const entries: Array<{ title: string; run(): void }> = SELECTION_ASKS.map((ask) => ({
+					title: ask.menu,
+					run: () => void this.chatOnSelection(ask.id, file, editor.getSelection()),
+				}));
+				if (this.savedPrompts().length) entries.push({ title: "Saved prompt...", run: () => this.pickSavedPrompt(file, editor.getSelection()) });
+				menu.addItem((i) => {
+					i.setSection("grill").setTitle("Grill").setIcon("flame");
+					const open = (i as unknown as { setSubmenu?: () => Menu }).setSubmenu;
+					if (typeof open === "function") {
+						const sub: Menu = open.call(i);
+						for (const e of entries) sub.addItem((x) => x.setTitle(e.title).onClick(e.run));
+						return;
+					}
+					i.setTitle(`Grill: ${entries[0].title.toLowerCase()}`).onClick(entries[0].run);
+					for (const e of entries.slice(1)) {
+						menu.addItem((x) => x.setSection("grill").setTitle(`Grill: ${e.title.toLowerCase()}`).setIcon("flame").onClick(e.run));
+					}
+				});
+			}),
+		);
 		this.registerEvent(
 			this.app.workspace.on("file-menu", (menu, file) => {
 				if (file instanceof TFile && file.extension === "md") {
@@ -1403,6 +1468,71 @@ export default class GrillPlugin extends Plugin {
 		const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
 		const view = leaf?.view;
 		if (view instanceof SessionView) await view.startScopedSession(files, dueOnly);
+	}
+
+	/** Open Chat on a note with one of the selection asks: sent as it is, or, for a
+	 * question still to be typed, left in the box. */
+	async chatOnSelection(kind: SelectionAsk, file: TFile, selected: string): Promise<void> {
+		const message = selectionMessage(kind, selected);
+		if (!message) return;
+		await this.activateView();
+		const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view;
+		if (view instanceof SessionView) await view.startChatAbout(file, message, kind !== "ask", selected);
+	}
+
+	/** Where saved prompts are kept: one note each, named for what it does. */
+	private promptFolder(): string {
+		return normalizePath(`${this.data.settings.folder}/Prompts`);
+	}
+
+	savedPrompts(): TFile[] {
+		const dir = `${this.promptFolder()}/`;
+		return this.app.vault
+			.getMarkdownFiles()
+			.filter((f) => f.path.startsWith(dir))
+			.sort((a, b) => a.basename.localeCompare(b.basename));
+	}
+
+	/** A saved prompt as it is sent, with the selection in it. */
+	async savedPromptText(prompt: TFile, selected: string): Promise<string> {
+		return promptMessage(await this.app.vault.cachedRead(prompt), selected);
+	}
+
+	/** Pick a saved prompt and send it in a Chat about that note. With none saved yet,
+	 * the first one is started instead. */
+	pickSavedPrompt(note: TFile, selected: string): void {
+		const prompts = this.savedPrompts();
+		if (!prompts.length) {
+			new Notice("Grill: no saved prompts yet. Here is a first one to change.", 6000);
+			void this.newSavedPrompt();
+			return;
+		}
+		new SavedPromptModal(this.app, prompts, async (prompt) => {
+			const message = await this.savedPromptText(prompt, selected);
+			if (!message) {
+				new Notice(`Grill: ${prompt.basename} is empty.`, 5000);
+				return;
+			}
+			await this.activateView();
+			const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view;
+			if (view instanceof SessionView) await view.startChatAbout(note, message, true);
+		}).open();
+	}
+
+	/** A new note in the Prompts folder, opened to be written. */
+	async newSavedPrompt(): Promise<void> {
+		const dir = this.promptFolder();
+		try {
+			for (const folder of [this.data.settings.folder, dir]) {
+				if (!this.app.vault.getAbstractFileByPath(normalizePath(folder))) await this.app.vault.createFolder(normalizePath(folder));
+			}
+			let path = `${dir}/New prompt.md`;
+			for (let n = 2; this.app.vault.getAbstractFileByPath(path); n++) path = `${dir}/New prompt ${n}.md`;
+			const file = await this.app.vault.create(path, NEW_PROMPT);
+			await this.app.workspace.getLeaf(true).openFile(file);
+		} catch {
+			new Notice("Grill: couldn't create the prompt.", 6000);
+		}
 	}
 
 	/** Redo a saved session's questions (from its grill-redo block): same questions, no
@@ -2208,6 +2338,27 @@ export default class GrillPlugin extends Plugin {
 		if (!leaf) return;
 		await leaf.setViewState({ type: VIEW_TYPE, active: true });
 		await this.app.workspace.revealLeaf(leaf);
+	}
+}
+
+/** The saved prompts by name, to pick one from. */
+class SavedPromptModal extends FuzzySuggestModal<TFile> {
+	constructor(
+		app: App,
+		private prompts: TFile[],
+		private picked: (prompt: TFile) => void | Promise<void>,
+	) {
+		super(app);
+		this.setPlaceholder("Saved prompt");
+	}
+	getItems(): TFile[] {
+		return this.prompts;
+	}
+	getItemText(prompt: TFile): string {
+		return prompt.basename;
+	}
+	onChooseItem(prompt: TFile): void {
+		void this.picked(prompt);
 	}
 }
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## 8.2.0
+
+- **Chat from selected text.** Select text in a note and right-click: the Grill entry
+  has Ask about this, Explain, Rewrite and Make a note. The same four are in the
+  command list. Ask about this holds the passage above the chat box while you type.
+- **Saved prompts.** A note in `Grill/Prompts/` is a prompt you can run again. "New
+  saved prompt" creates one, and "Run a saved prompt" sends one about the open note
+  with whatever is selected. Write `{{selection}}` where the selected text should go.
+  Once you have one, a Prompts button under the chat box puts it in the box.
+- **A model button under the chat box.** With your own key it lists the models on your
+  account, and the one you pick also writes and marks tests. With Claude Code it
+  offers Default, Opus, Sonnet and Haiku.
+- **Grill Cloud answers more than study questions in Chat.** Drafting, rewriting and
+  planning in your notes are no longer turned away.
+
 ## 8.1.0
 
 - **Grill Cloud has a monthly plan.** $7.99 a month plus tax covers Chat and tests, and

@@ -48,6 +48,12 @@ export interface HomeData {
 	/** Claude Code's permission level, when it is what answers: its name, what it
 	 * means, and a step to the next one. */
 	level?: { name: string; says: string; next(): void } | null;
+	/** Which model answers, when there is a choice: its name, and a list to pick from,
+	 * opened at the button. */
+	model?: { name: string; open(at: HTMLElement): void } | null;
+	/** The saved prompts, when there are any: a list opened at the button, and what
+	 * to do with the one picked. */
+	prompts?: { open(at: HTMLElement, use: (text: string) => void): void } | null;
 	placeholder: string;
 	sendLabel: string;
 	/** What was typed, trimmed (empty when Send was pressed on an empty box), and
@@ -147,6 +153,22 @@ export function renderChatHome(screen: HTMLElement, d: HomeData): void {
 		const level = d.level;
 		const b = picks.createEl("button", { cls: "grill-home-engine grill-home-level", text: level.name, attr: { type: "button", "aria-label": `Permission level: ${level.name}. ${level.says}` } });
 		b.onclick = () => level.next();
+	}
+	if (d.model) {
+		const model = d.model;
+		const b = picks.createEl("button", { cls: "grill-home-engine grill-home-model", attr: { type: "button", "aria-label": `Model: ${model.name}. Change` } });
+		b.createSpan({ cls: "grill-home-model-name", text: model.name });
+		b.onclick = () => model.open(b);
+	}
+	if (d.prompts) {
+		const prompts = d.prompts;
+		const b = picks.createEl("button", { cls: "grill-home-engine", text: "Prompts", attr: { type: "button", "aria-label": "Use a saved prompt" } });
+		b.onclick = () =>
+			prompts.open(b, (text) => {
+				input.value = text;
+				input.focus();
+				input.setSelectionRange(text.length, text.length);
+			});
 	}
 	const send = bar.createEl("button", { text: d.sendLabel, cls: "mod-cta grill-primary-cta grill-home-send", attr: { type: "button" } });
 	const go = (): void => {

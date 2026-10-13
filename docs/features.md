@@ -12,9 +12,15 @@ Three levels decide when the card appears. Safe asks before any change to a note
 
 A reply is written to the screen as the model produces it. Under each reply, Insert at cursor places it in the note you are editing and Save as note keeps it as a note of its own beside the one it was about. Every conversation is saved under `Grill/Learn/`, and Test me on this starts a test on the note the conversation concerned.
 
+Chat can be started from text selected in a note. A right-click on the selection opens a Grill entry with four actions, which are also in the command list: Ask about this holds the passage above the chat box for a question to be typed, Explain and Rewrite send at once, and Make a note asks for a note written from the passage. In turn, the two actions under each reply complete the last two, since Insert at cursor replaces the text still selected and Save as note keeps the reply as a note of its own.
+
+A saved prompt is a note in `Grill/Prompts/`, named for what it does, whose text is sent as written. The command New saved prompt creates one, and Run a saved prompt sends one in a Chat about the open note, with any selected text quoted beneath it or placed where the prompt says `{{selection}}`. Once a prompt exists, a Prompts button under the chat box places one in the box, where it can be changed before it is sent.
+
 ## Engines
 
 An engine is what answers in Chat, and the button under the chat box steps through the ones available. Four kinds exist. Grill Cloud needs no setup and runs on a monthly plan once the free credits are used. A key of your own sends requests straight to the provider you chose. Claude Code and Codex run the program installed on your computer, under the sign-in you made there, with the vault as the working folder. Ollama runs a model on your own machine.
+
+Where an engine offers a choice of model, a second button under the chat box names the model in use and opens the list. With a key of your own, the list is the one on your account, and the model chosen there also writes and marks tests. With Claude Code, the choice is among its default, Opus, Sonnet and Haiku. Grill Cloud and Codex offer no choice here.
 
 The engines differ in what they can do in the vault. Grill Cloud and keys for Anthropic, OpenAI, DeepSeek and OpenAI-compatible endpoints use Grill's own note tools, which the plugin carries out through Obsidian; these work on a phone as on a desktop, and they cannot reach outside the vault or into Grill's own folder. Claude Code and Codex bring their own tools, shell commands included, and their own permission systems, which Grill passes through unchanged; they run on desktop only. Gemini and Ollama answer in text and change nothing.
 

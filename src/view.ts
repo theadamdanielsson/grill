@@ -1,9 +1,10 @@
 /** Quiz session side panel. */
 
-import { ItemView, loadMermaid, MarkdownRenderer, Modal, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
+import { ItemView, loadMermaid, MarkdownRenderer, Menu, Modal, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
 import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, cloudEnabled, creditsInWords, lowBalance, planInWords, usageInWords } from "./cloud";
-import { adjudicateBridges, ConceptTarget, contentWords, debriefSession, discussQuestion, embedTexts, explainQuestion, formatSatisfies, generateQuestions, Grade, CloudError, cleanDiagram, cleanText, gradeAnswer, learnFromNotes, learnWithTools, LLMConfig, replyInProgress, offeredProviders, PROVIDERS, ProviderId, Question, supportsEmbeddings, supportsVision, testModel, ThreadTurn, Verdict } from "./llm";
+import { CLAUDE_MODELS, selectionMessage } from "./selection";
+import { adjudicateBridges, ConceptTarget, contentWords, debriefSession, discussQuestion, embedTexts, explainQuestion, formatSatisfies, generateQuestions, Grade, CloudError, cleanDiagram, cleanText, gradeAnswer, learnFromNotes, learnWithTools, listModels, LLMConfig, replyInProgress, offeredProviders, PROVIDERS, ProviderId, Question, supportsEmbeddings, supportsVision, testModel, ThreadTurn, Verdict } from "./llm";
 import { detectOcclusionRegions } from "./ocr";
 import {
 	Concept,
@@ -497,6 +498,9 @@ export class SessionView extends ItemView {
 		record: string;
 		/** False when the note is too short to be tested on: see `enoughToTest`. */
 		testable: boolean;
+		/** A passage selected in the note that the next message is about: shown above
+		 * the box, and sent with what is typed. */
+		quote?: string;
 		turns: ThreadTurn[];
 		startedAt: Date;
 		persona: string;
@@ -1543,6 +1547,8 @@ export class SessionView extends ItemView {
 					})[0] ?? null,
 			openNote: openNote?.basename ?? null,
 			engine: this.engineForHome(),
+			model: this.modelForHome(),
+			prompts: learning && this.plugin.savedPrompts().length ? { open: (at, use) => this.promptsMenu(at, use) } : null,
 			level: learning && (this.agentProgram() || this.modelHasTools()) ? this.levelForHome() : null,
 			placeholder: learning ? "Ask anything, or say what to do" : "Say what to test, or just press Get grilled",
 			sendLabel: learning ? "Send" : "Get grilled",
@@ -1597,6 +1603,90 @@ export class SessionView extends ItemView {
 		}
 		if (s.provider === "grillcloud") return { name: "Grill Cloud", open };
 		return { name: s.provider === "custom" ? "Your endpoint" : PROVIDERS[s.provider].label.replace(/ \(.*$/, ""), open };
+	}
+
+	/** The models each provider has listed, kept while the pane is open. */
+	private modelLists: Partial<Record<ProviderId, string[]>> = {};
+
+	/** A list under one of the buttons below the box. */
+	private menuAt(at: HTMLElement, menu: Menu): void {
+		const r = at.getBoundingClientRect();
+		menu.showAtPosition({ x: r.left, y: r.bottom + 4 });
+	}
+
+	/** Which model answers, for the button under the box, where there is a choice to
+	 * make: Claude Code's own models, or the ones on the key in use. Grill Cloud picks
+	 * its own, and Codex is left to its settings. The model picked here is the one
+	 * tests are written and marked with too. */
+	private modelForHome(): { name: string; open(at: HTMLElement): void } | null {
+		const s = this.plugin.data.settings;
+		if (this.agentProgram()) {
+			if (s.chatEngine !== "claudecode") return null;
+			const now = CLAUDE_MODELS.find((m) => m.id === s.claudeModel) ?? CLAUDE_MODELS[0];
+			return {
+				name: now.name,
+				open: (at) => {
+					const menu = new Menu();
+					for (const m of CLAUDE_MODELS) {
+						menu.addItem((i) =>
+							i
+								.setTitle(m.name)
+								.setChecked(m.id === now.id)
+								.onClick(() => {
+									s.claudeModel = m.id;
+									void this.plugin.persist();
+									this.renderStart();
+								}),
+						);
+					}
+					this.menuAt(at, menu);
+				},
+			};
+		}
+		const cfg = this.plugin.llmConfig();
+		if (!cfg || cfg.provider === "grillcloud") return null;
+		const p = cfg.provider;
+		return {
+			name: cfg.model,
+			open: async (at) => {
+				// Asked of the provider once, the first time the list is opened.
+				if (!this.modelLists[p]) {
+					const { models } = await listModels(p, cfg.apiKey, cfg.baseUrl);
+					if (models.length) this.modelLists[p] = models;
+					if (!at.isConnected) return;
+				}
+				const listed = this.modelLists[p] ?? PROVIDERS[p].fallbackModels;
+				const menu = new Menu();
+				for (const m of listed.includes(cfg.model) ? listed : [cfg.model, ...listed]) {
+					menu.addItem((i) =>
+						i
+							.setTitle(m)
+							.setChecked(m === cfg.model)
+							.onClick(() => {
+								s.models[p] = m;
+								void this.plugin.persist();
+								this.renderStart();
+							}),
+					);
+				}
+				this.menuAt(at, menu);
+			},
+		};
+	}
+
+	/** The saved prompts, as a list under their button: picking one puts it in the box. */
+	private promptsMenu(at: HTMLElement, use: (text: string) => void): void {
+		const menu = new Menu();
+		for (const f of this.plugin.savedPrompts()) {
+			menu.addItem((i) =>
+				i.setTitle(f.basename).onClick(async () => {
+					const text = await this.plugin.savedPromptText(f, "");
+					if (text) use(text);
+					else new Notice(`Grill: ${f.basename} is empty.`, 5000);
+				}),
+			);
+		}
+		this.menuAt(at, menu);
 	}
 
 	/** The installed program Chat is set to run on (Claude Code or Codex), when it is
@@ -1830,16 +1920,28 @@ export class SessionView extends ItemView {
 		if (!L.turns.length) turns.createDiv({ cls: "grill-meta", text: "Ask anything about this note. Nothing here is graded." });
 		for (const turn of L.turns) void this.learnTurn(turns, turn);
 
+		if (L.quote) {
+			const quote = card.createDiv({ cls: "grill-learn-quote" });
+			quote.createDiv({ cls: "grill-learn-quote-text", text: L.quote.trim() });
+			const off = quote.createEl("button", { cls: "grill-home-chip-off", text: "x", attr: { type: "button", "aria-label": "Leave the selected text out" } });
+			off.onclick = () => {
+				L.quote = undefined;
+				quote.remove();
+				input.focus();
+			};
+		}
 		const box = card.createDiv({ cls: "grill-thread-ask grill-learn-box" });
 		const input = box.createEl("textarea", {
 			cls: "grill-thread-input",
-			attr: { rows: "2", placeholder: "Ask about this note... (Enter to send)", "aria-label": "Ask about this note" },
+			attr: { rows: "2", placeholder: L.quote ? "Ask about the selected text... (Enter to send)" : "Ask about this note... (Enter to send)", "aria-label": "Ask about this note" },
 		});
 		const send = box.createEl("button", { text: "Send", cls: "mod-cta grill-submit-btn" });
 		const go = (): void => {
 			const text = input.value.trim();
 			if (!text || send.disabled) return;
-			void this.askLearn(text);
+			const about = L.quote ? selectionMessage("ask", L.quote) : "";
+			L.quote = undefined;
+			void this.askLearn(about + text);
 		};
 		send.onclick = go;
 		input.addEventListener("keydown", (e) => {
@@ -2151,7 +2253,7 @@ export class SessionView extends ItemView {
 		const s = this.plugin.data.settings;
 		const brief = agentBrief(L.whole ? "" : L.note.path, L.record, L.instructions);
 		const shared = { prompt: text, cwd: base, program, level: s.agentLevel, resume: L.agentSession, signal: live.signal, onEvent: ui.onEvent, ask: ui.ask };
-		const result = s.chatEngine === "codex" ? await runCodex({ ...shared, brief }) : await runAgent({ ...shared, append: brief });
+		const result = s.chatEngine === "codex" ? await runCodex({ ...shared, brief }) : await runAgent({ ...shared, append: brief, ...(s.claudeModel ? { model: s.claudeModel } : {}) });
 		L.agentSession = result.sessionId || L.agentSession;
 		// A diagram, when one was asked for, is lifted out to be drawn the way every other is.
 		let diagram = "";
@@ -4841,6 +4943,16 @@ export class SessionView extends ItemView {
 		this.sessionScope = files;
 		this.dueOnly = dueOnly;
 		await this.startSession();
+	}
+
+	/** Entry point for the selection commands: a Chat about that note, with the message
+	 * sent, or the passage held above the box for a question to be typed about it. */
+	async startChatAbout(note: TFile, message: string, send: boolean, quote = ""): Promise<void> {
+		await this.leaveLearn();
+		await this.startLearn(note, send ? message : undefined);
+		if (send || !quote || this.learn?.note !== note) return;
+		this.learn.quote = quote;
+		this.renderLearn();
 	}
 
 	/** Redo a saved session's questions verbatim (from a note's grill-redo block): no
