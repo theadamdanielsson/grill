@@ -54,9 +54,9 @@ const PLAIN_LANGUAGES = new Set([
  * once the renderer has read it: no colon (a scheme), no "&" or backslash (either can
  * spell a colon, since Markdown decodes both in an address), no space or bracket, and
  * no two slashes at its start. */
-const LOCAL_IMAGE = /^!\[[^\[\]\n]*\]\((?![/]{2})[^()\s<>&\\:]+\)/;
+const LOCAL_IMAGE = /^!\[[^[\]\n]*\]\((?![/]{2})[^()\s<>&\\:]+\)/;
 /** An embed of something in the vault, held to the same rule. */
-const LOCAL_EMBED = /^!\[\[(?![/]{2})[^\[\]\n&\\:]+\]\]/;
+const LOCAL_EMBED = /^!\[\[(?![/]{2})[^[\]\n&\\:]+\]\]/;
 
 /** A "<" that would open a tag. The harmless tags are let through only when written
  * whole on one line: across a line break, a quote's ">" marker on the next line could

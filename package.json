@@ -1,6 +1,6 @@
 {
   "name": "grill",
-  "version": "8.2.0",
+  "version": "8.2.1",
   "description": "Chat with your notes and get grilled on them. An AI that reads, edits and tests you on your own notes, and remembers what you got wrong. For Obsidian.",
   "main": "main.js",
   "scripts": {

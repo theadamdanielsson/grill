@@ -1,5 +1,10 @@
 # Changelog
 
+## 8.2.1
+
+- Code and stylesheet tidied to the Obsidian directory's review rules. Nothing changes
+  in how Grill works.
+
 ## 8.2.0
 
 - **Chat from selected text.** Select text in a note and right-click: the Grill entry

@@ -1989,11 +1989,11 @@ settings:
   display: none;
 }
 /* A formula may otherwise break across lines inside itself, which wraps the row. */
-.grill-mgmt-card-preview mjx-container {
+.grill-mgmt-card-preview .MathJax {
   display: inline-block;
 }
-.grill-mgmt-card-preview mjx-container,
-.grill-mgmt-card-preview mjx-container * {
+.grill-mgmt-card-preview .MathJax,
+.grill-mgmt-card-preview .MathJax * {
   white-space: nowrap;
 }
 .grill-mgmt-card-body {
@@ -2575,8 +2575,7 @@ textarea.grill-mgmt-field {
    out a bad question. On a narrow pane it wraps as whole groups, never button by button. */
 .grill-answer-bar {
   flex-wrap: wrap;
-  row-gap: 0.6em;
-  column-gap: 0.7em;
+  gap: 0.6em 0.7em;
   margin-top: 0.8em;
 }
 .grill-answer-main,
@@ -3472,9 +3471,11 @@ textarea.grill-mgmt-field {
 /* Square corners throughout. Grill is drawn like an arcade cabinet: frames, tiles and
  * buttons with hard edges. Rounded cards and fields were the theme's habit showing
  * through, and read as a different product beside the tiles. Checkboxes keep theirs. */
-.grill-arcade-screen *:not(.checkbox-container):not(.checkbox-container *),
-.grill-thread-frame *:not(.checkbox-container):not(.checkbox-container *) {
-  border-radius: 0 !important;
+/* The :not(#...) names nothing: it lifts this rule above every radius set by a theme or
+ * further up this file, which is what it is for. */
+.grill-arcade-screen *:not(#grill-square):not(.checkbox-container):not(.checkbox-container *),
+.grill-thread-frame *:not(#grill-square):not(.checkbox-container):not(.checkbox-container *) {
+  border-radius: 0;
 }
 
 /* A question's type, in the Questions list: an outlined label. As a fill it took the
@@ -3498,7 +3499,7 @@ textarea.grill-mgmt-field {
   flex-wrap: wrap;
   justify-content: center;
   align-items: baseline;
-  column-gap: 0.55em;
+  gap: 0 0.55em;
   padding: 0.5em 0.4em 0.4em;
 }
 .grill-home .grill-start-stats .grill-stat-value {

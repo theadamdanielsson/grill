@@ -48,8 +48,8 @@ export interface CodexRun {
 	/** Said ahead of the first message: where it is, who for, what Grill has on record. */
 	brief?: string;
 	signal?: AbortSignal;
-	onEvent(e: AgentEvent): void;
-	ask(req: PermissionAsk): Promise<PermissionAnswer>;
+	onEvent: (e: AgentEvent) => void;
+	ask: (req: PermissionAsk) => Promise<PermissionAnswer>;
 }
 
 /** The name Claude Code gives the same kind of work, so one summary line serves all. */
@@ -125,7 +125,7 @@ export async function runCodexTurn(run: CodexRun, wire: CodexWire): Promise<Agen
 	const request = <T>(method: string, params: unknown): Promise<T> =>
 		new Promise<T>((yes, no) => {
 			const id = nextId++;
-			waiting.set(id, { yes: yes as (v: unknown) => void, no });
+			waiting.set(id, { yes, no });
 			wire.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
 		});
 	const answer = (id: unknown, result: unknown): void => wire.send(JSON.stringify({ jsonrpc: "2.0", id, result }));

@@ -688,16 +688,16 @@ export default class GrillPlugin extends Plugin {
 				// One Grill entry that opens to the list, the way Format and Insert do.
 				// Obsidian's menus can do that, though its typings don't say so; where
 				// they can't, the entries go in the menu itself.
-				const entries: Array<{ title: string; run(): void }> = SELECTION_ASKS.map((ask) => ({
+				const entries: Array<{ title: string; run: () => void }> = SELECTION_ASKS.map((ask) => ({
 					title: ask.menu,
 					run: () => void this.chatOnSelection(ask.id, file, editor.getSelection()),
 				}));
 				if (this.savedPrompts().length) entries.push({ title: "Saved prompt...", run: () => this.pickSavedPrompt(file, editor.getSelection()) });
 				menu.addItem((i) => {
 					i.setSection("grill").setTitle("Grill").setIcon("flame");
-					const open = (i as unknown as { setSubmenu?: () => Menu }).setSubmenu;
-					if (typeof open === "function") {
-						const sub: Menu = open.call(i);
+					const opens = i as unknown as { setSubmenu?: () => Menu };
+					if (typeof opens.setSubmenu === "function") {
+						const sub = opens.setSubmenu();
 						for (const e of entries) sub.addItem((x) => x.setTitle(e.title).onClick(e.run));
 						return;
 					}

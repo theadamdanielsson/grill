@@ -165,8 +165,8 @@ export interface AgentRun {
 	append?: string;
 	model?: string;
 	signal?: AbortSignal;
-	onEvent(e: AgentEvent): void;
-	ask(req: PermissionAsk): Promise<PermissionAnswer>;
+	onEvent: (e: AgentEvent) => void;
+	ask: (req: PermissionAsk) => Promise<PermissionAnswer>;
 }
 
 export interface AgentResult {

@@ -59,8 +59,8 @@ export interface HomeData {
 	/** What was typed, trimmed (empty when Send was pressed on an empty box), and
 	 * whether the open note's chip was still on. */
 	send(text: string, withOpenNote: boolean): void;
-	showProgress(): void;
-	showQuestions(): void;
+	showProgress: () => void;
+	showQuestions: () => void;
 }
 
 /** How much is left, as a ring with no number on it: a balance that ticks down in

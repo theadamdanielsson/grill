@@ -120,7 +120,7 @@ function svgForImage(svg: string, font = ""): string | null {
 	// drawn in what it was measured in.
 	const family = font.replace(/[<>{};]/g, "").trim();
 	if (family) {
-		const style = doc.createElementNS("http://www.w3.org/2000/svg", "style");
+		const style = createSvg("style");
 		style.textContent = `* { font-family: ${family} !important; }`;
 		root.appendChild(style);
 	}
@@ -1364,7 +1364,7 @@ export class SessionView extends ItemView {
 		const all = this.app.vault.getMarkdownFiles();
 		const learned = all.filter((f) => f.path.startsWith(`${folder}/Learn/`)).sort((a, b) => b.stat.ctime - a.stat.ctime)[0];
 		if (!learned) return null;
-		const name = this.app.metadataCache.getFileCache(learned)?.frontmatter?.note;
+		const name: unknown = this.app.metadataCache.getFileCache(learned)?.frontmatter?.note;
 		const note = typeof name === "string" ? byName.get(name) : undefined;
 		if (!note) return null;
 		const testedSince = all.some(
@@ -1404,7 +1404,7 @@ export class SessionView extends ItemView {
 		const concepts = this.plugin.concepts;
 		const notesOf = (ids: string[]): TFile[] => {
 			const notes = new Set(ids.map((id) => concepts[id]?.note));
-			return [...notes].flatMap((n) => (n && byName.has(n) ? [byName.get(n) as TFile] : []));
+			return [...notes].flatMap((n) => byName.get(n ?? "") ?? []);
 		};
 		const begin = (scope: TFile[] | null, dueOnly: boolean, only: string[] | null = null): void => this.beginTest(scope, dueOnly, only);
 
@@ -1431,7 +1431,10 @@ export class SessionView extends ItemView {
 					label: `Explain what I missed: ${n}`,
 					detail: `Missed: ${listSome([...new Set(missedLabels.get(n) ?? [])])}`,
 					count: String(count),
-					run: () => void this.startLearn(byName.get(n) as TFile, "What have I been getting wrong on this note, and what do I need to understand to fix it?"),
+					run: () => {
+						const note = byName.get(n);
+						if (note) void this.startLearn(note, "What have I been getting wrong on this note, and what do I need to understand to fix it?");
+					},
 				});
 			}
 			if (openNote) {
@@ -1451,7 +1454,7 @@ export class SessionView extends ItemView {
 				label: "Catch up",
 				detail: `The ${CATCH_UP} most pressing now. The other ${dueNow - CATCH_UP} come back over the coming days`,
 				count: `${CATCH_UP} of ${dueNow}`,
-				run: async () => {
+				run: () => void (async () => {
 					// Worked out on the schedule as it is on disk now, not as it was when
 					// this pane last loaded it: another device may have reviewed and synced
 					// since, and writing the older copy back would undo that.
@@ -1468,7 +1471,7 @@ export class SessionView extends ItemView {
 					if (moved) new Notice(`Grill: ${kept.length} for now. The other ${moved} come back over the coming days, ${CATCH_UP} a day at most.`, 8000);
 					const notes = new Set(kept.map((id) => fresh[id]?.note));
 					begin(eligible.filter((f) => notes.has(f.basename)), true, kept);
-				},
+				})(),
 			});
 		} else if (dueNow > missed.length) {
 			// Only when it is more than the misses: when everything due is a miss, this
@@ -1521,7 +1524,6 @@ export class SessionView extends ItemView {
 			});
 		}
 
-		const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 		renderChatHome(screen, {
 			mode: this.homeMode,
 			setMode: (mode) => {
@@ -1648,7 +1650,7 @@ export class SessionView extends ItemView {
 		const p = cfg.provider;
 		return {
 			name: cfg.model,
-			open: async (at) => {
+			open: (at) => void (async () => {
 				// Asked of the provider once, the first time the list is opened.
 				if (!this.modelLists[p]) {
 					const { models } = await listModels(p, cfg.apiKey, cfg.baseUrl);
@@ -1670,7 +1672,7 @@ export class SessionView extends ItemView {
 					);
 				}
 				this.menuAt(at, menu);
-			},
+			})(),
 		};
 	}
 
@@ -1739,7 +1741,7 @@ export class SessionView extends ItemView {
 	 * cut to size for a message. */
 	private async learnNotes(note: TFile, also: TFile[]): Promise<{ noteText: string; linkedText: string }> {
 		const eligible = new Map(this.allEligible().map((f) => [f.path, f] as const));
-		const links = Object.keys(this.app.metadataCache.resolvedLinks[note.path] ?? {}).flatMap((path) => (eligible.has(path) ? [eligible.get(path) as TFile] : []));
+		const links = Object.keys(this.app.metadataCache.resolvedLinks[note.path] ?? {}).flatMap((path) => eligible.get(path) ?? []);
 		const read = async (f: TFile): Promise<{ name: string; text: string }> => ({ name: f.basename, text: await this.app.vault.cachedRead(f) });
 		// Asked of the whole vault: the notes that matched come first and get more room
 		// each than a linked note does, then whatever the main note links to.
@@ -1797,7 +1799,7 @@ export class SessionView extends ItemView {
 		const asked: Array<{ at: number; text: string }> = [];
 		for (const f of sessions) {
 			if (answers.length >= LEARN_ANSWERS_SENT) break;
-			const when = this.app.metadataCache.getFileCache(f)?.frontmatter?.date;
+			const when: unknown = this.app.metadataCache.getFileCache(f)?.frontmatter?.date;
 			for (const a of parseSessionNote(await this.app.vault.cachedRead(f))) {
 				if (a.note !== noteName) continue;
 				if (answers.length < LEARN_ANSWERS_SENT) answers.push({ ...a, when: typeof when === "string" ? when : undefined });
@@ -1841,7 +1843,7 @@ export class SessionView extends ItemView {
 			})),
 		);
 		const byName = new Map(eligible.map((f) => [f.basename, f] as const));
-		const found = rankNotes(text, notes, 5, openNote?.basename ?? "").flatMap((n) => (byName.has(n.name) ? [byName.get(n.name) as TFile] : []));
+		const found = rankNotes(text, notes, 5, openNote?.basename ?? "").flatMap((n) => byName.get(n.name) ?? []);
 		const map = vaultMap(notes);
 		// Three kinds of question. One that matches notes is answered from those notes,
 		// with the map so the rest of the vault is known about: a few thousand tokens.
@@ -2126,7 +2128,7 @@ export class SessionView extends ItemView {
 	private turnUi(
 		waiting: HTMLElement,
 		live: { onText(soFar: string): void; signal: AbortSignal },
-	): { onEvent(e: AgentEvent): void; ask(req: PermissionAsk): Promise<PermissionAnswer> } {
+	): { onEvent: (e: AgentEvent) => void; ask: (req: PermissionAsk) => Promise<PermissionAnswer> } {
 		const body = waiting.querySelector<HTMLElement>(".grill-thread-text");
 		const activity = createDiv({ cls: "grill-agent-activity" });
 		waiting.insertBefore(activity, body);
@@ -2652,18 +2654,12 @@ export class SessionView extends ItemView {
 
 		// Stats derived from mastery.json.
 		const counts = { untested: 0, struggling: 0, known: 0 };
-		let dueWeek = 0, knownShaky = 0;
-		const now = Date.now();
-		const weekMs = 7 * 86400_000;
+		let knownShaky = 0;
 		for (const f of eligible) {
 			const m = map[f.basename];
 			counts[statusOf(m)]++;
 			if (m) {
 				if (m.weakPrereq) knownShaky++;
-				if (m.dueAt) {
-					const d = new Date(m.dueAt).getTime();
-					if (d > now && d <= now + weekMs) dueWeek++;
-				}
 			}
 		}
 		// Concept-level, not note-level: matches what clicking into the due queue
@@ -3701,7 +3697,7 @@ export class SessionView extends ItemView {
 			// stretch stays plain text, which keeps its spacing against the input exactly.
 			const stretch = (text: string): void => {
 				if (!text) return;
-				if (/[$*`\[]/.test(text)) this.md(text, qEl.createSpan({ cls: "grill-blank-text" }), q.node);
+				if (/[$*`[]/.test(text)) this.md(text, qEl.createSpan({ cls: "grill-blank-text" }), q.node);
 				else qEl.createSpan({ text });
 			};
 			let cursor = 0;
@@ -4959,7 +4955,6 @@ export class SessionView extends ItemView {
 	 * generation, no scheduling writes, graded per the current setting. Practice, not a
 	 * review. */
 	async startReplay(questions: Question[]): Promise<void> {
-		const s = this.plugin.data.settings;
 		const cfg = this.plugin.llmConfig();
 		if (!cfg) {
 			if (this.plugin.askToUseModel()) return;
@@ -6027,7 +6022,7 @@ export class SessionView extends ItemView {
 			if (this.targets.some((t) => !this.isPrebuilt(t))) {
 				this.renderLoading(
 					"Writing your questions",
-					`${cfg!.model} is reading ${names.length} notes. This usually takes a few seconds.`,
+					`${cfg.model} is reading ${names.length} notes. This usually takes a few seconds.`,
 					() => this.cancelSession(),
 				);
 			}
