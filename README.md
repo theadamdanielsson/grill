@@ -18,7 +18,7 @@ The home screen suggests where to go from your record: the questions you last mi
 
 - **A chat that works in your vault:** it reads, searches, edits and creates notes over several steps, and shows each step as it happens. Three permission levels decide when it has to ask: Safe, Plan and Auto.
 - **A record behind every reply:** per-concept scheduling, your past answers and the confusions Grill has named are given to the chat, so an explanation starts from what you got wrong.
-- **Nothing to set up:** [Grill Cloud](#grill-cloud) answers, writes questions and grades with no API key and no account. Free to try.
+- **Nothing to set up:** [Grill Cloud](#grill-cloud) answers, writes questions and grades with no API key and no account. It works on your phone, reads the images in your notes, and your notes are not trained on. Free to try.
 - **Or a program on your computer:** [Claude Code, Codex or opencode](#with-claude-code-or-codex), with your own sign-in. opencode has free models and needs no account.
 - **Or your own key:** Claude, GPT, Gemini, DeepSeek, any OpenAI-compatible endpoint (OpenRouter, Groq, LM Studio), or a local model through Ollama.
 - **Questions from your own notes:** recall questions written from what you wrote, in free text, multiple choice, true or false, fill-in and matching.
@@ -45,6 +45,15 @@ How each of these works is described in **[docs/features.md](docs/features.md)**
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/cloud-dark.svg"><img src="docs/icons/cloud.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> Grill Cloud
 
 Grill Cloud is the easiest way to use Grill. Press Start free and it answers in Chat, writes the questions, grades your answers and explains them, with no API key and no sign-up. Grill makes a key on your device and, while each day's free credits last, you get some to try it.
+
+What Grill Cloud gives you that the free options do not:
+
+- **It works on your phone.** Claude Code, Codex and opencode need a computer. Grill Cloud chats, edits notes and tests you on a phone or tablet too.
+- **It reads your images.** Diagrams, graphs, screenshots and photos of handwritten pages in your notes are read, and the questions cover them.
+- **It reads aloud in a natural voice,** for studying away from the screen.
+- **Your notes are not trained on.** Free models may keep what you send to improve the model. Anthropic, behind Grill Cloud, does not.
+- **One model, chosen for grading.** You do not pick between free models of uneven quality. Grill picks the model for how well it marks, and keeps it current.
+- **Nothing to install or sign in to.** No program, no terminal, no key. One balance for every vault, which follows a synced vault to your other devices.
 
 After that Grill Cloud is a monthly plan: $7.99 a month, plus tax where it applies, and you can cancel it whenever you like. The plan covers Chat and tests up to usage limits, which apply to any five hours, to any week and to each month. The limits are not given as figures, because what a session uses depends on how long your notes are and how much you ask of it. Importantly, a Chat turn that works in the vault takes several steps, and each step counts as a reply, so editing through Chat uses more than asking a question. When a limit is reached, Grill says so and roughly when it frees up. For anyone who wants to keep going at once, credit packs come up at that point: 400 credits for $3.99 or 1,100 for $9.99. Credits are used only past a limit, and they do not expire.
 
