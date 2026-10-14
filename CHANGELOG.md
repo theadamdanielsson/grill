@@ -1,5 +1,21 @@
 # Changelog
 
+## 8.4.0
+
+- **opencode, free.** Grill can install opencode, an open-source agent like Claude
+  Code, from the Agents tab in settings or on the first run. It has free models that
+  need no account, uses your Ollama models, and can read, search and change the vault
+  with the same permission card and levels as the other engines. Its free models may
+  keep what you send them to improve the model.
+- **Start on what you already have.** On the first run, Grill offers Claude Code, Codex
+  or opencode when one is on your computer, ahead of Grill Cloud. Chat starts on an
+  installed program instead of saying there is no model.
+- **Tests without a key.** With no Grill Cloud, key or Ollama set up, questions are
+  written and marked by the program Chat runs on.
+- **Settings in tabs:** Basic, Own key, Agents, Study, Scope and Advanced.
+- **Chats are named by their topic,** such as `2026-10-14 Real Interest Rate (r)`,
+  instead of by the time alone.
+
 ## 8.3.0
 
 - **Chat can set Grill up for you.** Say what you are aiming for, such as an exam in

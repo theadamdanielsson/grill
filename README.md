@@ -6,7 +6,7 @@ I take a lot of notes to learn new material, and I needed a way to learn them mo
 
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/play-dark.svg"><img src="docs/icons/play.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> How to use it
 
-1. **Start free.** On first run, press Start free. That is Grill Cloud: no API key, no sign-up, and a few free credits to try it. You can use your own API key, Ollama, Claude Code or Codex instead.
+1. **Start free.** On first run, press Start free. That is Grill Cloud: no API key, no sign-up, and a few free credits to try it. If Claude Code, Codex or opencode is on your computer, Grill offers to start on it instead. You can also use your own API key or Ollama.
 2. **Chat.** Ask about the note you have open, or tell Grill what to do with it. It can explain, summarise, find things across the vault, and edit or create notes, asking your permission before a change.
 3. **Test.** Switch to Test and press **Get grilled**. Grill writes questions from your notes and marks what you type back, with partial credit and specific feedback. What you get wrong is what Chat and the suggestions point at next.
 
@@ -19,7 +19,7 @@ The home screen suggests where to go from your record: the questions you last mi
 - **A chat that works in your vault:** it reads, searches, edits and creates notes over several steps, and shows each step as it happens. Three permission levels decide when it has to ask: Safe, Plan and Auto.
 - **A record behind every reply:** per-concept scheduling, your past answers and the confusions Grill has named are given to the chat, so an explanation starts from what you got wrong.
 - **Nothing to set up:** [Grill Cloud](#grill-cloud) answers, writes questions and grades with no API key and no account. Free to try.
-- **Or your own subscription:** [Claude Code or Codex](#with-claude-code-or-codex), run from the program already installed on your computer with your own sign-in.
+- **Or a program on your computer:** [Claude Code, Codex or opencode](#with-claude-code-or-codex), with your own sign-in. opencode has free models and needs no account.
 - **Or your own key:** Claude, GPT, Gemini, DeepSeek, any OpenAI-compatible endpoint (OpenRouter, Groq, LM Studio), or a local model through Ollama.
 - **Questions from your own notes:** recall questions written from what you wrote, in free text, multiple choice, true or false, fill-in and matching.
 - **Fair grading:** answers are marked against a rubric written with the question, with partial credit and the expected answer always shown.
@@ -62,13 +62,15 @@ There is nothing to look after. Grill makes a key on your device when you press 
 The first month of a plan is refunded if you ask within 14 days of subscribing. Used credits cannot be refunded, and unused ones can if you ask within 14 days. Grill Cloud is for people 18 and over.
 
 <a name="with-claude-code-or-codex"></a>
-## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/screen-dark.svg"><img src="docs/icons/screen.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> With Claude Code or Codex
+## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/screen-dark.svg"><img src="docs/icons/screen.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> With Claude Code, Codex or opencode
 
 Chat can run on the Claude Code or Codex already installed on your computer. Grill starts the program as it is, in your vault, and shows what it does; the sign-in is the one you made in a terminal, and Grill never sees it. As a result, Chat draws on the plan you already pay Anthropic or OpenAI for, within whatever that plan allows for use outside the provider's own apps.
 
 The button under the chat box steps through the engines found on your computer, and the button beside it sets the permission level. Safe asks before a note is changed or a command is run. Plan reads and proposes, and changes nothing. Auto edits notes in the vault without asking. These are the programs' own permission systems, passed through; Grill adds none of its own.
 
-Two limits apply. First, this works on desktop only, since there is a program to run. Second, these engines answer in Chat; tests are still written and graded by Grill Cloud, your own key or Ollama.
+[opencode](https://github.com/anomalyco/opencode) is an open-source program of the same kind that works with many models. Grill can install it: the Install button in the Agents tab of Grill's settings, or on the first run, downloads one pinned build (about 80 MB) from npm, where opencode publishes it, checks it against the published checksum, and keeps it in `~/.grill/opencode`, outside your vault. Without an account it offers free models and any Ollama models on your computer; `opencode auth login` in a terminal adds your own accounts. Note that opencode's free models may keep what you send them to improve the model while they are free. For notes you would rather keep private, use a model with your own account, Ollama, or Grill Cloud.
+
+Two limits apply. First, this works on desktop only, since there is a program to run. Second, tests are written and graded by Grill Cloud, your own key or Ollama when one is set up; only without one do they run on the program Chat uses.
 
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/key-dark.svg"><img src="docs/icons/key.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> With your own key
 
@@ -83,7 +85,7 @@ To pay a model provider directly, pick "use my own API key or Ollama" on first r
 
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/ask-dark.svg"><img src="docs/icons/ask.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> Worth knowing before you install
 
-- Grill needs a model: [Grill Cloud](#grill-cloud), your own API key, or Ollama. Earlier versions had a mode with no AI; 8.0 removes it.
+- Grill needs a model: [Grill Cloud](#grill-cloud), your own API key, Ollama, or Claude Code, Codex or opencode on your computer. Earlier versions had a mode with no AI; 8.0 removes it.
 - It is only as good as your notes. Half-written notes make half-baked questions.
 - The grading is a model's judgement. It is usually right, and it always shows you the expected answer so that you can judge for yourself.
 - A chat that can edit your notes can edit them badly. Safe is the default level, every change is shown before it is made, and a vault under version control or sync history can undo one.
@@ -92,12 +94,12 @@ To pay a model provider directly, pick "use my own API key or Ollama" on first r
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/check-dark.svg"><img src="docs/icons/check.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> Requirements
 
 - **Obsidian 1.8.0 or newer.** Grill checks this on load and won't run on an older build.
-- **Desktop or mobile.** Writing long answers is easier with a keyboard, and Claude Code and Codex are desktop only.
+- **Desktop or mobile.** Writing long answers is easier with a keyboard, and Claude Code, Codex and opencode are desktop only.
 - **One of these, for questions and grading:**
   - [Grill Cloud](#grill-cloud): nothing to install or sign up for. Press Start free.
   - An API key from Anthropic, OpenAI, Google, DeepSeek, or any OpenAI-compatible endpoint (OpenRouter, Groq, LM Studio).
   - [Ollama](https://ollama.com) installed locally: no key, no cost, nothing leaving your machine.
-- **Optionally, for Chat:** Claude Code or Codex installed and signed in.
+  - On desktop, Claude Code or Codex installed and signed in, or opencode, which Grill can install.
 - No account with Grill itself.
 
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/install-dark.svg"><img src="docs/icons/install.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> Installation
@@ -124,8 +126,8 @@ After installing, open Grill (the flame icon, or the "Open Grill" command). Firs
 The common ones are below; the full list is in [docs/troubleshooting.md](docs/troubleshooting.md).
 
 - **"Couldn't find concepts to quiz in these notes."** The note has too little in it to ask about. Add to it, or pick a longer note.
-- **Chat says it cannot edit my notes.** The engine answering has no tools: Gemini and Ollama answer in text only. Switch the engine under the chat box, or use Grill Cloud, an Anthropic or OpenAI key, Claude Code or Codex.
-- **The engine button opens settings.** No installed Claude Code or Codex was found. Set its location in Grill's settings.
+- **Chat says it cannot edit my notes.** The engine answering has no tools: Gemini and Ollama answer in text only. Switch the engine under the chat box, or use Grill Cloud, an Anthropic or OpenAI key, Claude Code, Codex or opencode.
+- **The engine button opens settings.** No installed Claude Code, Codex or opencode was found. Set its location in the Agents tab of Grill's settings, or install opencode there.
 - **A note I aced does not turn green.** Green requires most of a note's concepts to each be answered correctly twice, spaced out. One pass is not enough to call a note known.
 - **The same question keeps coming back.** This is by design: a concept's question is written once and reused on every later review, so that what is tested is the answer and never the wording. The "Clear cached questions" command forces a new one.
 - **A model is not reading the images in my notes.** Grill sends images to models that support vision, and says in the session when the chosen model cannot read them.
@@ -136,7 +138,7 @@ Something broken? [Open an issue](https://github.com/theadamdanielsson/grill/iss
 
 ## Privacy and cost
 
-Grill talks only to the model provider you configure. There are no analytics, there is no account, and no server of mine sits in the middle. The one exception is [Grill Cloud](#grill-cloud), if you turn it on: the session then goes through my server to Anthropic. What leaves your machine and what Grill stores locally is set out in **[docs/privacy.md](docs/privacy.md)**.
+Grill talks only to the model provider you configure. There are no analytics, there is no account, and no server of mine sits in the middle. The one exception is [Grill Cloud](#grill-cloud), if you turn it on: the session then goes through my server to Anthropic. Installing opencode downloads it from npm (registry.npmjs.org), once, when you press Install. What leaves your machine and what Grill stores locally is set out in **[docs/privacy.md](docs/privacy.md)**.
 
 ## License
 

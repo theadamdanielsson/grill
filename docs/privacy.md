@@ -16,6 +16,10 @@ Grill sends your notes to one place: the model you chose to run it on. It has no
 
 **With Claude Code or Codex**, Grill starts the program installed on your computer, in your vault, and passes it your message with a short brief: the path of the open note, Grill's record on it, and your study preferences. The program then reads files and contacts Anthropic or OpenAI itself, under the account you signed in with and that provider's terms. Importantly, Grill never reads, stores or forwards that sign-in, and the program is run unmodified. Unlike Grill's own note tools, these programs are bounded by their own permission system, which Grill passes through, and they can run shell commands when you allow them.
 
+**With opencode**, the same holds: Grill starts the program in your vault and passes it your message and the brief. opencode then sends them to the model picked under the chat box: its own free models (run through opencode's service, which may keep what is sent to improve a model while it is free), an Ollama model on your computer, or an account you signed in to with `opencode auth login`. Installing it from Grill downloads one pinned build from registry.npmjs.org, checks it against the published checksum, and keeps it in `~/.grill/opencode`.
+
+**Tests without a model.** When no Grill Cloud, key or Ollama is set up, questions are written and marked by the program Chat runs on, in an empty folder of Grill's own and with no permission to change anything. The note text and your answer are sent the same way as above.
+
 **With Ollama**, the model runs on your machine and nothing leaves it. Smaller local models write weaker questions than hosted ones; 8B or larger is a reasonable floor.
 
 ## Other calls

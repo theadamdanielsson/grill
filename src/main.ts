@@ -3672,7 +3672,7 @@ export class GrillSettingTab extends PluginSettingTab {
 					if (this.opencodeBusy) return setting.setDesc(`Downloading opencode${mb ? ` (${mb} MB)` : ""} and checking it...`);
 					if (found) {
 						setting.setDesc(
-							`${isGrillInstall(found) ? `Installed by Grill (${OPENCODE_VERSION})` : `Found at ${found}`}. Free models work without signing in. To use an account of yours, run opencode auth login in a terminal.`,
+							`${isGrillInstall(found) ? `Installed by Grill (${OPENCODE_VERSION})` : `Found at ${found}`}. Free models work without signing in, and may keep what you send them to improve the model. To use an account of yours, run opencode auth login in a terminal.`,
 						);
 						if (isGrillInstall(found)) {
 							setting.addButton((b) =>
