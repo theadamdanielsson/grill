@@ -721,37 +721,57 @@
   color: var(--grill-ink-flame, #ff7a22);
 }
 
-/* Tabs along the top of the settings page, after Copilot's: a row of square buttons on
- * a rule, the open one filled. Only the open tab's rows are drawn under it. */
+/* Tabs along the top of the settings page: plain folder tabs on one rule, the open one
+ * joined to the page under it. Only the open tab's rows are drawn under it. Obsidian
+ * 1.13+ puts the bar in a group of its own, whose card is taken off here. */
+.grill-settings .grill-settings-tabs-group,
+.grill-settings .grill-settings-tabs-group > .setting-items {
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  margin: 0;
+}
 .grill-settings-tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 2px;
-  margin: 0.2em 0 0.6em;
+  gap: 0;
+  margin: 0 0 0.4em;
   padding: 0;
   border: none;
-  border-bottom: 2px solid var(--text-normal);
+  border-bottom: 1px solid var(--background-modifier-border-hover);
 }
 .grill-settings-tabs .grill-settings-tab {
   border-radius: 0;
   box-shadow: none;
-  border: 1px solid var(--background-modifier-border);
+  background: none;
+  border: 1px solid transparent;
   border-bottom: none;
-  background: var(--background-secondary);
+  margin-bottom: -1px;
   color: var(--text-muted);
-  font-size: var(--font-ui-medium);
-  padding: 0.35em 0.9em;
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-medium);
+  padding: 0.45em 0.95em;
   height: auto;
   cursor: pointer;
 }
 .grill-settings-tabs .grill-settings-tab:hover {
   color: var(--text-normal);
-  background: var(--background-modifier-hover);
+  background: none;
 }
 .grill-settings-tabs .grill-settings-tab.is-active {
-  background: var(--interactive-accent);
-  border-color: var(--interactive-accent);
-  color: var(--text-on-accent);
+  color: var(--grill-ink-flame, #ff7a22);
+  background: var(--background-primary);
+  border-color: var(--background-modifier-border-hover);
+  border-top: 2px solid var(--grill-ember, #b91c00);
+}
+/* The first section under the tabs needs no rule of its own: the tabs are the rule. */
+.grill-settings .grill-settings-tabs + .setting-item-heading,
+.grill-settings .grill-settings-tabs-group + .setting-group > .setting-item-heading {
+  border-top: none;
+  border-image: none;
+  margin-top: 0.6em;
+  padding-top: 0.4em;
 }
 
 /* The Tuning escape hatch: every number the scheduler runs on, reachable but never
