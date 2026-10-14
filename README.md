@@ -117,7 +117,7 @@ npm run build
 
 then drop `main.js`, `manifest.json`, and `styles.css` into `<vault>/.obsidian/plugins/grill/`.
 
-After installing, open Grill (the flame icon, or the "Open Grill" command). First run asks how your questions should be written, then starts you on the note you have open.
+After installing, open Grill (the flame icon, or the "Open Grill" command). First run asks which model Grill should use, then shows what you can do with your notes.
 
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/cross-dark.svg"><img src="docs/icons/cross.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> Troubleshooting
 

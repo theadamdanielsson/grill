@@ -758,8 +758,7 @@ test("the onboarding panel and the home screen ask for the balance without ever 
 	plugin.cloudListeners.add(view.onCloud);
 	// Every step of first run draws without a hitch, and only the cloud step asks.
 	view.renderOnboarding(2);
-	view.renderOnboarding(2, false, true);
-	view.renderOnboarding(2, false, false, new (TFile as any)("School/Stats.md"));
+	view.renderOnboarding(1, true);
 	assert.equal(seen.length, 0);
 	view.renderOnboarding(1);
 	await settle();
@@ -1179,31 +1178,6 @@ test("one balance per device: Start free in a second vault uses the key the firs
 	await alone.plugin.startCloud();
 	assert.ok(isCloudKey(alone.plugin.data.settings.apiKeys.grillcloud));
 	(globalThis as any).localStorage = real;
-});
-
-test("first run offers the open note only when there is enough in it to ask about", async () => {
-	const { plugin } = await boot();
-	const structured = ["# Demand", "", "**Elasticity**: how much quantity responds to price.", "**Substitute**: a good bought instead of another.", "**Complement**: a good bought alongside another.", "**Normal good**: demand rises with income.", "**Inferior good**: demand falls as income rises."].join("\n");
-	const prose = "Demand is one side of a market. ".repeat(30);
-	const open = (path: string, text: string, frontmatter?: Record<string, unknown>): any => {
-		const file = new (TFile as any)(path);
-		const app = {
-			workspace: { getActiveFile: () => file },
-			metadataCache: { getFileCache: () => ({ frontmatter }) },
-			vault: { cachedRead: async () => text },
-		};
-		const view = new (GrillView as any)(deepFake({ app }), plugin) as any;
-		view.app = app;
-		return view;
-	};
-	const s = plugin.data.settings;
-	assert.equal((await open("Econ/Demand.md", structured).firstNote())?.path, "Econ/Demand.md");
-	assert.equal(await open("Econ/Demand.md", prose).firstNote(), null, "a note with a question or two in it");
-	assert.equal(await open("Econ/Demand.md", structured, { "excalidraw-plugin": "parsed" }).firstNote(), null, "a drawing");
-	assert.equal(await open(`${s.folder}/Session.md`, structured).firstNote(), null, "Grill's own files");
-	assert.equal(await open("Econ/Demand.pdf", structured).firstNote(), null);
-	s.includedFolders = ["School"];
-	assert.equal(await open("Econ/Demand.md", structured).firstNote(), null, "outside Grill's folders");
 });
 
 test("the monthly plan is offered where it is on sale, opens its own checkout, and is noticed when it starts", async () => {

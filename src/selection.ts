@@ -67,6 +67,15 @@ export function promptMessage(prompt: string, selected: string): string {
 	return has ? `${text}\n\n${quoteSelection(selected)}` : text;
 }
 
+/** Prompts that come with Grill, offered above the saved ones: things worth asking of
+ * any note, whatever it is for. */
+export const STARTER_PROMPTS: Array<{ name: string; text: string }> = [
+	{ name: "Summarise", text: "Summarise this note in five bullet points, in plain words." },
+	{ name: "Find the gaps", text: "What is missing, unclear or contradictory in this note?" },
+	{ name: "Pull out tasks", text: "List every task, decision and open question in this note." },
+	{ name: "Explain simply", text: "Explain this note as if I were new to the subject." },
+];
+
 /** What a new saved prompt starts as. */
 export const NEW_PROMPT = "Summarise this in five bullet points, in plain words.\n";
 

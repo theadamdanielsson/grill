@@ -28,7 +28,6 @@ export interface HomeCredits {
 	left: number;
 	low: boolean;
 	label: string;
-	open(): void;
 }
 
 export type HomeMode = "chat" | "test";
@@ -51,8 +50,8 @@ export interface HomeData {
 	/** Which model answers, when there is a choice: its name, and a list to pick from,
 	 * opened at the button. */
 	model?: { name: string; open(at: HTMLElement): void } | null;
-	/** The saved prompts, when there are any: a list opened at the button, and what
-	 * to do with the one picked. */
+	/** The prompts, Grill's own and the saved ones: a list opened at the button, and
+	 * what to do with the one picked. */
 	prompts?: { open(at: HTMLElement, use: (text: string) => void): void } | null;
 	placeholder: string;
 	sendLabel: string;
@@ -64,14 +63,15 @@ export interface HomeData {
 }
 
 /** How much is left, as a ring with no number on it: a balance that ticks down in
- * view while you study is a distraction, a ring that slowly empties is not. */
+ * view while you study is a distraction, a ring that slowly empties is not. Drawn
+ * small, as a mark inside Grill Cloud's button under the chat box, which does the
+ * clicking. */
 export function renderCreditsRing(parent: HTMLElement, c: HomeCredits): void {
-	const btn = parent.createEl("button", { cls: "grill-credits-ring", attr: { "aria-label": c.label, type: "button" } });
+	const btn = parent.createSpan({ cls: "grill-credits-ring", attr: { "aria-label": c.label, title: c.label, role: "img" } });
 	btn.toggleClass("is-low", c.low);
-	btn.onclick = () => c.open();
+	const svg = btn.createSvg("svg", { attr: { viewBox: "0 0 24 24", width: "15", height: "15", "aria-hidden": "true" } });
 	const r = 8;
 	const around = 2 * Math.PI * r;
-	const svg = btn.createSvg("svg", { attr: { viewBox: "0 0 24 24", width: "22", height: "22", "aria-hidden": "true" } });
 	const ring = (cls: string): SVGElement =>
 		svg.createSvg("circle", { cls, attr: { cx: "12", cy: "12", r: String(r), fill: "none", "stroke-width": "4" } });
 	ring("grill-credits-track");

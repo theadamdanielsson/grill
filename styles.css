@@ -611,17 +611,6 @@
 }
 
 /* First-run onboarding: choose Grill's folders. */
-/* A note's name can be long: let the button wrap, not clip. */
-.grill-view .grill-onboard-note-btn {
-  white-space: normal;
-  height: auto;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-.grill-onboard-first {
-  margin: 0.8em 0 0;
-  line-height: 1.5;
-}
 .grill-onboard-controls {
   display: flex;
   gap: 1em;
@@ -3033,22 +3022,13 @@ textarea.grill-mgmt-field {
 .grill-stats.grill-stats-link {
   cursor: pointer;
 }
-/* Credits as a ring beside the wordmark, where the number was. */
-.grill-arcade-mark > .grill-credits-host {
-  position: absolute;
-  top: -0.35em;
-  right: 0;
+/* Credits as a ring, in Grill Cloud's button under the box in place of its dot. */
+.grill-credits-host {
   display: flex;
+  align-items: center;
 }
-.grill-view button.grill-credits-ring,
-.grill-view button.grill-credits-ring:hover {
+.grill-credits-ring {
   display: flex;
-  height: auto;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-  cursor: pointer;
 }
 .grill-credits-track {
   stroke: var(--grill-ember-dark, #5c1400);
@@ -3059,7 +3039,7 @@ textarea.grill-mgmt-field {
 .grill-credits-ring.is-low .grill-credits-left {
   stroke: var(--grill-flame-hot, #ff5a1f);
 }
-.grill-credits-ring:hover .grill-credits-left {
+.grill-home-engine:hover .grill-credits-left {
   stroke: var(--grill-gold-white, #fff2b0);
 }
 .grill-home-suggestions {

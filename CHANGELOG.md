@@ -1,5 +1,22 @@
 # Changelog
 
+## 8.3.0
+
+- **Chat can set Grill up for you.** Say what you are aiming for, such as an exam in
+  three weeks, and Chat can change session length, study intensity, question formats,
+  easy days, study folders, hints and sounds. Every change is shown before and after
+  on one card, to allow or decline. This works on Grill Cloud and on your own key.
+- **Chat knows how Grill works.** Ask how to write your own questions, what the Test
+  tab offers, or how the schedule works, and Chat answers from a guide built into
+  Grill.
+- **Ready prompts.** The Prompts button under the chat box is always there, with
+  Summarise, Find the gaps, Pull out tasks and Explain simply, then your saved prompts.
+- **A shorter first run.** Choose how Grill answers, then land on the home screen and
+  pick what to do from there.
+- **A cleaner home screen.** The wordmark is gone, so the tiles sit at the top. Grill
+  Cloud's credits show as a small ring in its button under the chat box, only when
+  Grill Cloud is what answers.
+
 ## 8.2.1
 
 - Code and stylesheet tidied to the Obsidian directory's review rules. Nothing changes

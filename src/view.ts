@@ -2,8 +2,9 @@
 
 import { ItemView, loadMermaid, MarkdownRenderer, Menu, Modal, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
+import { INTENSITY_PRESETS } from "./main";
 import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, cloudEnabled, creditsInWords, lowBalance, planInWords, usageInWords } from "./cloud";
-import { CLAUDE_MODELS, selectionMessage } from "./selection";
+import { CLAUDE_MODELS, selectionMessage, STARTER_PROMPTS } from "./selection";
 import { adjudicateBridges, ConceptTarget, contentWords, debriefSession, discussQuestion, embedTexts, explainQuestion, formatSatisfies, generateQuestions, Grade, CloudError, cleanDiagram, cleanText, gradeAnswer, learnFromNotes, learnWithTools, listModels, LLMConfig, replyInProgress, offeredProviders, PROVIDERS, ProviderId, Question, supportsEmbeddings, supportsVision, testModel, ThreadTurn, Verdict } from "./llm";
 import { detectOcclusionRegions } from "./ocr";
 import {
@@ -85,6 +86,7 @@ import { aboutTheVault, learnContext, learnRecord, namesANote, parseLearnNote, p
 import { safeDiagram, safeMarkdown } from "./safemd";
 import { activitySummary, AgentEvent, agentBrief, AGENT_LEVELS, findProgram, PermissionAnswer, PermissionAsk, runAgent } from "./agent";
 import type { VaultPort } from "./vaulttools";
+import type { SettingsPort } from "./settingstools";
 import { findCodex, runCodex } from "./codex";
 
 /** Mermaid's drawing, made fit to be shown as an image: well-formed XML, with a size
@@ -319,9 +321,9 @@ const BATCH = 2;
 /** A scan still running after this long is treated as hung (an OCR or embedding
  * model download with no timeout of its own) and no longer blocks a new start. */
 const SCAN_LOCK_MS = 5 * 60_000;
-/** Concepts a note must yield before first run offers it as the first session: fewer
- * makes a first session of a question or two, or none at all. */
-const ONBOARD_NOTE_CONCEPTS = 3;
+/** Concepts a note must yield to be offered for a test: fewer makes a session of a
+ * question or two, or none at all. */
+const TEST_NOTE_CONCEPTS = 3;
 /** Debounce for the mid-session checkpoint save after a grade. */
 const CHECKPOINT_MS = 3000;
 /** Learn: how many of the latest session notes are read for past answers on a note, and
@@ -846,11 +848,11 @@ export class SessionView extends ItemView {
 	 * written, then what to be asked about first. With Grill Cloud available the first
 	 * step leads with it: it is the only way to AI questions that needs nothing set up,
 	 * and getting an API key was where new installs gave up. The other two ways are one
-	 * click away on the same screen. The second step leads, for a new install, with
-	 * the note that is open: one press to a first question, on a note the student can
-	 * see. `pick` opens the folder list instead. `first` is that note once looked for
-	 * (null: none worth offering). */
-	private renderOnboarding(step: 1 | 2 = 1, own = false, pick = false, first?: TFile | null): void {
+	 * click away on the same screen. A new install then lands on the home screen, where
+	 * what there is to do is laid out to pick from; Grill studies the whole vault until
+	 * folders are picked in settings. Someone already set up, here from the command, gets
+	 * the folder list as a second step. */
+	private renderOnboarding(step: 1 | 2 = 1, own = false): void {
 		const wrap = this.root(true);
 		this.cloudRedraw = null;
 		const s = this.plugin.data.settings;
@@ -862,15 +864,26 @@ export class SessionView extends ItemView {
 		const steps = screen.createDiv({ cls: "grill-onboard-steps" });
 		if (step === 2 || own) {
 			const back = steps.createEl("a", { cls: "grill-chip-link", text: "Back" });
-			// From the folder list, back to the note it was reached from.
-			back.onclick = () => (step === 2 && pick && first ? this.renderOnboarding(2, false, false, first) : this.renderOnboarding(1));
+			back.onclick = () => this.renderOnboarding(1);
 		}
-		steps.createSpan({ cls: "grill-meta", text: `Step ${step} of 2` });
+		// A new install has the one step.
+		if (s.onboarded) steps.createSpan({ cls: "grill-meta", text: `Step ${step} of 2` });
 		// Someone already set up who opened this from the command can leave it as it was.
 		if (s.onboarded) {
 			const cancel = steps.createEl("a", { cls: "grill-chip-link", text: "Cancel" });
 			cancel.onclick = () => this.renderStart();
 		}
+
+		const finish = async (): Promise<void> => {
+			if (step === 2) s.includedFolders = [...this.onboardFolders];
+			s.dismissedOffers = [...new Set([...s.dismissedOffers, NEW_IN_7])];
+			s.onboarded = true;
+			await this.plugin.persist();
+			this.plugin.refreshStatusBar();
+			this.homeMode = "chat";
+			this.renderStart();
+		};
+		const next = (): void => void (s.onboarded ? this.renderOnboarding(2) : finish());
 
 		if (step === 1) {
 			if (own || !cloudEnabled()) {
@@ -878,13 +891,13 @@ export class SessionView extends ItemView {
 				screen.createDiv({ cls: "grill-section-label", text: "Your own key or Ollama" });
 				screen.createEl("p", { cls: "grill-meta", text: "AI writes and grades questions from your notes, on a model you pay for or run yourself." });
 				this.renderProviderSetup(screen.createDiv({ cls: "grill-onboard-setup" }));
-				const next = screen.createEl("button", { text: "Continue", cls: "mod-cta grill-start-btn grill-primary-cta" });
-				next.onclick = async () => {
+				const cont = screen.createEl("button", { text: "Continue", cls: "mod-cta grill-start-btn grill-primary-cta" });
+				cont.onclick = async () => {
 					// Pick up a value typed but not yet blurred.
 					screen.querySelectorAll("input").forEach((i) => i.dispatchEvent(new Event("change")));
 					if (s.provider === "grillcloud") s.provider = "anthropic";
 					await this.plugin.persist();
-					this.renderOnboarding(2);
+					next();
 				};
 				return;
 			}
@@ -908,7 +921,7 @@ export class SessionView extends ItemView {
 				if (s.apiKeys.grillcloud && this.plugin.cloudState === "ok") {
 					s.provider = "grillcloud";
 					await this.plugin.persist();
-					this.renderOnboarding(2);
+					next();
 					return;
 				}
 				go.disabled = true;
@@ -929,7 +942,8 @@ export class SessionView extends ItemView {
 					Object.assign(s, was);
 					await this.plugin.persist();
 				}
-				this.renderOnboarding(this.plugin.cloudState === "ok" ? 2 : 1);
+				if (this.plugin.cloudState === "ok") next();
+				else this.renderOnboarding(1);
 			};
 			// The other way, plainly there, one click.
 			const others = screen.createDiv({ cls: "grill-onboard-others" });
@@ -939,49 +953,7 @@ export class SessionView extends ItemView {
 			return;
 		}
 
-		const finish = async (files: TFile[] | null): Promise<void> => {
-			// Starting on a note leaves Grill's folders as they were: ticks made in the
-			// folder list and then walked away from are not a choice.
-			if (!files) s.includedFolders = [...chosen];
-			s.dismissedOffers = [...new Set([...s.dismissedOffers, NEW_IN_7])];
-			s.onboarded = true;
-			await this.plugin.persist();
-			this.plugin.refreshStatusBar();
-			// The home screen first, so there is somewhere to land if a session can't
-			// start (no key yet, no notes in scope); then straight into the first one.
-			this.renderStart();
-			if (files) {
-				void this.startScopedSession(files);
-				return;
-			}
-			this.sessionScope = null;
-			this.dueOnly = false;
-			void this.startSession();
-		};
 		const chosen = this.onboardFolders;
-
-		// A new install is offered the note that is open, when there is enough in it: the
-		// shortest way to a first question. Someone set up already came here to change
-		// something, and goes straight to their folders.
-		if (!pick && !s.onboarded && first === undefined) {
-			void this.firstNote().then((note) => {
-				if (screen.isConnected) this.renderOnboarding(2, false, false, note);
-			});
-			return;
-		}
-		if (!pick && !s.onboarded && first) {
-			screen.createDiv({ cls: "grill-section-label", text: "What should Grill ask you about first?" });
-			const btn = screen.createEl("button", { text: `Get grilled on ${first.basename}`, cls: "mod-cta grill-start-btn grill-primary-cta grill-onboard-note-btn" });
-			btn.onclick = () => void finish([first]);
-			screen.createEl("p", {
-				cls: "grill-meta grill-onboard-first",
-				text: `Start with the note you have open. Later sessions draw from ${s.includedFolders.length ? "Grill's folders" : "your whole vault"}, which you can change any time in settings.`,
-			});
-			const others = screen.createDiv({ cls: "grill-onboard-others" });
-			const folders = others.createEl("a", { text: "Pick folders instead" });
-			folders.onclick = () => this.renderOnboarding(2, false, true, first);
-			return;
-		}
 
 		screen.createDiv({ cls: "grill-section-label", text: "Which folders should Grill study?" });
 		screen.createEl("p", {
@@ -1040,35 +1012,18 @@ export class SessionView extends ItemView {
 			};
 		}
 
-		const btn = screen.createEl("button", { text: "Get grilled", cls: "mod-cta grill-start-btn grill-primary-cta" });
-		btn.onclick = () => void finish(null);
+		const btn = screen.createEl("button", { text: "Done", cls: "mod-cta grill-start-btn grill-primary-cta" });
+		btn.onclick = () => void finish();
 	}
 
-	/** The open note, if it is worth a first session: a note of the user's own with
-	 * enough in it for a few questions in the mode just chosen. Drawings and boards
-	 * kept in markdown files are not notes to be quizzed on. */
-	private async firstNote(): Promise<TFile | null> {
-		try {
-			const f = this.app.workspace.getActiveFile();
-			if (!(f instanceof TFile) || f.extension !== "md" || this.plugin.isExcluded(f.path)) return null;
-			const fm = this.app.metadataCache.getFileCache(f)?.frontmatter;
-			if (fm && ("excalidraw-plugin" in fm || "kanban-plugin" in fm)) return null;
-			const s = this.plugin.data.settings;
-			const concepts = extractConcepts(f.basename, await this.app.vault.cachedRead(f), s.questionFormats);
-			return concepts.length >= ONBOARD_NOTE_CONCEPTS ? f : null;
-		} catch {
-			return null;
-		}
-	}
-
-	/** Whether a note has enough in it to be tested on: the rule first run uses, at least
-	 * `ONBOARD_NOTE_CONCEPTS` things Grill can ask about. A note with one or two makes
+	/** Whether a note has enough in it to be tested on: at least
+	 * `TEST_NOTE_CONCEPTS` things Grill can ask about. A note with one or two makes
 	 * a session too short to tell anything, on questions stretched from too little. */
 	private async enoughToTest(f: TFile): Promise<boolean> {
 		const s = this.plugin.data.settings;
 		try {
 			const concepts = extractConcepts(f.basename, await this.app.vault.cachedRead(f), s.questionFormats);
-			return concepts.length >= ONBOARD_NOTE_CONCEPTS;
+			return concepts.length >= TEST_NOTE_CONCEPTS;
 		} catch {
 			return true;
 		}
@@ -1152,12 +1107,6 @@ export class SessionView extends ItemView {
 							? this.plugin.cloudNote || "Couldn't reach Grill Cloud."
 							: "Checking your balance...",
 		});
-		// With a plan running, credits are only low once its limit is reached.
-		const covered = this.plugin.cloudPlan !== null && !this.plugin.cloudPlan.limit;
-		if (state === "none" || (state === "ok" && !covered && (credits ?? 0) < lowBalance(this.plugin.data.settings.cloudUsage))) {
-			const more = el.createEl("a", { cls: "grill-chip-link", text: this.plugin.cloudCanSubscribe ? "Get the monthly plan in settings" : "Add credits in settings" });
-			more.onclick = () => this.plugin.openSettings();
-		}
 		return el.createEl("button", { text: state === "ok" ? "Continue with Grill Cloud" : "Start free", cls: "mod-cta grill-cloud-go grill-primary-cta" });
 	}
 
@@ -1329,8 +1278,8 @@ export class SessionView extends ItemView {
 
 		// The arcade cabinet: everything on this screen lives on the lit CRT ground,
 		// framed in the banner's gold/ember double border. See .grill-arcade-screen.
+		// No wordmark here: the pane's own tab names it, and the tiles start at the top.
 		const screen = wrap.createDiv({ cls: "grill-arcade-screen" });
-		screen.createDiv({ cls: "grill-arcade-mark", text: "GRILL" });
 
 		const statsEl = screen.createDiv({ cls: "grill-stats grill-start-stats" });
 		const addStat = (label: string, tone?: "correct" | "incorrect"): HTMLElement => {
@@ -1394,7 +1343,6 @@ export class SessionView extends ItemView {
 	private chatHome(screen: HTMLElement, eligible: TFile[], statsEl: HTMLElement): void {
 		screen.addClass("grill-home");
 		this.cloudRedraw = null;
-		this.creditsRing(screen);
 		statsEl.addClass("grill-stats-link");
 		statsEl.onclick = () => this.showDashboard();
 
@@ -1550,7 +1498,7 @@ export class SessionView extends ItemView {
 			openNote: openNote?.basename ?? null,
 			engine: this.engineForHome(),
 			model: this.modelForHome(),
-			prompts: learning && this.plugin.savedPrompts().length ? { open: (at, use) => this.promptsMenu(at, use) } : null,
+			prompts: learning ? { open: (at, use) => this.promptsMenu(at, use) } : null,
 			level: learning && (this.agentProgram() || this.modelHasTools()) ? this.levelForHome() : null,
 			placeholder: learning ? "Ask anything, or say what to do" : "Say what to test, or just press Get grilled",
 			sendLabel: learning ? "Send" : "Get grilled",
@@ -1578,6 +1526,7 @@ export class SessionView extends ItemView {
 				void this.renderManageQuestions();
 			},
 		});
+		this.creditsRing(screen);
 	}
 
 	/** What answers in Chat, for the button under the box: its name, and the way to
@@ -1676,9 +1625,12 @@ export class SessionView extends ItemView {
 		};
 	}
 
-	/** The saved prompts, as a list under their button: picking one puts it in the box. */
+	/** The prompts, as a list under their button: Grill's own, then the saved ones, then
+	 * a way to save a new one. Picking one puts it in the box. */
 	private promptsMenu(at: HTMLElement, use: (text: string) => void): void {
 		const menu = new Menu();
+		for (const p of STARTER_PROMPTS) menu.addItem((i) => i.setTitle(p.name).onClick(() => use(p.text)));
+		menu.addSeparator();
 		for (const f of this.plugin.savedPrompts()) {
 			menu.addItem((i) =>
 				i.setTitle(f.basename).onClick(async () => {
@@ -1688,6 +1640,7 @@ export class SessionView extends ItemView {
 				}),
 			);
 		}
+		menu.addItem((i) => i.setTitle("New saved prompt...").onClick(() => void this.plugin.newSavedPrompt()));
 		this.menuAt(at, menu);
 	}
 
@@ -2197,6 +2150,27 @@ export class SessionView extends ItemView {
 			// Grill's own folder under any spelling of its case: on most computers
 			// "grill/" and "Grill/" are one folder.
 			locked: (path) => this.plugin.isExcluded(path) || path.toLowerCase().startsWith(`${this.plugin.data.settings.folder.toLowerCase()}/`),
+			settings: this.settingsPort(),
+		};
+	}
+
+	/** Grill's study settings, as Chat's settings tools reach them. */
+	private settingsPort(): SettingsPort {
+		const s = this.plugin.data.settings;
+		return {
+			get: () => ({ ...s, easyDays: [...s.easyDays], includedFolders: [...s.includedFolders] }),
+			folders: () => {
+				const own = `${s.folder}/`;
+				return listFolders(this.app.vault.getMarkdownFiles().filter((f) => !f.path.startsWith(own)));
+			},
+			set: async (changes) => {
+				const { studyIntensity, ...rest } = changes;
+				Object.assign(s, rest);
+				// A preset stands for the four numbers the schedule reads, as in settings.
+				if (studyIntensity && studyIntensity !== "custom") Object.assign(s, INTENSITY_PRESETS[studyIntensity], { studyIntensity });
+				await this.plugin.persist();
+				this.plugin.refreshStatusBar();
+			},
 		};
 	}
 
@@ -2288,7 +2262,13 @@ export class SessionView extends ItemView {
 	private creditsRing(screen: HTMLElement): void {
 		const s = this.plugin.data.settings;
 		if (!cloudEnabled() || s.provider !== "grillcloud" || !s.apiKeys.grillcloud) return;
-		const host = (screen.querySelector<HTMLElement>(".grill-arcade-mark") ?? screen).createSpan({ cls: "grill-credits-host" });
+		// In the engine's button under the chat box, in place of its dot, and only when
+		// Grill Cloud is what answers there. Running out on a test is told when it happens.
+		const dot = screen.querySelector<HTMLElement>(".grill-home-engine-dot");
+		const picks = screen.querySelector<HTMLElement>(".grill-home-picks");
+		if (!dot || !picks || this.engineForHome().name !== "Grill Cloud") return;
+		const host = picks.createSpan({ cls: "grill-credits-host is-inline" });
+		dot.replaceWith(host);
 		const fill = (): void => {
 			host.empty();
 			const credits = this.plugin.cloudCredits;
@@ -2308,8 +2288,7 @@ export class SessionView extends ItemView {
 			renderCreditsRing(host, {
 				left: covered ? 1 : now / s.cloudRing.full,
 				low,
-				label: covered ? "Grill Cloud monthly plan. Open settings." : low ? "Grill Cloud credits are low. Open settings to add more." : "Grill Cloud credits. Open settings.",
-				open: () => this.plugin.openSettings(),
+				label: covered ? "Grill Cloud: monthly plan" : low ? "Grill Cloud: credits are low" : "Grill Cloud: credits left",
 			});
 		};
 		fill();

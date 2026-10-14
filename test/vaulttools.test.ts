@@ -3,7 +3,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { resolveNote, runTool, runToolChat, safeForNote, toolAsk, VaultPort } from "../src/vaulttools";
 import { readPiece, streamText, StreamCall, toolStreamCall, ToolMsg } from "../src/stream";
-import type { AgentEvent, PermissionAnswer } from "../src/agent";
+import type { AgentEvent, PermissionAnswer, PermissionAsk } from "../src/agent";
+import type { SettingsPort, StudySettings } from "../src/settingstools";
 
 function vault(files: Record<string, string>): VaultPort & { files: Record<string, string> } {
 	return {
@@ -327,5 +328,54 @@ test("a note with Windows line endings is edited across lines, and odd paths are
 	assert.equal(v.files["W.md"], "1\r\n2\r\nthree");
 	for (const path of [".obsidian/x.md", ".trash/x.md", "notes/ .md", "a/../b.md", "notes/\u202Egnp.md", "a\\b.md", "C:/x.md"]) {
 		assert.equal((await runTool(v, call("create_note", { path, content: "x" }))).failed, true, path);
+	}
+});
+
+function studySettings(): SettingsPort & { now: StudySettings } {
+	const port = {
+		now: { questionsPerSession: 5, studyIntensity: "steady", questionFormats: "mixed", easyDays: [], includedFolders: [], testHints: false, sounds: true } as StudySettings,
+		get: () => ({ ...port.now }),
+		folders: () => ["Macro", "Macro/Chapter 1", "Stats"],
+		set: async (c: Partial<StudySettings>) => void Object.assign(port.now, c),
+	};
+	return port;
+}
+
+test("Chat reads Grill's guide and settings, and a settings change shows each one as it was and will be", async () => {
+	const v = Object.assign(notes(), { settings: studySettings() });
+	const asked: PermissionAsk[] = [];
+	const change = call("change_grill_settings", { changes: [{ setting: "questions_per_session", value: 10 }, { setting: "study_intensity", value: "intense" }, { setting: "easy_days", value: ["sunday", "Saturday"] }, { setting: "study_folders", value: ["macro"] }] }, "c3");
+	const model = scripted([{ text: "", calls: [call("grill_guide", {}, "c1"), call("grill_settings", {}, "c2")] }, { text: "", calls: [change] }, { text: "Set up for the exam." }]);
+	const done = await runToolChat({ ...model, port: v, level: "safe", onEvent: () => undefined, ask: async (req) => (asked.push(req), "once" as PermissionAnswer) });
+	assert.equal(done.text, "Set up for the exam.");
+	assert.deepEqual(done.tools, ["Read", "Read", "Edit"]);
+	const read = model.seen[1].at(-1) as Extract<ToolMsg, { role: "tool" }>;
+	assert.match(read.results[0].content, /spaced-repetition/);
+	assert.match(read.results[1].content, /questions_per_session = 5/);
+	assert.equal(asked.length, 1);
+	assert.deepEqual(asked[0].removed, ["Questions per session: 5", "Study intensity: steady", "Easy days: none", "Study folders: the whole vault"]);
+	assert.deepEqual(asked[0].added, ["Questions per session: 10", "Study intensity: intense", "Easy days: Sunday, Saturday", "Study folders: Macro"]);
+	assert.deepEqual(v.settings.now.easyDays, [0, 6]);
+	assert.deepEqual(v.settings.now.includedFolders, ["Macro"]);
+	assert.equal(v.settings.now.studyIntensity, "intense");
+});
+
+test("a settings change that can't be made is refused without asking, and changes nothing", async () => {
+	for (const bad of [{ setting: "provider", value: "openai" }, { setting: "questions_per_session", value: 500 }, { setting: "study_intensity", value: "custom" }, { setting: "study_folders", value: ["Nowhere"] }, { setting: "easy_days", value: ["Funday"] }, { setting: "test_hints", value: "yes" }]) {
+		const v = Object.assign(notes(), { settings: studySettings() });
+		const before = { ...v.settings.now };
+		let asks = 0;
+		const model = scripted([{ text: "", calls: [call("change_grill_settings", { changes: [bad] })] }, { text: "Couldn't." }]);
+		await runToolChat({ ...model, port: v, level: "safe", onEvent: () => undefined, ask: async () => (asks++, "once") });
+		assert.equal(asks, 0, JSON.stringify(bad));
+		assert.deepEqual(v.settings.now, before);
+		assert.equal((model.seen[1].at(-1) as Extract<ToolMsg, { role: "tool" }>).results[0].failed, true);
+	}
+	// Declined, and Plan level: nothing changes either.
+	for (const [level, answer] of [["safe", "deny"], ["plan", "once"]] as const) {
+		const v = Object.assign(notes(), { settings: studySettings() });
+		const model = scripted([{ text: "", calls: [call("change_grill_settings", { changes: [{ setting: "sounds", value: false }] })] }, { text: "ok" }]);
+		await runToolChat({ ...model, port: v, level, onEvent: () => undefined, ask: async () => answer });
+		assert.equal(v.settings.now.sounds, true);
 	}
 });
