@@ -1680,7 +1680,7 @@ export default class GrillPlugin extends Plugin {
 			provider: "custom",
 			apiKey: "",
 			model: engine === "claudecode" ? "Claude Code" : engine === "codex" ? "Codex" : "opencode",
-			agent: (system, user, schema) => agentJSON({ engine, program, model, system, user, schema }),
+			agent: (system, user, schema, signal) => agentJSON({ engine, program, model, system, user, schema, signal }),
 		};
 	}
 
@@ -3766,14 +3766,14 @@ export class GrillSettingTab extends PluginSettingTab {
 					(sec): SettingDefinitionItem => ({
 						type: "group",
 						heading: sec.heading,
-						visible: () => this.tab === sec.tab,
+						visible: () => this.tab === sec.tab || this.searching(),
 						items: sec.rows.map(toDef),
 					}),
 				),
 				{
 					type: "group",
 					heading: TUNING_NAME,
-					visible: () => this.tab === "advanced",
+					visible: () => this.tab === "advanced" || this.searching(),
 					items: this.tuningRows().map(toDef),
 				},
 			];
@@ -3803,6 +3803,12 @@ export class GrillSettingTab extends PluginSettingTab {
 			new Setting(containerEl).setName(TUNING_NAME).setDesc(TUNING_DESC).setHeading();
 			for (const r of this.tuningRows()) renderRow(containerEl, r);
 		}
+	}
+
+	/** Whether Obsidian's settings search has something typed in it. Every tab's rows are
+	 * then in play, so a search finds a row whatever tab is open. */
+	private searching(): boolean {
+		return (this.app as unknown as { setting?: { isSearchActive?: boolean } }).setting?.isSearchActive === true;
 	}
 
 	/** The tabs along the top: one is open, and only its rows are drawn under it. */

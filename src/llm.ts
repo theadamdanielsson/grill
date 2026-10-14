@@ -140,7 +140,7 @@ export interface LLMConfig {
 	baseUrl?: string;
 	/** Set when no model is set up and an agent program answers instead (agentjson.ts):
 	 * each request goes to it whole, as one JSON answer, with no images. */
-	agent?: (system: string, user: string, schema: Record<string, unknown>) => Promise<unknown>;
+	agent?: (system: string, user: string, schema: Record<string, unknown>, signal: AbortSignal) => Promise<unknown>;
 }
 
 /** How long an agent program is given for one answer: it has to start first. */
@@ -768,7 +768,15 @@ async function callJSONOnce(
 	images: ImageInput[],
 	effort: "low" | "medium" = "medium",
 ): Promise<unknown> {
-	if (cfg.agent) return withTimeout(cfg.agent(system, flattenUser(user), schema), AGENT_TIMEOUT_MS);
+	if (cfg.agent) {
+		// A program given up on is stopped, so it doesn't go on working (and spending) unseen.
+		const stop = new AbortController();
+		try {
+			return await withTimeout(cfg.agent(system, flattenUser(user), schema, stop.signal), AGENT_TIMEOUT_MS);
+		} finally {
+			stop.abort();
+		}
+	}
 	const call = buildCall(cfg, system, user, schema, maxTokens, images, effort);
 	const resp = await withTimeout(
 		requestUrl({

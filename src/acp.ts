@@ -141,7 +141,9 @@ export function acpAsk(call: Loose): PermissionAsk {
 	if (tool === "Bash") {
 		return { tool, title: "Run a command", removed, added, detail: str(input.command) || str(call.title), always: "Always allow this command in this chat" };
 	}
-	return { tool, title: acpLine(call), removed, added, detail: str(input.url) || str(input.query) || "", always: "Always allow in this chat" };
+	const query = str(input.query);
+	const title = tool === "Other" && query && !str(input.url) ? `Search the web for "${clip(query, 60)}"` : acpLine(call);
+	return { tool: query && tool === "Other" ? "WebSearch" : tool, title, removed, added, detail: str(input.url) || query || "", always: "Always allow in this chat" };
 }
 
 /** The option the agent offered that matches the answer given on the card. */
@@ -176,16 +178,17 @@ export function modelsOf(session: Loose): { models: AcpModel[]; current: string 
 	return { models, current: str(old?.currentModelId) };
 }
 
-/** The value of a session's mode option that means "read and propose only", if it has one. */
-function planMode(session: Loose): { configId: string; value: string } | null {
+/** A session's mode option, when it has one with a "read and propose only" value: that
+ * value, the one to go back to otherwise, and the one it is on. */
+export function modeOption(session: Loose): { configId: string; plan: string; other: string; current: string } | null {
 	const option = list(session.configOptions)
 		.map(obj)
 		.find((o) => o && (o.category === "mode" || o.id === "mode"));
 	if (!option) return null;
-	const plan = list(option.options)
-		.map(obj)
-		.find((o) => o && /^plan$/i.test(str(o.value)));
-	return plan ? { configId: str(option.id), value: str(plan.value) } : null;
+	const values = list(option.options).map((o) => str(obj(o)?.value)).filter(Boolean);
+	const plan = values.find((v) => /^plan$/i.test(v));
+	const other = values.find((v) => /^build$/i.test(v)) ?? values.find((v) => v !== plan);
+	return plan && other ? { configId: str(option.id), plan, other, current: str(option.currentValue) } : null;
 }
 
 /** Run one turn over a wire that is already open. Throws with a sentence fit to show. */
@@ -205,6 +208,8 @@ export async function runAcpTurn(run: AcpRun, wire: AcpWire): Promise<AgentResul
 	let stopped = false;
 	/** Whether a change was declined on the card: some agents (opencode) end the turn there. */
 	let declined = false;
+	/** Whether Plan turned a change or a command away, which it does without asking. */
+	let planned = false;
 
 	const request = <T>(method: string, params: unknown): Promise<T> =>
 		new Promise<T>((yes, no) => {
@@ -219,6 +224,12 @@ export async function runAcpTurn(run: AcpRun, wire: AcpWire): Promise<AgentResul
 		if (method === "session/request_permission") {
 			if (stopped) return answer(id, { outcome: { outcome: "cancelled" } });
 			const call = { ...(calls.get(str(obj(params.toolCall)?.toolCallId)) ?? {}), ...(obj(params.toolCall) ?? {}) };
+			// Plan changes nothing and runs nothing, whatever the agent's own rules let through.
+			if (run.level === "plan" && ["edit", "delete", "move", "execute"].includes(str(call.kind))) {
+				planned = declined = true;
+				const optionId = pickOption(list(params.options), "deny");
+				return answer(id, optionId ? { outcome: { outcome: "selected", optionId } } : { outcome: { outcome: "cancelled" } });
+			}
 			const a = await run.ask(acpAsk(call));
 			if (a === "deny") declined = true;
 			if (stopped) return answer(id, { outcome: { outcome: "cancelled" } });
@@ -232,6 +243,9 @@ export async function runAcpTurn(run: AcpRun, wire: AcpWire): Promise<AgentResul
 	const told = (params: Loose): void => {
 		const u = obj(params.update);
 		if (!u || !live) return;
+		// Work handed to a helper inside the agent is the agent's business: its reply is
+		// what the agent makes of it, not the helper's own words.
+		if (obj(u._meta)?.["opencode/child-session"] || obj(params._meta)?.["opencode/child-session"]) return;
 		const what = str(u.sessionUpdate);
 		if (what === "agent_message_chunk") {
 			const c = obj(u.content);
@@ -342,8 +356,10 @@ export async function runAcpTurn(run: AcpRun, wire: AcpWire): Promise<AgentResul
 		if (run.model && run.model !== current && models.some((m) => m.id === run.model)) {
 			await request("session/set_config_option", { sessionId, configId: "model", value: run.model });
 		}
-		const plan = planMode(session);
-		if (run.level === "plan" && plan) await request("session/set_config_option", { sessionId, ...plan });
+		// Set either way: a conversation picked up again keeps the mode it was left in.
+		const mode = modeOption(session);
+		const wanted = mode && (run.level === "plan" ? mode.plan : mode.other);
+		if (mode && wanted && (wanted !== mode.current || !fresh)) await request("session/set_config_option", { sessionId, configId: mode.configId, value: wanted });
 		if (run.signal?.aborted) throw new DOMException("Stopped.", "AbortError");
 		const first = fresh && run.brief ? `<context>\n${run.brief}\n</context>\n\n${run.prompt}` : run.prompt;
 		live = true;
@@ -355,7 +371,16 @@ export async function runAcpTurn(run: AcpRun, wire: AcpWire): Promise<AgentResul
 	}
 	// A turn the agent ended on a declined change has said what it was about to do, or
 	// nothing: either way nothing was changed, which is the answer.
-	const reply = text.trim() || (declined ? "Declined, so nothing was changed." : "");
+	const changed = tools.includes("Edit") || tools.includes("Bash");
+	const reply =
+		text.trim() ||
+		(planned
+			? "Plan changes nothing. Switch to Safe to let it make the change, with your permission."
+			: declined
+				? changed
+					? "Stopped at the change you declined. What was allowed before it was done."
+					: "Declined, so nothing was changed."
+				: "");
 	if (!reply) throw new Error(`${run.name} finished without saying anything.`);
 	return { text: reply, sessionId, tools, seconds: (Date.now() - began) / 1000 };
 }
@@ -408,6 +433,9 @@ export function openAcp(p: AcpProgram, cwd: string): AcpWire {
 	let closed = false;
 	let take: (line: string) => void = () => undefined;
 	let gone: (why: string) => void = () => undefined;
+	// Writing to a program that has just gone away is not an error worth more than the
+	// one its exit already reports.
+	(child.stdin as unknown as { on?(e: "error", f: () => void): void }).on?.("error", () => undefined);
 	child.stdout.setEncoding?.("utf8");
 	child.stdout.on("data", (d) => {
 		pending += String(d);

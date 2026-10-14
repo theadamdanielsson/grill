@@ -1568,7 +1568,8 @@ export class SessionView extends ItemView {
 		if (Platform.isDesktopApp && findOpencode(s.opencodePath)) have.push("opencode");
 		let now = have.includes(s.chatEngine) ? s.chatEngine : "model";
 		// Nothing set up but a program that works: Chat runs on that instead of on nothing.
-		if (now === "model" && have.length > 1 && !this.plugin.modelConfig()) {
+		// Not for someone still to say whether a model may be used (see askToUseModel).
+		if (now === "model" && have.length > 1 && s.modelAgreed && !this.plugin.modelConfig()) {
 			now = s.chatEngine = have[1];
 			void this.plugin.persist();
 		}

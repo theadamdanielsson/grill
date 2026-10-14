@@ -42,18 +42,32 @@ export function downloadSize(platform: string, arch: string): number | null {
 	return b ? BUILDS[b].mb : null;
 }
 
-/** opencode's permission rules for each of Grill's levels. Safe: asks before changing
- * a note, running a command or going on the web. Plan: the same, and the session is put
- * in opencode's own read-only mode. Auto: edits without asking, still asks before a
- * command or the web. Its own updater is off: Grill keeps the build it has tried. */
-export function opencodeConfig(level: AgentLevel): string {
-	const edit = level === "auto" ? "allow" : "ask";
-	return JSON.stringify({ autoupdate: false, permission: { edit, bash: "ask", webfetch: "ask", external_directory: "ask" } });
+/** opencode's permission rules for one of Grill's levels. Safe: asks before changing a
+ * note, running a command or going on the web. Plan: may not edit, and asks before a
+ * command, which Grill then declines itself (acp.ts): opencode 2.0.22 stops working
+ * altogether when `bash` is denied in its configuration. Auto: edits without asking,
+ * still asks before a command or the web. */
+export function levelRules(level: AgentLevel): Record<string, string> {
+	const web = { webfetch: "ask", websearch: "ask", codesearch: "ask" };
+	if (level === "plan") return { edit: "deny", bash: "ask", external_directory: "deny", ...web };
+	return { edit: level === "auto" ? "allow" : "ask", bash: "ask", external_directory: "ask", ...web };
 }
 
-/** How to start opencode as an agent for a level. */
+/** The configuration Grill lays over the user's own. The rules are set on every agent
+ * opencode has built in as well as at the top, since an agent's own rules come first,
+ * and the session starts on the default agent whatever the user's configuration names.
+ * Its own updater is off: Grill keeps the build it has tried. */
+export function opencodeConfig(level: AgentLevel): string {
+	const permission = levelRules(level);
+	const agent = Object.fromEntries(["build", "plan", "general", "explore"].map((name) => [name, { permission }]));
+	return JSON.stringify({ autoupdate: false, default_agent: "build", permission, agent });
+}
+
+/** How to start opencode as an agent for a level. A vault's own opencode.json is not
+ * read: a shared or downloaded vault could otherwise allow everything, or start a
+ * program of its own, as soon as someone chats. */
 export function opencodeProgram(program: string, level: AgentLevel): AcpProgram {
-	return { program, args: ["acp"], env: { OPENCODE_CONFIG_CONTENT: opencodeConfig(level) } };
+	return { program, args: ["acp"], env: { OPENCODE_CONFIG_CONTENT: opencodeConfig(level), OPENCODE_DISABLE_PROJECT_CONFIG: "1" } };
 }
 
 type Need = (name: string) => unknown;
@@ -175,7 +189,12 @@ export async function installOpencode(): Promise<string> {
 	fs.mkdirSync(dir, { recursive: true });
 	// Written beside it and moved into place, so a half-written program is never found.
 	fs.writeFileSync(`${target}.part`, file, { mode: 0o755 });
-	fs.renameSync(`${target}.part`, target);
+	try {
+		fs.renameSync(`${target}.part`, target);
+	} catch {
+		// Windows won't replace a program that is running.
+		throw new Error("opencode is running. Close Chat's conversation and try again.");
+	}
 	if (proc.platform !== "win32") fs.chmodSync(target, 0o755);
 	return target;
 }

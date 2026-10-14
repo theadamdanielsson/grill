@@ -360,3 +360,73 @@ test("a chat is named by what it was about", () => {
 	assert.equal(t("hi", "ok", ""), "hi");
 	assert.ok(!/[\\/:*?"<>|#^[\]]/.test(t("a/b: c? [[x]] d", "# What is r*: a/b?")));
 });
+
+// ---- after the review ---------------------------------------------------------
+
+import { modeOption } from "../src/acp";
+import { levelRules, opencodeProgram } from "../src/opencode";
+
+test("opencode: Grill's rules sit on every built-in agent, and a vault's own config is not read", () => {
+	const p = opencodeProgram("/x/opencode", "safe");
+	assert.equal(p.env!.OPENCODE_DISABLE_PROJECT_CONFIG, "1");
+	const c = JSON.parse(p.env!.OPENCODE_CONFIG_CONTENT);
+	assert.equal(c.default_agent, "build");
+	for (const a of ["build", "plan", "general", "explore"]) assert.deepEqual(c.agent[a].permission, c.permission, a);
+	assert.equal(c.permission.websearch, "ask");
+	assert.equal(c.permission.codesearch, "ask");
+	assert.equal(levelRules("plan").bash, "ask");
+	assert.equal(levelRules("plan").edit, "deny");
+	assert.equal(levelRules("auto").edit, "allow");
+	assert.equal(levelRules("auto").bash, "ask");
+});
+
+test("a helper's own words stay out of the reply", async () => {
+	const a = agent(({ update }) => {
+		update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "HELPER REPORT" }, _meta: { "opencode/child-session": "ses_child" } });
+		update({ sessionUpdate: "tool_call", toolCallId: "c1", kind: "read", status: "completed", locations: [{ path: "/v/x.md" }], _meta: { "opencode/child-session": "ses_child" } });
+		update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Done." } });
+	});
+	const { run, events } = base();
+	const r = await runAcpTurn(run, a.wire);
+	assert.equal(r.text, "Done.");
+	assert.deepEqual(r.tools, []);
+	assert.equal(events.filter((e) => e.kind === "activity").length, 0);
+});
+
+test("a conversation left in Plan goes back to building at another level", async () => {
+	const a = agent(({ update }) => update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "ok" } }));
+	const { run } = base({ resume: "ses_1", level: "safe" });
+	await runAcpTurn(run, a.wire);
+	const set = a.got.filter((m) => m.method === "session/set_config_option").map((m) => m.params);
+	assert.deepEqual(set, [{ sessionId: "ses_1", configId: "mode", value: "build" }]);
+	assert.deepEqual(modeOption(SESSION), { configId: "mode", plan: "plan", other: "build", current: "build" });
+});
+
+test("declining after changes went through says so", async () => {
+	const a = agent(async ({ update, ask }) => {
+		update({ sessionUpdate: "tool_call", toolCallId: "e1", kind: "edit", status: "completed", locations: [{ path: "/v/a.md" }] });
+		await ask("session/request_permission", { sessionId: "ses_1", toolCall: { toolCallId: "e2", kind: "edit", locations: [{ path: "/v/b.md" }] }, options: [{ optionId: "n", kind: "reject_once" }] });
+	}, { stopReason: "cancelled" });
+	const { run } = base({ ask: async () => "deny" });
+	const r = await runAcpTurn(run, a.wire);
+	assert.match(r.text, /^Stopped at the change you declined/);
+});
+
+test("Plan turns a change or command away itself, with no card", async () => {
+	let reply: Msg = {};
+	const a = agent(async ({ ask }) => {
+		reply = await ask("session/request_permission", {
+			sessionId: "ses_1",
+			toolCall: { toolCallId: "x", kind: "execute", rawInput: { command: "touch ran.txt" } },
+			options: [
+				{ optionId: "y", kind: "allow_once" },
+				{ optionId: "n", kind: "reject_once" },
+			],
+		});
+	}, { stopReason: "cancelled" });
+	const { run, asks } = base({ level: "plan" });
+	const r = await runAcpTurn(run, a.wire);
+	assert.equal(asks.length, 0);
+	assert.deepEqual(reply.result, { outcome: { outcome: "selected", optionId: "n" } });
+	assert.match(r.text, /^Plan changes nothing/);
+});
