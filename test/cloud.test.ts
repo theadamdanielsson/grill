@@ -9,6 +9,10 @@ import { stopSpeaking } from "../src/tts";
 import { CloudError, cloudWait, offeredProviders, testModel } from "../src/llm";
 import { SessionView as GrillView } from "../src/view";
 
+/** The settings definitions under the tab bar: each tab's sections, then Tuning. */
+const sectionDefs = (tab: any): any[] => (tab.getSettingDefinitions() as any[]).filter((d) => d.cls !== "grill-settings-tabs-group");
+
+
 // Waiting for a purchase sets a timer and a focus listener; the tests drive the checks by hand.
 (globalThis as any).setInterval = () => 1;
 (globalThis as any).clearInterval = () => undefined;
@@ -64,7 +68,7 @@ async function boot(settings: Record<string, unknown> = {}, local: Record<string
 }
 
 const rows = (tab: GrillSettingTab): string[] =>
-	(tab.getSettingDefinitions() as any[]).flatMap((d) => d.items).filter((it: any) => it.visible()).map((it: any) => it.name);
+	sectionDefs(tab).flatMap((d) => d.items).filter((it: any) => it.visible()).map((it: any) => it.name);
 
 interface Fake {
 	credits: number;
@@ -329,7 +333,7 @@ function keyRow(tab: GrillSettingTab) {
 
 /** Render one settings row the way Obsidian does, and hand back its controls. */
 function draw(tab: GrillSettingTab, name: string) {
-	const def = (tab.getSettingDefinitions() as any[]).flatMap((d) => d.items).find((it: any) => it.name === name);
+	const def = sectionDefs(tab).flatMap((d) => d.items).find((it: any) => it.name === name);
 	const buttons: any[] = [];
 	const texts: any[] = [];
 	const row = fakeSetting();
@@ -381,11 +385,12 @@ test("settings: Grill Cloud has the first section, says what it is before it sta
 	const { state } = server({ credits: 42, granted: false });
 	const { plugin, tab } = await boot({ provider: "openai" });
 	const sections = (): Array<{ heading: string; names: string[] }> =>
-		(tab.getSettingDefinitions() as any[]).filter((d) => d.type === "group").map((d) => ({ heading: d.heading, names: d.items.filter((it: any) => it.visible()).map((it: any) => it.name) }));
+		sectionDefs(tab).filter((d) => d.type === "group").map((d) => ({ heading: d.heading, names: d.items.filter((it: any) => it.visible()).map((it: any) => it.name) }));
 	// Before it is ever turned on, with another provider in use: first on the page,
 	// and nothing but the offer.
 	assert.deepEqual(sections()[0], { heading: "Grill Cloud", names: ["Grill Cloud"] });
-	assert.equal(sections()[1].heading, "Your own key or Ollama");
+	assert.equal(sections()[1].heading, "Chat");
+	assert.equal(sections()[2].heading, "Your own key or Ollama");
 	const before = draw(tab, "Grill Cloud");
 	assert.match(before.desc(), /nothing to set up/);
 	// What it costs, what it needs and where notes go are said before anything is sent.

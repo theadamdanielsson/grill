@@ -43,6 +43,10 @@ import { dueFiles, duplicateBasenames } from "./scope";
 import { KeyStash, secretStore, vaultId } from "./secrets";
 import { CLAUDE_MODELS, NEW_PROMPT, promptMessage, SELECTION_ASKS, SelectionAsk, selectionMessage } from "./selection";
 import { GrillStore } from "./store";
+import { agentJSON } from "./agentjson";
+import { findProgram } from "./agent";
+import { findCodex } from "./codex";
+import { canInstall, downloadSize, findOpencode, installOpencode, isGrillInstall, OPENCODE_VERSION, uninstallOpencode } from "./opencode";
 import { SessionView, VIEW_TYPE } from "./view";
 import type { ColorMode, NumberMode } from "./mapview";
 import { listLanguages, listVoices, listVoicesForLang, onVoicesChanged, speak, speakNatural } from "./tts";
@@ -166,13 +170,17 @@ interface GrillSettings {
 	modelAgreed: boolean;
 	/** What answers in Chat: the model chosen for questions and grading, or the Claude
 	 * Code installed on this computer, which can read and change the vault. */
-	chatEngine: "model" | "claudecode" | "codex";
+	chatEngine: "model" | "claudecode" | "codex" | "opencode";
 	/** Where Claude Code is, when it isn't in one of the usual places. */
 	claudePath: string;
 	/** Which of Claude Code's models answers in Chat; "" leaves it to Claude Code. */
 	claudeModel: string;
 	/** Where Codex is, when it isn't in one of the usual places. */
 	codexPath: string;
+	/** Where opencode is, when it isn't Grill's own install or in one of the usual places. */
+	opencodePath: string;
+	/** Which of opencode's models answers in Chat, by its id; "" leaves it to opencode. */
+	opencodeModel: string;
 	/** Claude Code's permission level in Chat. */
 	agentLevel: "safe" | "plan" | "auto";
 	/** Read-aloud voice language: "" auto-detects per question from its text, an
@@ -349,6 +357,8 @@ function defaultSettings(): GrillSettings {
 		claudePath: "",
 		claudeModel: "",
 		codexPath: "",
+		opencodePath: "",
+		opencodeModel: "",
 		agentLevel: "safe",
 		ttsLanguage: "",
 		ttsVoiceURI: "",
@@ -448,10 +458,12 @@ export default class GrillPlugin extends Plugin {
 		const old = s as { questionSource?: unknown; gradingMode?: unknown };
 		if (typeof s.modelAgreed === "boolean") settings.modelAgreed = s.modelAgreed;
 		else if (old.questionSource === "local" || old.gradingMode === "self") settings.modelAgreed = false;
-		if (s.chatEngine === "model" || s.chatEngine === "claudecode" || s.chatEngine === "codex") settings.chatEngine = s.chatEngine;
+		if (s.chatEngine === "model" || s.chatEngine === "claudecode" || s.chatEngine === "codex" || s.chatEngine === "opencode") settings.chatEngine = s.chatEngine;
 		if (typeof s.claudePath === "string") settings.claudePath = s.claudePath;
 		if (typeof s.claudeModel === "string" && CLAUDE_MODELS.some((m) => m.id === s.claudeModel)) settings.claudeModel = s.claudeModel;
 		if (typeof s.codexPath === "string") settings.codexPath = s.codexPath;
+		if (typeof s.opencodePath === "string") settings.opencodePath = s.opencodePath;
+		if (typeof s.opencodeModel === "string") settings.opencodeModel = s.opencodeModel;
 		if (s.agentLevel === "safe" || s.agentLevel === "plan" || s.agentLevel === "auto") settings.agentLevel = s.agentLevel;
 		if (typeof s.ttsLanguage === "string") settings.ttsLanguage = s.ttsLanguage;
 		if (typeof s.ttsVoiceURI === "string") settings.ttsVoiceURI = s.ttsVoiceURI;
@@ -1603,7 +1615,8 @@ export default class GrillPlugin extends Plugin {
 		const days = activeDayCount(this.data.arcLog);
 		const threshold = this.data.arc ? this.data.arc.atActiveDays + ACTIVE_DAYS_BETWEEN_ARCS : MIN_ACTIVE_DAYS_FOR_ARC;
 		if (days < threshold) return;
-		const cfg = this.llmConfig();
+		// Not on an agent program: nothing is started in the background at launch.
+		const cfg = this.modelConfig();
 		if (!cfg) return;
 		try {
 			const reg = await this.store.loadRegistry();
@@ -1636,7 +1649,7 @@ export default class GrillPlugin extends Plugin {
 		const s = this.data.settings;
 		if (s.modelAgreed) return false;
 		s.modelAgreed = true;
-		const usable = !!this.llmConfig();
+		const usable = !!this.modelConfig();
 		s.modelAgreed = false;
 		if (!usable) {
 			// Nothing saved that could be used: there is nothing to agree to, only to say.
@@ -1649,8 +1662,30 @@ export default class GrillPlugin extends Plugin {
 		return true;
 	}
 
-	/** Active provider config for LLM calls; null if a needed key is missing. */
+	/** What writes and marks questions: the model set up, or else the agent program Chat
+	 * runs on (desktop only), answering one request at a time. Null when there is neither. */
 	llmConfig(): LLMConfig | null {
+		return this.modelConfig() ?? this.agentConfig();
+	}
+
+	/** The agent program Chat is set to, standing in for a model: see agentjson.ts. */
+	agentConfig(): LLMConfig | null {
+		const s = this.data.settings;
+		if (!s.modelAgreed || !Platform.isDesktopApp || s.chatEngine === "model") return null;
+		const engine = s.chatEngine;
+		const program = engine === "claudecode" ? findProgram(s.claudePath) : engine === "codex" ? findCodex(s.codexPath) : findOpencode(s.opencodePath);
+		if (!program) return null;
+		const model = engine === "claudecode" ? s.claudeModel : engine === "opencode" ? s.opencodeModel : "";
+		return {
+			provider: "custom",
+			apiKey: "",
+			model: engine === "claudecode" ? "Claude Code" : engine === "codex" ? "Codex" : "opencode",
+			agent: (system, user, schema) => agentJSON({ engine, program, model, system, user, schema }),
+		};
+	}
+
+	/** The model set up for LLM calls; null if a needed key is missing. */
+	modelConfig(): LLMConfig | null {
 		const s = this.data.settings;
 		if (!s.modelAgreed) return null;
 		const info = PROVIDERS[s.provider];
@@ -1667,6 +1702,30 @@ export default class GrillPlugin extends Plugin {
 			model: s.provider === "grillcloud" ? info.defaultModel : s.models[s.provider] || info.defaultModel,
 			baseUrl: s.provider === "ollama" ? s.ollamaUrl : s.provider === "custom" ? s.customBaseUrl : undefined,
 		};
+	}
+
+	/** How big opencode's download is for this computer, in MB, or null without one. */
+	opencodeDownloadSize(): number | null {
+		try {
+			const proc = (window as unknown as { require?: (n: string) => unknown }).require?.("process") as { platform: string; arch: string } | undefined;
+			return proc ? downloadSize(proc.platform, proc.arch) : null;
+		} catch {
+			return null;
+		}
+	}
+
+	/** Install opencode and make it what answers in Chat. Says how it went. */
+	async installOpencode(): Promise<boolean> {
+		try {
+			await installOpencode();
+		} catch (e) {
+			new Notice(`Grill: ${(e as Error).message}`, 8000);
+			return false;
+		}
+		this.data.settings.chatEngine = "opencode";
+		await this.persist();
+		new Notice("Grill: opencode is installed. Chat now runs on it.", 6000);
+		return true;
 	}
 
 	/** Grill Cloud credits left as last heard from the server; null until known. */
@@ -2409,7 +2468,19 @@ interface Row {
 	build: (setting: Setting) => unknown;
 }
 
+/** The tabs along the top of Grill's settings. */
+type TabId = "basic" | "key" | "agents" | "study" | "scope" | "advanced";
+const TABS: Array<{ id: TabId; name: string }> = [
+	{ id: "basic", name: "Basic" },
+	{ id: "key", name: "Own key" },
+	{ id: "agents", name: "Agents" },
+	{ id: "study", name: "Study" },
+	{ id: "scope", name: "Scope" },
+	{ id: "advanced", name: "Advanced" },
+];
+
 interface Section {
+	tab: TabId;
 	heading: string;
 	rows: Row[];
 }
@@ -2436,6 +2507,10 @@ export class GrillSettingTab extends PluginSettingTab {
 	private cloudDeleteConfirm = false;
 	/** Set when a purchase has just landed: the balance to count up from on the next draw. */
 	private cloudCountFrom: number | null = null;
+	/** The tab open now. Kept while Obsidian is open, so the page comes back where it was. */
+	private tab: TabId = "basic";
+	/** While opencode is being downloaded from this tab. */
+	private opencodeBusy = false;
 	/** Guards against attaching a duplicate voiceschanged listener on every display(). */
 	private voicesListenerAttached = false;
 
@@ -3333,7 +3408,7 @@ export class GrillSettingTab extends PluginSettingTab {
 						.setIcon("zap")
 						.setTooltip("Test this model with a tiny request")
 						.onClick(async () => {
-							const cfg = this.plugin.llmConfig();
+							const cfg = this.plugin.modelConfig();
 							if (!cfg) {
 								new Notice("Grill: set an API key first.");
 								return;
@@ -3453,17 +3528,18 @@ export class GrillSettingTab extends PluginSettingTab {
 			},
 			{
 				name: "Chat engine",
-				desc: "What answers in Chat. Claude Code and Codex run the program installed on this computer, with your own sign-in, and can read and change the whole vault. Desktop only.",
-				aliases: ["claude code", "codex", "agent", "engine", "subscription", "chatgpt"],
+				desc: "What answers in Chat. Claude Code, Codex and opencode run the program on this computer, with your own sign-in, and can read and change the whole vault. Desktop only.",
+				aliases: ["claude code", "codex", "opencode", "agent", "engine", "subscription", "chatgpt"],
 				build: (setting) =>
 					setting.addDropdown((d) =>
 						d
 							.addOption("model", "The model chosen above")
 							.addOption("claudecode", "Claude Code")
 							.addOption("codex", "Codex")
+							.addOption("opencode", "opencode")
 							.setValue(s.chatEngine)
 							.onChange(async (v) => {
-								s.chatEngine = v === "claudecode" || v === "codex" ? v : "model";
+								s.chatEngine = v === "claudecode" || v === "codex" || v === "opencode" ? v : "model";
 								await this.plugin.persist();
 							}),
 					),
@@ -3559,15 +3635,91 @@ export class GrillSettingTab extends PluginSettingTab {
 
 		// Questions and grading is about how you study, not which model runs it.
 		const studyMode = ai.splice(ai.findIndex((r) => r.name === "Questions and grading"), 1);
+		// What answers in Chat goes first; where each program is goes with the programs.
+		const take = (rows: Row[], name: string): Row[] => {
+			const at = rows.findIndex((r) => r.name === name);
+			return at < 0 ? [] : rows.splice(at, 1);
+		};
+		const engine = take(studying, "Chat engine");
+		const programs = [...take(studying, "Claude Code location"), ...take(studying, "Codex location"), ...this.opencodeRows()];
 		return [
-			...(cloudRows.length ? [{ heading: "Grill Cloud", rows: cloudRows }] : []),
+			...(cloudRows.length ? [{ tab: "basic" as const, heading: "Grill Cloud", rows: cloudRows }] : []),
+			{ tab: "basic", heading: "Chat", rows: engine },
 			// Grill Cloud picks the model itself.
 			{
+				tab: "key",
 				heading: cloudEnabled() ? "Your own key or Ollama" : "AI",
 				rows: all || p !== "grillcloud" ? ai : ai.filter((r) => r.name !== "Model" && r.name !== "Custom model ID"),
 			},
-			{ heading: "Studying", rows: [...studyMode, ...studying] },
-			{ heading: "Scope", rows: scope },
+			{ tab: "agents", heading: "Programs on this computer", rows: programs },
+			{ tab: "study", heading: "Studying", rows: [...studyMode, ...studying] },
+			{ tab: "scope", heading: "Scope", rows: scope },
+		];
+	}
+
+	/** opencode: installed by Grill, or found where it already is. */
+	private opencodeRows(): Row[] {
+		const s = this.plugin.data.settings;
+		return [
+			{
+				name: "opencode",
+				desc: "",
+				aliases: ["opencode", "free models", "agent", "ollama", "install", "download"],
+				build: (setting) => {
+					if (!Platform.isDesktopApp) return setting.setDesc("Runs on desktop only.");
+					const found = findOpencode(s.opencodePath);
+					const mb = this.plugin.opencodeDownloadSize();
+					if (this.opencodeBusy) return setting.setDesc(`Downloading opencode${mb ? ` (${mb} MB)` : ""} and checking it...`);
+					if (found) {
+						setting.setDesc(
+							`${isGrillInstall(found) ? `Installed by Grill (${OPENCODE_VERSION})` : `Found at ${found}`}. Free models work without signing in. To use an account of yours, run opencode auth login in a terminal.`,
+						);
+						if (isGrillInstall(found)) {
+							setting.addButton((b) =>
+								b.setButtonText("Remove").onClick(() => {
+									uninstallOpencode();
+									if (s.chatEngine === "opencode") s.chatEngine = "model";
+									void this.plugin.persist();
+									this.rerender();
+								}),
+							);
+						}
+						return setting;
+					}
+					if (!canInstall()) return setting.setDesc("Not installed, and there is no build of it for this computer.");
+					setting.setDesc(`An agent that can read and change the vault, with free models of its own. Grill downloads opencode's build${mb ? ` (${mb} MB)` : ""} and checks it before installing.`);
+					return setting.addButton((b) =>
+						b
+							.setButtonText("Install")
+							.setCta()
+							.onClick(async () => {
+								this.opencodeBusy = true;
+								this.rerender();
+								try {
+									await this.plugin.installOpencode();
+								} finally {
+									this.opencodeBusy = false;
+									this.rerender();
+								}
+							}),
+					);
+				},
+			},
+			{
+				name: "opencode location",
+				desc: "Leave empty to have it found. Fill in the full path to use a copy of your own.",
+				aliases: ["opencode path", "binary", "executable"],
+				build: (setting) =>
+					setting.addText((t) =>
+						t
+							.setPlaceholder("Found automatically")
+							.setValue(s.opencodePath)
+							.onChange(async (v) => {
+								s.opencodePath = v.trim();
+								await this.plugin.persist();
+							}),
+					),
+			},
 		];
 	}
 
@@ -3605,17 +3757,23 @@ export class GrillSettingTab extends PluginSettingTab {
 				},
 			});
 			return [
+				{
+					type: "group",
+					cls: "grill-settings-tabs-group",
+					items: [{ name: "", searchable: false, visible: () => true, render: (setting) => this.tabBar(setting.settingEl) }],
+				},
 				...this.sections(true).map(
 					(sec): SettingDefinitionItem => ({
 						type: "group",
 						heading: sec.heading,
+						visible: () => this.tab === sec.tab,
 						items: sec.rows.map(toDef),
 					}),
 				),
 				{
-					type: "page",
-					name: TUNING_NAME,
-					desc: TUNING_DESC,
+					type: "group",
+					heading: TUNING_NAME,
+					visible: () => this.tab === "advanced",
 					items: this.tuningRows().map(toDef),
 				},
 			];
@@ -3635,14 +3793,34 @@ export class GrillSettingTab extends PluginSettingTab {
 			if (r.desc) setting.setDesc(r.desc);
 			r.build(setting);
 		};
+		this.tabBar(containerEl.createDiv());
 		for (const sec of this.sections()) {
+			if (sec.tab !== this.tab) continue;
 			new Setting(containerEl).setName(sec.heading).setHeading();
 			for (const r of sec.rows) renderRow(containerEl, r);
 		}
-		const details = containerEl.createEl("details", { cls: "grill-tuning" });
-		details.createEl("summary", { text: `${TUNING_NAME} — you shouldn't need any of this` });
-		details.createEl("p", { cls: "setting-item-description", text: TUNING_DESC });
-		for (const r of this.tuningRows()) renderRow(details, r);
+		if (this.tab === "advanced") {
+			new Setting(containerEl).setName(TUNING_NAME).setDesc(TUNING_DESC).setHeading();
+			for (const r of this.tuningRows()) renderRow(containerEl, r);
+		}
+	}
+
+	/** The tabs along the top: one is open, and only its rows are drawn under it. */
+	private tabBar(el: HTMLElement): void {
+		el.empty();
+		el.className = "grill-settings-tabs";
+		el.setAttribute("role", "tablist");
+		for (const tab of TABS) {
+			const b = el.createEl("button", { cls: "grill-settings-tab", text: tab.name });
+			b.setAttribute("role", "tab");
+			b.setAttribute("aria-selected", String(tab.id === this.tab));
+			if (tab.id === this.tab) b.addClass("is-active");
+			b.onclick = () => {
+				if (tab.id === this.tab) return;
+				this.tab = tab.id;
+				this.rerender();
+			};
+		}
 	}
 }
 

@@ -5,6 +5,10 @@ import GrillPlugin, { GrillSettingTab } from "../src/main";
 import { KeyStash, type ApiKeys, type SecretStore } from "../src/secrets";
 import { cloud } from "../src/cloud";
 
+/** The settings definitions under the tab bar: each tab's sections, then Tuning. */
+const sectionDefs = (tab: any): any[] => (tab.getSettingDefinitions() as any[]).filter((d) => d.cls !== "grill-settings-tabs-group");
+
+
 // These tests are about the settings page as it is without Grill Cloud. The source
 // ships with it switched off and the release commit switches it on, so the state is
 // set here, not assumed. (Grill Cloud's own rows are tested in cloud.test.ts.)
@@ -292,10 +296,10 @@ test("with Grill Cloud on, it has the first section and the page still has no du
 	try {
 		for (const provider of ["anthropic", "ollama", "custom", "grillcloud"]) {
 			const { tab } = await boot({ data: { settings: { provider } } }, keychain());
-			const defs = tab.getSettingDefinitions() as any[];
+			const defs = sectionDefs(tab);
 			assert.deepEqual(
 				defs.map((d) => d.heading ?? d.name),
-				["Grill Cloud", "Your own key or Ollama", "Studying", "Scope", "Tuning"],
+				["Grill Cloud", "Chat", "Your own key or Ollama", "Programs on this computer", "Studying", "Scope", "Tuning"],
 			);
 			const every = names(defs);
 			assert.equal(new Set(every).size, every.length, `duplicate row names (${provider})`);
@@ -311,14 +315,14 @@ test("the searchable definitions and the classic page list the same rows", async
 	for (const provider of ["anthropic", "openai", "gemini", "deepseek", "ollama", "custom"]) {
 		const disk = { data: { settings: { provider } } };
 		const { tab } = await boot(disk, keychain());
-		const defs = tab.getSettingDefinitions() as any[];
+		const defs = sectionDefs(tab);
 		assert.deepEqual(
 			defs.map((d) => d.type),
-			["group", "group", "group", "page"],
+			["group", "group", "group", "group", "group", "group"],
 		);
 		assert.deepEqual(
 			defs.map((d) => d.heading ?? d.name),
-			["AI", "Studying", "Scope", "Tuning"],
+			["Chat", "AI", "Programs on this computer", "Studying", "Scope", "Tuning"],
 		);
 		const every = names(defs);
 		assert.equal(new Set(every).size, every.length, "duplicate row names");
@@ -334,16 +338,24 @@ test("the searchable definitions and the classic page list the same rows", async
 		for (const d of defs) for (const it of d.items) it.render(fakeSetting());
 		assert.deepEqual(settingNames, []);
 
-		// The classic page draws exactly the same rows, in the same order.
-		tab.display();
-		const headings = ["AI", "Studying", "Scope"];
+		// The classic page draws exactly the same rows, in the same order, a tab at a time.
+		const headings = ["Chat", "AI", "Programs on this computer", "Studying", "Scope", "Tuning"];
+		const drawn: string[] = [];
+		for (const id of ["basic", "key", "agents", "study", "scope", "advanced"]) {
+			(tab as any).tab = id;
+			settingNames.length = 0;
+			tab.display();
+			drawn.push(...settingNames);
+		}
+		(tab as any).tab = "basic";
+		const tuning = names(defs.filter((d) => d.heading === "Tuning"));
 		assert.deepEqual(
-			settingNames.filter((n) => !headings.includes(n)),
-			defined,
+			drawn.filter((n) => !headings.includes(n)),
+			[...defined.filter((n) => !tuning.includes(n)), ...tuning],
 			provider,
 		);
 		assert.deepEqual(
-			settingNames.filter((n) => headings.includes(n)),
+			drawn.filter((n) => headings.includes(n)),
 			headings,
 		);
 	}
@@ -353,7 +365,7 @@ test("definitions built once at load still show what's true when the tab is open
 	// Obsidian calls getSettingDefinitions() when the plugin loads and then only
 	// re-renders those same definitions each time the tab is opened.
 	const { plugin, tab } = await boot({ data: { settings: {} } }, keychain());
-	const defs = tab.getSettingDefinitions() as any[];
+	const defs = sectionDefs(tab);
 	const def = (name: string): any => defs.flatMap((d) => d.items).find((it: any) => it.name === name);
 	const s = plugin.data.settings;
 

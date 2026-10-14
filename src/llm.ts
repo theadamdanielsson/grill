@@ -138,7 +138,13 @@ export interface LLMConfig {
 	model: string;
 	/** Ollama server URL, e.g. http://localhost:11434 */
 	baseUrl?: string;
+	/** Set when no model is set up and an agent program answers instead (agentjson.ts):
+	 * each request goes to it whole, as one JSON answer, with no images. */
+	agent?: (system: string, user: string, schema: Record<string, unknown>) => Promise<unknown>;
 }
+
+/** How long an agent program is given for one answer: it has to start first. */
+const AGENT_TIMEOUT_MS = 240_000;
 
 export interface Question {
 	node: string;
@@ -308,6 +314,7 @@ const OLLAMA_EMBED_MODEL = "nomic-embed-text";
  * prefilter, so a failure here should silently fall back, not surface as an error
  * the way a student-facing grading/generation call would. */
 export async function embedTexts(cfg: LLMConfig, texts: string[]): Promise<number[][] | null> {
+	if (cfg.agent) return null;
 	if (!texts.length) return [];
 	try {
 		switch (cfg.provider) {
@@ -761,6 +768,7 @@ async function callJSONOnce(
 	images: ImageInput[],
 	effort: "low" | "medium" = "medium",
 ): Promise<unknown> {
+	if (cfg.agent) return withTimeout(cfg.agent(system, flattenUser(user), schema), AGENT_TIMEOUT_MS);
 	const call = buildCall(cfg, system, user, schema, maxTokens, images, effort);
 	const resp = await withTimeout(
 		requestUrl({
@@ -2100,6 +2108,8 @@ export async function learnWithTools(
 	live: LiveReply,
 	work: Pick<ToolChat, "port" | "level" | "onEvent" | "ask" | "allowed">,
 ): Promise<(ThreadTurn & { tools: string[]; seconds: number }) | null | "unopened"> {
+	// An agent program answering for a model has its own tools, run another way.
+	if (cfg.agent) return "unopened";
 	const p = learnPrompt(noteName, noteText, linkedText, thread, ask, persona, instructions, record, vault);
 	const prompt = { system: `${p.system}\n\n${TOOL_RULES}`, cacheable: p.cacheable, rest: p.rest, maxTokens: 4000 };
 	const o = { takesEffort: cfg.provider === "anthropic" && anthropicTakesEffort(cfg.model), cloudUrl: cloud.streams && cloud.tools ? cloud.url : null };
@@ -2179,7 +2189,7 @@ export async function learnFromNotes(
 	// Read as it is written where the provider can be asked that way; whole otherwise,
 	// and whole too when a stream could not be opened, before anything was shown.
 	let streamed: string | null = null;
-	if (live) {
+	if (live && !cfg.agent) {
 		const call = streamCall(
 			cfg,
 			{ system, cacheable, rest, maxTokens: 4000 },

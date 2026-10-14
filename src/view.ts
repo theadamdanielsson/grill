@@ -88,6 +88,8 @@ import { activitySummary, AgentEvent, agentBrief, AGENT_LEVELS, findProgram, Per
 import type { VaultPort } from "./vaulttools";
 import type { SettingsPort } from "./settingstools";
 import { findCodex, runCodex } from "./codex";
+import { AcpModel, acpModels, runAcp } from "./acp";
+import { canInstall, findOpencode, opencodeProgram } from "./opencode";
 
 /** Mermaid's drawing, made fit to be shown as an image: well-formed XML, with a size
  * of its own. Null if it isn't a drawing (Mermaid draws its errors as one too).
@@ -901,7 +903,29 @@ export class SessionView extends ItemView {
 				};
 				return;
 			}
-			screen.createDiv({ cls: "grill-section-label", text: "How should Grill write your questions?" });
+			// A program already on this computer, signed in, is the shortest way in: Chat
+			// starts on it with nothing to set up. Without one, opencode can be installed.
+			const program = this.installedAgent();
+			if (program) {
+				screen.createDiv({ cls: "grill-section-label", text: `${program.name} is on this computer` });
+				const use = screen.createEl("button", { text: `Start with ${program.name}`, cls: "mod-cta grill-start-btn grill-primary-cta" });
+				use.onclick = async () => {
+					s.chatEngine = program.id;
+					await this.plugin.persist();
+					next();
+				};
+			} else if (Platform.isDesktopApp && canInstall()) {
+				const mb = this.plugin.opencodeDownloadSize();
+				const free = screen.createDiv({ cls: "grill-onboard-others" });
+				const get = free.createEl("a", { text: `Install opencode, free models, no account${mb ? ` (${mb} MB)` : ""}` });
+				get.onclick = async () => {
+					get.setText("Downloading and checking...");
+					get.addClass("is-disabled");
+					if (await this.plugin.installOpencode()) next();
+					else this.renderOnboarding(1);
+				};
+			}
+			screen.createDiv({ cls: "grill-section-label", text: program ? "Or use Grill Cloud" : "How should Grill write your questions?" });
 			const panel = screen.createDiv({ cls: "grill-cloud-panel" });
 			const go = this.renderCloudPanel(panel, true);
 			// With a key already here (set up before, or arrived by sync): show what's on
@@ -1184,7 +1208,7 @@ export class SessionView extends ItemView {
 				s.provider = p;
 				save();
 			}
-			const cfg = this.plugin.llmConfig();
+			const cfg = this.plugin.modelConfig();
 			if (!cfg) {
 				status.setText(p === "custom" ? "Add a base URL and model first." : "Add your key first.");
 				return;
@@ -1533,12 +1557,18 @@ export class SessionView extends ItemView {
 	 * change it. */
 	private engineForHome(): { name: string; open(): void } {
 		const s = this.plugin.data.settings;
-		// With Claude Code or Codex on this computer, the button steps through what there
+		// With Claude Code, Codex or opencode on this computer, the button steps through what there
 		// is: the model, then each program that is installed.
-		const have: Array<"model" | "claudecode" | "codex"> = ["model"];
+		const have: Array<"model" | "claudecode" | "codex" | "opencode"> = ["model"];
 		if (Platform.isDesktopApp && findProgram(s.claudePath)) have.push("claudecode");
 		if (Platform.isDesktopApp && findCodex(s.codexPath)) have.push("codex");
-		const now = have.includes(s.chatEngine) ? s.chatEngine : "model";
+		if (Platform.isDesktopApp && findOpencode(s.opencodePath)) have.push("opencode");
+		let now = have.includes(s.chatEngine) ? s.chatEngine : "model";
+		// Nothing set up but a program that works: Chat runs on that instead of on nothing.
+		if (now === "model" && have.length > 1 && !this.plugin.modelConfig()) {
+			now = s.chatEngine = have[1];
+			void this.plugin.persist();
+		}
 		const open =
 			have.length > 1
 				? (): void => {
@@ -1549,7 +1579,8 @@ export class SessionView extends ItemView {
 				: (): void => this.plugin.openSettings();
 		if (now === "claudecode") return { name: "Claude Code", open };
 		if (now === "codex") return { name: "Codex", open };
-		if (!this.plugin.llmConfig()) {
+		if (now === "opencode") return { name: "opencode", open };
+		if (!this.plugin.modelConfig()) {
 			return { name: "No model", open };
 		}
 		if (s.provider === "grillcloud") return { name: "Grill Cloud", open };
@@ -1571,7 +1602,9 @@ export class SessionView extends ItemView {
 	 * tests are written and marked with too. */
 	private modelForHome(): { name: string; open(at: HTMLElement): void } | null {
 		const s = this.plugin.data.settings;
-		if (this.agentProgram()) {
+		const program = this.agentProgram();
+		if (program && s.chatEngine === "opencode") return this.opencodeModelButton(program);
+		if (program) {
 			if (s.chatEngine !== "claudecode") return null;
 			const now = CLAUDE_MODELS.find((m) => m.id === s.claudeModel) ?? CLAUDE_MODELS[0];
 			return {
@@ -1625,6 +1658,49 @@ export class SessionView extends ItemView {
 		};
 	}
 
+	/** The models opencode offers, as it last said: asked for once (no model is used to
+	 * answer) the first time the list is opened, and refreshed by every turn. */
+	private opencodeModels: { models: AcpModel[]; current: string } | null = null;
+
+	/** opencode's model button: its own free models, Ollama's, and any account signed in
+	 * to it, by the names it gives them. */
+	private opencodeModelButton(program: string): { name: string; open(at: HTMLElement): void } {
+		const s = this.plugin.data.settings;
+		const known = this.opencodeModels;
+		const id = s.opencodeModel || known?.current || "";
+		const name = (known?.models.find((m) => m.id === id)?.name ?? id).replace(/^opencode\//, "") || "Model";
+		return {
+			name,
+			open: (at) =>
+				void (async () => {
+					const base = (this.app.vault.adapter as { getBasePath?: () => string }).getBasePath?.();
+					if (!this.opencodeModels && base) {
+						try {
+							this.opencodeModels = await acpModels(opencodeProgram(program, s.agentLevel), base);
+						} catch (e) {
+							new Notice(`Grill: opencode could not list its models. ${(e as Error).message}`, 8000);
+							return;
+						}
+						if (!at.isConnected) return;
+					}
+					const menu = new Menu();
+					for (const m of this.opencodeModels?.models ?? []) {
+						menu.addItem((i) =>
+							i
+								.setTitle(m.name.replace(/^opencode\//, ""))
+								.setChecked(m.id === id)
+								.onClick(() => {
+									s.opencodeModel = m.id;
+									void this.plugin.persist();
+									this.renderStart();
+								}),
+						);
+					}
+					this.menuAt(at, menu);
+				})(),
+		};
+	}
+
 	/** The prompts, as a list under their button: Grill's own, then the saved ones, then
 	 * a way to save a new one. Picking one puts it in the box. */
 	private promptsMenu(at: HTMLElement, use: (text: string) => void): void {
@@ -1644,12 +1720,25 @@ export class SessionView extends ItemView {
 		this.menuAt(at, menu);
 	}
 
-	/** The installed program Chat is set to run on (Claude Code or Codex), when it is
+	/** The first agent program on this computer, for offering it on the first run. */
+	private installedAgent(): { id: "claudecode" | "codex" | "opencode"; name: string } | null {
+		if (!Platform.isDesktopApp) return null;
+		const s = this.plugin.data.settings;
+		if (findProgram(s.claudePath)) return { id: "claudecode", name: "Claude Code" };
+		if (findCodex(s.codexPath)) return { id: "codex", name: "Codex" };
+		if (findOpencode(s.opencodePath)) return { id: "opencode", name: "opencode" };
+		return null;
+	}
+
+	/** The installed program Chat is set to run on (Claude Code, Codex or opencode), when it is
 	 * there to run: null otherwise. */
 	private agentProgram(): string | null {
 		const s = this.plugin.data.settings;
 		if (!Platform.isDesktopApp) return null;
-		return s.chatEngine === "claudecode" ? findProgram(s.claudePath) : s.chatEngine === "codex" ? findCodex(s.codexPath) : null;
+		if (s.chatEngine === "claudecode") return findProgram(s.claudePath);
+		if (s.chatEngine === "codex") return findCodex(s.codexPath);
+		if (s.chatEngine === "opencode") return findOpencode(s.opencodePath);
+		return null;
 	}
 
 	private levelForHome(): { name: string; says: string; next(): void } {
@@ -2177,7 +2266,7 @@ export class SessionView extends ItemView {
 	/** Whether the model behind Chat can be given the vault tools. */
 	private modelHasTools(): boolean {
 		const cfg = this.plugin.llmConfig();
-		if (!cfg) return false;
+		if (!cfg || cfg.agent) return false;
 		if (cfg.provider === "grillcloud") return cloud.streams && cloud.tools;
 		return cfg.provider === "anthropic" || cfg.provider === "openai" || cfg.provider === "deepseek" || cfg.provider === "custom";
 	}
@@ -2229,7 +2318,19 @@ export class SessionView extends ItemView {
 		const s = this.plugin.data.settings;
 		const brief = agentBrief(L.whole ? "" : L.note.path, L.record, L.instructions);
 		const shared = { prompt: text, cwd: base, program, level: s.agentLevel, resume: L.agentSession, signal: live.signal, onEvent: ui.onEvent, ask: ui.ask };
-		const result = s.chatEngine === "codex" ? await runCodex({ ...shared, brief }) : await runAgent({ ...shared, append: brief, ...(s.claudeModel ? { model: s.claudeModel } : {}) });
+		const result =
+			s.chatEngine === "codex"
+				? await runCodex({ ...shared, brief })
+				: s.chatEngine === "opencode"
+					? await runAcp({
+							...shared,
+							...opencodeProgram(program, s.agentLevel),
+							name: "opencode",
+							brief,
+							model: s.opencodeModel,
+							onModels: (models, current) => (this.opencodeModels = { models, current }),
+						})
+					: await runAgent({ ...shared, append: brief, ...(s.claudeModel ? { model: s.claudeModel } : {}) });
 		L.agentSession = result.sessionId || L.agentSession;
 		// A diagram, when one was asked for, is lifted out to be drawn the way every other is.
 		let diagram = "";
@@ -5345,7 +5446,7 @@ export class SessionView extends ItemView {
 			// misses exactly the pairs (related, no shared vocabulary) that make the
 			// missing-link finder worth having. Providers without embeddings (Anthropic,
 			// DeepSeek) still skip it entirely, so nobody pays for a call that can't happen.
-			if (supportsEmbeddings(cfg.provider)) {
+			if (!cfg.agent && supportsEmbeddings(cfg.provider)) {
 				await this.refreshEmbeddings(cfg, names);
 				const semantic = detectSemanticBridgeCandidates(
 					this.app,
@@ -5751,7 +5852,7 @@ export class SessionView extends ItemView {
 			};
 			const seed = pickCandidates(orderedNames, this.plugin.mastery, notesCap, priority, freshPolicy);
 			const names = expandSelectionWithLinks(this.app, seed, byName, this.plugin.mastery, notesCap);
-			const vision = !!cfg && s.sendImages && supportsVision(cfg.provider, cfg.model);
+			const vision = !!cfg && !cfg.agent && s.sendImages && supportsVision(cfg.provider, cfg.model);
 			this.sessionVision = vision;
 			// Desktop-only for now: Tesseract.js's worker+WASM combination is unverified on
 			// mobile's webview, so occlusion silently no-ops there rather than risking a
@@ -5860,7 +5961,7 @@ export class SessionView extends ItemView {
 			// session still runs fine (the model is told to quiz text only), but silently
 			// — with no visible sign the toggle isn't doing anything for this model, it
 			// reads as "images are broken" rather than "this model doesn't support vision".
-			if (cfg && s.sendImages && !supportsVision(cfg.provider, cfg.model) && this.notesWithUnsentImages.size > 0) {
+			if (cfg && !cfg.agent && s.sendImages && !supportsVision(cfg.provider, cfg.model) && this.notesWithUnsentImages.size > 0) {
 				new Notice(
 					`Grill: ${cfg.model} can't read images, so this session will quiz on text only. Switch to a vision model (Claude, GPT-4o/5, Gemini, or a vision Ollama model) to include them.`,
 					8000,

@@ -721,6 +721,39 @@
   color: var(--grill-ink-flame, #ff7a22);
 }
 
+/* Tabs along the top of the settings page, after Copilot's: a row of square buttons on
+ * a rule, the open one filled. Only the open tab's rows are drawn under it. */
+.grill-settings-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin: 0.2em 0 0.6em;
+  padding: 0;
+  border: none;
+  border-bottom: 2px solid var(--text-normal);
+}
+.grill-settings-tabs .grill-settings-tab {
+  border-radius: 0;
+  box-shadow: none;
+  border: 1px solid var(--background-modifier-border);
+  border-bottom: none;
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-medium);
+  padding: 0.35em 0.9em;
+  height: auto;
+  cursor: pointer;
+}
+.grill-settings-tabs .grill-settings-tab:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+.grill-settings-tabs .grill-settings-tab.is-active {
+  background: var(--interactive-accent);
+  border-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
 /* The Tuning escape hatch: every number the scheduler runs on, reachable but never
    asked about. Deliberately reads as an appendix rather than a fifth section — no
    ember rule, muted summary — so nothing about it invites a browse. */

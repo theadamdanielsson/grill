@@ -147,9 +147,9 @@ How Grill quizzes and talks: Grill/Instructions.md (command: Open persona & inst
 
 Progress: the Progress screen (or the tiles on the home screen) shows the arc of how you have changed, what you keep missing, coverage per folder, a map of your notes coloured by how well you know them, and a review heatmap.
 
-Engines: what answers in Chat, switched with the button under the chat box. Grill Cloud needs no setup and has a monthly plan once the free credits are used. Your own key (Anthropic, OpenAI, Gemini, DeepSeek, any OpenAI-compatible endpoint) or Ollama on your machine. Claude Code or Codex if installed (desktop only). Tests use Grill Cloud, your key or Ollama, as chosen in settings.
+Engines: what answers in Chat, switched with the button under the chat box. Grill Cloud needs no setup and has a monthly plan once the free credits are used. Your own key (Anthropic, OpenAI, Gemini, DeepSeek, any OpenAI-compatible endpoint) or Ollama on your machine. Claude Code, Codex or opencode if installed (desktop only); opencode can be installed from the Agents tab of Grill's settings and has free models that need no sign-in. Tests use Grill Cloud, your key or Ollama, as chosen in settings.
 
-Settings: grill_settings lists the study settings Chat can change. Everything else (engine, keys, models, folders to exclude, voice, the graph) is in Obsidian's settings under Grill.`;
+Settings: grill_settings lists the study settings Chat can change. Everything else (engine, keys, models, folders to exclude, voice, the graph) is in Obsidian's settings under Grill, in tabs: Basic, Own key, Agents, Study, Scope, Advanced.`;
 
 export const SETTINGS_TOOLS: ToolSpec[] = [
 	{
