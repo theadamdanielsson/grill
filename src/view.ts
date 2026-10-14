@@ -914,16 +914,6 @@ export class SessionView extends ItemView {
 					await this.plugin.persist();
 					next();
 				};
-			} else if (Platform.isDesktopApp && canInstall()) {
-				const mb = this.plugin.opencodeDownloadSize();
-				const free = screen.createDiv({ cls: "grill-onboard-others" });
-				const get = free.createEl("a", { text: `Install opencode, free models, no account${mb ? ` (${mb} MB)` : ""}` });
-				get.onclick = async () => {
-					get.setText("Downloading and checking...");
-					get.addClass("is-disabled");
-					if (await this.plugin.installOpencode()) next();
-					else this.renderOnboarding(1);
-				};
 			}
 			screen.createDiv({ cls: "grill-section-label", text: program ? "Or use Grill Cloud" : "How should Grill write your questions?" });
 			const panel = screen.createDiv({ cls: "grill-cloud-panel" });
@@ -974,6 +964,19 @@ export class SessionView extends ItemView {
 			others.createSpan({ cls: "grill-meta", text: "Or " });
 			const mine = others.createEl("a", { text: "use my own API key or Ollama" });
 			mine.onclick = () => this.renderOnboarding(1, true);
+			// With no program here to start on: the free one, after Grill Cloud.
+			if (!program && Platform.isDesktopApp && canInstall()) {
+				const mb = this.plugin.opencodeDownloadSize();
+				const free = screen.createDiv({ cls: "grill-onboard-others" });
+				free.createSpan({ cls: "grill-meta", text: "Or " });
+				const get = free.createEl("a", { text: `install opencode: free models, no account${mb ? ` (${mb} MB)` : ""}` });
+				get.onclick = async () => {
+					get.setText("downloading and checking...");
+					get.addClass("is-disabled");
+					if (await this.plugin.installOpencode()) next();
+					else this.renderOnboarding(1);
+				};
+			}
 			return;
 		}
 
