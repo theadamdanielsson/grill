@@ -19,6 +19,7 @@ import { BridgeMap } from "./bridges";
 import { PdfCacheMap } from "./pdf";
 import { ConceptExtractionCacheMap } from "./generate-local";
 import { safeDiagram, safeMarkdown } from "./safemd";
+import { replyTitle } from "./learn";
 
 /** A generated question cached for reuse. `sourceHash` ties it to the concept's
  * source text at generation time; a mismatch means the note changed and the entry
@@ -831,17 +832,20 @@ export class GrillStore {
 		await this.ensureFolder(this.folder());
 		await this.ensureFolder(normalizePath(`${this.folder()}/Learn`));
 		await this.ensureFolder(dir);
-		const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}.${pad(d.getMinutes())}`;
+		const day = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+		const title = learnTitle(turns, note === "Your notes" ? "" : note);
 		const lines: string[] = [
 			"---",
-			`date: ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+			`date: ${day}`,
 			"type: learn",
+			`title: ${JSON.stringify(title)}`,
 			`note: ${JSON.stringify(note)}`,
 			`provider: ${meta.provider}`,
 			`model: ${meta.model}`,
 			"---",
+			`# ${title}`,
 			// A conversation about the notes as a whole has no one note to link to.
-			note === "Your notes" ? "# Learn: your notes" : `# Learn: [[${note}]]`,
+			note === "Your notes" ? "About your notes." : `About [[${note}]].`,
 			"",
 		];
 		for (const turn of turns) {
@@ -850,8 +854,11 @@ export class GrillStore {
 			const drawn = safeDiagram(turn.diagram ?? "");
 			if (drawn) lines.push("```mermaid", drawn, "```", "");
 		}
-		let path = normalizePath(`${dir}/${stamp}.md`);
-		if (await this.app.vault.adapter.exists(path)) path = normalizePath(`${dir}/${stamp}.${pad(d.getSeconds())}.md`);
+		// Dated first, so the folder reads in order and the name can't be taken for a
+		// note of the student's own with the same title.
+		const base = `${day} ${title}`;
+		let path = normalizePath(`${dir}/${base}.md`);
+		for (let n = 2; await this.app.vault.adapter.exists(path); n++) path = normalizePath(`${dir}/${base} ${n}.md`);
 		try {
 			return await this.app.vault.create(path, lines.join("\n"));
 		} catch {
@@ -900,4 +907,16 @@ export class GrillStore {
 		}
 		return out;
 	}
+}
+
+/** What a Learn conversation is called: the first heading Grill wrote, else the first
+ * thing asked (when it says more than two words), else the note it was about. Already
+ * safe to be a file name. */
+export function learnTitle(turns: Array<{ role: "student" | "tutor"; text: string }>, note: string): string {
+	const reply = turns.find((t) => t.role === "tutor")?.text ?? "";
+	const heading = replyTitle(/^#{1,3}\s+(.+)$/m.exec(reply)?.[1] ?? "");
+	if (heading) return heading;
+	const asked = replyTitle((turns.find((t) => t.role === "student")?.text ?? "").split("\n")[0]).replace(/[?!]+$/, "");
+	if (asked.split(" ").length >= 3) return asked[0].toUpperCase() + asked.slice(1);
+	return replyTitle(note) || asked || "Chat";
 }

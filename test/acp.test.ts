@@ -348,3 +348,15 @@ test("with an agent standing in for a model, grading goes to it whole and its JS
 	assert.match(seen[0].user, /Rates rise more than inflation/);
 	assert.equal(g.verdict, "correct");
 });
+
+import { learnTitle } from "../src/store";
+
+test("a chat is named by what it was about", () => {
+	const t = (student: string, tutor: string, note = "agent__teach_me_something@20261014_172657") =>
+		learnTitle([{ role: "student", text: student }, { role: "tutor", text: tutor }], note);
+	assert.equal(t("teach me something", "## Real Interest Rate (r)\nSources..."), "Real Interest Rate (r)");
+	assert.equal(t("why does the **IS curve** slope down?", "Because..."), "Why does the IS curve slope down");
+	assert.equal(t("teach me", "No heading here.", "Solow Model"), "Solow Model");
+	assert.equal(t("hi", "ok", ""), "hi");
+	assert.ok(!/[\\/:*?"<>|#^[\]]/.test(t("a/b: c? [[x]] d", "# What is r*: a/b?")));
+});

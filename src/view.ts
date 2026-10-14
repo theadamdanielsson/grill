@@ -1515,7 +1515,7 @@ export class SessionView extends ItemView {
 						const fm = cache?.frontmatter;
 						const chatted = fm?.type === "learn";
 						const title = chatted
-							? String(fm?.note ?? "")
+							? String(fm?.title ?? fm?.note ?? "")
 							: sessionTitle((cache?.headings ?? []).filter((h) => h.level === 2).map((h) => h.heading));
 						return {
 							title: title || f.basename,
@@ -1804,10 +1804,13 @@ export class SessionView extends ItemView {
 		this.learnStop?.abort();
 		if (!L || !L.turns.some((t) => t.role === "tutor")) return;
 		const cfg = this.plugin.llmConfig();
+		const s = this.plugin.data.settings;
+		// What answered: the program Chat ran on, or the model.
+		const ran = this.agentProgram() ? s.chatEngine : null;
 		try {
 			await this.plugin.store.saveLearnThread(L.whole ? "Your notes" : L.note.basename, L.turns, {
-				provider: cfg?.provider ?? "",
-				model: cfg?.provider === "grillcloud" ? "hosted" : (cfg?.model ?? ""),
+				provider: ran ?? cfg?.provider ?? "",
+				model: ran === "claudecode" ? s.claudeModel || "default" : ran === "opencode" ? s.opencodeModel || "default" : ran ? "default" : cfg?.provider === "grillcloud" ? "hosted" : (cfg?.model ?? ""),
 				startedAt: L.startedAt,
 			});
 		} catch (e) {
