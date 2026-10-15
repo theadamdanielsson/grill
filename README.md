@@ -59,7 +59,7 @@ After that Grill Cloud is a monthly plan: $7.99 a month, plus tax where it appli
 
 The checkout is run by Stripe, so the page says "Sold through Link" and your card statement shows Link. The plan starts in Grill a few seconds after you pay. You cancel it at link.com, signed in with the email address you paid with, and it stays usable until the end of the month already paid for. Buying happens in Grill and nowhere else.
 
-Grill chooses the model behind Grill Cloud for the quality of its grading and keeps it current.
+Grill Cloud runs on two of Anthropic's Claude models, each chosen by testing it on real notes and kept current. A fast model writes the test questions. A stronger one marks your answers and runs Chat, because marking is where the stronger model was clearly better.
 
 One thing differs from every other way of running Grill. With Grill Cloud, the notes in a session, the images in them, your answers and your custom instructions go through my server to Anthropic. In Chat, the notes the model asks to read go the same way. My server does not keep them: it does not store or log your notes, the questions, or your answers. Anthropic keeps them for up to 30 days to watch for abuse and does not train on them. If you turn on the natural voice, the text being read aloud goes to OpenAI the same way. What my server does store is a short list, set out in the privacy policy.
 

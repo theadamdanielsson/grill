@@ -10,8 +10,9 @@ Grill asks a model to do two jobs, and they need different amounts of muscle:
 So pick for the grading. Everything below is about getting grading you can trust for the least
 money, or for free.
 
-**The short version: use Grill Cloud.** Press Start free in Grill and it runs on a model
-chosen for its grading and kept current, with no key to get and nothing to configure. It's
+**The short version: use Grill Cloud.** Press Start free in Grill and it runs on Claude
+models chosen for their grading and kept current: a fast one writes the questions, and a
+stronger one marks your answers and runs Chat. There is no key to get and nothing to configure. It's
 free to try, then $7.99 a month. The rest of this page is for when you'd
 rather bring your own key or run a model on your own machine.
 
