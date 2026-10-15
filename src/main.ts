@@ -2433,8 +2433,8 @@ const isAccountId = (v: unknown): v is string => typeof v === "string" && /^[0-9
 const CUSTOM = "__custom__";
 
 const TUNING_NAME = "Tuning";
-const TUNING_DESC =
-	"Changing one sets Study intensity to Custom.";
+const TUNING_DESC = "Changing one of these sets Study intensity to Custom.";
+const DATA_NAME = "Data";
 
 /** Run a number up from `from` to `to` in an element's text, over about a second,
  * easing out. Skipped (the final text is simply set) for people who ask for reduced
@@ -2469,13 +2469,12 @@ interface Row {
 }
 
 /** The tabs along the top of Grill's settings. */
-type TabId = "basic" | "key" | "agents" | "study" | "scope" | "advanced";
+type TabId = "basic" | "key" | "agents" | "study" | "advanced";
 const TABS: Array<{ id: TabId; name: string }> = [
 	{ id: "basic", name: "Basic" },
 	{ id: "key", name: "Own key" },
 	{ id: "agents", name: "Agents" },
 	{ id: "study", name: "Study" },
-	{ id: "scope", name: "Scope" },
 	{ id: "advanced", name: "Advanced" },
 ];
 
@@ -2732,12 +2731,9 @@ export class GrillSettingTab extends PluginSettingTab {
 	}
 
 	/** The escape hatch: every number the engine schedules on, reachable but never asked
-	 * about. Deliberately NOT a persisted preference — before Obsidian 1.13 it's a native
-	 * <details> that collapses again on every reopen, on 1.13+ a sub-page you have to walk
-	 * into. The previous round of this used a sticky "Show advanced settings" toggle, which
-	 * is what let the tab re-accrete: once a power user flipped it on, adding one more
-	 * setting behind it was free. A click every time is the friction that keeps the default
-	 * surface honest. */
+	 * about. They live on the Advanced tab, which the page never opens on, so the other
+	 * tabs stay short. The last two rows, Grill folder and Restore, are not tuning: they
+	 * are drawn under a heading of their own (see dataRows). */
 	private tuningRows(): Row[] {
 		const s = this.plugin.data.settings;
 
@@ -2752,9 +2748,7 @@ export class GrillSettingTab extends PluginSettingTab {
 		return [
 			this.sliderRow(
 				"Review frequency",
-				"FSRS's target recall probability at each concept's due date. Lower brings concepts back sooner (more " +
-					"reviews, progress feels faster); higher spaces them further apart (fewer reviews, longer " +
-					"before something you know comes back around).",
+				"How sure Grill wants you to be when a concept comes back. Higher means more reviews.",
 				70,
 				97,
 				Math.min(Math.max(s.desiredRetention, 70), 97),
@@ -2766,11 +2760,7 @@ export class GrillSettingTab extends PluginSettingTab {
 			),
 			this.sliderRow(
 				"New concepts per day",
-				"Caps how many never-before-tested concepts \"Get grilled\" will introduce per calendar day. Once " +
-					"hit, sessions fill remaining slots by reviewing what's already due instead, so a few missed " +
-					"days can't leave the due queue permanently outrunning what you can actually review. 0 = no new " +
-					"concepts at all, ever — pure review. Only governs \"Get grilled\": a deliberately scoped session " +
-					"(\"Grill this note/folder\", a committed Custom Study pick) is never throttled by this.",
+				"The most untested concepts a day. Tests on a note or folder you pick aren't capped. 0 means review only.",
 				0,
 				100,
 				Math.min(Math.max(s.newConceptsPerDay, 0), 100),
@@ -2782,8 +2772,7 @@ export class GrillSettingTab extends PluginSettingTab {
 			),
 			this.sliderRow(
 				"New material share",
-				"The most a single session lets new/untested material claim, whenever it's allowed to claim any " +
-					"room at all (see the toggle below).",
+				"The most of one session that new material can take.",
 				0,
 				100,
 				Math.min(Math.max(s.freshContentShare, 0), 100),
@@ -2824,9 +2813,7 @@ export class GrillSettingTab extends PluginSettingTab {
 			},
 			this.sliderRow(
 				"Grade weighting",
-				"How much a graph node's number weighs coverage (how much of the note you've confirmed, capped so a " +
-					"long note isn't penalised for its length) against mastery (how well you'd recall what you've " +
-					"actually studied right now). Left: pure mastery. Right: pure coverage.",
+				"A note's score on the map: how well you recall it (left) or how much of it you've covered (right).",
 				0,
 				100,
 				s.graphCoverageWeight,
@@ -2872,6 +2859,13 @@ export class GrillSettingTab extends PluginSettingTab {
 					});
 				},
 			},
+		];
+	}
+
+	/** Where Grill keeps its files, and the way back to the recommended settings. */
+	private dataRows(): Row[] {
+		const s = this.plugin.data.settings;
+		return [
 			{
 				name: "Grill folder",
 				desc: "Where Grill keeps its data and session notes.",
@@ -3483,7 +3477,7 @@ export class GrillSettingTab extends PluginSettingTab {
 						d.addOption("relaxed", "Relaxed — fewer reviews, slower intake");
 						d.addOption("steady", "Steady — recommended");
 						d.addOption("intense", "Intense — exam in a fortnight");
-						if (s.studyIntensity === "custom") d.addOption("custom", "Custom — set in Tuning below");
+						if (s.studyIntensity === "custom") d.addOption("custom", "Custom — set in Advanced");
 						d.setValue(s.studyIntensity);
 						d.onChange(async (v) => {
 							if (v === "custom") return;
@@ -3527,13 +3521,13 @@ export class GrillSettingTab extends PluginSettingTab {
 					),
 			},
 			{
-				name: "Chat engine",
-				desc: "What answers in Chat. Claude Code, Codex and opencode run the program on this computer, with your own sign-in, and can read and change the whole vault. Desktop only.",
+				name: "Engine",
+				desc: "What answers in Chat. Claude Code, Codex and opencode run on this computer with your own sign-in. Desktop only. With no Grill Cloud, key or Ollama set up, the program also writes and marks tests.",
 				aliases: ["claude code", "codex", "opencode", "agent", "engine", "subscription", "chatgpt"],
 				build: (setting) =>
 					setting.addDropdown((d) =>
 						d
-							.addOption("model", "The model chosen above")
+							.addOption("model", cloudEnabled() && p === "grillcloud" ? "Grill Cloud" : "Your model")
 							.addOption("claudecode", "Claude Code")
 							.addOption("codex", "Codex")
 							.addOption("opencode", "opencode")
@@ -3633,27 +3627,28 @@ export class GrillSettingTab extends PluginSettingTab {
 			},
 		];
 
-		// Questions and grading is about how you study, not which model runs it.
-		const studyMode = ai.splice(ai.findIndex((r) => r.name === "Questions and grading"), 1);
-		// What answers in Chat goes first; where each program is goes with the programs.
 		const take = (rows: Row[], name: string): Row[] => {
 			const at = rows.findIndex((r) => r.name === name);
 			return at < 0 ? [] : rows.splice(at, 1);
 		};
-		const engine = take(studying, "Chat engine");
+		// What answers, and how Grill talks, go on the first tab; where each program is
+		// goes with the programs.
+		const persona = take(ai, "Persona & instructions");
+		const engine = take(studying, "Engine");
 		const programs = [...take(studying, "Claude Code location"), ...take(studying, "Codex location"), ...this.opencodeRows()];
 		return [
 			...(cloudRows.length ? [{ tab: "basic" as const, heading: "Grill Cloud", rows: cloudRows }] : []),
-			{ tab: "basic", heading: "Chat", rows: engine },
+			{ tab: "basic", heading: "Chat", rows: [...engine, ...persona] },
 			// Grill Cloud picks the model itself.
 			{
 				tab: "key",
 				heading: cloudEnabled() ? "Your own key or Ollama" : "AI",
 				rows: all || p !== "grillcloud" ? ai : ai.filter((r) => r.name !== "Model" && r.name !== "Custom model ID"),
 			},
-			{ tab: "agents", heading: "Programs on this computer", rows: programs },
-			{ tab: "study", heading: "Studying", rows: [...studyMode, ...studying] },
-			{ tab: "scope", heading: "Scope", rows: scope },
+			// None of these programs run on mobile, so the tab isn't there.
+			...(all || Platform.isDesktopApp ? [{ tab: "agents" as const, heading: "Programs on this computer", rows: programs }] : []),
+			{ tab: "study", heading: "Studying", rows: studying },
+			{ tab: "study", heading: "Folders", rows: scope },
 		];
 	}
 
@@ -3727,7 +3722,7 @@ export class GrillSettingTab extends PluginSettingTab {
 	 * state doesn't show it. */
 	private liveRow(name: string): Row | undefined {
 		try {
-			return [...this.sections().flatMap((sec) => sec.rows), ...this.tuningRows()].find((r) => r.name === name);
+			return [...this.sections().flatMap((sec) => sec.rows), ...this.tuningRows(), ...this.dataRows()].find((r) => r.name === name);
 		} catch (e) {
 			console.error("Grill: settings row failed", e);
 			return undefined;
@@ -3735,7 +3730,7 @@ export class GrillSettingTab extends PluginSettingTab {
 	}
 
 	/** Obsidian 1.13+: the same rows as display(), handed over as definitions so the
-	 * settings search can find them. Tuning becomes a sub-page.
+	 * settings search can find them. Tuning is a group on the Advanced tab.
 	 *
 	 * Obsidian asks for these once, when the plugin loads, and again only on update();
 	 * opening the tab just re-renders what it already has. So a definition carries no
@@ -3774,7 +3769,16 @@ export class GrillSettingTab extends PluginSettingTab {
 					type: "group",
 					heading: TUNING_NAME,
 					visible: () => this.tab === "advanced" || this.searching(),
-					items: this.tuningRows().map(toDef),
+					items: [
+						{ name: "", desc: TUNING_DESC, searchable: false, visible: () => this.tab === "advanced", render: (setting) => void setting.setDesc(TUNING_DESC) },
+						...this.tuningRows().map(toDef),
+					],
+				},
+				{
+					type: "group",
+					heading: DATA_NAME,
+					visible: () => this.tab === "advanced" || this.searching(),
+					items: this.dataRows().map(toDef),
 				},
 			];
 		} catch (e) {
@@ -3802,6 +3806,8 @@ export class GrillSettingTab extends PluginSettingTab {
 		if (this.tab === "advanced") {
 			new Setting(containerEl).setName(TUNING_NAME).setDesc(TUNING_DESC).setHeading();
 			for (const r of this.tuningRows()) renderRow(containerEl, r);
+			new Setting(containerEl).setName(DATA_NAME).setHeading();
+			for (const r of this.dataRows()) renderRow(containerEl, r);
 		}
 	}
 

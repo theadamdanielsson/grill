@@ -18,13 +18,13 @@ A saved prompt is a note in `Grill/Prompts/`, named for what it does, whose text
 
 ## Engines
 
-An engine is what answers in Chat, and the button under the chat box steps through the ones available. Four kinds exist. Grill Cloud needs no setup and runs on a monthly plan once the free credits are used. A key of your own sends requests straight to the provider you chose. Claude Code and Codex run the program installed on your computer, under the sign-in you made there, with the vault as the working folder. Ollama runs a model on your own machine.
+An engine is what answers in Chat, and the button under the chat box steps through the ones available. Four kinds exist. Grill Cloud needs no setup and runs on a monthly plan once the free credits are used. A key of your own sends requests straight to the provider you chose. Claude Code, Codex and opencode run the program installed on your computer, under the sign-in you made there, with the vault as the working folder. Grill can install opencode, whose free models need no account. Ollama runs a model on your own machine.
 
 Where an engine offers a choice of model, a second button under the chat box names the model in use and opens the list. With a key of your own, the list is the one on your account, and the model chosen there also writes and marks tests. With Claude Code, the choice is among its default, Opus, Sonnet and Haiku. Grill Cloud and Codex offer no choice here.
 
-The engines differ in what they can do in the vault. Grill Cloud and keys for Anthropic, OpenAI, DeepSeek and OpenAI-compatible endpoints use Grill's own note tools, which the plugin carries out through Obsidian; these work on a phone as on a desktop, and they cannot reach outside the vault or into Grill's own folder. Claude Code and Codex bring their own tools, shell commands included, and their own permission systems, which Grill passes through unchanged; they run on desktop only. Gemini and Ollama answer in text and change nothing.
+The engines differ in what they can do in the vault. Grill Cloud and keys for Anthropic, OpenAI, DeepSeek and OpenAI-compatible endpoints use Grill's own note tools, which the plugin carries out through Obsidian; these work on a phone as on a desktop, and they cannot reach outside the vault or into Grill's own folder. Claude Code, Codex and opencode bring their own tools, shell commands included, and their own permission systems, which Grill passes through unchanged; they run on desktop only. Gemini and Ollama answer in text and change nothing.
 
-Tests are a separate matter. Questions are written and graded by Grill Cloud, your own key or Ollama, whichever is chosen as the provider in settings, and Claude Code and Codex take no part in them.
+Tests are a separate matter. Questions are written and graded by Grill Cloud, your own key or Ollama, whichever is chosen as the provider in settings. Only when none of these is set up are tests written and graded by the program Chat runs on.
 
 ## Tests
 
@@ -61,7 +61,7 @@ It's also fussy about its own questions. Before one reaches you it's checked for
 
 ## Links you haven't made yet
 
-Because your notes live in a graph, Grill can also find the links you *haven't* made. In a session it looks for two of your notes that clearly belong together but aren't linked, quizzes you on the connection, and offers a one-tap **Link these notes** button that writes the `[[link]]` into the note for you. Answer it and your graph gets a little denser: the AI working *inside* your graph, not beside it. You can turn it off, or change how many it adds per session, in settings.
+Because your notes live in a graph, Grill can also find the links you *haven't* made. In a session it looks for two of your notes that clearly belong together but aren't linked, quizzes you on the connection, and offers a one-tap **Link these notes** button that writes the `[[link]]` into the note for you. Answer it and your graph gets a little denser: the AI working *inside* your graph, not beside it. How many appear depends on how many pairs Grill confirms are related in that session, and a session with none shows none.
 
 ## Writing your own questions
 

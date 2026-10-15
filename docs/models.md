@@ -67,9 +67,9 @@ puts you back in the section above.
 
 ---
 
-## For Chat: Claude Code or Codex
+## For Chat: Claude Code, Codex or opencode
 
-Chat can also run on the Claude Code or Codex installed on your computer, under your own sign-in, which draws on the plan you already pay for. These engines answer in Chat only: tests are still written and graded by the provider chosen above. Set the engine with the button under the chat box, or under Chat engine in settings. Desktop only.
+Chat can also run on the Claude Code or Codex installed on your computer, under your own sign-in, which draws on the plan you already pay for, or on opencode, which Grill can install and whose free models need no account. Tests are written and graded by the provider chosen above when one is set up; only without one do they run on the program Chat uses. Set the engine with the button under the chat box, or under Engine on the Basic tab of Grill's settings. Desktop only.
 
 In Chat, the model matters in a second way. Grill Cloud and keys for Anthropic, OpenAI, DeepSeek and OpenAI-compatible endpoints can read, search and change notes; Gemini and Ollama answer in text only.
 

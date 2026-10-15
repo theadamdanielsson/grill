@@ -15,7 +15,7 @@ The engine answering has no tools. Gemini and Ollama answer in text only, so the
 
 ## The engine button opens settings, or Claude Code or Codex will not start
 
-The button steps through the engines found on this computer, and opens settings when only the model is available. Grill looks for Claude Code and Codex in the usual install folders. If yours is elsewhere, give the full path under Claude Code location or Codex location in settings; `which claude` or `which codex` in a terminal prints it.
+The button steps through the engines found on this computer, and opens settings when only the model is available. Grill looks for Claude Code and Codex in the usual install folders. If yours is elsewhere, give the full path under Claude Code location or Codex location on the Agents tab of Grill's settings; `which claude` or `which codex` in a terminal prints it.
 
 A message that the program is not signed in means what it says: open a terminal, run `claude` or `codex`, and sign in there. Grill uses that sign-in and has none of its own. These engines run on desktop only.
 

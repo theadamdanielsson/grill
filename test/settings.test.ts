@@ -284,7 +284,7 @@ function names(items: any[]): string[] {
 	const out: string[] = [];
 	for (const it of items) {
 		if (it.type === "group" || it.type === "page") out.push(...names(it.items ?? []));
-		else out.push(it.name);
+		else if (it.name) out.push(it.name);
 	}
 	return out;
 }
@@ -299,7 +299,7 @@ test("with Grill Cloud on, it has the first section and the page still has no du
 			const defs = sectionDefs(tab);
 			assert.deepEqual(
 				defs.map((d) => d.heading ?? d.name),
-				["Grill Cloud", "Chat", "Your own key or Ollama", "Programs on this computer", "Studying", "Scope", "Tuning"],
+				["Grill Cloud", "Chat", "Your own key or Ollama", "Programs on this computer", "Studying", "Folders", "Tuning", "Data"],
 			);
 			const every = names(defs);
 			assert.equal(new Set(every).size, every.length, `duplicate row names (${provider})`);
@@ -318,11 +318,11 @@ test("the searchable definitions and the classic page list the same rows", async
 		const defs = sectionDefs(tab);
 		assert.deepEqual(
 			defs.map((d) => d.type),
-			["group", "group", "group", "group", "group", "group"],
+			["group", "group", "group", "group", "group", "group", "group"],
 		);
 		assert.deepEqual(
 			defs.map((d) => d.heading ?? d.name),
-			["Chat", "AI", "Programs on this computer", "Studying", "Scope", "Tuning"],
+			["Chat", "AI", "Programs on this computer", "Studying", "Folders", "Tuning", "Data"],
 		);
 		const every = names(defs);
 		assert.equal(new Set(every).size, every.length, "duplicate row names");
@@ -339,16 +339,17 @@ test("the searchable definitions and the classic page list the same rows", async
 		assert.deepEqual(settingNames, []);
 
 		// The classic page draws exactly the same rows, in the same order, a tab at a time.
-		const headings = ["Chat", "AI", "Programs on this computer", "Studying", "Scope", "Tuning"];
+		const headings = ["Chat", "AI", "Programs on this computer", "Studying", "Folders", "Tuning", "Data"];
 		const drawn: string[] = [];
-		for (const id of ["basic", "key", "agents", "study", "scope", "advanced"]) {
+		for (const id of ["basic", "key", "agents", "study", "advanced"]) {
 			(tab as any).tab = id;
 			settingNames.length = 0;
 			tab.display();
 			drawn.push(...settingNames);
 		}
 		(tab as any).tab = "basic";
-		const tuning = names(defs.filter((d) => d.heading === "Tuning"));
+		// The Advanced tab's rows come last; its unnamed row is the note under Tuning.
+		const tuning = names(defs.filter((d) => d.heading === "Tuning" || d.heading === "Data")).filter(Boolean);
 		assert.deepEqual(
 			drawn.filter((n) => !headings.includes(n)),
 			[...defined.filter((n) => !tuning.includes(n)), ...tuning],
