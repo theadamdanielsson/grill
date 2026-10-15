@@ -3914,11 +3914,3 @@ textarea.grill-mgmt-field {
   gap: 0.2em 0.9em;
   margin-bottom: 0.6em;
 }
-
-/* A newer Grill is out: one line above the tiles. */
-.grill-update-line {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.2em 0.9em;
-  margin-bottom: 0.6em;
-}
