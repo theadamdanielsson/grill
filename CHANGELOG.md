@@ -1,5 +1,18 @@
 # Changelog
 
+## 8.4.1
+
+- **Settings in five tabs.** Basic has Grill Cloud, the engine, persona and
+  instructions, and links to the guides. The folders Grill covers are under Study.
+  Advanced has the scheduling numbers, then the Grill folder and Restore.
+- **The engine says what it covers.** It answers in Chat, and with nothing else set
+  up it also writes and marks tests.
+- **The monthly plan, in full.** The offer says what the plan covers, how its limits
+  reset and what happens at one. On a plan, the card shows how much of each limit is
+  used.
+- **A line when a newer Grill is out.** Grill checks GitHub once a day, and the home
+  screen offers Update or Not now.
+
 ## 8.4.0
 
 - **opencode, free.** Grill can install opencode, an open-source agent like Claude
