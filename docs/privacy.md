@@ -28,6 +28,8 @@ Grill sends your notes to one place: the model you chose to run it on. It has no
 
 **The arc makes its own occasional call.** The Progress screen's arc (see [Features: what it keeps track of](features.md#what-it-keeps-track-of)) is refreshed on Obsidian launch, or at the end of a session on Grill Cloud so that its cost shows in that session's receipt. It sends your misconception counts and labels and past session headlines, never note text.
 
+**Grill checks once a day whether a newer version is out.** It asks GitHub for the latest Grill release and sends nothing else. When there is a newer one, the home screen says so in one line, with Update and Not now.
+
 **Two features download a model once, if you accept the offer.** At the end of a session where they would have applied, Grill offers to quiz you on diagrams it can read on-device (an OCR engine of about 10 MB) and to pick prompt context by meaning (an embedding model of about 25 MB). Accepting fetches the file once and caches it; both then run on your machine and send nothing. Declining is remembered.
 
 ## What Grill stores, and where

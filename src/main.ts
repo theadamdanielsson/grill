@@ -22,6 +22,7 @@ import { CalPoint, isCalPoint } from "./calibration";
 import { LLMConfig, offeredProviders, PROVIDERS, ProviderId, Question, listModels, migrateLegacyModels, synthesizeArc, testModel } from "./llm";
 import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, CloudPack, CloudPlan, planInWords, planLabel, cloudAccount, cloudBalance, cloudSpeech, cloudCheckoutUrl, cloudDelete, cloudEnabled, cloudStart, creditsInWords, isCloudKey, newCloudKey, packLabel, usageInWords } from "./cloud";
 import { drawPlanOffer, drawPlanUsage, RefillModal } from "./refill";
+import { CHECK_EVERY_MS, isNewer, latestVersion } from "./update";
 import { CATCH_UP, ConceptMap, dueConceptCount, migrateResetScheduling, rebalanceDueDates, reconcileConcepts } from "./concepts";
 import { pairKey } from "./bridges";
 import {
@@ -960,6 +961,8 @@ export default class GrillPlugin extends Plugin {
 
 		this.app.workspace.onLayoutReady(() => {
 			this.askToUseModel();
+			// Not at startup itself: nothing about it is urgent.
+			window.setTimeout(() => void this.checkForUpdate(), 15_000);
 			void (async () => {
 				this.mastery = await this.store.loadMastery();
 				this.concepts = await this.store.loadConcepts();
@@ -1842,6 +1845,39 @@ export default class GrillPlugin extends Plugin {
 	 * refusing: what it last said about sales may no longer hold. */
 	get cloudCanBuy(): boolean {
 		return this.cloudPacks.length > 0 && this.cloudSales && this.cloudState !== "offline" && this.cloudState !== "refused";
+	}
+
+	/** A newer Grill than this one, when one is out and Not now hasn't been pressed for it. */
+	updateVersion: string | null = null;
+
+	/** Ask GitHub for the latest release, at most once a day per device, and say on the
+	 * home screen when it is newer than this one. */
+	async checkForUpdate(): Promise<void> {
+		const ls = this.app as unknown as { loadLocalStorage?: (k: string) => unknown; saveLocalStorage?: (k: string, v: unknown) => void };
+		const saved = ls.loadLocalStorage?.("grill-update") as { at?: unknown; latest?: unknown } | null | undefined;
+		let latest = typeof saved?.latest === "string" ? saved.latest : null;
+		const at = typeof saved?.at === "number" ? saved.at : 0;
+		if (Date.now() - at > CHECK_EVERY_MS) {
+			const fresh = await latestVersion();
+			if (fresh) {
+				latest = fresh;
+				ls.saveLocalStorage?.("grill-update", { at: Date.now(), latest });
+			}
+		}
+		if (!latest || !isNewer(latest, this.manifest.version)) return;
+		if (this.data.settings.dismissedOffers.includes(`update:${latest}`)) return;
+		this.updateVersion = latest;
+		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
+			if (leaf.view instanceof SessionView) leaf.view.refreshIfOnStartScreen();
+		}
+	}
+
+	/** Not now: this version isn't mentioned again. The next one is. */
+	async dismissUpdate(): Promise<void> {
+		if (!this.updateVersion) return;
+		this.data.settings.dismissedOffers = [...this.data.settings.dismissedOffers, `update:${this.updateVersion}`];
+		this.updateVersion = null;
+		await this.persist();
 	}
 
 	/** Whether subscribing would work right now: the plan is on sale and this key has none. */

@@ -75,6 +75,7 @@ import {
 	topMisconceptions,
 } from "./debrief";
 import { dueFiles, listFolders, matchScope, untestedFiles } from "./scope";
+import { PLUGIN_PAGE } from "./update";
 import { CONFIDENCE_LEVELS, calibrationLine, pushCalibration } from "./calibration";
 import { celebrate, playSfx } from "./sfx";
 import { stopSpeaking, toSpeechText, ttsAvailable } from "./tts";
@@ -1296,6 +1297,24 @@ export class SessionView extends ItemView {
 		more.onclick = () => this.plugin.openSettings();
 	}
 
+	/** One line at the top of the home screen when a newer Grill is out. */
+	private updateLine(parent: HTMLElement): void {
+		const v = this.plugin.updateVersion;
+		if (!v) return;
+		const line = parent.createDiv({ cls: "grill-meta grill-update-line" });
+		line.createSpan({ text: `Grill ${v} is out.` });
+		const go = line.createEl("a", { text: "Update", href: PLUGIN_PAGE });
+		go.onclick = (e) => {
+			e.preventDefault();
+			window.open(PLUGIN_PAGE);
+		};
+		const later = line.createEl("a", { text: "Not now" });
+		later.onclick = async () => {
+			await this.plugin.dismissUpdate();
+			line.remove();
+		};
+	}
+
 	private renderStart(): void {
 		// Leaving a session for the home screen, by any route, persists it.
 		if (this.dirty || this.bankDirty || this.bridgesDirty) void this.flush();
@@ -1307,6 +1326,7 @@ export class SessionView extends ItemView {
 		// framed in the banner's gold/ember double border. See .grill-arcade-screen.
 		// No wordmark here: the pane's own tab names it, and the tiles start at the top.
 		const screen = wrap.createDiv({ cls: "grill-arcade-screen" });
+		this.updateLine(screen);
 
 		const statsEl = screen.createDiv({ cls: "grill-stats grill-start-stats" });
 		const addStat = (label: string, tone?: "correct" | "incorrect"): HTMLElement => {
