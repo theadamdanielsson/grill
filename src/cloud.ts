@@ -53,6 +53,31 @@ export interface CloudPlan {
 	limit: "" | "window" | "week" | "period";
 	/** When room starts to come back under that limit, in seconds. */
 	resets: number;
+	/** How much of each limit is used, 0 to 1: the five hours, the week, the period.
+	 * Missing from a server older than 8.5. */
+	window?: number;
+	week?: number;
+	period?: number;
+}
+
+/** What the plan is, a line each, under its price where it is offered. */
+export const PLAN_DETAILS = [
+	"Chat and tests, with no API key.",
+	"Usage limits reset every five hours and every week.",
+	"At a limit, wait or add credits. Credits don't expire.",
+	"Cancel anytime.",
+];
+
+/** A running plan's three limits, as the share of each that is used. */
+export function planUsage(plan: CloudPlan): Array<{ name: string; used: number }> {
+	const rows: Array<{ name: string; used: number | undefined }> = [
+		{ name: "Five hours", used: plan.window },
+		{ name: "This week", used: plan.week },
+		{ name: "This month", used: plan.period },
+	];
+	return rows
+		.filter((r): r is { name: string; used: number } => typeof r.used === "number" && Number.isFinite(r.used))
+		.map((r) => ({ name: r.name, used: Math.min(1, Math.max(0, r.used)) }));
 }
 
 /** What the plan's button says. The price stands above it, in the offer. */

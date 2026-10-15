@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { deepFake, fakeEl, fakeSetting, net, notices, Plugin, TFile } from "obsidian";
 import GrillPlugin, { GrillSettingTab } from "../src/main";
-import { cloud, cloudAccount, cloudCheckoutUrl, creditsInWords, heardFromCloud, isCloudKey, lowBalance, newCloudKey, packLabel, planInWords, planLabel, usageInWords } from "../src/cloud";
+import { cloud, cloudAccount, cloudCheckoutUrl, creditsInWords, heardFromCloud, isCloudKey, lowBalance, newCloudKey, packLabel, planInWords, planLabel, planUsage, usageInWords } from "../src/cloud";
 import { refillWords } from "../src/refill";
 import { KeyStash } from "../src/secrets";
 import { stopSpeaking } from "../src/tts";
@@ -390,7 +390,7 @@ test("settings: Grill Cloud has the first section, says what it is before it sta
 	// and nothing but the offer.
 	assert.deepEqual(sections()[0], { heading: "Grill Cloud", names: ["Grill Cloud"] });
 	assert.equal(sections()[1].heading, "Chat");
-	assert.equal(sections()[2].heading, "Your own key or Ollama");
+	assert.equal(sections()[3].heading, "Your own key or Ollama");
 	const before = draw(tab, "Grill Cloud");
 	assert.match(before.desc(), /nothing to set up/);
 	// What it costs, what it needs and where notes go are said before anything is sent.
@@ -1234,4 +1234,13 @@ test("the monthly plan is offered where it is on sale, opens its own checkout, a
 	await plugin.refreshCloud();
 	assert.equal(plugin.cloudCanSubscribe, false);
 	cloud.plan = { price: "$7.99", url: "" };
+});
+
+test("a running plan's limits show as shares used, and an older server's answer shows none", () => {
+	assert.deepEqual(planUsage({ until: 1, limit: "", resets: 0, window: 0.25, week: 1.4, period: -0.1 }), [
+		{ name: "Five hours", used: 0.25 },
+		{ name: "This week", used: 1 },
+		{ name: "This month", used: 0 },
+	]);
+	assert.deepEqual(planUsage({ until: 1, limit: "", resets: 0 }), []);
 });

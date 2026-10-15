@@ -21,7 +21,7 @@ import { configureFSRSWeights, MasteryMap } from "./mastery";
 import { CalPoint, isCalPoint } from "./calibration";
 import { LLMConfig, offeredProviders, PROVIDERS, ProviderId, Question, listModels, migrateLegacyModels, synthesizeArc, testModel } from "./llm";
 import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, CloudPack, CloudPlan, planInWords, planLabel, cloudAccount, cloudBalance, cloudSpeech, cloudCheckoutUrl, cloudDelete, cloudEnabled, cloudStart, creditsInWords, isCloudKey, newCloudKey, packLabel, usageInWords } from "./cloud";
-import { drawPlanOffer, RefillModal } from "./refill";
+import { drawPlanOffer, drawPlanUsage, RefillModal } from "./refill";
 import { CATCH_UP, ConceptMap, dueConceptCount, migrateResetScheduling, rebalanceDueDates, reconcileConcepts } from "./concepts";
 import { pairKey } from "./bridges";
 import {
@@ -2468,6 +2468,14 @@ interface Row {
 	build: (setting: Setting) => unknown;
 }
 
+/** Where to read more, linked from the Basic tab. */
+const HELP_LINKS: Array<{ text: string; href: string }> = [
+	{ text: "Website", href: "https://grill.onbridger.com" },
+	{ text: "How Grill works", href: "https://github.com/theadamdanielsson/grill/blob/main/docs/features.md" },
+	{ text: "Choosing a model", href: "https://github.com/theadamdanielsson/grill/blob/main/docs/models.md" },
+	{ text: "Troubleshooting", href: "https://github.com/theadamdanielsson/grill/blob/main/docs/troubleshooting.md" },
+];
+
 /** The tabs along the top of Grill's settings. */
 type TabId = "basic" | "key" | "agents" | "study" | "advanced";
 const TABS: Array<{ id: TabId; name: string }> = [
@@ -3054,6 +3062,7 @@ export class GrillSettingTab extends PluginSettingTab {
 											? planInWords(plan)
 											: usage,
 				});
+				if (known && plan && !waiting) drawPlanUsage(body, plan);
 				card.toggleClass("grill-cloud-waiting", waiting);
 				if (!usingCloud) {
 					setting.addButton((b) =>
@@ -3639,6 +3648,21 @@ export class GrillSettingTab extends PluginSettingTab {
 		return [
 			...(cloudRows.length ? [{ tab: "basic" as const, heading: "Grill Cloud", rows: cloudRows }] : []),
 			{ tab: "basic", heading: "Chat", rows: [...engine, ...persona] },
+			{
+				tab: "basic",
+				heading: "Learn more",
+				rows: [
+					{
+						name: "Guides",
+						desc: "How to get the most out of Grill.",
+						aliases: ["help", "docs", "documentation", "website", "github", "manual"],
+						build: (setting) => {
+							const links = setting.descEl.createDiv({ cls: "grill-help-links" });
+							for (const l of HELP_LINKS) links.createEl("a", { text: l.text, href: l.href });
+						},
+					},
+				],
+			},
 			// Grill Cloud picks the model itself.
 			{
 				tab: "key",

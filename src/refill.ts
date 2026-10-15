@@ -6,7 +6,7 @@
 
 import { Modal } from "obsidian";
 import type GrillPlugin from "./main";
-import { cloud, planBack, planLabel } from "./cloud";
+import { cloud, CloudPlan, PLAN_DETAILS, planBack, planLabel, planUsage } from "./cloud";
 
 /** What the pop-up says for each way credits fall short. The server's own sentences
  * point at settings, which is no longer where this is fixed, so these are said here. */
@@ -25,8 +25,23 @@ export function drawPlanOffer(parent: HTMLElement): HTMLElement {
 	const row = offer.createDiv({ cls: "grill-plan-price-row" });
 	row.createSpan({ cls: "grill-plan-price", text: cloud.plan.price });
 	row.createSpan({ cls: "grill-plan-per", text: "a month + tax" });
-	offer.createDiv({ cls: "grill-plan-line", text: "Chat and tests, with no API key. Cancel anytime." });
+	for (const line of PLAN_DETAILS) offer.createDiv({ cls: "grill-plan-line", text: line });
 	return offer;
+}
+
+/** A running plan's limits as bars: how much of each is used. Nothing when the
+ * server didn't say. */
+export function drawPlanUsage(parent: HTMLElement, plan: CloudPlan): void {
+	const rows = planUsage(plan);
+	if (!rows.length) return;
+	const box = parent.createDiv({ cls: "grill-plan-usage" });
+	for (const r of rows) {
+		const row = box.createDiv({ cls: "grill-plan-usage-row" });
+		row.createSpan({ cls: "grill-plan-usage-name", text: r.name });
+		const bar = row.createDiv({ cls: "grill-plan-usage-bar" });
+		bar.createDiv({ cls: "grill-plan-usage-fill" }).style.width = `${Math.round(r.used * 100)}%`;
+		row.createSpan({ cls: "grill-plan-usage-pct", text: `${Math.round(r.used * 100)}% used` });
+	}
 }
 
 export class RefillModal extends Modal {

@@ -3875,3 +3875,34 @@ textarea.grill-mgmt-field {
   background: rgba(255, 122, 34, 0.09);
   color: var(--grill-ink-gold, #ffd23f);
 }
+
+/* A running plan's limits: a thin bar each, on the Grill Cloud card. */
+.grill-plan-usage {
+  display: grid;
+  gap: 0.35em;
+  margin-top: 0.7em;
+}
+.grill-plan-usage-row {
+  display: grid;
+  grid-template-columns: 6.5em 1fr auto;
+  align-items: center;
+  gap: 0.6em;
+  font-size: var(--font-ui-smaller, 0.8em);
+  color: var(--grill-ink-dim, #c9a875);
+}
+.grill-plan-usage-bar {
+  height: 6px;
+  background: rgba(255, 122, 34, 0.15);
+}
+.grill-plan-usage-fill {
+  height: 100%;
+  background: var(--grill-flame, #ff7a22);
+}
+
+/* The Learn more links, on one line where they fit. */
+.grill-help-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2em 0.9em;
+  margin-top: 0.3em;
+}
