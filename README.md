@@ -1,6 +1,6 @@
 ![Grill: your notes, your AI, your weak spots](docs/hero.svg)
 
-I take a lot of notes to learn new material, and I needed a way to learn them more deeply. Grill is a chat that works inside your Obsidian vault and keeps a record of what you know. It tests you on your own notes, grades what you write, and schedules each concept with spaced repetition. In turn, the chat answers from that record: it knows which questions you missed, which you skipped, and what you asked about last week.
+I take a lot of notes to learn new material, and I needed a way to learn them more deeply. Grill is a chat that works inside your Obsidian vault and keeps a record of what you know. It tests you on your own notes, grades what you write, and schedules each concept with spaced repetition. In turn, the chat answers from that record: it knows which questions you missed, which you skipped, and what you asked about last week. The record is not confined to Obsidian either. Claude Code, Codex and other AI agents can read it, test you on it and add what you answer them, so what you get wrong comes back wherever you study.
 
 ![Grill's home screen: suggestions from your record above the chat box](docs/screenshot-home-8.png)
 
@@ -9,6 +9,7 @@ I take a lot of notes to learn new material, and I needed a way to learn them mo
 1. **Start free.** On first run, press Start free. That is Grill Cloud: no API key, no sign-up, and a few free credits to try it. If Claude Code, Codex or opencode is on your computer, Grill offers to start on it instead. You can also use your own API key or Ollama.
 2. **Chat.** Ask about the note you have open, or tell Grill what to do with it. It can explain, summarise, find things across the vault, and edit or create notes, asking your permission before a change.
 3. **Test.** Switch to Test and press **Get grilled**. Grill writes questions from your notes and marks what you type back, with partial credit and specific feedback. What you get wrong is what Chat and the suggestions point at next.
+4. **Bring your agents in.** Settings → Agents → Connect an agent gives Claude Code or Codex your record, in one line pasted in a terminal. See [In your other agents](#in-your-other-agents).
 
 The home screen suggests where to go from your record: the questions you last missed, the notes not yet tested, the note you have open. Specifically, each suggestion states a fact (how many concepts are known, what was missed last time) and leaves the choice of what matters to you.
 
@@ -16,7 +17,11 @@ The home screen suggests where to go from your record: the questions you last mi
 
 ## <img src="docs/icons/flame.svg" height="24" alt="" style="display:inline;height:24px;width:auto"> What you get
 
-- **A chat that works in your vault:** it reads, searches, edits and creates notes over several steps, and shows each step as it happens. Three permission levels decide when it has to ask: Safe, Plan and Auto.
+- **An agentic chat in your vault:** it reads, searches, edits and creates notes over several steps, and shows each step as it happens. Three permission levels decide when it has to ask: Safe, Plan and Auto.
+- **Study straight from the chat:** when Chat recommends something, a button under the reply starts it, whether that is the reviews due, a retry of what you missed, or a test on the notes it named. Chat explains; Test is where you are graded.
+- **Undo a turn:** a reply that changed notes lists them, and one Undo puts all of them back.
+- **`@` and `/` in the box:** `@` brings a note into the message and `/` picks a prompt. On Claude Code, your own commands and skills are in the list too.
+- **Your record in other agents:** Claude Code, Codex, Cursor and other agents can see your weak spots, explain at your level, and test you. Their answers count here, and what you are tested on outside the vault shows on the Progress screen.
 - **A record behind every reply:** per-concept scheduling, your past answers and the confusions Grill has named are given to the chat, so an explanation starts from what you got wrong.
 - **Nothing to set up:** [Grill Cloud](#grill-cloud) answers, writes questions and grades with no API key and no account. It works on your phone, reads the images in your notes, and your notes are not trained on. Free to try.
 - **Or a program on your computer:** [Claude Code, Codex or opencode](#with-claude-code-or-codex), with your own sign-in. opencode has free models and needs no account.
@@ -77,9 +82,26 @@ Chat can run on the Claude Code or Codex already installed on your computer. Gri
 
 The button under the chat box steps through the engines found on your computer, and the button beside it sets the permission level. Safe asks before a note is changed or a command is run. Plan reads and proposes, and changes nothing. Auto edits notes in the vault without asking. These are the programs' own permission systems, passed through; Grill adds none of its own.
 
+The program runs with your own setup: your skills, MCP servers, hooks and `CLAUDE.md` come along, as they would in a terminal, and on Claude Code typing `/` lists your own commands and skills beside Grill's prompts. Grill adds its record to each of them. Claude Code, Codex and opencode can read your weak spots and offer a test as a button under the reply, as Grill Cloud can. What they cannot do in Grill is quiz you themselves, since testing belongs in Test, where answers are graded and scheduled.
+
 [opencode](https://github.com/anomalyco/opencode) is an open-source program of the same kind that works with many models. Grill can install it: the Install button in the Agents tab of Grill's settings, or on the first run, downloads one pinned build (about 80 MB) from npm, where opencode publishes it, checks it against the published checksum, and keeps it in `~/.grill/opencode`, outside your vault. Without an account it offers free models and any Ollama models on your computer; `opencode auth login` in a terminal adds your own accounts. Note that opencode's free models may keep what you send them to improve the model while they are free. For notes you would rather keep private, use a model with your own account, Ollama, or Grill Cloud.
 
 Two limits apply. First, this works on desktop only, since there is a program to run. Second, tests are written and graded by Grill Cloud, your own key or Ollama when one is set up; only without one do they run on the program Chat uses.
+
+<a name="in-your-other-agents"></a>
+## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/play-dark.svg"><img src="docs/icons/play.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> In your other agents
+
+Grill's record is useful beyond Obsidian, so 8.5 opens it to the agents you already use. Settings → Agents → Connect an agent copies one line for Claude Code or Codex; pasted in a terminal, it adds [grill-mcp](https://www.npmjs.com/package/grill-mcp), a small program that reads the record in your vault and writes back what you answer. From then on, an agent can call up your weak spots before explaining something, and test you when you ask it to. Its answers are added to the record while Grill is open, each agent session gets a session note like any other, and the schedule moves as it would after a test in Grill.
+
+For anything outside a vault, such as a code repository or a book, there is the **grill-test** skill:
+
+```
+npx skills add theadamdanielsson/grill --skill grill-test
+```
+
+It works in Claude Code, Codex, Cursor and the other agents that read Agent Skills. It asks one question at a time, grades each answer against the source, and records every answer, so a concept you missed comes back the next time you ask to be tested, even in a new session. That record is kept in your home folder (`~/.grill/record/`), never in the project, and Grill's Progress screen shows it under Tested in other agents.
+
+![A Claude Code session with grill-test: a wrong answer is recorded, and a new session starts from it](skills/grill-test/grill-test.gif)
 
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/key-dark.svg"><img src="docs/icons/key.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> With your own key
 
@@ -97,7 +119,7 @@ To pay a model provider directly, pick "use my own API key or Ollama" on first r
 - Grill needs a model: [Grill Cloud](#grill-cloud), your own API key, Ollama, or Claude Code, Codex or opencode on your computer. Earlier versions had a mode with no AI; 8.0 removes it.
 - It is only as good as your notes. Half-written notes make half-baked questions.
 - The grading is a model's judgement. It is usually right, and it always shows you the expected answer so that you can judge for yourself.
-- A chat that can edit your notes can edit them badly. Safe is the default level, every change is shown before it is made, and a vault under version control or sync history can undo one.
+- A chat that can edit your notes can edit them badly. Safe is the default level, every change is shown before it is made, and on Grill Cloud, your own key and Claude Code a turn's changes can be undone from the reply. Otherwise, version control or sync history can undo one.
 - Local models are the weak link: good for privacy, weaker on questions and grading.
 
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/check-dark.svg"><img src="docs/icons/check.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> Requirements
@@ -142,12 +164,13 @@ The common ones are below; the full list is in [docs/troubleshooting.md](docs/tr
 - **A model is not reading the images in my notes.** Grill sends images to models that support vision, and says in the session when the chosen model cannot read them.
 - **A PDF is not being quizzed on.** Check that it is embedded, `![[file.pdf]]` with the `!`. A scanned PDF with no text layer, or a password-protected one, has nothing for Grill to extract.
 - **API errors, or grading looks wrong.** Check the key and the model name in settings; a mistyped model ID is the usual cause.
+- **An agent's answers don't show up.** Grill adds them while it is open, within a few seconds, or when it next starts. They wait in `Grill/Inbox/` until then.
 
 Something broken? [Open an issue](https://github.com/theadamdanielsson/grill/issues). A question or an idea? [Start a discussion](https://github.com/theadamdanielsson/grill/discussions).
 
 ## Privacy and cost
 
-Grill talks only to the model provider you configure. There are no analytics, there is no account, and no server of mine sits in the middle. The one exception is [Grill Cloud](#grill-cloud), if you turn it on: the session then goes through my server to Anthropic. Installing opencode downloads it from npm (registry.npmjs.org), once, when you press Install. What leaves your machine and what Grill stores locally is set out in **[docs/privacy.md](docs/privacy.md)**.
+Grill talks only to the model provider you configure. There are no analytics, there is no account, and no server of mine sits in the middle. The one exception is [Grill Cloud](#grill-cloud), if you turn it on: the session then goes through my server to Anthropic. Installing opencode downloads it from npm (registry.npmjs.org), once, when you press Install. Connecting an agent runs grill-mcp from npm on your computer, and it makes no network requests of its own. When Chat runs on opencode, Grill's record reaches it through an endpoint on your own computer (127.0.0.1), open only for that chat turn. What leaves your machine and what Grill stores locally is set out in **[docs/privacy.md](docs/privacy.md)**.
 
 ## License
 

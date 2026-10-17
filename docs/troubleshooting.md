@@ -21,7 +21,11 @@ A message that the program is not signed in means what it says: open a terminal,
 
 ## Chat changed a note and I want the old text back
 
-A change made through Chat is an ordinary edit, shown on the permission card before it is made unless the level is Auto. Grill keeps no copy of the earlier text. Obsidian's File recovery (Settings → Core plugins) holds snapshots of recent versions, and your sync history or version control holds more.
+A turn that changed notes lists them under the reply, with Undo. It puts every changed note back as it was before the turn, unless the note was changed again since, in which case it is left alone and Grill says so. Undo is there on Grill Cloud, your own key and Claude Code, while the conversation is open. For anything else (a change by Codex or opencode, or one from a conversation already closed), use Obsidian's file recovery (Settings → Core plugins → File recovery), your sync history or version control.
+
+## An agent's answers don't show up in Grill
+
+Answers from Claude Code, Codex or another connected agent wait as files in `Grill/Inbox/` until Grill adds them to the record. That happens within a few seconds while Grill is open, and otherwise when it next starts. An answer that cannot be applied is set aside as a `.rejected` file in the same folder rather than tried again.
 
 ## A Chat reply arrives all at once
 

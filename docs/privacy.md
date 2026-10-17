@@ -18,6 +18,10 @@ Grill sends your notes to one place: the model you chose to run it on. It has no
 
 **With opencode**, the same holds: Grill starts the program in your vault and passes it your message and the brief. opencode then sends them to the model picked under the chat box: its own free models (run through opencode's service, which may keep what is sent to improve a model while it is free), an Ollama model on your computer, or an account you signed in to with `opencode auth login`. Installing it from Grill downloads one pinned build from registry.npmjs.org, checks it against the published checksum, and keeps it in `~/.grill/opencode`.
 
+**Your record, in Chat.** On every engine, Chat can read Grill's record through its own tools: the concepts you missed or are due, and what the record holds on a topic. For Claude Code these run inside the plugin. Codex calls them as tools Grill registered with it. opencode reaches them at an address on your own computer (`127.0.0.1`), which only accepts requests that carry a random id for the current chat turn, refuses any request from a web page, and closes the route when the turn ends.
+
+**Other agents, when you connect them.** Connect an agent adds grill-mcp to Claude Code or Codex on your computer. It reads the record files in your vault and writes each answer the agent grades into `Grill/Inbox/`; it makes no network requests of its own. What the agent then sends to its provider is governed by that agent's account and terms, as with any other file it reads. The grill-test skill, outside a vault, keeps its record in `~/.grill/record/`, and Grill reads that file to show it on the Progress screen.
+
 **Tests without a model.** When no Grill Cloud, key or Ollama is set up, questions are written and marked by the program Chat runs on, in an empty folder of Grill's own and with no permission to change anything. The note text and your answer are sent the same way as above.
 
 **With Ollama**, the model runs on your machine and nothing leaves it. Smaller local models write weaker questions than hosted ones; 8B or larger is a reasonable floor.
@@ -36,7 +40,7 @@ Grill sends your notes to one place: the model you chose to run it on. It has no
 
 Everything Grill tracks about you is written as plain files inside your own vault and syncs however you already sync it: the schedule (`Grill/concepts.json`), your per-note history (`Grill/mastery.json`), the misconception registry (`Grill/misconceptions.json`), each test's transcript (`Grill/Sessions/`) and each Chat conversation (`Grill/Learn/`). Deleting the `Grill` folder removes all of it. Your settings, the arc and the small log of study days it is built from live in the plugin's own `data.json`.
 
-A change Chat makes to a note is an ordinary edit to that note. Grill keeps no separate copy of the earlier text, so undoing one relies on Obsidian's file recovery, your sync history or version control.
+A change Chat makes to a note is an ordinary edit to that note. For the Undo under the reply, Grill keeps each changed note as it was before the turn, in memory and for as long as the conversation is open; nothing is written for it. Changes made by Codex or opencode, and any change after the conversation is closed, are undone through Obsidian's file recovery, your sync history or version control.
 
 An API key is kept in Obsidian's keychain (Settings → Keychain), under a name that includes this vault's id. The keychain belongs to one device and does not sync, so each device needs the key entered once. On Obsidian older than 1.11.4, which has no keychain, the key stays in `data.json`, a plaintext file that should not be synced somewhere untrusted. A Grill Cloud key is the exception: it stays in `data.json` on purpose, so that it follows the vault, because it is the only handle on a prepaid balance. A copy is also kept in Obsidian's local storage on the device, which is how other vaults on the same device share the balance.
 

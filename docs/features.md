@@ -8,7 +8,11 @@ Chat is a conversation about your notes in which nothing is graded. It opens on 
 
 Chat can also act. Where the engine supports it, the model may read a note, search the vault, list notes, change part of a note, rewrite a note, or create one. Each of these is listed above the reply as it happens, and a finished reply carries one line summing them up. In turn, a change to a note passes through a permission card that shows the lines to be removed and the lines to be added, with three answers: Allow once, Always allow in this chat, and Deny.
 
-Three levels decide when the card appears. Safe asks before any change to a note and before any command. Plan lets the engine read and propose, and nothing is changed. Auto lets it edit notes in the vault without asking. The level is set with the button beside the engine's name under the chat box.
+Three levels decide when the card appears. Safe asks before any change to a note and before any command. Plan lets the engine read and propose, and nothing is changed. Auto lets it edit notes in the vault without asking. The level is set with the button beside the engine's name under the chat box, which stays under the box inside a conversation too, beside the model. An engine changed in the middle of a conversation is given the conversation so far with the next message.
+
+A turn that changed notes ends with a list of them, each a way into the note, and one Undo that puts all of them back as they were before the turn. A note changed again since, by hand or by a later turn, is left as it is, and Grill says so. Undo is available on Grill Cloud, keys of your own and Claude Code; Codex and opencode make their changes without Grill seeing the text beforehand.
+
+Chat reads the record through tools of its own: what you got wrong or only partly right last time, what you know of a topic, and how the record stands overall. When it recommends studying something, it offers it as a button under the reply, which starts the test there and then: the reviews due, a retry of what you missed, or a test on the notes it names. Chat does not quiz you itself. Testing belongs in Test, where answers are graded and scheduled.
 
 A reply is written to the screen as the model produces it. Under each reply, Insert at cursor places it in the note you are editing and Save as note keeps it as a note of its own beside the one it was about. Every conversation is saved under `Grill/Learn/`, and Test me on this starts a test on the note the conversation concerned.
 
@@ -16,15 +20,23 @@ Chat can be started from text selected in a note. A right-click on the selection
 
 A saved prompt is a note in `Grill/Prompts/`, named for what it does, whose text is sent as written. The command New saved prompt creates one, and Run a saved prompt sends one in a Chat about the open note, with any selected text quoted beneath it or placed where the prompt says `{{selection}}`. Once a prompt exists, a Prompts button under the chat box places one in the box, where it can be changed before it is sent.
 
+Two characters typed in the box open a list. `@` lists your notes; the one picked goes in as a `[[link]]`, and its text is read with the message. `/` at the start lists the prompts, and, when Chat runs on Claude Code, your own Claude Code commands and skills, marked as such.
+
 ## Engines
 
 An engine is what answers in Chat, and the button under the chat box steps through the ones available. Four kinds exist. Grill Cloud needs no setup and runs on a monthly plan once the free credits are used. A key of your own sends requests straight to the provider you chose. Claude Code, Codex and opencode run the program installed on your computer, under the sign-in you made there, with the vault as the working folder. Grill can install opencode, whose free models need no account. Ollama runs a model on your own machine.
 
 Where an engine offers a choice of model, a second button under the chat box names the model in use and opens the list. With a key of your own, the list is the one on your account, and the model chosen there also writes and marks tests. With Claude Code, the choice is among its default, Opus, Sonnet and Haiku. Grill Cloud and Codex offer no choice here.
 
-The engines differ in what they can do in the vault. Grill Cloud and keys for Anthropic, OpenAI, DeepSeek and OpenAI-compatible endpoints use Grill's own note tools, which the plugin carries out through Obsidian; these work on a phone as on a desktop, and they cannot reach outside the vault or into Grill's own folder. Claude Code, Codex and opencode bring their own tools, shell commands included, and their own permission systems, which Grill passes through unchanged; they run on desktop only. Gemini and Ollama answer in text and change nothing.
+The engines differ in what they can do in the vault. Grill Cloud and keys for Anthropic, OpenAI, DeepSeek and OpenAI-compatible endpoints use Grill's own note tools, which the plugin carries out through Obsidian; these work on a phone as on a desktop, and they cannot reach outside the vault or into Grill's own folder. Claude Code, Codex and opencode bring their own tools, shell commands included, and their own permission systems, which Grill passes through unchanged; they run on desktop only. They also bring the rest of your own setup, as in a terminal: skills, MCP servers, hooks and instructions such as `CLAUDE.md`. Grill gives each of them its record tools in addition, in the way each program accepts them: inside the plugin for Claude Code, as Codex's own dynamic tools, and for opencode as an MCP endpoint on your computer that is open only for the turn. Gemini and Ollama answer in text and change nothing.
 
 Tests are a separate matter. Questions are written and graded by Grill Cloud, your own key or Ollama, whichever is chosen as the provider in settings. Only when none of these is set up are tests written and graded by the program Chat runs on.
+
+## Your record in other agents
+
+The record can be used outside Obsidian. Settings → Agents → Connect an agent copies a command for Claude Code or Codex that adds grill-mcp, a small program published on npm, as one of the agent's MCP servers, pointed at this vault. Through it, the agent can read the overview, the weak spots and what the record holds on a topic, use the questions Grill has already written, and record each answer it grades. It never writes the record files themselves, since Grill may hold them open. Each answer is written as a file in `Grill/Inbox/`, and Grill adds it to the record while it is open: the concept's schedule moves, the note's counts change, a confusion the answer showed joins the misconceptions, and the agent's session gets a session note marked with the agent's name. Each answer is added once, including when the vault syncs to a second device.
+
+Outside a vault, the grill-test skill tests you on a code repository, a book or anything else, through the same program. That record is kept in `~/.grill/record/` in your home folder, never in the project, with each concept named by its project. The Progress screen shows it under Tested in other agents, by project: how many concepts were tested, how many are due, what was missed last time, and the weakest concepts. Grill does not test you on these itself, since it has no notes to write the questions from; reviewing them happens in the agent.
 
 ## Tests
 

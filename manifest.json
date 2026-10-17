@@ -3,7 +3,7 @@
 	"name": "Grill",
 	"version": "8.4.1",
 	"minAppVersion": "1.8.0",
-	"description": "Chat with your notes and get grilled on them. An AI that reads, edits and tests you on your own notes, and remembers what you got wrong. Start free, or use your own key, Claude Code, Codex or opencode.",
+	"description": "Chat with your notes and get grilled on them. An agentic AI that reads, edits and tests you on your notes, remembers what you got wrong, and shares that record with Claude Code, Codex and your other agents. Start free, or bring your own.",
 	"author": "Adam Danielsson",
 	"authorUrl": "https://github.com/theadamdanielsson",
 	"isDesktopOnly": false,
