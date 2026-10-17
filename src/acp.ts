@@ -208,6 +208,8 @@ export async function runAcpTurn(run: AcpRun, wire: AcpWire): Promise<AgentResul
 	const waiting = new Map<number, { yes(v: unknown): void; no(e: Error): void }>();
 	const tools: string[] = [];
 	const counted = new Set<string>();
+	/** Calls that read Grill's record, so the summary says they read it. */
+	const recordReads = new Set<string>();
 	/** What each tool call has said about itself so far, by its id. */
 	const calls = new Map<string, Loose>();
 	let text = "";
@@ -281,12 +283,14 @@ export async function runAcpTurn(run: AcpRun, wire: AcpWire): Promise<AgentResul
 				(call.kind === "execute" ? !!str(input.command) : list(call.locations).length > 0 || Object.keys(input).length > 0);
 			if (!said && ready) {
 				call.said = true;
-				run.onEvent({ kind: "activity", tool: acpTool(str(call.kind)), line: acpLine(call) });
+				// Reading Grill's record counts as reading, in the summary under the reply.
+				if (/grill_(overview|weak_spots|what_they_know)/.test(`${str(call.title)} ${str(obj(call.rawInput)?.code)}`)) recordReads.add(id);
+				run.onEvent({ kind: "activity", tool: recordReads.has(id) ? "Read" : acpTool(str(call.kind)), line: acpLine(call) });
 			}
 			// Counted once it has been done, and only if it was: a declined change is not work.
 			if (call.status === "completed" && !counted.has(id)) {
 				counted.add(id);
-				tools.push(acpTool(str(call.kind)));
+				tools.push(recordReads.has(id) ? "Read" : acpTool(str(call.kind)));
 			}
 		}
 	};
