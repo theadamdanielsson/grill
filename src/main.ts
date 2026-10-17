@@ -393,6 +393,13 @@ function defaultSettings(): GrillSettings {
 	};
 }
 
+/** Makes `target` hold what `from` holds, keeping the object itself: open panes keep a
+ * reference to it. */
+function replaceContents<T extends object>(target: T, from: T): void {
+	for (const k of Object.keys(target)) if (!Object.prototype.hasOwnProperty.call(from, k)) delete (target as Record<string, unknown>)[k];
+	Object.assign(target, from);
+}
+
 export default class GrillPlugin extends Plugin {
 	data: PluginData = { settings: defaultSettings(), calibration: [], arcLog: [], arc: null };
 	store!: GrillStore;
@@ -1324,16 +1331,32 @@ export default class GrillPlugin extends Plugin {
 			const inbox = await this.store.readInbox();
 			if (!inbox.length) return;
 			await this.withViewsSynced(async () => {
-				const registry = await this.store.loadRegistry();
-				const state = { concepts: this.concepts, mastery: this.mastery, registry };
-				const { applied } = applyResults(
+				// Applied to copies: nothing in memory changes unless all of it is saved, so a
+				// fold that stops part way can't leave answers counted that will be counted
+				// again when it is tried next.
+				const applied0 = await this.store.loadAppliedInbox();
+				const seen = new Set(applied0);
+				const state = {
+					concepts: structuredClone(this.concepts),
+					mastery: structuredClone(this.mastery),
+					registry: await this.store.loadRegistry(),
+				};
+				const { applied, failed } = applyResults(
 					state,
 					inbox.map((i) => i.result),
-					{ allowNew: false, desiredRetention: this.data.settings.desiredRetention / 100 },
+					{ allowNew: false, desiredRetention: this.data.settings.desiredRetention / 100, seen },
 				);
-				await this.store.saveConcepts(this.concepts);
-				await this.store.saveMastery(this.mastery);
-				await this.store.saveRegistry(registry);
+				if (applied.length) {
+					await this.store.saveConcepts(state.concepts);
+					await this.store.saveMastery(state.mastery);
+					await this.store.saveRegistry(state.registry);
+					await this.store.saveAppliedInbox([...applied0, ...applied.map((r) => r.id)]);
+					// The open panes hold these very objects: changed in place, not replaced.
+					replaceContents(this.concepts, state.concepts);
+					replaceContents(this.mastery, state.mastery);
+				}
+				// From here on the answers are in the record: a session note that can't be
+				// written is a note missing, never an answer counted twice.
 				const sessions = new Map<string, AgentResult[]>();
 				for (const r of applied) sessions.set(r.session, [...(sessions.get(r.session) ?? []), r]);
 				for (const [id, rs] of sessions) {
@@ -1353,14 +1376,18 @@ export default class GrillPlugin extends Plugin {
 						})),
 					];
 					const startedAt = was?.startedAt ?? new Date(rs[0].at);
-					const file = await this.store.writeSessionNote(entries, { provider: rs[0].via, model: "grill-mcp", startedAt }, this.data.settings.linkSessions, undefined, [], was?.file);
+					const file = await this.store
+						.writeSessionNote(entries, { provider: rs[0].via, model: "grill-mcp", startedAt }, this.data.settings.linkSessions, undefined, [], was?.file)
+						.catch(() => null);
 					if (file) this.agentSessionNotes.set(id, { file, entries, startedAt });
 				}
-				// Only once everything above is saved: a failure leaves the files to try again.
-				for (const i of inbox) await this.store.removeInboxFile(i.path);
+				const bad = new Set(failed.map((r) => r.id));
+				for (const i of inbox) await (bad.has(i.result.id) ? this.store.setAsideInboxFile(i.path) : this.store.removeInboxFile(i.path));
 				await this.store.removeEmptyInbox();
-				const via = [...new Set(applied.map((r) => r.via))].join(", ");
-				new Notice(`Grill: added ${applied.length} answer${applied.length === 1 ? "" : "s"} from ${via}.`, 6000);
+				if (applied.length) {
+					const via = [...new Set(applied.map((r) => r.via))].join(", ");
+					new Notice(`Grill: added ${applied.length} answer${applied.length === 1 ? "" : "s"} from ${via}.`, 6000);
+				}
 			}, "with answers from other agents");
 			this.refreshStatusBar();
 			for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {

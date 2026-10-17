@@ -6,6 +6,8 @@
  * by the view that calls this; nothing here reads or changes the record.
  */
 
+import { attachPicker, type PickSource } from "./mention";
+
 export interface HomeSuggestion {
 	label: string;
 	/** One line of fact under the name: where the misses are, how the note has gone. */
@@ -53,6 +55,8 @@ export interface HomeData {
 	/** The prompts, Grill's own and the saved ones: a list opened at the button, and
 	 * what to do with the one picked. */
 	prompts?: { open(at: HTMLElement, use: (text: string) => void): void } | null;
+	/** What `@` and `/` in the box offer. */
+	pick?: PickSource;
 	placeholder: string;
 	sendLabel: string;
 	/** What was typed, trimmed (empty when Send was pressed on an empty box), and
@@ -143,6 +147,7 @@ export function renderChatHome(screen: HTMLElement, d: HomeData): void {
 		cls: "grill-home-input",
 		attr: { placeholder: d.placeholder, "aria-label": d.mode === "chat" ? "Message" : "What to be tested on" },
 	});
+	if (d.pick) attachPicker(input, d.pick);
 	const bar = box.createDiv({ cls: "grill-home-bar" });
 	const picks = bar.createDiv({ cls: "grill-home-picks" });
 	drawPicks(picks, d, input);

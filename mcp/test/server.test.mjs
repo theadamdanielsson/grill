@@ -127,3 +127,77 @@ test("in a code repo answers start and update a record of their own", async () =
 	assert.equal(log.length, 1);
 	assert.match(readFileSync(join(repo, ".grill", "Sessions", log[0]), "utf8"), /\*\*Expected answer:\*\* After 30 days idle\./);
 });
+
+test("a record file that can't be read is an error, and is never written over", async () => {
+	const repo = mkdtempSync(join(tmpdir(), "grill-repo-"));
+	mkdirSync(join(repo, ".grill"));
+	const conflict = '<<<<<<< HEAD\n{"a::b": {}}\n=======\n{}\n>>>>>>> other\n';
+	writeFileSync(join(repo, ".grill", "concepts.json"), conflict);
+	const c = await connect([], repo);
+	assert.equal((await call(c, "grill_overview")).error, true);
+	const r = await call(c, "grill_record_answer", { note: "x", question: "q", answer: "a", verdict: "correct" });
+	assert.equal(r.error, true);
+	await c.close();
+	assert.equal(readFileSync(join(repo, ".grill", "concepts.json"), "utf8"), conflict);
+});
+
+test("in a vault, unknown or mismatched concepts and reserved names are refused", async () => {
+	const { root } = makeVault();
+	const c = await connect(["--vault", root]);
+	assert.equal((await call(c, "grill_record_answer", { note: "__proto__", question: "q", answer: "a", verdict: "incorrect" })).error, true);
+	assert.equal((await call(c, "grill_record_answer", { note: "GDP", conceptId: "Inflation::term:bracket-creep", question: "q", answer: "a", verdict: "correct" })).error, true);
+	assert.equal((await call(c, "grill_record_answer", { note: "Inflation", conceptId: "constructor", question: "q", answer: "a", verdict: "correct" })).error, true);
+	await c.close();
+});
+
+test("started in a vault's subfolder, it uses that vault's record", async () => {
+	const { root } = makeVault();
+	mkdirSync(join(root, "Notes", "Deep"), { recursive: true });
+	const c = await connect([], join(root, "Notes", "Deep"));
+	assert.equal((await call(c, "grill_overview")).body.concepts.tested, 2);
+	await c.close();
+	assert.equal(existsSync(join(root, "Notes", "Deep", ".grill")), false);
+});
+
+test("three agents writing to one repo lose nothing", async () => {
+	const repo = mkdtempSync(join(tmpdir(), "grill-repo-"));
+	const clients = await Promise.all([0, 1, 2].map(() => connect([], repo)));
+	await Promise.all(
+		clients.map((c, k) =>
+			Promise.all(Array.from({ length: 15 }, (_, i) => call(c, "grill_record_answer", { note: `f${k}.ts`, label: `c${i}`, question: "q", answer: "a", verdict: "correct" }))),
+		),
+	);
+	await Promise.all(clients.map((c) => c.close()));
+	const concepts = JSON.parse(readFileSync(join(repo, ".grill", "concepts.json"), "utf8"));
+	assert.equal(Object.keys(concepts).length, 45);
+});
+
+test("a note named with # records, and the command can't set the id or time", async () => {
+	const { root, g } = makeVault();
+	const concepts = JSON.parse(readFileSync(join(g, "concepts.json"), "utf8"));
+	concepts["C# basics::term:delegates"] = concept("C# basics", "delegates");
+	writeFileSync(join(g, "concepts.json"), JSON.stringify(concepts));
+	const c = await connect(["--vault", root]);
+	assert.equal((await call(c, "grill_record_answer", { note: "C# basics", conceptId: "C# basics::term:delegates", question: "q", answer: "a", verdict: "correct" })).error, false);
+	await c.close();
+	const { spawnSync } = await import("node:child_process");
+	const out = spawnSync(process.execPath, [bin, "record", '{"note":"Inflation","question":"q","answer":"a","verdict":"correct","id":"../../z","at":"2030-01-01T00:00:00Z"}', "--vault", root], { encoding: "utf8" });
+	assert.equal(out.status, 0, out.stderr);
+	const files = readdirSync(join(g, "Inbox"));
+	assert.equal(files.length, 2);
+	for (const f of files) assert.ok(!JSON.parse(readFileSync(join(g, "Inbox", f), "utf8")).at.startsWith("2030"));
+	assert.equal(existsSync(join(g, "z.json")), false);
+});
+
+test("a repo's own .grill wins over the vault it sits in, and an iCloud placeholder is not an empty record", async () => {
+	const { root } = makeVault();
+	const repo = join(root, "code", "app");
+	mkdirSync(join(repo, ".grill"), { recursive: true });
+	writeFileSync(join(repo, ".grill", ".concepts.json.icloud"), "");
+	const c = await connect([], repo);
+	const o = await call(c, "grill_overview");
+	assert.equal(o.error, true, "the record is away in iCloud, not empty");
+	assert.equal((await call(c, "grill_record_answer", { note: "x", question: "q", answer: "a", verdict: "correct" })).error, true);
+	await c.close();
+	assert.equal(existsSync(join(repo, ".grill", "concepts.json")), false);
+});

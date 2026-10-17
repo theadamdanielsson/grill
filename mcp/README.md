@@ -13,25 +13,39 @@ codex mcp add grill -- npx -y grill-mcp --vault "/path/to/your/vault"
 
 Any other MCP client runs the same command, `npx -y grill-mcp --vault <path>`, over stdio. It requires Node.js 18 or later.
 
+Without `--vault`, grill-mcp uses the vault it is started in, including from one of the vault's subfolders, or the folder named by the `GRILL_VAULT` environment variable. `--dir <path>` keeps a record in a folder of its own, outside any vault.
+
 ## Tools
 
 | Tool | What it returns |
 |---|---|
-| `grill_overview` | Counts of tested, known and struggling concepts, what is due now or fading this week, the weakest notes and active misconceptions. |
-| `grill_weak_spots` | Concepts missed last time, struggling or likely forgotten, weakest first, optionally for one topic. |
+| `grill_overview` | Counts of tested, known and still-learning concepts, what is due now or fading this week, the weakest notes and active misconceptions. |
+| `grill_weak_spots` | Concepts missed last time, missed repeatedly, or likely forgotten, weakest first, optionally for one topic. |
 | `grill_what_they_know` | Everything the record holds on a topic, for pitching an explanation. |
 | `grill_questions` | Questions Grill already wrote for the concepts most worth testing, with expected answers for grading. |
 | `grill_record_answer` | Records one graded answer, which then moves that concept's schedule. |
 
 The server also tells the agent how to test: one question at a time, the expected answer kept back until you have answered, and every answer recorded.
 
+## Commands
+
+The same queries are available as plain commands, for an agent that has a shell but no MCP set up. Each prints JSON. The `grill-test` skill uses them.
+
+```
+npx -y grill-mcp overview
+npx -y grill-mcp weak-spots [topic]
+npx -y grill-mcp know <topic>
+npx -y grill-mcp questions [topic]
+npx -y grill-mcp record '{"note": "...", "question": "...", "answer": "...", "verdict": "partial"}'
+```
+
 ## How answers reach Grill
 
-grill-mcp never writes to the record files themselves, since the plugin may hold them open. Each graded answer is instead written as one file in the `Inbox` folder inside your Grill folder. The next time Grill is open, it folds these answers into the record, writes a session note for each agent session, and removes the files.
+grill-mcp never writes to the record files themselves, since the plugin may hold them open. Each graded answer is instead written as one file in the `Inbox` folder inside your Grill folder. While Grill is open, it adds these answers to the record within a few seconds, writes a session note for each agent session, and removes the files. Each answer is counted once, including when the vault syncs to a second device.
 
 ## Outside a vault
 
-Run in a folder that is not an Obsidian vault, for instance a code repository, grill-mcp keeps a record of its own in `.grill/` and updates it directly. A readable log of each day's questions and answers is kept in `.grill/Sessions/`.
+Run in a folder that is not an Obsidian vault, for instance a code repository, grill-mcp keeps a record of its own in `.grill/` and updates it directly, one writer at a time. A readable log of each day's questions and answers is kept in `.grill/Sessions/`. A record file that cannot be read is reported as an error and never written over.
 
 ## Privacy
 

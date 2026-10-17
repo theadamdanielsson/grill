@@ -149,3 +149,33 @@ test("a study offer reaches the pane as a button, or comes back with why it can'
 	assert.deepEqual(offered[1], { kind: "misses" });
 	assert.equal((await runRecordQuery({ state: port.state }, "grill_offer_study", { kind: "due" })).failed, true);
 });
+
+test("names that would reach Object.prototype or break a session note are refused", () => {
+	const base = { v: 1, id: "x", at: new Date().toISOString(), question: "q", verdict: "correct" };
+	for (const note of ["__proto__", "constructor", "x\n```dataviewjs", "y".repeat(201)]) assert.equal(parseResult({ ...base, note }), null, note);
+	for (const note of ["C# basics", "a|b", "Notes [draft]"]) assert.ok(parseResult({ ...base, note }), `a real note name: ${note}`);
+	assert.equal(parseResult({ ...base, note: "GDP", id: "../../z" }), null, "an id is never a path");
+	assert.equal(parseResult({ ...base, note: "GDP", conceptId: "__proto__" }), null);
+	assert.equal(parseResult({ ...base, note: "GDP", via: "Claude\nprovider: evil" })?.via, "Claudeprovider evil");
+	assert.equal(parseResult({ ...base, note: "GDP", misconception: { tag: "constructor", label: "" } })?.misconception, undefined);
+	assert.equal(Object.prototype.hasOwnProperty.call(Object.prototype, "correct"), false);
+});
+
+test("an answer is never applied twice, counts for its concept's note, and one bad answer stops no other", () => {
+	const s = state();
+	const good = result({ id: "a1", conceptId: "GDP::term:recession", note: "Somewhere else", verdict: "correct" });
+	const first = applyResults(s, [good, { ...good }], { allowNew: false });
+	assert.equal(first.applied.length, 1, "the same id twice in one fold");
+	assert.equal(first.applied[0].note, "GDP");
+	assert.equal(s.mastery["Somewhere else"], undefined);
+	const again = applyResults(s, [good], { allowNew: false, seen: new Set(["a1"]) });
+	assert.equal(again.applied.length, 0, "already folded on another device or an earlier try");
+	assert.equal(s.concepts["GDP::term:recession"].correct, 3);
+});
+
+test("a short topic is matched as written, not as everything", () => {
+	const s = state();
+	s.concepts["AI basics::term:ai"] = { ...s.concepts["GDP::term:recession"], note: "AI basics", label: "AI", reviewLog: [{ t: new Date().toISOString(), elapsedDays: 1, rating: 1 }], incorrect: 1, streak: 0 };
+	s.concepts["GDP::term:recession"].reviewLog!.push({ t: new Date().toISOString(), elapsedDays: 1, rating: 1 });
+	assert.deepEqual(weakSpots(s, "AI", 10).concepts.map((c) => c.note), ["AI basics"]);
+});

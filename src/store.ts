@@ -494,18 +494,43 @@ export class GrillStore {
 		for (const path of (await adapter.list(dir)).files) {
 			const name = path.slice(path.lastIndexOf("/") + 1);
 			if (name.startsWith(".") || !name.endsWith(".json")) continue;
+			let raw: unknown;
 			try {
-				const result = parseResult(JSON.parse(await adapter.read(path)));
-				if (result) out.push({ path, result });
+				raw = JSON.parse(await adapter.read(path));
 			} catch {
-				/* half-synced or not one of ours: try again next time */
+				continue; // half written or half synced: tried again next time
 			}
+			const result = parseResult(raw);
+			// Whole, but not an answer Grill takes: put aside, not read again every time.
+			if (result) out.push({ path, result });
+			else await this.setAsideInboxFile(path);
 		}
 		return out.sort((a, b) => a.result.at.localeCompare(b.result.at));
 	}
 
 	async removeInboxFile(path: string): Promise<void> {
 		await this.app.vault.adapter.remove(path).catch(() => undefined);
+	}
+
+	/** An answer that could not be applied is kept beside the others under a name the
+	 * fold no longer reads, so it is not tried again every time. */
+	async setAsideInboxFile(path: string): Promise<void> {
+		await this.app.vault.adapter.rename(path, `${path}.rejected`).catch(() => this.removeInboxFile(path));
+	}
+
+	private appliedPath(): string {
+		return normalizePath(`${this.folder()}/inbox-applied.json`);
+	}
+
+	/** Ids of agent answers already in the record. In the vault, not the plugin's own data,
+	 * so a second device that syncs the same answer file in skips it too. */
+	async loadAppliedInbox(): Promise<string[]> {
+		const ids = await this.loadJSON<unknown>(this.appliedPath(), []);
+		return Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : [];
+	}
+
+	async saveAppliedInbox(ids: string[]): Promise<void> {
+		await this.saveJSON(this.appliedPath(), JSON.stringify(ids.slice(-5000)));
 	}
 
 	/** The Inbox folder, once nothing is left in it, so it isn't left in the file list. */
@@ -794,7 +819,10 @@ export class GrillStore {
 		}
 		for (const e of entries) {
 			const label = e.gaveUp ? "Skipped" : e.verdict === "correct" ? "Correct" : e.verdict === "partial" ? "Partially correct" : "Incorrect";
-			lines.push(link ? `## [[${e.node}]]` : `## ${e.node}`, "", safeMarkdown(e.question), "");
+			// A name that can't sit inside a [[link]] (one with ] or |, from an agent or a
+			// file made outside Obsidian) is written as plain, safe text instead.
+			const linkable = /^[^[\]|#^\n\r]+$/.test(e.node);
+			lines.push(link && linkable ? `## [[${e.node}]]` : `## ${safeMarkdown(e.node)}`, "", safeMarkdown(e.question), "");
 			if (!e.gaveUp && e.answer) {
 				lines.push(`> [!quote] Your answer`, ...safeMarkdown(e.answer).split("\n").map((l) => `> ${l}`), "");
 			}

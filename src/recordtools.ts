@@ -27,12 +27,12 @@ const limit = { type: "integer", minimum: 1, maximum: 50 };
 export const RECORD_TOOLS: ToolSpec[] = [
 	{
 		name: "grill_overview",
-		description: "How the student's record stands: concepts tested, known and struggling, what is due now or fading this week, the weakest notes, and the misconceptions they keep showing.",
+		description: "How the student's record stands: concepts tested, known and still being learned, what is due now or fading this week, the weakest notes, and the misconceptions they keep showing.",
 		input: { type: "object", properties: {}, additionalProperties: false },
 	},
 	{
 		name: "grill_weak_spots",
-		description: "Concepts the student got wrong last time, is struggling with, or is likely to have forgotten, weakest first, with their misconceptions. Optionally for one topic.",
+		description: "Concepts the student got wrong last time, keeps missing, or is likely to have forgotten, weakest first, with their misconceptions. Optionally for one topic.",
 		input: { type: "object", properties: { topic, limit }, additionalProperties: false },
 	},
 	{
@@ -59,7 +59,7 @@ export const RECORD_TOOLS: ToolSpec[] = [
 /** Said to the model with the tools. */
 export const RECORD_RULES =
 	"Grill keeps a record of what the student knows, per concept: read it with grill_weak_spots, grill_what_they_know and grill_overview rather than from Grill's files, which only Grill reads correctly. " +
-	"A note's status comes from its concepts: a note marked struggling has tested concepts that aren't yet known, whatever its own counters say. " +
+	"A status of learning means tested but not yet proven twice, not wrong: what they got wrong is what lastAnswerMissed and the weak spots say. " +
 	"Don't quiz the student in the chat, and don't offer to: testing is Grill's Test, where answers are graded and scheduled. " +
 	"When you recommend studying something (the reviews due, a retry of what they missed, a test on particular notes), call grill_offer_study for it, and a button that starts it appears under your reply. Say what you recommend and why; don't describe the buttons or tell them where to click.";
 

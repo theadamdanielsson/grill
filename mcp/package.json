@@ -5,18 +5,38 @@
   "license": "MIT",
   "author": "Adam Danielsson",
   "homepage": "https://grill.onbridger.com",
-  "repository": { "type": "git", "url": "git+https://github.com/theadamdanielsson/grill.git", "directory": "mcp" },
-  "keywords": ["mcp", "obsidian", "spaced-repetition", "claude-code", "codex", "learning"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/theadamdanielsson/grill.git",
+    "directory": "mcp"
+  },
+  "keywords": [
+    "mcp",
+    "obsidian",
+    "spaced-repetition",
+    "claude-code",
+    "codex",
+    "learning"
+  ],
   "type": "module",
-  "bin": { "grill-mcp": "dist/grill-mcp.js" },
-  "files": ["dist", "README.md", "LICENSE"],
-  "engines": { "node": ">=18" },
+  "bin": {
+    "grill-mcp": "dist/grill-mcp.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "node build.mjs",
     "test": "node build.mjs && node --test test/*.test.mjs"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",
+    "esbuild": "0.25.12",
     "zod": "4.6.7"
   }
 }

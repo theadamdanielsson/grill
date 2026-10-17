@@ -173,6 +173,8 @@ export interface AgentRun {
 	model?: string;
 	/** The student's record, offered as read-only tools (see recordtools.ts). */
 	record?: RecordPort;
+	/** Told the full path of a file about to be edited or written, before it is. */
+	beforeChange?: (path: string) => Promise<void>;
 	signal?: AbortSignal;
 	onEvent: (e: AgentEvent) => void;
 	ask: (req: PermissionAsk) => Promise<PermissionAnswer>;
@@ -361,6 +363,27 @@ export async function runAgent(run: AgentRun): Promise<AgentResult> {
 		abortController: stop,
 		canUseTool,
 		systemPrompt: { type: "preset", preset: "claude_code", ...(run.append || recordServer ? { append: [run.append, recordServer ? RECORD_RULES : ""].filter(Boolean).join("\n\n") } : {}) },
+		// Each file as it was, kept before Claude Code changes it, whatever the permission
+		// level: what lets Grill offer to undo the turn.
+		...(run.beforeChange
+			? {
+					hooks: {
+						PreToolUse: [
+							{
+								matcher: "Edit|Write|MultiEdit|NotebookEdit",
+								hooks: [
+									async (input) => {
+										const t = (input as { tool_input?: { file_path?: unknown; notebook_path?: unknown } }).tool_input;
+										const at = typeof t?.file_path === "string" ? t.file_path : typeof t?.notebook_path === "string" ? t.notebook_path : "";
+										if (at) await run.beforeChange?.(at).catch(() => undefined);
+										return { continue: true };
+									},
+								],
+							},
+						],
+					},
+				}
+			: {}),
 		...(recordServer
 			? {
 					mcpServers: { [RECORD_SERVER]: recordServer },

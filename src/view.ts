@@ -90,6 +90,7 @@ import type { VaultPort } from "./vaulttools";
 import type { SettingsPort } from "./settingstools";
 import type { RecordPort, StudyOffer } from "./recordtools";
 import { GRILL_ICON } from "./icon";
+import { attachPicker, linkedNames, type PickSource } from "./mention";
 import { findCodex, runCodex } from "./codex";
 import { AcpModel, acpModels, runAcp } from "./acp";
 import { canInstall, findOpencode, opencodeProgram } from "./opencode";
@@ -1557,6 +1558,7 @@ export class SessionView extends ItemView {
 			engine: this.engineForHome(),
 			model: this.modelForHome(),
 			prompts: learning ? { open: (at, use) => this.promptsMenu(at, use) } : null,
+			...(learning ? { pick: this.pickSource() } : {}),
 			level: learning && (this.agentProgram() || this.modelHasTools()) ? this.levelForHome() : null,
 			placeholder: learning ? "Ask anything, or say what to do" : "Say what to test, or just press Get grilled",
 			sendLabel: learning ? "Send" : "Get grilled",
@@ -1738,6 +1740,17 @@ export class SessionView extends ItemView {
 
 	/** The prompts, as a list under their button: Grill's own, then the saved ones, then
 	 * a way to save a new one. Picking one puts it in the box. */
+	/** What `@` and `/` offer in a message box: the notes Grill reads, and the prompts. */
+	private pickSource(): PickSource {
+		return {
+			notes: () => this.allEligible().map((f) => f.basename),
+			prompts: () => [
+				...STARTER_PROMPTS.map((p) => ({ name: p.name, text: async () => p.text })),
+				...this.plugin.savedPrompts().map((f) => ({ name: f.basename, text: () => this.plugin.savedPromptText(f, "") })),
+			],
+		};
+	}
+
 	private promptsMenu(at: HTMLElement, use: (text: string) => void): void {
 		const menu = new Menu();
 		for (const p of STARTER_PROMPTS) menu.addItem((i) => i.setTitle(p.name).onClick(() => use(p.text)));
@@ -2017,6 +2030,7 @@ export class SessionView extends ItemView {
 			cls: "grill-thread-input",
 			attr: { rows: "2", placeholder: L.quote ? "Ask about the selected text... (Enter to send)" : "Ask about this note... (Enter to send)", "aria-label": "Ask about this note" },
 		});
+		attachPicker(input, this.pickSource());
 		const send = box.createEl("button", { text: "Send", cls: "mod-cta grill-submit-btn" });
 		const go = (): void => {
 			const text = input.value.trim();
@@ -2087,6 +2101,24 @@ export class SessionView extends ItemView {
 			const b = acts.createEl("button", { cls: "grill-home-link", text: label, attr: { type: "button" } });
 			b.onclick = () => void run();
 		};
+		// What the turn changed, each a way into the file, and one Undo for all of it.
+		if (turn.changes?.length) {
+			const card = el.createDiv({ cls: "grill-reply-changes" });
+			card.createDiv({ cls: "grill-meta", text: turn.undone ? "Changes undone" : turn.changes.length === 1 ? "File changed" : `${turn.changes.length} files changed` });
+			for (const c of turn.changes) {
+				const name = c.path.split("/").pop() ?? c.path;
+				const row = card.createDiv({ cls: "grill-reply-change" });
+				const link = row.createSpan({ cls: "grill-chip-link", text: name.replace(/\.md$/, "") });
+				link.onclick = () => void this.app.workspace.openLinkText(c.path, "", false);
+				if (c.before === null) row.createSpan({ cls: "grill-meta", text: " (new)" });
+				else if (c.after === null) row.createSpan({ cls: "grill-meta", text: " (removed)" });
+			}
+			if (!turn.undone) {
+				const undo = card.createEl("button", { cls: "grill-hint-btn", text: "Undo", attr: { type: "button" } });
+				undo.onclick = () => void this.undoTurn(turn);
+			}
+			acts.before(card);
+		}
 		// Studying the reply recommends, ready to start.
 		if (turn.offers?.length) {
 			const go = el.createDiv({ cls: "grill-reply-offers" });
@@ -2144,6 +2176,12 @@ export class SessionView extends ItemView {
 		if (!program && L.turns.filter((t) => t.role === "student").length >= (L.whole ? WHOLE_VAULT_TURNS : THREAD_LIMIT)) {
 			new Notice("Grill: that's a long conversation. Test yourself on it, or start a new one.", 8000);
 			return;
+		}
+		// Notes named with @ join the ones the chat reads.
+		const byName = new Map(this.allEligible().map((f) => [f.basename.toLowerCase(), f] as const));
+		for (const n of linkedNames(text)) {
+			const f = byName.get(n.toLowerCase());
+			if (f && f !== L.note && !L.also.includes(f)) L.also.push(f);
 		}
 		// The note as it reads now: it may have been changed since the last message, by
 		// the chat or by hand.
@@ -2203,6 +2241,7 @@ export class SessionView extends ItemView {
 				signal: this.learnStop.signal,
 			};
 			this.pendingOffers = [];
+			this.turnBefore.clear();
 			const reply =
 				program && waiting
 					? await this.askAgent(L, program, text, waiting, live)
@@ -2210,6 +2249,8 @@ export class SessionView extends ItemView {
 			if (this.learn !== L) return;
 			if (this.pendingOffers.length) reply.offers = this.pendingOffers;
 			this.pendingOffers = [];
+			const changes = await this.turnChanges();
+			if (changes) reply.changes = changes;
 			// A turn that changed the note may have made it long enough to be tested on.
 			if (reply.activity && !L.whole) L.testable = await this.enoughToTest(L.note);
 			if (this.learn !== L) return;
@@ -2303,9 +2344,11 @@ export class SessionView extends ItemView {
 			write: async (path, content) => {
 				const f = file(path);
 				if (!f) throw new Error("The note is no longer there.");
+				await this.keepBefore(path);
 				await vault.modify(f, content);
 			},
 			create: async (path, content) => {
+				await this.keepBefore(path);
 				const dir = path.split("/").slice(0, -1).join("/");
 				if (dir && !vault.getAbstractFileByPath(dir)) await vault.createFolder(dir);
 				await vault.create(path, content);
@@ -2335,6 +2378,56 @@ export class SessionView extends ItemView {
 
 	/** Buttons offered during the turn being answered. */
 	private pendingOffers: StudyOfferButton[] = [];
+
+	/** Each file changed during the turn being answered, as it was before: null when the
+	 * turn made it. */
+	private turnBefore = new Map<string, string | null>();
+
+	/** Keeps a file as it is now, the first time the turn is about to change it. */
+	private async keepBefore(path: string): Promise<void> {
+		if (this.turnBefore.has(path)) return;
+		const adapter = this.app.vault.adapter;
+		this.turnBefore.set(path, (await adapter.exists(path)) ? await adapter.read(path) : null);
+	}
+
+	/** What the turn changed, before and after, or nothing. */
+	private async turnChanges(): Promise<ThreadTurn["changes"]> {
+		if (!this.turnBefore.size) return undefined;
+		const adapter = this.app.vault.adapter;
+		const out: NonNullable<ThreadTurn["changes"]> = [];
+		for (const [path, before] of this.turnBefore) {
+			const after = (await adapter.exists(path)) ? await adapter.read(path) : null;
+			if (after !== before) out.push({ path, before, after });
+		}
+		this.turnBefore.clear();
+		return out.length ? out : undefined;
+	}
+
+	/** Puts back every file a turn changed. A file changed again since, by hand or by a
+	 * later turn, is left as it is and said. */
+	private async undoTurn(turn: ThreadTurn): Promise<void> {
+		const vault = this.app.vault;
+		const kept: string[] = [];
+		for (const c of turn.changes ?? []) {
+			const now = (await vault.adapter.exists(c.path)) ? await vault.adapter.read(c.path) : null;
+			if (now !== c.after) {
+				kept.push(c.path.split("/").pop() ?? c.path);
+				continue;
+			}
+			const f = vault.getAbstractFileByPath(c.path);
+			if (c.before === null) {
+				if (f instanceof TFile) await this.app.fileManager.trashFile(f);
+			} else if (f instanceof TFile) await vault.modify(f, c.before);
+			else {
+				const dir = c.path.split("/").slice(0, -1).join("/");
+				if (dir && !vault.getAbstractFileByPath(dir)) await vault.createFolder(dir);
+				await vault.create(c.path, c.before);
+			}
+		}
+		turn.undone = true;
+		if (kept.length) new Notice(`Grill: left ${kept.join(", ")} as ${kept.length === 1 ? "it is" : "they are"}: changed again since.`, 8000);
+		this.renderLearn();
+	}
 
 	/** An offer from Chat made into a button, or the reason it can't be one. */
 	private studyButton(o: StudyOffer): StudyOfferButton | string {
@@ -2465,7 +2558,13 @@ export class SessionView extends ItemView {
 							model: s.opencodeModel,
 							onModels: (models, current) => (this.opencodeModels = { models, current }),
 						})
-					: await runAgent({ ...shared, append: brief, record: this.recordPort(), ...(s.claudeModel ? { model: s.claudeModel } : {}) });
+					: await runAgent({
+							...shared,
+							append: brief,
+							record: this.recordPort(),
+							beforeChange: (at) => (at.startsWith(`${base}/`) ? this.keepBefore(at.slice(base.length + 1)) : Promise.resolve()),
+							...(s.claudeModel ? { model: s.claudeModel } : {}),
+						});
 		L.agentSession = result.sessionId || L.agentSession;
 		// A diagram, when one was asked for, is lifted out to be drawn the way every other is.
 		let diagram = "";

@@ -3736,6 +3736,18 @@ textarea.grill-mgmt-field {
   gap: 0.4em;
   min-width: 0;
 }
+/* What a chat turn changed, with one Undo. */
+.grill-reply-changes {
+  margin-top: 0.6em;
+  padding: 0.5em 0.7em;
+  border-left: 2px solid var(--background-modifier-border);
+}
+.grill-reply-change {
+  margin: 0.15em 0;
+}
+.grill-reply-changes .grill-hint-btn {
+  margin-top: 0.4em;
+}
 /* Studying a chat reply recommends, ready to start. */
 .grill-reply-offers {
   display: flex;
@@ -3924,4 +3936,24 @@ textarea.grill-mgmt-field {
   flex-wrap: wrap;
   gap: 0.2em 0.9em;
   margin-bottom: 0.6em;
+}
+
+/* The list under a message box while typing @ for a note or / for a prompt. */
+.grill-pick-list {
+  margin-top: 0.3em;
+  max-height: 14em;
+  overflow-y: auto;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+}
+.grill-pick-item {
+  padding: 0.3em 0.6em;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.grill-pick-item.is-selected,
+.grill-pick-item:hover {
+  background: var(--background-modifier-hover);
 }

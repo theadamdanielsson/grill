@@ -1967,6 +1967,11 @@ export interface ThreadTurn {
 	activity?: string;
 	/** Studying it offered: buttons under the reply that start a test. */
 	offers?: StudyOfferButton[];
+	/** Files it changed: each as it was before the turn (null: it made the file) and as
+	 * the turn left it (null: it removed it), so the turn can be undone. */
+	changes?: Array<{ path: string; before: string | null; after: string | null }>;
+	/** The changes were undone. */
+	undone?: boolean;
 }
 
 /** A study offer as Grill checked it: what the button says, and what it starts. */

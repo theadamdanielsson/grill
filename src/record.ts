@@ -51,6 +51,19 @@ export interface RecordState {
 }
 
 const VERDICTS: ReadonlySet<string> = new Set(["correct", "partial", "incorrect"]);
+
+/** Keys that would reach Object.prototype if used to index the record. */
+const RESERVED: ReadonlySet<string> = new Set(["__proto__", "constructor", "prototype"]);
+
+/** A note name or concept id fit to be a key in the record: no line breaks, a sane
+ * length, never a reserved key. Real note names may hold `#`, `[` or `|`; where one is
+ * written into a note it is made safe there (see writeSessionNote). */
+export function fitName(s: string, most = 200): boolean {
+	return !!s.trim() && s.length <= most && !RESERVED.has(s) && !/[\n\r]/.test(s);
+}
+
+/** An own key of a record map, never one inherited from Object.prototype. */
+export const has = (map: object, key: string): boolean => Object.prototype.hasOwnProperty.call(map, key);
 const DIFFICULTIES: ReadonlySet<string> = new Set(["easy", "medium", "hard"]);
 
 /** A result file's contents, checked; null when it isn't one. */
@@ -59,14 +72,15 @@ export function parseResult(raw: unknown): AgentResult | null {
 	const r = raw as Record<string, unknown>;
 	const str = (k: string) => (typeof r[k] === "string" ? (r[k] as string) : "");
 	if (r.v !== RESULT_VERSION || !str("id") || !str("note") || !str("question") || !VERDICTS.has(str("verdict"))) return null;
+	if (!fitName(str("note")) || (str("conceptId") && !fitName(str("conceptId"), 600)) || !/^[\w-]{1,100}$/.test(str("id"))) return null;
 	if (Number.isNaN(new Date(str("at")).getTime())) return null;
 	const m = r.misconception as Record<string, unknown> | undefined;
-	const tag = m && typeof m.tag === "string" ? toTag(m.tag) : "";
+	const tag = m && typeof m.tag === "string" && !RESERVED.has(toTag(m.tag)) ? toTag(m.tag) : "";
 	return {
 		v: RESULT_VERSION,
 		id: str("id"),
 		at: new Date(str("at")).toISOString(),
-		via: str("via").slice(0, 60) || "Agent",
+		via: str("via").replace(/[^\p{L}\p{N} ._-]/gu, "").trim().slice(0, 40) || "Agent",
 		session: str("session") || str("id"),
 		...(str("conceptId") ? { conceptId: str("conceptId") } : {}),
 		note: str("note"),
@@ -102,32 +116,44 @@ export function slug(s: string): string {
 export function applyResults(
 	state: RecordState,
 	results: AgentResult[],
-	opts: { allowNew: boolean; desiredRetention?: number },
-): { applied: AgentResult[]; unknownConcept: AgentResult[] } {
+	opts: { allowNew: boolean; desiredRetention?: number; seen?: ReadonlySet<string> },
+): { applied: AgentResult[]; unknownConcept: AgentResult[]; failed: AgentResult[] } {
 	const applied: AgentResult[] = [];
 	const unknownConcept: AgentResult[] = [];
-	for (const r of [...results].sort((a, b) => a.at.localeCompare(b.at))) {
-		const at = new Date(r.at);
-		let cid = r.conceptId && state.concepts[r.conceptId] ? r.conceptId : undefined;
-		if (!cid && opts.allowNew) {
-			cid = r.conceptId || `${r.note}::agent:${slug(r.label || r.question.slice(0, 60))}`;
-			state.concepts[cid] ??= newConcept(r.note, r.label || r.question.slice(0, 80));
+	const failed: AgentResult[] = [];
+	for (const given of [...results].sort((a, b) => a.at.localeCompare(b.at))) {
+		// Never twice: a fold that stopped part way, a file that could not be deleted, or
+		// a second device folding the same synced file.
+		if (opts.seen?.has(given.id) || applied.some((a) => a.id === given.id)) continue;
+		try {
+			const at = new Date(given.at);
+			let cid = given.conceptId && has(state.concepts, given.conceptId) ? given.conceptId : undefined;
+			// The concept says which note it belongs to; an answer is never counted for
+			// another one.
+			const r = cid ? { ...given, note: state.concepts[cid].note } : given;
+			if (!cid && opts.allowNew) {
+				cid = r.conceptId || `${r.note}::agent:${slug(r.label || r.question.slice(0, 60))}`;
+				if (!fitName(cid, 300)) throw new Error("concept id not fit");
+				if (!has(state.concepts, cid)) state.concepts[cid] = newConcept(r.note, r.label || r.question.slice(0, 80));
+			}
+			if (cid) recordConceptAnswer(state.concepts, cid, r.verdict, r.difficulty ?? "medium", at, opts.desiredRetention);
+			else if (r.conceptId) unknownConcept.push(r);
+			if (!has(state.mastery, r.note)) state.mastery[r.note] = emptyMastery();
+			recordNoteStats(state.mastery, r.note, r.verdict, r.misconception?.tag);
+			if (r.misconception) {
+				mergeAssignments(
+					state.registry,
+					[{ rawTag: r.misconception.tag, canonTag: r.misconception.tag, canonLabel: r.misconception.label, note: r.note }],
+					at,
+				);
+			}
+			refreshNote(state, r.note);
+			applied.push(r);
+		} catch {
+			failed.push(given);
 		}
-		if (cid) recordConceptAnswer(state.concepts, cid, r.verdict, r.difficulty ?? "medium", at, opts.desiredRetention);
-		else if (r.conceptId) unknownConcept.push(r);
-		state.mastery[r.note] ??= emptyMastery();
-		recordNoteStats(state.mastery, r.note, r.verdict, r.misconception?.tag);
-		if (r.misconception) {
-			mergeAssignments(
-				state.registry,
-				[{ rawTag: r.misconception.tag, canonTag: r.misconception.tag, canonLabel: r.misconception.label, note: r.note }],
-				at,
-			);
-		}
-		refreshNote(state, r.note);
-		applied.push(r);
 	}
-	return { applied, unknownConcept };
+	return { applied, unknownConcept, failed };
 }
 
 function newConcept(note: string, label: string): ConceptMastery {
@@ -172,7 +198,8 @@ export interface ConceptView {
 	id: string;
 	note: string;
 	label: string;
-	status: "untested" | "struggling" | "known";
+	/** As Grill's screens say it: "learning" until proven, then "known". */
+	status: "untested" | "learning" | "known";
 	/** Chance of recalling it now, 0-100; null if never tested. */
 	recallNow: number | null;
 	answered: { correct: number; partial: number; incorrect: number };
@@ -193,7 +220,7 @@ export function viewConcept(id: string, c: ConceptMastery, now = new Date()): Co
 		id,
 		note: c.note,
 		label: c.label,
-		status: statusOf(c),
+		status: shown(statusOf(c)),
 		recallNow: recallNow(c, now),
 		answered: { correct: c.correct, partial: c.partial, incorrect: c.incorrect },
 		lastSeen: c.lastSeen,
@@ -201,6 +228,11 @@ export function viewConcept(id: string, c: ConceptMastery, now = new Date()): Co
 		lastAnswerMissed: lastAnswerMissed(c),
 		leech: isLeech(c),
 	};
+}
+
+/** A status in the words Grill's screens use. */
+function shown(st: "untested" | "struggling" | "known"): "untested" | "learning" | "known" {
+	return st === "struggling" ? "learning" : st;
 }
 
 /** Words of a query, lower-cased, without the short ones. */
@@ -215,7 +247,14 @@ function words(s: string): string[] {
  * than the concept's label. Plain word overlap, no model. */
 export function topicScore(topic: string, c: { note: string; label: string }): number {
 	const q = words(topic);
-	if (!q.length) return 1;
+	// A short topic ("AI", "EU") has no word long enough to match on: it is looked for
+	// as it is written, and an empty one matches everything.
+	if (!q.length) {
+		const t = topic.trim().toLowerCase();
+		if (!t) return 1;
+		const inName = (x: string) => new RegExp(`(^|[^\\p{L}\\p{N}])${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^\\p{L}\\p{N}])`, "u").test(x.toLowerCase());
+		return inName(c.note) ? 3 : inName(c.label) ? 2 : 0;
+	}
 	const noteW = new Set(words(c.note));
 	const labelW = new Set(words(c.label));
 	const whole = topic.trim().toLowerCase();
@@ -238,22 +277,22 @@ function matching(state: RecordState, topic: string | undefined): Array<[string,
 
 export interface Overview {
 	notes: number;
-	concepts: { total: number; tested: number; known: number; struggling: number };
+	concepts: { total: number; tested: number; known: number; learning: number };
 	dueNow: number;
 	fadingThisWeek: number;
 	lastStudied: string | null;
 	activeMisconceptions: Array<{ tag: string; label: string; notes: string[]; count: number }>;
-	weakestNotes: Array<{ note: string; struggling: number; missedLast: number }>;
+	weakestNotes: Array<{ note: string; learning: number; missedLast: number }>;
 }
 
 export function overview(state: RecordState, now = new Date()): Overview {
 	const all = Object.values(state.concepts).filter(live);
 	const tested = all.filter(conceptTested);
 	const week = now.getTime() + 7 * 86400_000;
-	const byNote = new Map<string, { struggling: number; missedLast: number }>();
+	const byNote = new Map<string, { learning: number; missedLast: number }>();
 	for (const c of tested) {
-		const e = byNote.get(c.note) ?? { struggling: 0, missedLast: 0 };
-		if (statusOf(c) === "struggling") e.struggling++;
+		const e = byNote.get(c.note) ?? { learning: 0, missedLast: 0 };
+		if (statusOf(c) === "struggling") e.learning++;
 		if (lastAnswerMissed(c)) e.missedLast++;
 		byNote.set(c.note, e);
 	}
@@ -263,7 +302,7 @@ export function overview(state: RecordState, now = new Date()): Overview {
 			total: all.length,
 			tested: tested.length,
 			known: tested.filter((c) => statusOf(c) === "known").length,
-			struggling: tested.filter((c) => statusOf(c) === "struggling").length,
+			learning: tested.filter((c) => statusOf(c) === "struggling").length,
 		},
 		dueNow: tested.filter((c) => c.dueAt && new Date(c.dueAt) <= now).length,
 		fadingThisWeek: tested.filter((c) => c.dueAt && new Date(c.dueAt) > now && new Date(c.dueAt).getTime() <= week).length,
@@ -271,8 +310,8 @@ export function overview(state: RecordState, now = new Date()): Overview {
 		activeMisconceptions: activeMisconceptions(state, undefined, 8),
 		weakestNotes: [...byNote.entries()]
 			.map(([note, e]) => ({ note, ...e }))
-			.filter((e) => e.struggling + e.missedLast > 0)
-			.sort((a, b) => b.struggling + b.missedLast - (a.struggling + a.missedLast))
+			.filter((e) => e.missedLast > 0 || e.learning > 0)
+			.sort((a, b) => b.missedLast - a.missedLast || b.learning - a.learning)
 			.slice(0, 8),
 	};
 }
@@ -299,7 +338,9 @@ const WEAK_RECALL = 70;
 
 function isWeak(c: ConceptMastery, now: Date): boolean {
 	const r = recallNow(c, now);
-	return lastAnswerMissed(c) || statusOf(c) === "struggling" || isLeech(c) || (r !== null && r < WEAK_RECALL);
+	// Not "struggling" alone: Grill calls a concept that until it is proven twice, so one
+	// right answer would read as a weak spot.
+	return lastAnswerMissed(c) || isLeech(c) || (r !== null && r < WEAK_RECALL);
 }
 
 export function weakSpots(state: RecordState, topic: string | undefined, limit: number, now = new Date()) {
@@ -320,7 +361,7 @@ export function whatTheyKnow(state: RecordState, topic: string, limit: number, n
 		concepts: found.map(([id, c]) => viewConcept(id, c, now)),
 		notes: notes.map((n) => {
 			const m = state.mastery[n];
-			return { note: n, status: m ? statusOf(m) : "untested", answered: m ? { correct: m.correct, partial: m.partial, incorrect: m.incorrect } : null };
+			return { note: n, status: m ? shown(statusOf(m)) : "untested", answered: m ? { correct: m.correct, partial: m.partial, incorrect: m.incorrect } : null };
 		}),
 		misconceptions: activeMisconceptions(state, topic, 6),
 	};
