@@ -206,6 +206,8 @@ export interface ConceptView {
 	lastSeen: string | null;
 	dueAt: string | null;
 	lastAnswerMissed: boolean;
+	/** How the last answer went. */
+	lastAnswer: "missed" | "partial" | "right" | null;
 	leech: boolean;
 }
 
@@ -226,6 +228,7 @@ export function viewConcept(id: string, c: ConceptMastery, now = new Date()): Co
 		lastSeen: c.lastSeen,
 		dueAt: c.dueAt,
 		lastAnswerMissed: lastAnswerMissed(c),
+		lastAnswer: !conceptTested(c) ? null : lastAnswerMissed(c) ? "missed" : lastAnswerPartial(c) ? "partial" : "right",
 		leech: isLeech(c),
 	};
 }
@@ -329,7 +332,12 @@ export function activeMisconceptions(state: RecordState, topic: string | undefin
  * then whatever is least likely to be recalled. */
 function weakness(c: ConceptMastery, now: Date): number {
 	const r = recallNow(c, now) ?? 100;
-	return (lastAnswerMissed(c) ? 200 : 0) + (statusOf(c) === "struggling" ? 100 : 0) + (isLeech(c) ? 50 : 0) + (100 - r);
+	return (lastAnswerMissed(c) ? 200 : lastAnswerPartial(c) ? 120 : 0) + (statusOf(c) === "struggling" ? 100 : 0) + (isLeech(c) ? 50 : 0) + (100 - r);
+}
+
+/** The last answer was only partly right (rated Hard): not a miss, but a gap. */
+function lastAnswerPartial(c: ConceptMastery): boolean {
+	return c.reviewLog?.[c.reviewLog.length - 1]?.rating === 2;
 }
 
 /** Below this chance of recall today, a concept counts as a weak spot even when nothing
@@ -340,7 +348,7 @@ function isWeak(c: ConceptMastery, now: Date): boolean {
 	const r = recallNow(c, now);
 	// Not "struggling" alone: Grill calls a concept that until it is proven twice, so one
 	// right answer would read as a weak spot.
-	return lastAnswerMissed(c) || isLeech(c) || (r !== null && r < WEAK_RECALL);
+	return lastAnswerMissed(c) || lastAnswerPartial(c) || isLeech(c) || (r !== null && r < WEAK_RECALL);
 }
 
 export function weakSpots(state: RecordState, topic: string | undefined, limit: number, now = new Date()) {

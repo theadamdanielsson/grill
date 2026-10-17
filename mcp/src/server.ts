@@ -9,8 +9,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, openSync, closeSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, appendFileSync, copyFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, realpathSync, mkdirSync, openSync, closeSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, appendFileSync, copyFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
+import { homedir } from "node:os";
 import { z } from "zod";
 import {
 	AgentResult,
@@ -36,6 +37,9 @@ interface Where {
 	folder: string;
 	/** True in an Obsidian vault: the plugin owns the record files there. */
 	vault: boolean;
+	/** In the record in the home folder: the project the agent is working in. Its
+	 * concepts are named with it, and reads keep to it. */
+	project?: string;
 }
 
 function argValue(name: string): string | undefined {
@@ -60,20 +64,52 @@ export function locate(): Where {
 	if (vault) return { folder: join(resolve(vault), grillFolderName(resolve(vault))), vault: true };
 	const dir = argValue("--dir");
 	if (dir) return { folder: resolve(dir), vault: false };
-	// Started inside a vault's subfolder is still in that vault: its record, not a new one.
+	// ~/.grill also holds what the plugin installs (opencode): the record has a folder of its own.
+	const home = process.env.GRILL_HOME ? resolve(process.env.GRILL_HOME) : join(homedir(), ".grill", "record");
+	// Started inside a vault, even in one of its subfolders, is that vault's record. A
+	// project that already keeps a record of its own in .grill uses that.
 	const cwd = process.cwd();
 	for (let at = cwd; ; at = dirname(at)) {
-		// The nearest record wins: a repository's own .grill, or the vault it sits in.
-		if (existsSync(join(at, ".grill"))) return { folder: join(at, ".grill"), vault: false };
+		if (!sameFolder(at, homedir()) && existsSync(join(at, ".grill"))) return { folder: join(at, ".grill"), vault: false };
 		if (existsSync(join(at, ".obsidian"))) return { folder: join(at, grillFolderName(at)), vault: true };
 		if (dirname(at) === at) break;
 	}
-	return { folder: join(cwd, ".grill"), vault: false };
+	// Otherwise one record for the person, in their home folder, never in the project:
+	// it is theirs, not the codebase's, and goes with them from project to project.
+	return { folder: home, vault: false, project: projectName(cwd) };
 }
 
-/** A record file, or `fallback` when there is none yet. A file that is there but can't
- * be read or parsed (half written, a sync placeholder, a merge conflict) is an error:
- * read as empty, the next write would replace the whole record with one answer. */
+/** Whether two paths are one folder, through symlinks (/var and /private/var on a Mac). */
+function sameFolder(a: string, b: string): boolean {
+	try {
+		return realpathSync(a) === realpathSync(b);
+	} catch {
+		return resolve(a) === resolve(b);
+	}
+}
+
+/** The project's name: its git root's folder name, or the folder's own. */
+function projectName(cwd: string): string {
+	for (let at = cwd; ; at = dirname(at)) {
+		if (existsSync(join(at, ".git"))) return basename(at);
+		if (dirname(at) === at) break;
+	}
+	return basename(cwd);
+}
+
+/** What reads see: in the home record, only the current project's concepts. */
+function inView(where: Where, s: RecordState & { bank: QuestionBank }): RecordState & { bank: QuestionBank } {
+	if (!where.project) return s;
+	const mine = (note: string) => note.startsWith(`${where.project}/`);
+	const pick = <T extends { note: string }>(m: Record<string, T>) => Object.fromEntries(Object.entries(m).filter(([, v]) => mine(v.note)));
+	return {
+		concepts: pick(s.concepts),
+		mastery: Object.fromEntries(Object.entries(s.mastery).filter(([n]) => mine(n))),
+		registry: Object.fromEntries(Object.entries(s.registry).filter(([, r]) => r.notes.some(mine))),
+		bank: s.bank,
+	};
+}
+
 function readJSON<T>(path: string, fallback: T): T {
 	if (!existsSync(path)) return fallback;
 	let raw: string;
@@ -153,7 +189,7 @@ export function buildServer(where: Where, chatOnly = false): McpServer {
 			empty: true,
 			message: where.vault
 				? `No Grill record in ${where.folder} yet. The person has not been tested in Grill in this vault.`
-				: `No record in ${where.folder} yet. Answers recorded with grill_record_answer start one.`,
+				: `No record yet${where.project ? ` for ${where.project}` : ""}. Answers recorded with grill_record_answer start one, in ${where.folder}.`,
 		});
 	const hasRecord = (s: RecordState) => Object.keys(s.concepts).length + Object.keys(s.mastery).length > 0;
 	/** A record file that can't be read is said, never answered as an empty record. */
@@ -175,7 +211,7 @@ export function buildServer(where: Where, chatOnly = false): McpServer {
 			inputSchema: {},
 		},
 		guarded(async () => {
-			const s = load(where);
+			const s = inView(where, load(where));
 			return hasRecord(s) ? json(overview(s)) : empty();
 		}),
 	);
@@ -184,14 +220,14 @@ export function buildServer(where: Where, chatOnly = false): McpServer {
 		"grill_weak_spots",
 		{
 			title: "Weak spots",
-			description: "Concepts the person got wrong last time, keeps missing, or is likely to have forgotten, weakest first, with their active misconceptions. Optionally limited to a topic (matched on note names and concept labels).",
+			description: "Concepts the person got wrong or only partly right last time, keeps missing, or is likely to have forgotten, weakest first, with their active misconceptions. Optionally limited to a topic (matched on note names and concept labels).",
 			inputSchema: {
 				topic: z.string().optional().describe("A topic, note name or concept. Leave out for the whole record."),
 				limit: z.number().int().min(1).max(50).optional(),
 			},
 		},
 		guarded(async ({ topic, limit }: { topic?: string; limit?: number }) => {
-			const s = load(where);
+			const s = inView(where, load(where));
 			return hasRecord(s) ? json(weakSpots(s, topic, limit ?? 15)) : empty();
 		}),
 	);
@@ -207,7 +243,7 @@ export function buildServer(where: Where, chatOnly = false): McpServer {
 			},
 		},
 		guarded(async ({ topic, limit }: { topic: string; limit?: number }) => {
-			const s = load(where);
+			const s = inView(where, load(where));
 			return hasRecord(s) ? json(whatTheyKnow(s, topic, limit ?? 25)) : empty();
 		}),
 	);
@@ -225,7 +261,7 @@ export function buildServer(where: Where, chatOnly = false): McpServer {
 			},
 		},
 		guarded(async ({ topic, limit }: { topic?: string; limit?: number }) => {
-			const s = load(where);
+			const s = inView(where, load(where));
 			if (!hasRecord(s)) return empty();
 			const qs = questionsToAsk(s, s.bank, topic, limit ?? 5);
 			if (!qs.length) return json({ questions: [], message: "No stored questions match. Write your own from their notes, ask them one at a time, and record each answer." });
@@ -276,7 +312,7 @@ export function buildServer(where: Where, chatOnly = false): McpServer {
 			const r = parseResult(raw);
 			if (!r) return { isError: true, content: [{ type: "text" as const, text: "That answer could not be recorded: check note, question and verdict." }] };
 			if (where.vault) {
-				const s = load(where);
+				const s = inView(where, load(where));
 				const why = notInVault(s, r);
 				if (why) return { isError: true, content: [{ type: "text" as const, text: why }] };
 				writeAtomic(join(where.folder, INBOX_DIR, `${r.at.replace(/[:.]/g, "-")}-${r.id.slice(0, 8)}.json`), JSON.stringify(r, null, 1));
@@ -344,7 +380,10 @@ function withLock<T>(folder: string, run: () => T): T {
 /** Outside a vault there is no plugin, so the answer goes straight into the record,
  * and into a day's log the person can read. */
 function recordInRepo(where: Where, r: AgentResult): void {
-	withLock(where.folder, () => writeRepoRecord(where, r));
+	// In the home record a concept carries its project's name: "cors/lib/index.js".
+	const p = where.project;
+	const named = p && !r.note.startsWith(`${p}/`) ? { ...r, note: `${p}/${r.note}`, ...(r.conceptId && !r.conceptId.startsWith(`${p}/`) ? { conceptId: `${p}/${r.conceptId}` } : {}) } : r;
+	withLock(where.folder, () => writeRepoRecord(where, named));
 }
 
 function writeRepoRecord(where: Where, r: AgentResult): void {
@@ -379,7 +418,7 @@ const COMMANDS = ["overview", "weak-spots", "know", "questions", "record"];
 
 function runCommand(cmd: string, rest: string[]): number {
 	const where = locate();
-	const s = load(where);
+	const s = cmd === "record" ? load(where) : inView(where, load(where));
 	const out = (v: unknown) => console.log(JSON.stringify(v, null, 1));
 	const topic = rest.filter((a) => !a.startsWith("--") && !isFlagValue(a, rest)).join(" ").trim() || undefined;
 	const empty = !Object.keys(s.concepts).length && !Object.keys(s.mastery).length;

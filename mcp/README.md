@@ -13,7 +13,7 @@ codex mcp add grill -- npx -y grill-mcp --vault "/path/to/your/vault"
 
 Any other MCP client runs the same command, `npx -y grill-mcp --vault <path>`, over stdio. It requires Node.js 18 or later.
 
-Without `--vault`, grill-mcp uses the vault it is started in, including from one of the vault's subfolders, or the folder named by the `GRILL_VAULT` environment variable. `--dir <path>` keeps a record in a folder of its own, outside any vault.
+Without `--vault`, grill-mcp uses the vault it is started in, including from one of the vault's subfolders, or the folder named by the `GRILL_VAULT` environment variable. `--dir <path>` keeps a record in that folder instead.
 
 ## Tools
 
@@ -45,7 +45,9 @@ grill-mcp never writes to the record files themselves, since the plugin may hold
 
 ## Outside a vault
 
-Run in a folder that is not an Obsidian vault, for instance a code repository, grill-mcp keeps a record of its own in `.grill/` and updates it directly, one writer at a time. A readable log of each day's questions and answers is kept in `.grill/Sessions/`. A record file that cannot be read is reported as an error and never written over.
+Run outside an Obsidian vault, for instance in a code repository, grill-mcp keeps the record in `~/.grill/record/` (or the folder `GRILL_HOME` names), never in the project itself. There is one record for the person across all their projects. Each concept is named by its project (`cors/lib/index.js`), and each project's reads show only its own. A project that already has a `.grill/` folder, or a `--dir`, keeps a record of its own instead.
+
+Answers are written one at a time, and a readable log of each day's questions and answers is kept in the record's `Sessions/` folder. A record file that cannot be read is reported as an error and never written over.
 
 ## Privacy
 

@@ -46,8 +46,11 @@ function makeVault(folder = "Grill") {
 	return { root, g };
 }
 
-async function connect(args, cwd) {
-	const transport = new StdioClientTransport({ command: process.execPath, args: [bin, ...args], cwd, stderr: "ignore" });
+/** Each test's home record, never the real one. */
+const homeRecord = () => mkdtempSync(join(tmpdir(), "grill-home-"));
+
+async function connect(args, cwd, home = homeRecord()) {
+	const transport = new StdioClientTransport({ command: process.execPath, args: [bin, ...args], cwd, stderr: "ignore", env: { ...process.env, GRILL_HOME: home } });
 	const client = new Client({ name: "claude-code", version: "1.0.0" });
 	await client.connect(transport);
 	return client;
@@ -111,9 +114,12 @@ test("in a vault an answer goes to the inbox and the record files are untouched"
 	assert.equal(saved.verdict, "incorrect");
 });
 
-test("in a code repo answers start and update a record of their own", async () => {
+test("in a code repo answers go to the person's own record, named by the project, never into the repo", async () => {
 	const repo = mkdtempSync(join(tmpdir(), "grill-repo-"));
-	const c = await connect([], repo);
+	mkdirSync(join(repo, ".git"));
+	mkdirSync(join(repo, "src"));
+	const home = homeRecord();
+	const c = await connect([], join(repo, "src"), home);
 	assert.equal((await call(c, "grill_overview")).body.empty, true);
 	await call(c, "grill_record_answer", { note: "src/auth.ts", label: "token refresh", question: "What happens on a 401?", answer: "It refreshes the token and retries once", verdict: "correct" });
 	await call(c, "grill_record_answer", { note: "src/auth.ts", label: "session expiry", question: "When does a session expire?", answer: "no idea", verdict: "incorrect", modelAnswer: "After 30 days idle." });
@@ -122,10 +128,18 @@ test("in a code repo answers start and update a record of their own", async () =
 	const w = (await call(c, "grill_weak_spots", {})).body;
 	assert.equal(w.concepts[0].label, "session expiry");
 	await c.close();
-	assert.ok(existsSync(join(repo, ".grill", "concepts.json")));
-	const log = readdirSync(join(repo, ".grill", "Sessions"));
+	assert.equal(existsSync(join(repo, ".grill")), false, "nothing is written into the project");
+	const concepts = JSON.parse(readFileSync(join(home, "concepts.json"), "utf8"));
+	const project = repo.split("/").pop();
+	assert.ok(Object.values(concepts).every((x) => x.note === `${project}/src/auth.ts`));
+	const log = readdirSync(join(home, "Sessions"));
 	assert.equal(log.length, 1);
-	assert.match(readFileSync(join(repo, ".grill", "Sessions", log[0]), "utf8"), /\*\*Expected answer:\*\* After 30 days idle\./);
+	assert.match(readFileSync(join(home, "Sessions", log[0]), "utf8"), /\*\*Expected answer:\*\* After 30 days idle\./);
+	// Another project sees none of it.
+	const other = mkdtempSync(join(tmpdir(), "grill-repo-"));
+	const c2 = await connect([], other, home);
+	assert.equal((await call(c2, "grill_overview")).body.empty, true);
+	await c2.close();
 });
 
 test("a record file that can't be read is an error, and is never written over", async () => {
@@ -161,14 +175,15 @@ test("started in a vault's subfolder, it uses that vault's record", async () => 
 
 test("three agents writing to one repo lose nothing", async () => {
 	const repo = mkdtempSync(join(tmpdir(), "grill-repo-"));
-	const clients = await Promise.all([0, 1, 2].map(() => connect([], repo)));
+	const home = homeRecord();
+	const clients = await Promise.all([0, 1, 2].map(() => connect([], repo, home)));
 	await Promise.all(
 		clients.map((c, k) =>
 			Promise.all(Array.from({ length: 15 }, (_, i) => call(c, "grill_record_answer", { note: `f${k}.ts`, label: `c${i}`, question: "q", answer: "a", verdict: "correct" }))),
 		),
 	);
 	await Promise.all(clients.map((c) => c.close()));
-	const concepts = JSON.parse(readFileSync(join(repo, ".grill", "concepts.json"), "utf8"));
+	const concepts = JSON.parse(readFileSync(join(home, "concepts.json"), "utf8"));
 	assert.equal(Object.keys(concepts).length, 45);
 });
 
@@ -181,7 +196,7 @@ test("a note named with # records, and the command can't set the id or time", as
 	assert.equal((await call(c, "grill_record_answer", { note: "C# basics", conceptId: "C# basics::term:delegates", question: "q", answer: "a", verdict: "correct" })).error, false);
 	await c.close();
 	const { spawnSync } = await import("node:child_process");
-	const out = spawnSync(process.execPath, [bin, "record", '{"note":"Inflation","question":"q","answer":"a","verdict":"correct","id":"../../z","at":"2030-01-01T00:00:00Z"}', "--vault", root], { encoding: "utf8" });
+	const out = spawnSync(process.execPath, [bin, "record", '{"note":"Inflation","question":"q","answer":"a","verdict":"correct","id":"../../z","at":"2030-01-01T00:00:00Z"}', "--vault", root], { encoding: "utf8", env: { ...process.env, GRILL_HOME: homeRecord() } });
 	assert.equal(out.status, 0, out.stderr);
 	const files = readdirSync(join(g, "Inbox"));
 	assert.equal(files.length, 2);
@@ -208,4 +223,18 @@ test("--chat offers the record to read and nothing to test with", async () => {
 	assert.deepEqual((await c.listTools()).tools.map((t) => t.name).sort(), ["grill_overview", "grill_weak_spots", "grill_what_they_know"]);
 	assert.match(c.getInstructions(), /Don't quiz/);
 	await c.close();
+});
+
+test("a .grill in the home folder is never taken for a project's own record", async () => {
+	const fakeHome = mkdtempSync(join(tmpdir(), "grill-fakehome-"));
+	mkdirSync(join(fakeHome, ".grill", "opencode"), { recursive: true });
+	const repo = join(fakeHome, "code", "app");
+	mkdirSync(join(repo, ".git"), { recursive: true });
+	const transport = new StdioClientTransport({ command: process.execPath, args: [bin], cwd: repo, stderr: "ignore", env: { ...process.env, HOME: fakeHome, GRILL_HOME: "" } });
+	const c = new Client({ name: "t", version: "1" });
+	await c.connect(transport);
+	await call(c, "grill_record_answer", { note: "main.ts", question: "q", answer: "a", verdict: "correct" });
+	await c.close();
+	assert.ok(existsSync(join(fakeHome, ".grill", "record", "concepts.json")));
+	assert.equal(existsSync(join(fakeHome, ".grill", "concepts.json")), false);
 });
