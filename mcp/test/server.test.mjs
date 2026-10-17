@@ -201,3 +201,11 @@ test("a repo's own .grill wins over the vault it sits in, and an iCloud placehol
 	await c.close();
 	assert.equal(existsSync(join(repo, ".grill", "concepts.json")), false);
 });
+
+test("--chat offers the record to read and nothing to test with", async () => {
+	const { root } = makeVault();
+	const c = await connect(["--chat", "--vault", root]);
+	assert.deepEqual((await c.listTools()).tools.map((t) => t.name).sort(), ["grill_overview", "grill_weak_spots", "grill_what_they_know"]);
+	assert.match(c.getInstructions(), /Don't quiz/);
+	await c.close();
+});

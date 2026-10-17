@@ -9,6 +9,7 @@
  * the same activity list and permission card as the other engines. When it must ask
  * is the program's own configuration; Grill sets it from the level (see opencode.ts).
  */
+import { recordToolLine } from "./recordtools";
 import { AgentEvent, AgentLevel, AgentResult, PermissionAnswer, PermissionAsk, pathWith } from "./agent";
 import { diffLines } from "./codex";
 
@@ -47,6 +48,8 @@ export interface AcpRun {
 	brief?: string;
 	/** The model to use, by the agent's own id. Empty: the agent's own choice. */
 	model?: string;
+	/** MCP servers to give the session, as the protocol describes them. */
+	mcpServers?: Array<{ name: string; command: string; args: string[]; env: Array<{ name: string; value: string }> }>;
 	signal?: AbortSignal;
 	onEvent: (e: AgentEvent) => void;
 	ask: (req: PermissionAsk) => Promise<PermissionAnswer>;
@@ -81,6 +84,10 @@ export function acpLine(call: Loose): string {
 	const where = list(call.locations).map((l) => leaf(str(obj(l)?.path))).filter(Boolean);
 	const file = where[0] || leaf(str(input.path) || str(input.filePath) || str(input.file_path));
 	const title = str(call.title);
+	// Grill's own record, over MCP: named the way Chat names it everywhere else. opencode 2
+	// calls MCP tools from a short program it runs, so the name may be in that instead.
+	const record = /grill_(overview|weak_spots|what_they_know)/.exec(`${title} ${str(input.code)}`);
+	if (record) return recordToolLine(record[0], input);
 	switch (kind) {
 		case "read":
 			return file ? `Read ${file}` : title ? `Read ${clip(title, 60)}` : "Read a file";
@@ -337,7 +344,7 @@ export async function runAcpTurn(run: AcpRun, wire: AcpWire): Promise<AgentResul
 			const how = sessionCaps.resume ? "session/resume" : caps.loadSession ? "session/load" : "";
 			if (how) {
 				try {
-					session = (await request<Loose>(how, { sessionId: run.resume, cwd: run.cwd, mcpServers: [] })) ?? {};
+					session = (await request<Loose>(how, { sessionId: run.resume, cwd: run.cwd, mcpServers: run.mcpServers ?? [] })) ?? {};
 					sessionId = run.resume;
 				} catch (e) {
 					if ((e as Error).name === "AbortError") throw e;
@@ -347,7 +354,7 @@ export async function runAcpTurn(run: AcpRun, wire: AcpWire): Promise<AgentResul
 		}
 		const fresh = !session;
 		if (!session) {
-			session = (await request<Loose>("session/new", { cwd: run.cwd, mcpServers: [] })) ?? {};
+			session = (await request<Loose>("session/new", { cwd: run.cwd, mcpServers: run.mcpServers ?? [] })) ?? {};
 			sessionId = str(session.sessionId);
 		}
 		if (!sessionId) throw new Error(`${run.name} did not open a conversation.`);

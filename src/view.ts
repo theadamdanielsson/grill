@@ -85,14 +85,14 @@ import { listSome, missesLine, noteLine, shortDate } from "./suggest";
 import { drawPicks, renderChatHome, renderCreditsRing, type HomeMode, type HomeSuggestion } from "./home";
 import { aboutTheVault, learnContext, learnRecord, namesANote, parseLearnNote, parseSessionNote, namesInFull, rankNotes, replyTitle, sessionTitle, vaultMap, vaultNotes, type PastAnswer } from "./learn";
 import { safeDiagram, safeMarkdown } from "./safemd";
-import { activitySummary, AgentEvent, agentBrief, AGENT_LEVELS, findProgram, PermissionAnswer, PermissionAsk, runAgent } from "./agent";
+import { activitySummary, AgentEvent, agentBrief, AGENT_LEVELS, findProgram, grillRecordServer, PermissionAnswer, PermissionAsk, runAgent } from "./agent";
 import type { VaultPort } from "./vaulttools";
 import type { SettingsPort } from "./settingstools";
 import type { RecordPort, StudyOffer } from "./recordtools";
 import { GRILL_ICON } from "./icon";
 import { attachPicker, linkedNames, type PickSource } from "./mention";
 import { findCodex, runCodex } from "./codex";
-import { AcpModel, acpModels, runAcp } from "./acp";
+import { AcpModel, acpModels, runAcp, type AcpRun } from "./acp";
 import { canInstall, findOpencode, opencodeProgram } from "./opencode";
 
 /** Mermaid's drawing, made fit to be shown as an image: well-formed XML, with a size
@@ -2376,6 +2376,13 @@ export class SessionView extends ItemView {
 		};
 	}
 
+	/** Grill's record, read-only, for a program that takes MCP servers (opencode), or
+	 * none when it can't be run here. */
+	private recordServers(base: string): NonNullable<AcpRun["mcpServers"]> {
+		const server = grillRecordServer(base);
+		return server ? [{ name: "grill", ...server }] : [];
+	}
+
 	/** Buttons offered during the turn being answered. */
 	private pendingOffers: StudyOfferButton[] = [];
 
@@ -2555,6 +2562,7 @@ export class SessionView extends ItemView {
 							...opencodeProgram(program, s.agentLevel),
 							name: "opencode",
 							brief,
+							mcpServers: this.recordServers(base),
 							model: s.opencodeModel,
 							onModels: (models, current) => (this.opencodeModels = { models, current }),
 						})

@@ -140,9 +140,13 @@ Use it in two ways.
 
 Recorded answers update their schedule in Grill, the same as answers given inside Grill.`;
 
-export function buildServer(where: Where): McpServer {
+/** For a chat inside Grill, where Test does the testing: the record to read, nothing to
+ * quiz with or write. */
+const CHAT_INSTRUCTIONS = `Grill keeps a record of what this person knows: every concept from their notes they have been tested on, how likely they are to recall it today, what they got wrong last time, and the misconceptions they keep showing. Before explaining something, call grill_what_they_know or grill_weak_spots on the topic and pitch the explanation at their level; name the specific confusion if the record shows one. Read the record with these tools, not from Grill's files. Don't quiz them here: testing is Grill's Test, where answers are graded and scheduled.`;
+
+export function buildServer(where: Where, chatOnly = false): McpServer {
 	const session = randomUUID();
-	const server = new McpServer({ name: "grill", version: typeof GRILL_MCP_VERSION === "string" ? GRILL_MCP_VERSION : "0.0.0" }, { instructions: INSTRUCTIONS });
+	const server = new McpServer({ name: "grill", version: typeof GRILL_MCP_VERSION === "string" ? GRILL_MCP_VERSION : "0.0.0" }, { instructions: chatOnly ? CHAT_INSTRUCTIONS : INSTRUCTIONS });
 	const json = (v: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(v, null, 1) }] });
 	const empty = () =>
 		json({
@@ -207,6 +211,8 @@ export function buildServer(where: Where): McpServer {
 			return hasRecord(s) ? json(whatTheyKnow(s, topic, limit ?? 25)) : empty();
 		}),
 	);
+
+	if (chatOnly) return server;
 
 	server.registerTool(
 		"grill_questions",
@@ -437,6 +443,6 @@ if (process.argv.includes("--version")) {
 	}
 } else if (!process.env.GRILL_MCP_NO_MAIN) {
 	const where = locate();
-	await buildServer(where).connect(new StdioServerTransport());
+	await buildServer(where, process.argv.includes("--chat")).connect(new StdioServerTransport());
 	console.error(`grill-mcp: ${where.vault ? "vault" : "repo"} record at ${where.folder}`);
 }

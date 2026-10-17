@@ -430,3 +430,9 @@ test("Plan turns a change or command away itself, with no card", async () => {
 	assert.deepEqual(reply.result, { outcome: { outcome: "selected", optionId: "n" } });
 	assert.match(r.text, /^Plan changes nothing/);
 });
+
+test("a call to Grill's record reads as reading the record, also from opencode's code", async () => {
+	const { acpLine } = await import("../src/acp");
+	assert.equal(acpLine({ kind: "other", title: "execute", rawInput: { code: 'await tools["grill"]["grill_weak_spots"]({topic: "inflation"})' } }), "Read your weak spots");
+	assert.equal(acpLine({ kind: "other", title: "grill_overview", rawInput: {} }), "Read your record");
+});
