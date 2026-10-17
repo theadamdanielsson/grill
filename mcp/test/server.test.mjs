@@ -238,3 +238,15 @@ test("a .grill in the home folder is never taken for a project's own record", as
 	assert.ok(existsSync(join(fakeHome, ".grill", "record", "concepts.json")));
 	assert.equal(existsSync(join(fakeHome, ".grill", "concepts.json")), false);
 });
+
+test("an Obsidian vault without Grill uses the person's own record, so answers are kept", async () => {
+	const root = mkdtempSync(join(tmpdir(), "plain-vault-"));
+	mkdirSync(join(root, ".obsidian"));
+	const home = homeRecord();
+	const c = await connect([], root, home);
+	const r = await call(c, "grill_record_answer", { note: "Chapter 3.md", label: "opportunity cost", question: "q", answer: "a", verdict: "partial" });
+	assert.equal(r.error, false);
+	await c.close();
+	assert.ok(existsSync(join(home, "concepts.json")));
+	assert.equal(existsSync(join(root, "Grill")), false, "nothing is written into a vault Grill isn't in");
+});

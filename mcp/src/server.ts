@@ -71,12 +71,20 @@ export function locate(): Where {
 	const cwd = process.cwd();
 	for (let at = cwd; ; at = dirname(at)) {
 		if (!sameFolder(at, homedir()) && existsSync(join(at, ".grill"))) return { folder: join(at, ".grill"), vault: false };
-		if (existsSync(join(at, ".obsidian"))) return { folder: join(at, grillFolderName(at)), vault: true };
+		// A vault counts only if Grill is in it: in any other vault there is no record of
+		// Grill's to add to, and every answer would be refused.
+		if (existsSync(join(at, ".obsidian")) && hasGrill(at)) return { folder: join(at, grillFolderName(at)), vault: true };
 		if (dirname(at) === at) break;
 	}
 	// Otherwise one record for the person, in their home folder, never in the project:
 	// it is theirs, not the codebase's, and goes with them from project to project.
 	return { folder: home, vault: false, project: projectName(cwd) };
+}
+
+/** Whether Grill is installed in this vault, or has a record there. */
+function hasGrill(vault: string): boolean {
+	const folder = join(vault, grillFolderName(vault));
+	return existsSync(join(vault, ".obsidian", "plugins", "grill", "manifest.json")) || existsSync(join(folder, "concepts.json")) || existsSync(join(folder, "mastery.json"));
 }
 
 /** Whether two paths are one folder, through symlinks (/var and /private/var on a Mac). */
@@ -172,7 +180,7 @@ const INSTRUCTIONS = `Grill keeps a record of what this person knows: every conc
 
 Use it in two ways.
 1. To help them: before explaining something, call grill_what_they_know or grill_weak_spots on the topic and pitch the explanation at their level. Name the specific confusion if the record shows one.
-2. To test them, when they ask to be tested or grilled: get questions from grill_questions. Ask ONE at a time and wait for the answer. Never show the expected answer before they answer. Grade strictly against the expected answer and acceptable answers: "correct", "partial" or "incorrect". Then tell them the verdict and what was missing, and call grill_record_answer for that answer before asking the next question. If there are no stored questions, write your own from their notes and record those too.
+2. To test them, when they ask to be tested or grilled: get questions from grill_questions. Ask ONE at a time and wait for the answer. Never show the expected answer before they answer. Grade strictly against the expected answer and acceptable answers: "correct", "partial" or "incorrect". Then tell them the verdict and what was missing, and call grill_record_answer for that answer before asking the next question. When an answer shows a confusion the record already names (the misconceptions in grill_weak_spots or grill_what_they_know), record it under that same tag rather than a new one. If there are no stored questions, write your own from their notes and record those too.
 
 Recorded answers update their schedule in Grill, the same as answers given inside Grill.`;
 
@@ -287,7 +295,7 @@ export function buildServer(where: Where, chatOnly = false): McpServer {
 				misconception: z
 					.object({ tag: z.string().min(1).describe("snake_case name for the confusion, e.g. confuses_stock_with_flow"), label: z.string().describe("One plain sentence describing it.") })
 					.optional()
-					.describe("Only when the answer showed a specific, nameable confusion."),
+					.describe("Only when the answer showed a specific, nameable confusion. If the record already names it (see the misconceptions other grill tools return), use that tag."),
 			},
 		},
 		guarded(async (a: Record<string, any>) => {
