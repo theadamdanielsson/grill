@@ -441,3 +441,39 @@ export function restoreNoteCounts(state: RecordState): number {
 	}
 	return changed;
 }
+
+export interface ProjectSummary {
+	project: string;
+	tested: number;
+	dueNow: number;
+	missedLast: number;
+	lastStudied: string | null;
+	/** Its weakest concepts, weakest first. */
+	weakest: ConceptView[];
+}
+
+/** The record agents keep outside a vault (~/.grill/record), by project: what Grill
+ * shows of it, since it has no notes of its own to test from. A concept's project is
+ * the part of its note before the first "/". */
+export function projectSummaries(concepts: ConceptMap, now = new Date(), most = 4): ProjectSummary[] {
+	const by = new Map<string, Array<[string, ConceptMastery]>>();
+	for (const [id, c] of Object.entries(concepts)) {
+		if (!conceptTested(c)) continue;
+		const project = c.note.includes("/") ? c.note.slice(0, c.note.indexOf("/")) : c.note;
+		(by.get(project) ?? by.set(project, []).get(project)!).push([id, c]);
+	}
+	return [...by]
+		.map(([project, cs]) => ({
+			project,
+			tested: cs.length,
+			dueNow: cs.filter(([, c]) => c.dueAt && new Date(c.dueAt) <= now).length,
+			missedLast: cs.filter(([, c]) => lastAnswerMissed(c)).length,
+			lastStudied: cs.map(([, c]) => c.lastSeen ?? "").sort().pop() || null,
+			weakest: cs
+				.filter(([, c]) => isWeak(c, now))
+				.sort((a, b) => weakness(b[1], now) - weakness(a[1], now))
+				.slice(0, most)
+				.map(([id, c]) => viewConcept(id, c, now)),
+		}))
+		.sort((a, b) => (b.lastStudied ?? "").localeCompare(a.lastStudied ?? ""));
+}

@@ -89,6 +89,7 @@ import { activitySummary, AgentEvent, agentBrief, AGENT_LEVELS, findProgram, gri
 import type { VaultPort } from "./vaulttools";
 import type { SettingsPort } from "./settingstools";
 import type { RecordPort, StudyOffer } from "./recordtools";
+import { projectSummaries } from "./record";
 import { GRILL_ICON } from "./icon";
 import { attachPicker, linkedNames, type PickSource } from "./mention";
 import { findCodex, runCodex } from "./codex";
@@ -2376,6 +2377,38 @@ export class SessionView extends ItemView {
 		};
 	}
 
+	/** What coding agents tested the student on outside the vault (grill-test, through
+	 * grill-mcp), from the record in ~/.grill/record. Grill has no notes to test these
+	 * from, so it shows them, by project; reviewing happens in the agent. Desktop only. */
+	private agentRecordSection(screen: HTMLElement): void {
+		const req = (window as unknown as { require?: (m: string) => unknown }).require;
+		if (!Platform.isDesktopApp || !req) return;
+		let concepts: ConceptMap;
+		try {
+			const fs = req("fs") as { readFileSync(p: string, e: string): string };
+			const home = (req("os") as { homedir(): string }).homedir();
+			concepts = JSON.parse(fs.readFileSync(`${home}/.grill/record/concepts.json`, "utf8"));
+		} catch {
+			return; // no record yet, or not readable: nothing to show
+		}
+		const projects = projectSummaries(concepts);
+		if (!projects.length) return;
+		screen.createDiv({ cls: "grill-section-label", text: "From your coding agents" });
+		const card = screen.createDiv({ cls: "grill-card" });
+		card.createDiv({ cls: "grill-meta", text: "What Claude Code, Codex and other agents tested you on with grill-test, outside this vault. Review it there with /grill-test." });
+		for (const p of projects) {
+			const row = card.createDiv({ cls: "grill-misc-row" });
+			const head = row.createDiv({ cls: "grill-misc-head" });
+			head.createSpan({ cls: "grill-misc-label", text: p.project });
+			const facts = [`${p.tested} tested`, p.dueNow ? `${p.dueNow} due` : "", p.missedLast ? `${p.missedLast} missed last time` : ""].filter(Boolean).join(" · ");
+			head.createSpan({ cls: "grill-meta", text: ` ${facts}` });
+			if (p.weakest.length) {
+				const list = row.createDiv({ cls: "grill-misc-notes" });
+				list.setText(p.weakest.map((c) => `${c.label} (${c.note.slice(p.project.length + 1) || c.note})`).join(", "));
+			}
+		}
+	}
+
 	/** Grill's record, read-only, for a program that takes MCP servers (opencode), or
 	 * none when it can't be run here. */
 	private recordServers(base: string): NonNullable<AcpRun["mcpServers"]> {
@@ -3113,6 +3146,8 @@ export class SessionView extends ItemView {
 			const beatenList = fold.createDiv({ cls: "grill-misc-list" });
 			for (const c of beatenAll) beatenList.createDiv({ cls: "grill-arc-resolved-row", text: c.label });
 		}
+
+		this.agentRecordSection(screen);
 
 		// Concept coverage: honest counts from the per-concept scheduler.
 		const cmap = await this.plugin.store.loadConcepts();

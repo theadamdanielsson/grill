@@ -179,3 +179,22 @@ test("a short topic is matched as written, not as everything", () => {
 	s.concepts["GDP::term:recession"].reviewLog!.push({ t: new Date().toISOString(), elapsedDays: 1, rating: 1 });
 	assert.deepEqual(weakSpots(s, "AI", 10).concepts.map((c) => c.note), ["AI basics"]);
 });
+
+import { projectSummaries } from "../src/record";
+
+test("the agents' record is summed up by project, weakest first, newest project first", () => {
+	const s: RecordState = { concepts: {}, mastery: {}, registry: {} };
+	const t = Date.now();
+	applyResults(s, [
+		result({ id: "1", note: "cors/lib/index.js", label: "preflight", verdict: "incorrect", at: new Date(t - 5000).toISOString() }),
+		result({ id: "2", note: "cors/lib/index.js", label: "vary header", verdict: "correct", at: new Date(t - 4000).toISOString() }),
+		result({ id: "3", note: "toolrails/proxy.py", label: "grammar repair", verdict: "partial", at: new Date(t).toISOString() }),
+	], { allowNew: true });
+	const p = projectSummaries(s.concepts);
+	assert.deepEqual(p.map((x) => x.project), ["toolrails", "cors"]);
+	const cors = p.find((x) => x.project === "cors")!;
+	assert.equal(cors.tested, 2);
+	assert.equal(cors.missedLast, 1);
+	assert.deepEqual(cors.weakest.map((c) => c.label), ["preflight"]);
+	assert.deepEqual(p[0].weakest.map((c) => c.lastAnswer), ["partial"]);
+});
