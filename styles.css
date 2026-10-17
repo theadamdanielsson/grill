@@ -3957,3 +3957,8 @@ textarea.grill-mgmt-field {
 .grill-pick-item:hover {
   background: var(--background-modifier-hover);
 }
+
+/* A concept an agent tested, under its project on Progress. */
+.grill-agent-concept {
+  margin-top: 0.2em;
+}

@@ -2393,18 +2393,20 @@ export class SessionView extends ItemView {
 		}
 		const projects = projectSummaries(concepts);
 		if (!projects.length) return;
-		screen.createDiv({ cls: "grill-section-label", text: "From your coding agents" });
+		screen.createDiv({ cls: "grill-section-label", text: "Tested in other agents" });
 		const card = screen.createDiv({ cls: "grill-card" });
-		card.createDiv({ cls: "grill-meta", text: "What Claude Code, Codex and other agents tested you on with grill-test, outside this vault. Review it there with /grill-test." });
+		card.createDiv({ cls: "grill-meta", text: "Review these in your agent with /grill-test." });
 		for (const p of projects) {
 			const row = card.createDiv({ cls: "grill-misc-row" });
 			const head = row.createDiv({ cls: "grill-misc-head" });
 			head.createSpan({ cls: "grill-misc-label", text: p.project });
-			const facts = [`${p.tested} tested`, p.dueNow ? `${p.dueNow} due` : "", p.missedLast ? `${p.missedLast} missed last time` : ""].filter(Boolean).join(" · ");
-			head.createSpan({ cls: "grill-meta", text: ` ${facts}` });
-			if (p.weakest.length) {
-				const list = row.createDiv({ cls: "grill-misc-notes" });
-				list.setText(p.weakest.map((c) => `${c.label} (${c.note.slice(p.project.length + 1) || c.note})`).join(", "));
+			const facts = [p.dueNow ? `${p.dueNow} due` : "", p.missedLast ? `${p.missedLast} missed` : "", `${p.tested} tested`].filter(Boolean).join(" · ");
+			head.createSpan({ cls: "grill-meta", text: facts });
+			for (const c of p.weakest) {
+				const line = row.createDiv({ cls: "grill-agent-concept" });
+				line.createSpan({ text: c.label });
+				const file = c.note.slice(p.project.length + 1);
+				if (file) line.createSpan({ cls: "grill-meta", text: ` ${file}` });
 			}
 		}
 	}
