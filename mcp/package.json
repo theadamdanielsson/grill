@@ -1,6 +1,6 @@
 {
   "name": "grill-mcp",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Grill's record of what you know, for any AI agent: weak spots, misconceptions, questions to ask, and a place to record your answers.",
   "license": "MIT",
   "author": "Adam Danielsson",

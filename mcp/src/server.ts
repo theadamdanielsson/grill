@@ -386,9 +386,12 @@ function runCommand(cmd: string, rest: string[]): number {
 	if (cmd === "record") {
 		let raw: Record<string, unknown>;
 		try {
-			raw = JSON.parse(rest.find((a) => a.trim().startsWith("{")) ?? "");
+			// From the argument, or else from stdin: a heredoc keeps quotes and apostrophes
+			// in an answer from breaking the shell command.
+			const arg = rest.find((a) => a.trim().startsWith("{"));
+			raw = JSON.parse(arg ?? (process.stdin.isTTY ? "" : readFileSync(0, "utf8")));
 		} catch {
-			console.error('record takes one JSON argument: {"note":..., "question":..., "answer":..., "verdict":"correct|partial|incorrect", ...}');
+			console.error('record takes the answer as JSON, as an argument or on stdin: {"note":..., "question":..., "answer":..., "verdict":"correct|partial|incorrect", ...}');
 			return 1;
 		}
 		// The answer's own fields only: when it was given, and its id, are set here.
