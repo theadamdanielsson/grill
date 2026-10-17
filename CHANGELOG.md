@@ -1,5 +1,29 @@
 # Changelog
 
+## 8.5.0
+
+- **Your agents know what you know.** Settings → Agents → Connect an agent gives
+  Claude Code or Codex your record, with one line pasted in a terminal. The agent can
+  see your weak spots, explain at your level and test you, and its answers count in
+  Grill: the schedule moves, and each agent session gets a session note.
+- **Tested in other agents.** The grill-test skill tests you in any agent on a repo,
+  a book or anything else, and keeps that record in your home folder. Progress shows
+  it by project: what is due, what was missed, and the weakest concepts.
+- **Chat starts your reviews.** Chat reads your record on every engine, and when it
+  recommends something, a button under the reply starts it: the reviews due, a retry
+  of what you missed, or a test on the notes it names. Testing stays in Test.
+- **Undo a turn.** A reply that changed notes lists them, with one Undo that puts
+  them back. On Grill Cloud, your own key and Claude Code.
+- **`@` and `/`.** `@` brings a note into the message. `/` picks a prompt, and on
+  Claude Code your own commands and skills are in the list too.
+- **Change engine, level and model inside a chat.** A new engine is given the
+  conversation so far.
+- **Codex and opencode** get the same record tools and buttons as Claude Code.
+- **Notes are named as links** in replies, never as file paths.
+- **Note counts are rebuilt.** Per-note answer counts that were missing are restored
+  from your concepts once, on first load.
+- **Grill's own pixel flame** in the ribbon and menus.
+
 ## 8.4.1
 
 - **Settings in five tabs.** Basic has Grill Cloud, the engine, persona and
