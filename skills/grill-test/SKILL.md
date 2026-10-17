@@ -47,7 +47,7 @@ Each time they answer, do these in order:
    EOF
    ```
 
-   `note` is the file, note or topic the question is about. `label` is the concept, short and stable, so the same concept is recorded under the same name next time. Leave `misconception` out unless the answer showed a specific, nameable confusion (mixing up two functions, getting a direction of causality backwards). When a question came from the record, pass its `conceptId` and `note` instead of a label.
+   `note` is the file, note or topic the question is about. `label` is the concept in 2 to 5 plain words, with no brackets or file names ("preflight handling", not "default preflight handling (OPTIONS short-circuit)"). Keep it stable, so the same concept is recorded under the same name next time. Leave `misconception` out unless the answer showed a specific, nameable confusion (mixing up two functions, getting a direction of causality backwards). When a question came from the record, pass its `conceptId` and `note` instead of a label.
 3. **Then reply:** the verdict in one line, what was right, what was missing and where it is in the source (`file:line`), then the next question.
 
 ## 4. Finish
