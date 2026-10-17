@@ -23,6 +23,7 @@ import { LLMConfig, offeredProviders, PROVIDERS, ProviderId, Question, listModel
 import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, CloudPack, CloudPlan, planInWords, planLabel, cloudAccount, cloudBalance, cloudSpeech, cloudCheckoutUrl, cloudDelete, cloudEnabled, cloudStart, creditsInWords, isCloudKey, newCloudKey, packLabel, usageInWords } from "./cloud";
 import { drawPlanOffer, drawPlanUsage, RefillModal } from "./refill";
 import { CHECK_EVERY_MS, isNewer, latestVersion } from "./update";
+import { AgentResult, applyResults, restoreNoteCounts } from "./record";
 import { CATCH_UP, ConceptMap, dueConceptCount, migrateResetScheduling, rebalanceDueDates, reconcileConcepts } from "./concepts";
 import { pairKey } from "./bridges";
 import {
@@ -43,7 +44,8 @@ import { countTrainableReviews, MIN_REVIEWS_FOR_OPTIMIZATION, optimizeFSRSWeight
 import { dueFiles, duplicateBasenames } from "./scope";
 import { KeyStash, secretStore, vaultId } from "./secrets";
 import { CLAUDE_MODELS, NEW_PROMPT, promptMessage, SELECTION_ASKS, SelectionAsk, selectionMessage } from "./selection";
-import { GrillStore } from "./store";
+import { GrillStore, type SessionEntry } from "./store";
+import { GRILL_ICON, registerGrillIcon } from "./icon";
 import { agentJSON } from "./agentjson";
 import { findProgram } from "./agent";
 import { findCodex } from "./codex";
@@ -215,6 +217,8 @@ interface GrillSettings {
 	localEmbedContext: boolean;
 	/** One-time flag: the note→concept scheduling reset has run. */
 	conceptsMigrated: boolean;
+	/** One-time flag: note counts lost before 8.0 have been rebuilt (see restoreNoteCounts). */
+	noteCountsRestored: boolean;
 	/** One-time flag: legacy installs have had their stored old shipped defaults
 	 * (graphNumberMode "off", newConceptsPerDay 0) carried to the current defaults.
 	 * Guards the migration so it fires exactly once — after it, the user can freely
@@ -367,6 +371,7 @@ function defaultSettings(): GrillSettings {
 		graphInsights: true,
 		localEmbedContext: false,
 		conceptsMigrated: false,
+		noteCountsRestored: false,
 		graphColorMode: "mastery",
 		graphNumberMode: "percent",
 		graphCoverageWeight: 15,
@@ -472,6 +477,7 @@ export default class GrillPlugin extends Plugin {
 		if (typeof s.graphInsights === "boolean") settings.graphInsights = s.graphInsights;
 		if (typeof s.localEmbedContext === "boolean") settings.localEmbedContext = s.localEmbedContext;
 		if (typeof s.conceptsMigrated === "boolean") settings.conceptsMigrated = s.conceptsMigrated;
+		if (typeof s.noteCountsRestored === "boolean") settings.noteCountsRestored = s.noteCountsRestored;
 		if (["mastery", "recency", "dueness", "misconceptions"].includes(s.graphColorMode as string)) {
 			settings.graphColorMode = s.graphColorMode as ColorMode;
 		}
@@ -602,7 +608,8 @@ export default class GrillPlugin extends Plugin {
 		this.store = new GrillStore(this.app, () => this.data.settings.folder);
 
 		this.registerView(VIEW_TYPE, (leaf: WorkspaceLeaf) => new SessionView(leaf, this));
-		this.addRibbonIcon("flame", "Grill", () => void this.activateView());
+		registerGrillIcon();
+		this.addRibbonIcon(GRILL_ICON, "Grill", () => void this.activateView());
 		this.addCommand({
 			id: "start-session",
 			name: "Start session",
@@ -707,7 +714,7 @@ export default class GrillPlugin extends Plugin {
 				}));
 				if (this.savedPrompts().length) entries.push({ title: "Saved prompt...", run: () => this.pickSavedPrompt(file, editor.getSelection()) });
 				menu.addItem((i) => {
-					i.setSection("grill").setTitle("Grill").setIcon("flame");
+					i.setSection("grill").setTitle("Grill").setIcon(GRILL_ICON);
 					const opens = i as unknown as { setSubmenu?: () => Menu };
 					if (typeof opens.setSubmenu === "function") {
 						const sub = opens.setSubmenu();
@@ -716,7 +723,7 @@ export default class GrillPlugin extends Plugin {
 					}
 					i.setTitle(`Grill: ${entries[0].title.toLowerCase()}`).onClick(entries[0].run);
 					for (const e of entries.slice(1)) {
-						menu.addItem((x) => x.setSection("grill").setTitle(`Grill: ${e.title.toLowerCase()}`).setIcon("flame").onClick(e.run));
+						menu.addItem((x) => x.setSection("grill").setTitle(`Grill: ${e.title.toLowerCase()}`).setIcon(GRILL_ICON).onClick(e.run));
 					}
 				});
 			}),
@@ -727,14 +734,14 @@ export default class GrillPlugin extends Plugin {
 					menu.addItem((i) =>
 						i
 							.setTitle("Grill this note")
-							.setIcon("flame")
+							.setIcon(GRILL_ICON)
 							.onClick(() => void this.startScoped([file])),
 					);
 				} else if (file instanceof TFolder) {
 					menu.addItem((i) =>
 						i
 							.setTitle("Grill this folder")
-							.setIcon("flame")
+							.setIcon(GRILL_ICON)
 							.onClick(() => {
 								const files = this.app.vault
 									.getMarkdownFiles()
@@ -763,7 +770,7 @@ export default class GrillPlugin extends Plugin {
 				menu.addItem((i) =>
 					i
 						.setTitle(`Grill these ${notes.size} note${notes.size === 1 ? "" : "s"}`)
-						.setIcon("flame")
+						.setIcon(GRILL_ICON)
 						.onClick(() => void this.startScoped([...notes.values()])),
 				);
 			}),
@@ -776,6 +783,13 @@ export default class GrillPlugin extends Plugin {
 		// needs re-extracting, and only to keep the ambient due-count from going stale
 		// while you edit a note without starting a session. Debounced per file so
 		// active typing (repeated autosave "modify" events) settles before re-parsing.
+		// An agent's answer arriving through grill-mcp. Also checked on a timer, started
+		// once the record is loaded, for a file a sync service delivers without an event.
+		this.registerEvent(
+			this.app.vault.on("create", (file) => {
+				if (file instanceof TFile && this.store.isInboxPath(file.path)) this.scheduleFold();
+			}),
+		);
 		this.registerEvent(
 			this.app.vault.on("modify", (file) => {
 				if (file instanceof TFile && file.extension === "md" && !this.isExcluded(file.path)) {
@@ -977,8 +991,21 @@ export default class GrillPlugin extends Plugin {
 						console.error("Grill: couldn't save the scheduling migration; will retry next launch", e);
 					}
 				}
+				if (!this.data.settings.noteCountsRestored) {
+					try {
+						const registry = await this.store.loadRegistry();
+						if (restoreNoteCounts({ concepts: this.concepts, mastery: this.mastery, registry })) await this.store.saveMastery(this.mastery);
+						this.data.settings.noteCountsRestored = true;
+						await this.persist();
+					} catch (e) {
+						console.error("Grill: couldn't rebuild note counts; will retry next launch", e);
+					}
+				}
+				this.recordLoaded = true;
+				this.registerInterval(window.setInterval(() => void this.foldInbox(), 120_000));
 				this.refreshStatusBar();
 				this.warnOnDuplicateBasenames();
+				void this.foldInbox();
 				// On Grill Cloud this waits for the end of a session (see the summary screen):
 				// nothing is spent in the background that a receipt doesn't show.
 				if (this.data.settings.provider !== "grillcloud") void this.maybeSynthesizeArc();
@@ -1241,7 +1268,7 @@ export default class GrillPlugin extends Plugin {
 	 * before it and reloaded after it. Without this, a pane mid-session held its own
 	 * pre-rename copies of the question bank/bridges/registry and its next save put
 	 * them straight back, undoing the rename or delete. */
-	private async withViewsSynced(edit: () => Promise<void>): Promise<void> {
+	private async withViewsSynced(edit: () => Promise<void>, doing = "for that rename/delete"): Promise<void> {
 		const views = this.app.workspace
 			.getLeavesOfType(VIEW_TYPE)
 			.map((l) => l.view)
@@ -1253,18 +1280,94 @@ export default class GrillPlugin extends Plugin {
 					// Rewriting the stores now would either lose that pane's unsaved changes
 					// (on reload) or be undone by them (on its next save). Leave the old
 					// records in place; history stays attached to the old name until then.
-					new Notice("Grill: couldn't update its records for that rename/delete while a save is failing.", 8000);
+					new Notice(`Grill: couldn't update its records ${doing} while a save is failing.`, 8000);
 					return;
 				}
 			}
 			edited = true;
 			await edit();
 		} catch (e) {
-			new Notice(`Grill: couldn't update its records for that rename/delete (${(e as Error).message}).`, 8000);
+			new Notice(`Grill: couldn't update its records ${doing} (${(e as Error).message}).`, 8000);
 		} finally {
 			// Once the edit has started, re-sync even after a partial failure, so no pane
 			// keeps copies that disagree with what's on disk.
 			if (edited) for (const v of views) await v.reloadSharedStores().catch(() => undefined);
+		}
+	}
+
+	private folding = false;
+	/** Each agent session's note so far, by session, while Obsidian is open. */
+	private agentSessionNotes = new Map<string, { file: TFile; entries: SessionEntry[]; startedAt: Date }>();
+	/** False until the record is loaded: anything saved from the empty placeholders
+	 * would replace the real files. */
+	recordLoaded = false;
+	private foldTimer: number | null = null;
+
+	/** Soon after an agent leaves an answer: several arrive in a burst. */
+	private scheduleFold(): void {
+		if (this.foldTimer !== null) window.clearTimeout(this.foldTimer);
+		this.foldTimer = window.setTimeout(() => {
+			this.foldTimer = null;
+			void this.foldInbox();
+		}, 1500);
+	}
+
+	/** Answers graded by other agents (through grill-mcp) join the record here, the
+	 * same as answers given in Grill: each moves its concept's schedule, counts for its
+	 * note, and the misconception it showed is added to the registry. Every agent
+	 * session also gets a session note. Open panes are saved first and reloaded after,
+	 * so none of them writes an older copy back over the result. */
+	async foldInbox(): Promise<void> {
+		if (this.folding || !this.recordLoaded) return;
+		this.folding = true;
+		try {
+			const inbox = await this.store.readInbox();
+			if (!inbox.length) return;
+			await this.withViewsSynced(async () => {
+				const registry = await this.store.loadRegistry();
+				const state = { concepts: this.concepts, mastery: this.mastery, registry };
+				const { applied } = applyResults(
+					state,
+					inbox.map((i) => i.result),
+					{ allowNew: false, desiredRetention: this.data.settings.desiredRetention / 100 },
+				);
+				await this.store.saveConcepts(this.concepts);
+				await this.store.saveMastery(this.mastery);
+				await this.store.saveRegistry(registry);
+				const sessions = new Map<string, AgentResult[]>();
+				for (const r of applied) sessions.set(r.session, [...(sessions.get(r.session) ?? []), r]);
+				for (const [id, rs] of sessions) {
+					// Answers arrive one at a time: a session already written to gets its
+					// note rewritten with every answer so far, not a note per answer.
+					const was = this.agentSessionNotes.get(id);
+					const entries = [
+						...(was?.entries ?? []),
+						...rs.map((r) => ({
+							node: r.note,
+							question: r.question,
+							answer: r.answer,
+							verdict: r.verdict,
+							gaveUp: false,
+							feedback: r.feedback ?? "",
+							modelAnswer: r.modelAnswer ?? "",
+						})),
+					];
+					const startedAt = was?.startedAt ?? new Date(rs[0].at);
+					const file = await this.store.writeSessionNote(entries, { provider: rs[0].via, model: "grill-mcp", startedAt }, this.data.settings.linkSessions, undefined, [], was?.file);
+					if (file) this.agentSessionNotes.set(id, { file, entries, startedAt });
+				}
+				// Only once everything above is saved: a failure leaves the files to try again.
+				for (const i of inbox) await this.store.removeInboxFile(i.path);
+				await this.store.removeEmptyInbox();
+				const via = [...new Set(applied.map((r) => r.via))].join(", ");
+				new Notice(`Grill: added ${applied.length} answer${applied.length === 1 ? "" : "s"} from ${via}.`, 6000);
+			}, "with answers from other agents");
+			this.refreshStatusBar();
+			for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
+				if (leaf.view instanceof SessionView) leaf.view.refreshIfOnStartScreen();
+			}
+		} finally {
+			this.folding = false;
 		}
 	}
 
@@ -3707,9 +3810,36 @@ export class GrillSettingTab extends PluginSettingTab {
 			},
 			// None of these programs run on mobile, so the tab isn't there.
 			...(all || Platform.isDesktopApp ? [{ tab: "agents" as const, heading: "Programs on this computer", rows: programs }] : []),
+			...(all || Platform.isDesktopApp ? [{ tab: "agents" as const, heading: "Other agents", rows: [this.recordForAgentsRow()] }] : []),
 			{ tab: "study", heading: "Studying", rows: studying },
 			{ tab: "study", heading: "Folders", rows: scope },
 		];
+	}
+
+	/** grill-mcp: the record for Claude Code, Codex and other agents outside Grill. One
+	 * command to paste in a terminal; their answers come back through the Inbox folder. */
+	private recordForAgentsRow(): Row {
+		const base = (this.app.vault.adapter as { getBasePath?: () => string }).getBasePath?.() ?? "";
+		const server = `npx -y grill-mcp --vault "${base.replace(/"/g, '\\"')}"`;
+		const commands = [
+			{ agent: "Claude Code", text: `claude mcp add --scope user grill -- ${server}` },
+			{ agent: "Codex", text: `codex mcp add grill -- ${server}` },
+		];
+		return {
+			name: "Connect an agent",
+			desc: "Lets the agent see what you know and test you. Its answers count in Grill. Paste the copied line in a terminal.",
+			aliases: ["mcp", "claude code", "codex", "cursor", "record", "memory"],
+			build: (setting) => {
+				for (const c of commands) {
+					setting.addButton((b) =>
+						b.setButtonText(`Copy for ${c.agent}`).onClick(async () => {
+							await navigator.clipboard.writeText(c.text);
+							new Notice(`Grill: copied. Paste it in a terminal, then start a new ${c.agent} session.`, 6000);
+						}),
+					);
+				}
+			},
+		};
 	}
 
 	/** opencode: installed by Grill, or found where it already is. */

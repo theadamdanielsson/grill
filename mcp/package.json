@@ -1,0 +1,22 @@
+{
+  "name": "grill-mcp",
+  "version": "0.1.0",
+  "description": "Grill's record of what you know, for any AI agent: weak spots, misconceptions, questions to ask, and a place to record your answers.",
+  "license": "MIT",
+  "author": "Adam Danielsson",
+  "homepage": "https://grill.onbridger.com",
+  "repository": { "type": "git", "url": "git+https://github.com/theadamdanielsson/grill.git", "directory": "mcp" },
+  "keywords": ["mcp", "obsidian", "spaced-repetition", "claude-code", "codex", "learning"],
+  "type": "module",
+  "bin": { "grill-mcp": "dist/grill-mcp.js" },
+  "files": ["dist", "README.md", "LICENSE"],
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node build.mjs && node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "zod": "4.6.7"
+  }
+}

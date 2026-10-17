@@ -3736,6 +3736,17 @@ textarea.grill-mgmt-field {
   gap: 0.4em;
   min-width: 0;
 }
+/* Studying a chat reply recommends, ready to start. */
+.grill-reply-offers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4em;
+  margin-top: 0.6em;
+}
+/* The same buttons under a chat's box. */
+.grill-learn-picks {
+  margin-top: 0.5em;
+}
 .grill-view button.grill-home-level,
 .grill-view button.grill-home-level:hover {
   color: var(--grill-ink-gold, #ffd23f);

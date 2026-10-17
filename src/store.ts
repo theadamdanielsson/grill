@@ -20,6 +20,7 @@ import { PdfCacheMap } from "./pdf";
 import { ConceptExtractionCacheMap } from "./generate-local";
 import { safeDiagram, safeMarkdown } from "./safemd";
 import { replyTitle } from "./learn";
+import { AgentResult, INBOX_DIR, parseResult } from "./record";
 
 /** A generated question cached for reuse. `sourceHash` ties it to the concept's
  * source text at generation time; a mismatch means the note changed and the entry
@@ -483,6 +484,46 @@ export class GrillStore {
 	 * this plugin's own JSON shape. Overwrites on each export (a snapshot, not a
 	 * template like the instructions file), so `vault.modify` when the file's
 	 * already there rather than `createInstructions`'s create-once dance. */
+	/** Graded answers other agents left in `<folder>/Inbox/` (see record.ts), oldest
+	 * first. Files that aren't a result are left where they are and skipped. */
+	async readInbox(): Promise<Array<{ path: string; result: AgentResult }>> {
+		const dir = normalizePath(`${this.folder()}/${INBOX_DIR}`);
+		const adapter = this.app.vault.adapter;
+		if (!(await adapter.exists(dir))) return [];
+		const out: Array<{ path: string; result: AgentResult }> = [];
+		for (const path of (await adapter.list(dir)).files) {
+			const name = path.slice(path.lastIndexOf("/") + 1);
+			if (name.startsWith(".") || !name.endsWith(".json")) continue;
+			try {
+				const result = parseResult(JSON.parse(await adapter.read(path)));
+				if (result) out.push({ path, result });
+			} catch {
+				/* half-synced or not one of ours: try again next time */
+			}
+		}
+		return out.sort((a, b) => a.result.at.localeCompare(b.result.at));
+	}
+
+	async removeInboxFile(path: string): Promise<void> {
+		await this.app.vault.adapter.remove(path).catch(() => undefined);
+	}
+
+	/** The Inbox folder, once nothing is left in it, so it isn't left in the file list. */
+	async removeEmptyInbox(): Promise<void> {
+		const dir = normalizePath(`${this.folder()}/${INBOX_DIR}`);
+		const adapter = this.app.vault.adapter;
+		try {
+			const left = await adapter.list(dir);
+			if (!left.files.length && !left.folders.length) await adapter.rmdir(dir, false);
+		} catch {
+			/* already gone, or something arrived meanwhile */
+		}
+	}
+
+	isInboxPath(path: string): boolean {
+		return path.startsWith(normalizePath(`${this.folder()}/${INBOX_DIR}`) + "/") && path.endsWith(".json");
+	}
+
 	async exportReviewLog(concepts: ConceptMap): Promise<TFile | null> {
 		await this.ensureFolder(this.folder());
 		const csvField = (v: string): string => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
@@ -701,6 +742,8 @@ export class GrillStore {
 		link = true,
 		debrief?: SessionDebrief,
 		redoQuestions: Question[] = [],
+		/** A note written earlier for the same session, rewritten in place with all of it. */
+		replace?: TFile | null,
 	): Promise<TFile | null> {
 		const d = meta.startedAt;
 		const pad = (n: number) => String(n).padStart(2, "0");
@@ -806,6 +849,14 @@ export class GrillStore {
 			lines.push("## Redo", "", "```grill-redo", JSON.stringify({ v: 1, questions: redo }), "```", "");
 		}
 
+		if (replace && this.app.vault.getAbstractFileByPath(replace.path) === replace) {
+			try {
+				await this.app.vault.modify(replace, lines.join("\n"));
+				return replace;
+			} catch {
+				return null;
+			}
+		}
 		let path = normalizePath(`${dir}/${stamp}.md`);
 		if (await this.app.vault.adapter.exists(path)) {
 			path = normalizePath(`${dir}/${stamp}.${pad(d.getSeconds())}.md`);

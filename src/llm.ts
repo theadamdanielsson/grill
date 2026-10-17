@@ -1965,6 +1965,18 @@ export interface ThreadTurn {
 	imagePath?: string;
 	/** What Claude Code did to write this turn, in one line. */
 	activity?: string;
+	/** Studying it offered: buttons under the reply that start a test. */
+	offers?: StudyOfferButton[];
+}
+
+/** A study offer as Grill checked it: what the button says, and what it starts. */
+export interface StudyOfferButton {
+	label: string;
+	/** Concepts to ask exactly, as "Retry my misses" does; empty for the usual pick. */
+	only: string[];
+	/** Notes to draw from (vault paths); empty for every note in scope. */
+	paths: string[];
+	dueOnly: boolean;
 }
 
 const DISCUSS_RULES = `The student has just answered a quiz question on their own note and been graded. They are now asking you a follow-up. You are their tutor in a short conversation under that question.

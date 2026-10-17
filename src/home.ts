@@ -145,31 +145,7 @@ export function renderChatHome(screen: HTMLElement, d: HomeData): void {
 	});
 	const bar = box.createDiv({ cls: "grill-home-bar" });
 	const picks = bar.createDiv({ cls: "grill-home-picks" });
-	const engine = picks.createEl("button", { cls: "grill-home-engine", attr: { type: "button", "aria-label": `Answered by ${d.engine.name}. Change in settings` } });
-	engine.createSpan({ cls: "grill-home-engine-dot" });
-	engine.createSpan({ text: d.engine.name });
-	engine.onclick = () => d.engine.open();
-	if (d.level) {
-		const level = d.level;
-		const b = picks.createEl("button", { cls: "grill-home-engine grill-home-level", text: level.name, attr: { type: "button", "aria-label": `Permission level: ${level.name}. ${level.says}` } });
-		b.onclick = () => level.next();
-	}
-	if (d.model) {
-		const model = d.model;
-		const b = picks.createEl("button", { cls: "grill-home-engine grill-home-model", attr: { type: "button", "aria-label": `Model: ${model.name}. Change` } });
-		b.createSpan({ cls: "grill-home-model-name", text: model.name });
-		b.onclick = () => model.open(b);
-	}
-	if (d.prompts) {
-		const prompts = d.prompts;
-		const b = picks.createEl("button", { cls: "grill-home-engine", text: "Prompts", attr: { type: "button", "aria-label": "Use a saved prompt" } });
-		b.onclick = () =>
-			prompts.open(b, (text) => {
-				input.value = text;
-				input.focus();
-				input.setSelectionRange(text.length, text.length);
-			});
-	}
+	drawPicks(picks, d, input);
 	const send = bar.createEl("button", { text: d.sendLabel, cls: "mod-cta grill-primary-cta grill-home-send", attr: { type: "button" } });
 	const go = (): void => {
 		if (send.disabled) return;
@@ -195,4 +171,38 @@ export function renderChatHome(screen: HTMLElement, d: HomeData): void {
 	};
 	link("Progress", d.showProgress);
 	link("Questions", d.showQuestions);
+}
+
+/** The buttons under a message box: what answers, its permission level, its model, and
+ * the saved prompts. Drawn on the home screen and under a chat. */
+export function drawPicks(
+	picks: HTMLElement,
+	d: Pick<HomeData, "engine" | "level" | "model" | "prompts">,
+	input: HTMLTextAreaElement,
+): void {
+	const engine = picks.createEl("button", { cls: "grill-home-engine", attr: { type: "button", "aria-label": `Answered by ${d.engine.name}. Change in settings` } });
+	engine.createSpan({ cls: "grill-home-engine-dot" });
+	engine.createSpan({ text: d.engine.name });
+	engine.onclick = () => d.engine.open();
+	if (d.level) {
+		const level = d.level;
+		const b = picks.createEl("button", { cls: "grill-home-engine grill-home-level", text: level.name, attr: { type: "button", "aria-label": `Permission level: ${level.name}. ${level.says}` } });
+		b.onclick = () => level.next();
+	}
+	if (d.model) {
+		const model = d.model;
+		const b = picks.createEl("button", { cls: "grill-home-engine grill-home-model", attr: { type: "button", "aria-label": `Model: ${model.name}. Change` } });
+		b.createSpan({ cls: "grill-home-model-name", text: model.name });
+		b.onclick = () => model.open(b);
+	}
+	if (d.prompts) {
+		const prompts = d.prompts;
+		const b = picks.createEl("button", { cls: "grill-home-engine", text: "Prompts", attr: { type: "button", "aria-label": "Use a saved prompt" } });
+		b.onclick = () =>
+			prompts.open(b, (text) => {
+				input.value = text;
+				input.focus();
+				input.setSelectionRange(text.length, text.length);
+			});
+	}
 }

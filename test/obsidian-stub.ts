@@ -187,3 +187,4 @@ export function requestUrl(req: RequestUrlParam): Promise<RequestUrlResponse> {
 export async function loadMermaid(): Promise<unknown> {
 	return {};
 }
+export function addIcon(_id: string, _svg: string): void {}

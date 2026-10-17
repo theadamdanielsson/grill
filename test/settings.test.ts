@@ -299,7 +299,7 @@ test("with Grill Cloud on, it has the first section and the page still has no du
 			const defs = sectionDefs(tab);
 			assert.deepEqual(
 				defs.map((d) => d.heading ?? d.name),
-				["Grill Cloud", "Chat", "Learn more", "Your own key or Ollama", "Programs on this computer", "Studying", "Folders", "Tuning", "Data"],
+				["Grill Cloud", "Chat", "Learn more", "Your own key or Ollama", "Programs on this computer", "Other agents", "Studying", "Folders", "Tuning", "Data"],
 			);
 			const every = names(defs);
 			assert.equal(new Set(every).size, every.length, `duplicate row names (${provider})`);
@@ -318,11 +318,11 @@ test("the searchable definitions and the classic page list the same rows", async
 		const defs = sectionDefs(tab);
 		assert.deepEqual(
 			defs.map((d) => d.type),
-			["group", "group", "group", "group", "group", "group", "group", "group"],
+			["group", "group", "group", "group", "group", "group", "group", "group", "group"],
 		);
 		assert.deepEqual(
 			defs.map((d) => d.heading ?? d.name),
-			["Chat", "Learn more", "AI", "Programs on this computer", "Studying", "Folders", "Tuning", "Data"],
+			["Chat", "Learn more", "AI", "Programs on this computer", "Other agents", "Studying", "Folders", "Tuning", "Data"],
 		);
 		const every = names(defs);
 		assert.equal(new Set(every).size, every.length, "duplicate row names");
@@ -339,7 +339,7 @@ test("the searchable definitions and the classic page list the same rows", async
 		assert.deepEqual(settingNames, []);
 
 		// The classic page draws exactly the same rows, in the same order, a tab at a time.
-		const headings = ["Chat", "Learn more", "AI", "Programs on this computer", "Studying", "Folders", "Tuning", "Data"];
+		const headings = ["Chat", "Learn more", "AI", "Programs on this computer", "Other agents", "Studying", "Folders", "Tuning", "Data"];
 		const drawn: string[] = [];
 		for (const id of ["basic", "key", "agents", "study", "advanced"]) {
 			(tab as any).tab = id;

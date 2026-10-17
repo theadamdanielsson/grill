@@ -21,7 +21,8 @@
     "d3-force": "^3.0.0",
     "franc-min": "^6.2.0",
     "tesseract.js": "^7.0.0",
-    "ts-fsrs": "^5.4.1"
+    "ts-fsrs": "^5.4.1",
+    "zod": "^4.1.0"
   },
   "overrides": {
     "sharp": "npm:empty-npm-package@1.0.0",
