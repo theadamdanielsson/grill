@@ -46,6 +46,7 @@ import { KeyStash, secretStore, vaultId } from "./secrets";
 import { CLAUDE_MODELS, NEW_PROMPT, promptMessage, SELECTION_ASKS, SelectionAsk, selectionMessage } from "./selection";
 import { GrillStore, type SessionEntry } from "./store";
 import { GRILL_ICON, registerGrillIcon } from "./icon";
+import { LoopbackToolServer } from "./loopback";
 import { agentJSON } from "./agentjson";
 import { findProgram } from "./agent";
 import { findCodex } from "./codex";
@@ -1032,7 +1033,18 @@ export default class GrillPlugin extends Plugin {
 		});
 	}
 
+	private loopback: LoopbackToolServer | null = null;
+
+	/** The MCP endpoint on this computer that opencode reaches Grill's tools through
+	 * (see loopback.ts). Started on first use; desktop only. */
+	toolServer(): LoopbackToolServer {
+		const req = (window as unknown as { require?: (m: string) => unknown }).require;
+		if (!req) throw new Error("Grill's tools are only reachable this way on desktop.");
+		return (this.loopback ??= new LoopbackToolServer(req));
+	}
+
 	onunload(): void {
+		void this.loopback?.close();
 		this.stopCloudWatch();
 		void terminateOcrWorker();
 	}

@@ -49,7 +49,10 @@ export interface AcpRun {
 	/** The model to use, by the agent's own id. Empty: the agent's own choice. */
 	model?: string;
 	/** MCP servers to give the session, as the protocol describes them. */
-	mcpServers?: Array<{ name: string; command: string; args: string[]; env: Array<{ name: string; value: string }> }>;
+	mcpServers?: Array<
+		| { name: string; command: string; args: string[]; env: Array<{ name: string; value: string }> }
+		| { type: "http"; name: string; url: string; headers: Array<{ name: string; value: string }> }
+	>;
 	signal?: AbortSignal;
 	onEvent: (e: AgentEvent) => void;
 	ask: (req: PermissionAsk) => Promise<PermissionAnswer>;

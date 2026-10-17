@@ -142,3 +142,39 @@ test("what Codex did is said in a line, and a patch is read as lines out and lin
 	assert.equal(diffLines(Array.from({ length: 20 }, (_, i) => `+l${i}`).join("\n")).added.length, 13);
 	assert.ok(codexPlaces("/Users/a", "darwin", {}).includes("/opt/homebrew/bin/codex"));
 });
+
+test("Grill's tools go to a new conversation as dynamic tools, and Codex's calls are answered here", async () => {
+	const called: Array<[string, Msg]> = [];
+	const tools = {
+		specs: [{ name: "grill_weak_spots", description: "weak spots", input: { type: "object", properties: { topic: { type: "string" } } } }],
+		call: async (name: string, args: Record<string, unknown>) => (called.push([name, args]), { content: "bracket creep, missed last time" }),
+	};
+	let reply: Msg | undefined;
+	let refused: Msg | undefined;
+	const lines: string[] = [];
+	const s = server(async (x) => {
+		reply = await x.ask("item/tool/call", { threadId: "th_new", turnId: "tu_1", callId: "c1", namespace: "grill", tool: "grill_weak_spots", arguments: { topic: "inflation" } });
+		refused = await x.ask("item/tool/call", { threadId: "th_new", turnId: "tu_1", callId: "c2", namespace: "other", tool: "grill_weak_spots", arguments: {} });
+		const item = { type: "dynamicToolCall", id: "c1", namespace: "grill", tool: "grill_weak_spots", arguments: { topic: "inflation" } };
+		x.say("item/started", { threadId: "th_new", turnId: "tu_1", item: { ...item, status: "inProgress" } });
+		x.say("item/completed", { threadId: "th_new", turnId: "tu_1", item: { ...item, status: "completed" } });
+		x.say("item/completed", { threadId: "th_new", turnId: "tu_1", item: { type: "agentMessage", id: "m1", text: "Start with bracket creep." } });
+		finish(x);
+	});
+	const r = await runCodexTurn(base({ tools, onEvent: (e) => e.kind === "activity" && lines.push(e.line) }), s.wire);
+	const start = s.got.find((m) => m.method === "thread/start")!;
+	assert.deepEqual(start.params.dynamicTools, [{ namespace: "grill", name: "grill_weak_spots", description: "weak spots", inputSchema: tools.specs[0].input }]);
+	assert.deepEqual(called, [["grill_weak_spots", { topic: "inflation" }]]);
+	assert.deepEqual(reply!.result, { success: true, contentItems: [{ type: "inputText", text: "bracket creep, missed last time" }] });
+	assert.ok(refused!.error, "a tool of another namespace is not Grill's to run");
+	assert.ok(lines.includes("Read your weak spots on inflation"));
+	assert.equal(r.text, "Start with bracket creep.");
+	assert.equal(codexLine({ type: "dynamicToolCall", tool: "grill_overview", arguments: {} }), "Read your record");
+});
+
+test("a resumed conversation keeps the tools it started with: none are sent again", async () => {
+	const s = server((x) => finish(x));
+	await runCodexTurn(base({ resume: "th_old", tools: { specs: [], call: async () => ({ content: "" }) } }), s.wire).catch(() => undefined);
+	const resume = s.got.find((m) => m.method === "thread/resume")!;
+	assert.equal(resume.params.dynamicTools, undefined);
+});

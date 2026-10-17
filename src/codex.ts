@@ -12,6 +12,9 @@
  *
  * The protocol and the way to launch it follow Claudian (github.com/YishenTu/claudian, MIT).
  */
+import type { ToolSpec } from "./stream";
+import type { ToolRunner } from "./loopback";
+import { isRecordTool, recordToolLine } from "./recordtools";
 import { AgentEvent, AgentLevel, AgentResult, PermissionAnswer, PermissionAsk, pathWith } from "./agent";
 
 type Loose = Record<string, unknown>;
@@ -50,11 +53,18 @@ export interface CodexRun {
 	signal?: AbortSignal;
 	onEvent: (e: AgentEvent) => void;
 	ask: (req: PermissionAsk) => Promise<PermissionAnswer>;
+	/** Grill's own tools, given to a new conversation as Codex's dynamic tools and run
+	 * here when it calls them. A conversation keeps the tools it started with. */
+	tools?: { specs: ToolSpec[]; call: ToolRunner };
 }
+
+/** The namespace Grill's dynamic tools are listed under. */
+export const CODEX_TOOL_NAMESPACE = "grill";
 
 /** The name Claude Code gives the same kind of work, so one summary line serves all. */
 function likeClaudeCode(itemType: string): string {
-	return itemType === "commandExecution" ? "Bash" : itemType === "fileChange" ? "Edit" : itemType === "webSearch" ? "WebSearch" : "Other";
+	// Grill's own tools only read the record, so they count as reading.
+	return itemType === "commandExecution" ? "Bash" : itemType === "fileChange" ? "Edit" : itemType === "webSearch" ? "WebSearch" : itemType === "dynamicToolCall" ? "Read" : "Other";
 }
 
 interface Change {
@@ -79,6 +89,10 @@ export function codexLine(item: Loose): string | null {
 			return `Search the web for "${clip(str(item.query), 60)}"`;
 		case "mcpToolCall":
 			return `Use ${str(item.server)} ${str(item.tool)}`.trim();
+		case "dynamicToolCall": {
+			const tool = str(item.tool);
+			return isRecordTool(tool) ? recordToolLine(tool, obj(item.arguments) ?? {}) : `Use ${tool}`;
+		}
 		default:
 			return null;
 	}
@@ -150,6 +164,19 @@ export async function runCodexTurn(run: CodexRun, wire: CodexWire): Promise<Agen
 				always: "Always allow edits in this chat",
 			});
 			return answer(id, { decision: DECISION[a] });
+		}
+		// One of Grill's own tools: run here, answered in Codex's dynamic tool shape.
+		if (method === "item/tool/call" && run.tools && (params.namespace ?? CODEX_TOOL_NAMESPACE) === CODEX_TOOL_NAMESPACE) {
+			const tool = str(params.tool);
+			if (run.tools.specs.some((t) => t.name === tool)) {
+				let r: { content: string; failed?: boolean };
+				try {
+					r = await run.tools.call(tool, obj(params.arguments) ?? {});
+				} catch (e) {
+					r = { content: e instanceof Error ? e.message : String(e), failed: true };
+				}
+				return answer(id, { success: !r.failed, contentItems: [{ type: "inputText", text: r.content }] });
+			}
 		}
 		// Anything else it might ask of its host (more permissions, a question, a tool
 		// Grill doesn't offer) is not something this chat can answer.
@@ -226,7 +253,8 @@ export async function runCodexTurn(run: CodexRun, wire: CodexWire): Promise<Agen
 		wire.send(JSON.stringify({ jsonrpc: "2.0", method: "initialized" }));
 		const policy = codexPolicy(run.level);
 		const config = { cwd: run.cwd, approvalPolicy: policy.approvalPolicy, approvalsReviewer: "user", sandbox: policy.sandbox };
-		const opened = await request<Loose>(threadId ? "thread/resume" : "thread/start", threadId ? { threadId, ...config } : config);
+		const tools = run.tools ? { dynamicTools: run.tools.specs.map((t) => ({ namespace: CODEX_TOOL_NAMESPACE, name: t.name, description: t.description, inputSchema: t.input })) } : {};
+		const opened = await request<Loose>(threadId ? "thread/resume" : "thread/start", threadId ? { threadId, ...config } : { ...config, ...tools });
 		threadId = str(obj(opened?.thread)?.id) || threadId;
 		if (run.signal?.aborted) throw new DOMException("Stopped.", "AbortError");
 		const first = !run.resume && run.brief ? `<context>\n${run.brief}\n</context>\n\n${run.prompt}` : run.prompt;

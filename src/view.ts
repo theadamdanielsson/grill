@@ -85,15 +85,15 @@ import { listSome, missesLine, noteLine, shortDate } from "./suggest";
 import { drawPicks, renderChatHome, renderCreditsRing, type HomeMode, type HomeSuggestion } from "./home";
 import { aboutTheVault, learnContext, learnRecord, namesANote, parseLearnNote, parseSessionNote, namesInFull, rankNotes, replyTitle, sessionTitle, vaultMap, vaultNotes, type PastAnswer } from "./learn";
 import { safeDiagram, safeMarkdown } from "./safemd";
-import { activitySummary, AgentEvent, agentBrief, AGENT_LEVELS, findProgram, grillRecordServer, PermissionAnswer, PermissionAsk, runAgent } from "./agent";
+import { activitySummary, AgentEvent, agentBrief, AGENT_LEVELS, findProgram, PermissionAnswer, PermissionAsk, runAgent } from "./agent";
 import type { VaultPort } from "./vaulttools";
 import type { SettingsPort } from "./settingstools";
-import type { RecordPort, StudyOffer } from "./recordtools";
+import { RECORD_RULES, RECORD_TOOLS, runRecordQuery, type RecordPort, type StudyOffer } from "./recordtools";
 import { projectSummaries } from "./record";
 import { GRILL_ICON } from "./icon";
 import { attachPicker, linkedNames, type PickSource } from "./mention";
 import { findCodex, runCodex } from "./codex";
-import { AcpModel, acpModels, runAcp, type AcpRun } from "./acp";
+import { AcpModel, acpModels, runAcp } from "./acp";
 import { canInstall, findOpencode, opencodeProgram } from "./opencode";
 
 /** Mermaid's drawing, made fit to be shown as an image: well-formed XML, with a size
@@ -2411,13 +2411,6 @@ export class SessionView extends ItemView {
 		}
 	}
 
-	/** Grill's record, read-only, for a program that takes MCP servers (opencode), or
-	 * none when it can't be run here. */
-	private recordServers(base: string): NonNullable<AcpRun["mcpServers"]> {
-		const server = grillRecordServer(base);
-		return server ? [{ name: "grill", ...server }] : [];
-	}
-
 	/** Buttons offered during the turn being answered. */
 	private pendingOffers: StudyOfferButton[] = [];
 
@@ -2584,42 +2577,53 @@ export class SessionView extends ItemView {
 		const ui = this.turnUi(waiting, live);
 		const s = this.plugin.data.settings;
 		const brief = agentBrief(L.whole ? "" : L.note.path, L.record, L.instructions);
+		// The record tools Claude Code gets in-process, for Codex and opencode too: run
+		// here, so offering a test can put a button under the reply.
+		const record = this.recordPort();
+		const tools = { specs: RECORD_TOOLS, call: (name: string, args: Record<string, unknown>) => runRecordQuery(record, name, args) };
+		const withRules = `${brief}\n\n${RECORD_RULES}`;
 		// A program new to this chat (the engine was changed in it) is given the chat so far.
 		const before = L.agentSession ? [] : L.turns.slice(0, -1);
 		const prompt = before.length ? `${handoverText(before)}\n\nNow, the user says:\n${text}` : text;
 		const shared = { prompt, cwd: base, program, level: s.agentLevel, resume: L.agentSession, signal: live.signal, onEvent: ui.onEvent, ask: ui.ask };
-		const result =
-			s.chatEngine === "codex"
-				? await runCodex({ ...shared, brief })
-				: s.chatEngine === "opencode"
-					? await runAcp({
-							...shared,
-							...opencodeProgram(program, s.agentLevel),
-							name: "opencode",
-							brief,
-							mcpServers: this.recordServers(base),
-							model: s.opencodeModel,
-							onModels: (models, current) => (this.opencodeModels = { models, current }),
-						})
-					: await runAgent({
-							...shared,
-							append: brief,
-							record: this.recordPort(),
-							beforeChange: (at) => (at.startsWith(`${base}/`) ? this.keepBefore(at.slice(base.length + 1)) : Promise.resolve()),
-							...(s.claudeModel ? { model: s.claudeModel } : {}),
-						});
-		L.agentSession = result.sessionId || L.agentSession;
-		// A diagram, when one was asked for, is lifted out to be drawn the way every other is.
-		let diagram = "";
-		const said = cleanText(
-			result.text.replace(/```mermaid\s*\n([\s\S]*?)```/g, (_, src: string) => {
-				if (!diagram) diagram = cleanDiagram(src);
-				return "";
-			}),
-		);
-		const turn: ThreadTurn = { role: "tutor", text: said, activity: activitySummary(result.tools, result.seconds) };
-		if (diagram) turn.diagram = diagram;
-		return turn;
+		// opencode reaches them over MCP, at a route that lasts as long as this turn.
+		const route = s.chatEngine === "opencode" ? await this.plugin.toolServer().open(RECORD_TOOLS, tools.call).catch(() => null) : null;
+		try {
+			const result =
+				s.chatEngine === "codex"
+					? await runCodex({ ...shared, brief: withRules, tools })
+					: s.chatEngine === "opencode"
+						? await runAcp({
+								...shared,
+								...opencodeProgram(program, s.agentLevel),
+								name: "opencode",
+								brief: route ? withRules : brief,
+								mcpServers: route ? [{ type: "http", name: "grill", url: route.url, headers: Object.entries(route.headers).map(([name, value]) => ({ name, value })) }] : [],
+								model: s.opencodeModel,
+								onModels: (models, current) => (this.opencodeModels = { models, current }),
+							})
+						: await runAgent({
+								...shared,
+								append: brief,
+								record: this.recordPort(),
+								beforeChange: (at) => (at.startsWith(`${base}/`) ? this.keepBefore(at.slice(base.length + 1)) : Promise.resolve()),
+								...(s.claudeModel ? { model: s.claudeModel } : {}),
+							});
+			L.agentSession = result.sessionId || L.agentSession;
+			// A diagram, when one was asked for, is lifted out to be drawn the way every other is.
+			let diagram = "";
+			const said = cleanText(
+				result.text.replace(/```mermaid\s*\n([\s\S]*?)```/g, (_, src: string) => {
+					if (!diagram) diagram = cleanDiagram(src);
+					return "";
+				}),
+			);
+			const turn: ThreadTurn = { role: "tutor", text: said, activity: activitySummary(result.tools, result.seconds) };
+			if (diagram) turn.diagram = diagram;
+			return turn;
+		} finally {
+			route?.dispose();
+		}
 	}
 
 	/** Leave the Learn conversation, keeping it as a note. `test`: go straight into a

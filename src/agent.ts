@@ -292,35 +292,6 @@ export function pathWith(current: string, program: string, home: string, platfor
 		.join(sep);
 }
 
-/** Grill's record as an MCP server for a program that takes one (opencode), read-only:
- * `npx grill-mcp --chat`. Null when there is no npx on this computer to run it with.
- * The folder npx is in goes first on the server's PATH, for the node it runs with. */
-export function grillRecordServer(vault: string): { command: string; args: string[]; env: Array<{ name: string; value: string }> } | null {
-	const req = need();
-	if (!req) return null;
-	const fs = req("fs") as { existsSync(p: string): boolean; readdirSync(p: string): string[] };
-	const proc = req("process") as { platform: string; env: Record<string, string | undefined> };
-	const home = (req("os") as { homedir(): string }).homedir();
-	const win = proc.platform === "win32";
-	const sep = win ? ";" : ":";
-	const dirs = pathWith(proc.env.PATH ?? "", "", home, proc.platform).split(sep);
-	// Node installed with nvm is on no PATH Obsidian sees: its newest version is looked for.
-	try {
-		const nvm = `${home}/.nvm/versions/node`;
-		const versions = fs.readdirSync(nvm).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
-		dirs.push(...versions.map((v) => `${nvm}/${v}/bin`));
-	} catch {
-		/* no nvm */
-	}
-	for (const d of dirs) {
-		const npx = `${d}${win ? "\\" : "/"}${win ? "npx.cmd" : "npx"}`;
-		if (d && fs.existsSync(npx)) {
-			return { command: npx, args: ["-y", "grill-mcp@0", "--chat", "--vault", vault], env: [{ name: "PATH", value: [d, ...dirs.filter((x) => x !== d)].join(sep) }] };
-		}
-	}
-	return null;
-}
-
 /** Start the program the way the SDK would, but without handing Node the pane's abort
  * signal, which it refuses: stopping is done by hand. After Claudian's custom spawn. */
 function startProgram(o: SpawnOptions): SpawnedProcess {
