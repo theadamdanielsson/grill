@@ -3953,6 +3953,10 @@ textarea.grill-mgmt-field {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.grill-pick-hint {
+  color: var(--text-faint);
+  font-size: 0.85em;
+}
 .grill-pick-item.is-selected,
 .grill-pick-item:hover {
   background: var(--background-modifier-hover);

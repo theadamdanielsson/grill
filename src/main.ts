@@ -3709,8 +3709,8 @@ export class GrillSettingTab extends PluginSettingTab {
 			},
 			{
 				name: "Engine",
-				desc: "What answers in Chat. Claude Code, Codex and opencode run on this computer with your own sign-in. Desktop only. With no Grill Cloud, key or Ollama set up, the program also writes and marks tests.",
-				aliases: ["claude code", "codex", "opencode", "agent", "engine", "subscription", "chatgpt"],
+				desc: "What answers in Chat. Claude Code, Codex and opencode run on this computer with your own sign-in and your own setup: skills, MCP servers, hooks and CLAUDE.md. Desktop only. With no Grill Cloud, key or Ollama set up, the program also writes and marks tests.",
+				aliases: ["claude code", "codex", "opencode", "agent", "engine", "subscription", "chatgpt", "skills", "mcp", "hooks"],
 				build: (setting) =>
 					setting.addDropdown((d) =>
 						d

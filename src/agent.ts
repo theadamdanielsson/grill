@@ -309,6 +309,49 @@ function startProgram(o: SpawnOptions): SpawnedProcess {
 	return child as unknown as SpawnedProcess;
 }
 
+/** The user's own slash commands and skills, as Claude Code itself lists them (user,
+ * project, plugins, MCP prompts; not Claude Code's built-in ones), for Grill's `/` list.
+ * An empty prompt makes it read its configuration and report, with no model call; it
+ * is then closed. After Claudian's probeClaudeRuntime. */
+export async function claudeCommands(program: string, cwd: string): Promise<Array<{ name: string; description: string; argumentHint: string }>> {
+	const req = need();
+	if (!req) return [];
+	acceptPaneSignals(req("events") as Parameters<typeof acceptPaneSignals>[0]);
+	const proc = req("process") as { platform: string; env: Record<string, string | undefined> };
+	const home = (req("os") as { homedir(): string }).homedir();
+	const { query } = await import("@anthropic-ai/claude-agent-sdk");
+	const stop = new AbortController();
+	const timer = window.setTimeout(() => stop.abort(), 20_000);
+	const conversation = query({
+		prompt: "",
+		options: {
+			cwd,
+			pathToClaudeCodeExecutable: program,
+			env: { ...(proc.env as Record<string, string>), PATH: pathWith(proc.env.PATH ?? "", program, home, proc.platform) },
+			spawnClaudeCodeProcess: startProgram,
+			settingSources: ["user", "project", "local"],
+			persistSession: false,
+			abortController: stop,
+		},
+	});
+	try {
+		// The list is complete once the session has started: MCP servers connect first.
+		for (;;) {
+			const next = await conversation.next();
+			if (next.done) return [];
+			if (next.value.type === "system" && (next.value as { subtype?: string }).subtype === "init") break;
+		}
+		const all = await conversation.supportedCommands();
+		return all.filter((c) => !c.builtin).map((c) => ({ name: c.name, description: c.description, argumentHint: c.argumentHint }));
+	} catch {
+		return [];
+	} finally {
+		window.clearTimeout(timer);
+		stop.abort();
+		conversation.close?.();
+	}
+}
+
 /** Run one turn. Throws with a sentence fit to show when it can't be run or fails. */
 export async function runAgent(run: AgentRun): Promise<AgentResult> {
 	const req = need();

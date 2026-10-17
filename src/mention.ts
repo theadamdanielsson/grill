@@ -51,7 +51,7 @@ export function linkedNames(text: string): string[] {
 
 export interface PickSource {
 	notes(): string[];
-	prompts(): Array<{ name: string; text: () => Promise<string> }>;
+	prompts(): Array<{ name: string; text: () => Promise<string>; hint?: string }>;
 }
 
 /** Watches a box and shows the list when `@` or `/` is typed. */
@@ -59,7 +59,7 @@ export function attachPicker(input: HTMLTextAreaElement, source: PickSource): vo
 	const list = createDiv({ cls: "grill-pick-list" });
 	list.hide();
 	input.insertAdjacentElement("afterend", list);
-	let items: Array<{ label: string; pick: () => Promise<string> }> = [];
+	let items: Array<{ label: string; hint?: string; pick: () => Promise<string> }> = [];
 	let at = 0;
 	let typed: Typed | null = null;
 
@@ -72,6 +72,7 @@ export function attachPicker(input: HTMLTextAreaElement, source: PickSource): vo
 		list.empty();
 		items.forEach((it, i) => {
 			const row = list.createDiv({ cls: `grill-pick-item${i === at ? " is-selected" : ""}`, text: it.label });
+			if (it.hint) row.createSpan({ cls: "grill-pick-hint", text: ` ${it.hint}` });
 			row.onmousedown = (e) => {
 				e.preventDefault();
 				at = i;
@@ -88,7 +89,10 @@ export function attachPicker(input: HTMLTextAreaElement, source: PickSource): vo
 		} else {
 			const all = source.prompts();
 			const names = rankNames(all.map((p) => p.name), typed.query);
-			items = names.map((n) => ({ label: n, pick: () => all.find((p) => p.name === n)!.text() }));
+			items = names.map((n) => {
+				const p = all.find((x) => x.name === n)!;
+				return { label: n, hint: p.hint, pick: () => p.text() };
+			});
 		}
 		at = Math.min(at, Math.max(0, items.length - 1));
 		draw();

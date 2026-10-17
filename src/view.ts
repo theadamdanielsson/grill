@@ -85,7 +85,7 @@ import { listSome, missesLine, noteLine, shortDate } from "./suggest";
 import { drawPicks, renderChatHome, renderCreditsRing, type HomeMode, type HomeSuggestion } from "./home";
 import { aboutTheVault, learnContext, learnRecord, namesANote, parseLearnNote, parseSessionNote, namesInFull, rankNotes, replyTitle, sessionTitle, vaultMap, vaultNotes, type PastAnswer } from "./learn";
 import { safeDiagram, safeMarkdown } from "./safemd";
-import { activitySummary, AgentEvent, agentBrief, AGENT_LEVELS, findProgram, PermissionAnswer, PermissionAsk, runAgent } from "./agent";
+import { activitySummary, AgentEvent, agentBrief, AGENT_LEVELS, claudeCommands, findProgram, PermissionAnswer, PermissionAsk, runAgent } from "./agent";
 import type { VaultPort } from "./vaulttools";
 import type { SettingsPort } from "./settingstools";
 import { RECORD_RULES, RECORD_TOOLS, runRecordQuery, type RecordPort, type StudyOffer } from "./recordtools";
@@ -1741,15 +1741,33 @@ export class SessionView extends ItemView {
 
 	/** The prompts, as a list under their button: Grill's own, then the saved ones, then
 	 * a way to save a new one. Picking one puts it in the box. */
-	/** What `@` and `/` offer in a message box: the notes Grill reads, and the prompts. */
+	/** What `@` and `/` offer in a message box: the notes Grill reads, the prompts, and,
+	 * when Chat runs on Claude Code, the user's own commands and skills. */
 	private pickSource(): PickSource {
+		this.loadClaudeCommands();
 		return {
 			notes: () => this.allEligible().map((f) => f.basename),
 			prompts: () => [
 				...STARTER_PROMPTS.map((p) => ({ name: p.name, text: async () => p.text })),
 				...this.plugin.savedPrompts().map((f) => ({ name: f.basename, text: () => this.plugin.savedPromptText(f, "") })),
+				...(this.plugin.data.settings.chatEngine === "claudecode"
+					? (this.claudeCommandList ?? []).map((c) => ({ name: `/${c.name}`, hint: "Claude Code", text: async () => `/${c.name} ` }))
+					: []),
 			],
 		};
+	}
+
+	/** The user's own Claude Code commands, asked of it once per pane. */
+	private claudeCommandList: Array<{ name: string; description: string }> | null = null;
+	private claudeCommandsAsked = false;
+
+	private loadClaudeCommands(): void {
+		if (this.claudeCommandsAsked || this.plugin.data.settings.chatEngine !== "claudecode") return;
+		const program = this.agentProgram();
+		const base = (this.app.vault.adapter as { getBasePath?: () => string }).getBasePath?.();
+		if (!program || !base) return;
+		this.claudeCommandsAsked = true;
+		void claudeCommands(program, base).then((list) => (this.claudeCommandList = list));
 	}
 
 	private promptsMenu(at: HTMLElement, use: (text: string) => void): void {
