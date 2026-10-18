@@ -1,7 +1,7 @@
 {
 	"id": "grill",
 	"name": "Grill",
-	"version": "8.5.0",
+	"version": "8.6.0",
 	"minAppVersion": "1.8.0",
 	"description": "Chat with your notes and get grilled on them. An agentic AI that reads, edits and tests you on your notes, remembers what you got wrong, and shares that record with Claude Code, Codex and your other agents. Start free, or bring your own.",
 	"author": "Adam Danielsson",

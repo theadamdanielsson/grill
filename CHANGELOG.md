@@ -1,5 +1,36 @@
 # Changelog
 
+## 8.6.0
+
+- **MCP servers.** Chat on Grill Cloud and your own key uses the tools of the MCP
+  servers you add, written as in Claude Code's `.mcp.json` or imported from it. A
+  server on the web works on any device; one that runs as a program needs a desktop.
+- **Sign in to MCP servers.** A server that needs an account offers Sign in, which
+  opens its page in your browser. The sign-in is kept in Obsidian's keychain and
+  renewed when it runs out.
+- **Skills.** Agent Skills from `Grill/Skills/`, and on desktop from the folders
+  Claude Code and `npx skills add` use. The model loads one when a request fits it.
+- **The web.** Chat reads web pages on every engine with tools, and searches the web
+  on Grill Cloud and Anthropic keys, citing the pages it used.
+- **Search by meaning.** An optional index on your computer lets Chat find notes by
+  what they are about. It downloads a small model once and sends nothing.
+- **Chats.** A Chats list on the home screen: open a past conversation to carry on
+  with it, rename it, or delete it.
+- **Long chats keep going.** On Grill Cloud and your own key, the start of a long
+  conversation is summed up and the latest turns are kept as they were. The saved
+  note keeps everything.
+- **The whole vault, by its structure.** A question about all your notes is answered
+  from a map of their folders, headings, links and tags, and the model reads only the
+  notes it needs. These conversations are no longer cut short.
+- **Chat knows which note is open.** A message says which note is in the editor when
+  it is not the one the conversation is about.
+- **Get started.** Until you have tested or chatted once, the home screen offers a
+  test or a walk through the note you have open, or your key notes.
+- **Notes that only embed a PDF** are no longer called too short to test.
+- **A smaller plugin file**, well under the size Obsidian Sync Standard carries.
+- Permission prompts cover the new tools: an MCP tool that can change something, and
+  every web page Chat reads, ask first at Safe.
+
 ## 8.5.0
 
 - **Your agents know what you know.** Settings → Agents → Connect an agent gives

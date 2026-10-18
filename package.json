@@ -1,6 +1,6 @@
 {
   "name": "grill",
-  "version": "8.5.0",
+  "version": "8.6.0",
   "description": "Chat with your notes and get grilled on them. An agentic AI that reads, edits and tests you on your notes, remembers what you got wrong, and shares that record with your other agents. For Obsidian.",
   "main": "main.js",
   "scripts": {
@@ -16,6 +16,7 @@
     "typescript": "^5.7.0"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@huggingface/transformers": "3.7.2",
     "@types/d3-force": "^3.0.10",
     "d3-force": "^3.0.0",
