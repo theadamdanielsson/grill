@@ -27,6 +27,18 @@ A turn that changed notes lists them under the reply, with Undo. It puts every c
 
 Answers from Claude Code, Codex or another connected agent wait as files in `Grill/Inbox/` until Grill adds them to the record. That happens within a few seconds while Grill is open, and otherwise when it next starts. An answer that cannot be applied is set aside as a `.rejected` file in the same folder rather than tried again.
 
+## An MCP server will not connect, or says "Needs sign-in"
+
+Connect, under Settings → Agents → Tools and skills, lists each server with the reason it could not be reached. A server written with a `command` is a program Grill starts on your computer, so the same command must work in a terminal; a program installed in an unusual place is best given by its full path. Such a server needs a desktop. A server written with a `url` must be reachable from your device, and "Needs sign-in" means it requires an account: press Sign in beside it and finish in the browser. A sign-in is kept on one device, so a second device signs in once as well.
+
+## Chat does not use a skill, the web or search by meaning
+
+These are for Chat on Grill Cloud and keys of your own, where the engine can use tools; Gemini and Ollama answer in text only, and Claude Code, Codex and opencode use their own setup. A skill is found only with a `SKILL.md` whose properties give a `name` and a `description`. Searching the web needs Grill Cloud or an Anthropic key, whereas reading a page works on any engine with tools. Search by meaning is off until it is turned on, runs on desktop only, and finds only what it has indexed so far; the setting shows how many notes are indexed.
+
+## A long chat lost the detail of its start
+
+On Grill Cloud and keys of your own, the start of a long conversation is summed up so that it can continue, and the latest turns are kept word for word. A detail from the beginning can therefore be given more briefly than it was said. The saved note under `Grill/Learn/` keeps every turn, and quoting the detail again brings it back.
+
 ## A Chat reply arrives all at once
 
 Replies are shown as they are written wherever the provider allows a request to be read in pieces from inside Obsidian. Where it does not (some OpenAI-compatible endpoints and local proxies), Grill falls back to fetching the reply whole. Nothing is lost; it appears later.

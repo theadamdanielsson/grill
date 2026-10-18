@@ -72,7 +72,7 @@ puts you back in the section above.
 
 Chat can also run on the Claude Code or Codex installed on your computer, under your own sign-in, which draws on the plan you already pay for, or on opencode, which Grill can install and whose free models need no account. Tests are written and graded by the provider chosen above when one is set up; only without one do they run on the program Chat uses. Set the engine with the button under the chat box, or under Engine on the Basic tab of Grill's settings. Desktop only.
 
-In Chat, the model matters in a second way. Grill Cloud and keys for Anthropic, OpenAI, DeepSeek and OpenAI-compatible endpoints can read, search and change notes; Gemini and Ollama answer in text only.
+In Chat, the model matters in a second way. Grill Cloud and keys for Anthropic, OpenAI, DeepSeek and OpenAI-compatible endpoints can read, search and change notes, use MCP servers and skills, and read web pages; Gemini and Ollama answer in text only. Of these, only Grill Cloud and an Anthropic key can also search the web, since the search is Anthropic's own.
 
 ---
 

@@ -6,8 +6,8 @@ I take a lot of notes to learn new material, and I needed a way to learn them mo
 
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/play-dark.svg"><img src="docs/icons/play.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> How to use it
 
-1. **Start free.** On first run, press Start free. That is Grill Cloud: no API key, no sign-up, and a few free credits to try it. If Claude Code, Codex or opencode is on your computer, Grill offers to start on it instead. You can also use your own API key or Ollama.
-2. **Chat.** Ask about the note you have open, or tell Grill what to do with it. It can explain, summarise, find things across the vault, and edit or create notes, asking your permission before a change.
+1. **Start free.** On first run, press Start free. That is Grill Cloud: no API key, no sign-up, and a few free credits to try it. If Claude Code, Codex or opencode is on your computer, Grill offers to start on it instead. You can also use your own API key or Ollama. The home screen then offers a first step on the note you have open: a short test, or a walk through it.
+2. **Chat.** Ask about the note you have open, or tell Grill what to do with it. It can explain, summarise, find things across the vault, read the web, use your MCP servers and skills, and edit or create notes, asking your permission before a change.
 3. **Test.** Switch to Test and press **Get grilled**. Grill writes questions from your notes and marks what you type back, with partial credit and specific feedback. What you get wrong is what Chat and the suggestions point at next.
 4. **Bring your agents in.** Settings → Agents → Connect an agent gives Claude Code or Codex your record, in one line pasted in a terminal. See [In your other agents](#in-your-other-agents).
 
@@ -20,6 +20,12 @@ The home screen suggests where to go from your record: the questions you last mi
 - **An agentic chat in your vault:** it reads, searches, edits and creates notes over several steps, and shows each step as it happens. Three permission levels decide when it has to ask: Safe, Plan and Auto.
 - **Study straight from the chat:** when Chat recommends something, a button under the reply starts it, whether that is the reviews due, a retry of what you missed, or a test on the notes it named. Chat explains; Test is where you are graded.
 - **Undo a turn:** a reply that changed notes lists them, and one Undo puts all of them back.
+- **MCP servers, with sign-in:** Chat on Grill Cloud or your own key uses the tools of the MCP servers you add, written as in Claude Code's `.mcp.json` or imported from it. A server that needs an account is signed in to from the browser, as in Claude Code.
+- **Skills:** Agent Skills from your vault and from the folders Claude Code and `npx skills add` use. The model loads one when a request fits it.
+- **The web:** Chat reads web pages, and searches the web on Grill Cloud and Anthropic keys, citing what it used.
+- **Search by meaning:** an optional on-device index finds notes by what they are about, even when the words differ.
+- **Chats you can come back to:** every conversation is kept. The Chats list continues, renames or deletes one, and a long conversation keeps going, its start summed up as Claude Code does.
+- **The whole vault, by its structure:** a question about all your notes is answered from Obsidian's own map of them, its folders, headings, links and tags, and the model reads only the notes it needs.
 - **`@` and `/` in the box:** `@` brings a note into the message and `/` picks a prompt. On Claude Code, your own commands and skills are in the list too.
 - **Your record in other agents:** Claude Code, Codex, Cursor and other agents can see your weak spots, explain at your level, and test you. Their answers count here, and what you are tested on outside the vault shows on the Progress screen.
 - **A record behind every reply:** per-concept scheduling, your past answers and the confusions Grill has named are given to the chat, so an explanation starts from what you got wrong.
@@ -53,6 +59,7 @@ Grill Cloud is the easiest way to use Grill. Press Start free and it answers in 
 
 What Grill Cloud gives you that the free options do not:
 
+- **The agent features without a subscription.** Chat on Grill Cloud works in your vault, uses your MCP servers and skills, and searches the web, with no Claude or ChatGPT plan of your own.
 - **It works on your phone.** Claude Code, Codex and opencode need a computer. Grill Cloud chats, edits notes and tests you on a phone or tablet too.
 - **It reads your images.** Diagrams, graphs, screenshots and photos of handwritten pages in your notes are read, and the questions cover them.
 - **It reads aloud in a natural voice,** for studying away from the screen.
@@ -66,7 +73,7 @@ The checkout is run by Stripe, so the page says "Sold through Link" and your car
 
 Grill Cloud runs on two of Anthropic's Claude models, each chosen by testing it on real notes and kept current. A fast model writes the test questions. A stronger one marks your answers and runs Chat, because marking is where the stronger model was clearly better.
 
-One thing differs from every other way of running Grill. With Grill Cloud, the notes in a session, the images in them, your answers and your custom instructions go through my server to Anthropic. In Chat, the notes the model asks to read go the same way. My server does not keep them: it does not store or log your notes, the questions, or your answers. Anthropic keeps them for up to 30 days to watch for abuse and does not train on them. If you turn on the natural voice, the text being read aloud goes to OpenAI the same way. What my server does store is a short list, set out in the privacy policy.
+One thing differs from every other way of running Grill. With Grill Cloud, the notes in a session, the images in them, your answers and your custom instructions go through my server to Anthropic. In Chat, the notes the model asks to read go the same way, as do the results of the tools it uses: a web page it reads, what an MCP server returns, a skill it loads. A web search is run by Anthropic and counts towards the plan's limits like the rest of a reply. My server does not keep them: it does not store or log your notes, the questions, or your answers. Anthropic keeps them for up to 30 days to watch for abuse and does not train on them. If you turn on the natural voice, the text being read aloud goes to OpenAI the same way. What my server does store is a short list, set out in the privacy policy.
 
 - [Privacy policy](https://grill.onbridger.com/privacy)
 - [Terms](https://grill.onbridger.com/terms)
@@ -87,6 +94,18 @@ The program runs with your own setup: your skills, MCP servers, hooks and `CLAUD
 [opencode](https://github.com/anomalyco/opencode) is an open-source program of the same kind that works with many models. Grill can install it: the Install button in the Agents tab of Grill's settings, or on the first run, downloads one pinned build (about 80 MB) from npm, where opencode publishes it, checks it against the published checksum, and keeps it in `~/.grill/opencode`, outside your vault. Without an account it offers free models and any Ollama models on your computer; `opencode auth login` in a terminal adds your own accounts. Note that opencode's free models may keep what you send them to improve the model while they are free. For notes you would rather keep private, use a model with your own account, Ollama, or Grill Cloud.
 
 Two limits apply. First, this works on desktop only, since there is a program to run. Second, tests are written and graded by Grill Cloud, your own key or Ollama when one is set up; only without one do they run on the program Chat uses.
+
+<a name="tools-skills-and-the-web"></a>
+## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/play-dark.svg"><img src="docs/icons/play.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> Tools, skills and the web
+
+Chat on Grill Cloud and on your own key can reach beyond the vault, and the model decides when to, as Claude Code does. Everything is set in Settings → Agents → Tools and skills; Claude Code, Codex and opencode bring their own versions of each.
+
+- **MCP servers.** Paste servers as in Claude Code's `.mcp.json`, or press Import from Claude Code. A `url` server works on any device and a `command` server runs on your computer. Connect lists each server with its tools, and a server that needs an account offers Sign in, which opens its page in your browser and keeps the sign-in in Obsidian's keychain.
+- **Skills.** Grill reads Agent Skills from `Grill/Skills/` in your vault and, on desktop, from `~/.agents/skills` and `~/.claude/skills`. A skill's scripts are read, never run.
+- **The web.** Chat reads a page at an address on any engine with tools. On Grill Cloud and Anthropic keys it can also search the web.
+- **Search by meaning.** Off until you turn it on. It downloads a small model once and indexes your notes on your computer, so Chat can find a note by what it is about.
+
+The permission levels cover all of it. A tool that only reads runs without asking; any other tool asks first at Safe, as reading a web page does, and nothing that changes things runs at Plan. Details are in [docs/features.md](docs/features.md#tools-skills-and-the-web).
 
 <a name="in-your-other-agents"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/play-dark.svg"><img src="docs/icons/play.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> In your other agents
@@ -119,6 +138,7 @@ To pay a model provider directly, pick "use my own API key or Ollama" on first r
 - Grill needs a model: [Grill Cloud](#grill-cloud), your own API key, Ollama, or Claude Code, Codex or opencode on your computer. Earlier versions had a mode with no AI; 8.0 removes it.
 - It is only as good as your notes. Half-written notes make half-baked questions.
 - The grading is a model's judgement. It is usually right, and it always shows you the expected answer so that you can judge for yourself.
+- An MCP server, a skill or a web page written by someone else can carry instructions aimed at the model. Grill tells the model to treat them as data, and asks before any tool that could change something or send text out, but add only the servers and skills you trust.
 - A chat that can edit your notes can edit them badly. Safe is the default level, every change is shown before it is made, and on Grill Cloud, your own key and Claude Code a turn's changes can be undone from the reply. Otherwise, version control or sync history can undo one.
 - Local models are the weak link: good for privacy, weaker on questions and grading.
 
@@ -164,13 +184,15 @@ The common ones are below; the full list is in [docs/troubleshooting.md](docs/tr
 - **A model is not reading the images in my notes.** Grill sends images to models that support vision, and says in the session when the chosen model cannot read them.
 - **A PDF is not being quizzed on.** Check that it is embedded, `![[file.pdf]]` with the `!`. A scanned PDF with no text layer, or a password-protected one, has nothing for Grill to extract.
 - **API errors, or grading looks wrong.** Check the key and the model name in settings; a mistyped model ID is the usual cause.
+- **An MCP server shows an error after Connect.** A `command` server must be runnable from a terminal on your computer, and a `url` server must be reachable. "Needs sign-in" means pressing Sign in beside it.
+- **Search by meaning finds nothing yet.** The first index takes a while on a large vault. Its progress shows under the setting, and Chat says when a search covered only part of the vault.
 - **An agent's answers don't show up.** Grill adds them while it is open, within a few seconds, or when it next starts. They wait in `Grill/Inbox/` until then.
 
 Something broken? [Open an issue](https://github.com/theadamdanielsson/grill/issues). A question or an idea? [Start a discussion](https://github.com/theadamdanielsson/grill/discussions).
 
 ## Privacy and cost
 
-Grill talks only to the model provider you configure. There are no analytics, there is no account, and no server of mine sits in the middle. The one exception is [Grill Cloud](#grill-cloud), if you turn it on: the session then goes through my server to Anthropic. Installing opencode downloads it from npm (registry.npmjs.org), once, when you press Install. Connecting an agent runs grill-mcp from npm on your computer, and it makes no network requests of its own. When Chat runs on opencode, Grill's record reaches it through an endpoint on your own computer (127.0.0.1), open only for that chat turn. What leaves your machine and what Grill stores locally is set out in **[docs/privacy.md](docs/privacy.md)**.
+Grill talks only to the model provider you configure. There are no analytics, there is no account, and no server of mine sits in the middle. The one exception is [Grill Cloud](#grill-cloud), if you turn it on: the session then goes through my server to Anthropic. Installing opencode downloads it from npm (registry.npmjs.org), once, when you press Install. Connecting an agent runs grill-mcp from npm on your computer, and it makes no network requests of its own. The MCP servers you add receive what the model sends their tools, a page Chat reads is fetched straight from your computer, and search by meaning downloads its model from Hugging Face once and then runs on your computer. When Chat runs on opencode, Grill's record reaches it through an endpoint on your own computer (127.0.0.1), open only for that chat turn. What leaves your machine and what Grill stores locally is set out in **[docs/privacy.md](docs/privacy.md)**.
 
 ## License
 
