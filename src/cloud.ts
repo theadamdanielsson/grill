@@ -120,6 +120,8 @@ export const cloud = {
 	streams: false,
 	/** Whether the server has said the model may ask for tools. */
 	tools: false,
+	/** Whether the server has said Chat with tools may search the web. */
+	search: false,
 	/** Called with the balance whenever the server mentions it. */
 	onCredits: null as ((credits: number) => void) | null,
 	/** Called with what a reply cost, in credits (fractions included). */
@@ -221,6 +223,8 @@ export interface CloudBalance {
 	streams?: boolean;
 	/** Whether the model may ask for tools, which the plugin then runs. */
 	tools?: boolean;
+	/** Whether Chat with tools may search the web. */
+	search?: boolean;
 }
 
 /** The balance. Asks nothing of the server but to look. */

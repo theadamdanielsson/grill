@@ -125,3 +125,32 @@ test("the request asks for a stream of plain text, with the note marked for the 
 	assert.equal(streamCall({ provider: "grillcloud", apiKey: "k", model: "m" }, p), null);
 	assert.equal(streamCall({ provider: "grillcloud", apiKey: "k", model: "m" }, p, { cloudUrl: "https://c.test/cloud/" })?.url, "https://c.test/cloud/chat/completions");
 });
+
+test("the provider's own web search runs alongside, and its pieces are never taken for a tool Grill must run", async () => {
+	const sse = [
+		{ type: "content_block_start", index: 0, content_block: { type: "server_tool_use", id: "s1", name: "web_search" } },
+		{ type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '{"query":"cpi"}' } },
+		{ type: "content_block_start", index: 1, content_block: { type: "web_search_tool_result", tool_use_id: "s1", content: [] } },
+		{ type: "content_block_delta", index: 2, delta: { type: "text_delta", text: "CPI rose." } },
+		{ type: "content_block_start", index: 3, content_block: { type: "tool_use", id: "t1", name: "read_note" } },
+		{ type: "content_block_delta", index: 3, delta: { type: "input_json_delta", partial_json: '{"path":"A"}' } },
+	]
+		.map((e) => `data: ${JSON.stringify(e)}\n\n`)
+		.join("");
+	const got = await streamText(call("anthropic"), run(answering([sse])));
+	assert.equal(got.text, "CPI rose.");
+	assert.deepEqual(got.calls.map((c) => c.name), ["read_note"]);
+});
+
+test("web search is asked for in each provider's way, and only where asked", async () => {
+	const { toolStreamCall } = await import("../src/stream");
+	const p = { system: "S", cacheable: "", rest: "ASK", maxTokens: 100 };
+	const tool = { name: "read_note", description: "x", input: { type: "object" } };
+	const a = toolStreamCall({ provider: "anthropic", apiKey: "k", model: "claude-sonnet-5" }, p, [], [tool], { webSearch: true })!;
+	assert.ok((a.body.tools as Array<{ type?: string }>).some((t) => t.type === "web_search_20250305"));
+	const plain = toolStreamCall({ provider: "anthropic", apiKey: "k", model: "claude-sonnet-5" }, p, [], [tool])!;
+	assert.equal((plain.body.tools as unknown[]).length, 1);
+	const c = toolStreamCall({ provider: "grillcloud", apiKey: "k", model: "m" }, p, [], [tool], { cloudUrl: "https://c.test/cloud", webSearch: true })!;
+	assert.equal(c.body.web_search, true);
+	assert.ok(!(c.body.tools as Array<{ type?: string }>).some((t) => t.type === "web_search_20250305"), "Grill Cloud adds the search itself");
+});

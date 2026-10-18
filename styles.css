@@ -3966,3 +3966,53 @@ textarea.grill-mgmt-field {
 .grill-agent-concept {
   margin-top: 0.2em;
 }
+
+/* MCP servers box in settings: the JSON gets the full width. */
+.grill-setting-tall {
+	flex-wrap: wrap;
+}
+.grill-setting-tall .setting-item-control {
+	flex-basis: 100%;
+	flex-wrap: wrap;
+	margin-top: var(--size-4-2);
+}
+/* After the buttons, on a line of its own. */
+.grill-setting-tall textarea.grill-mono {
+	order: 1;
+	flex-basis: 100%;
+	width: 100%;
+	box-sizing: border-box;
+	min-width: 18em;
+	font-family: var(--font-monospace);
+	font-size: var(--font-smaller);
+}
+.grill-inline-btn {
+	margin-left: var(--size-4-2);
+}
+
+/* Chats list: each chat with its Rename and Delete under it. */
+.grill-chat-item {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	margin-bottom: var(--size-4-2);
+}
+.grill-chat-actions {
+	display: flex;
+	gap: var(--size-4-3);
+	align-items: center;
+	padding-left: var(--size-4-2);
+}
+.grill-chat-actions button.grill-chip-link {
+	background: none;
+	border: none;
+	box-shadow: none;
+	padding: 0;
+	height: auto;
+	font-size: var(--font-smaller);
+	cursor: pointer;
+}
+.grill-chat-actions button.grill-chat-delete {
+	color: var(--text-error);
+	font-weight: var(--font-semibold);
+}

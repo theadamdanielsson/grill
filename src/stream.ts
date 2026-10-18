@@ -36,6 +36,9 @@ export interface StreamOptions {
 	/** Grill Cloud's address, when its server has said it streams; without it Grill
 	 * Cloud is asked the old way. */
 	cloudUrl?: string | null;
+	/** Let the model search the web with the provider's own search: Anthropic, directly
+	 * or through Grill Cloud. */
+	webSearch?: boolean;
 }
 
 /** Nothing was written and nothing can be: ask without streaming. */
@@ -167,6 +170,7 @@ export function toolStreamCall(cfg: LLMConfig, p: StreamPrompt, steps: ToolMsg[]
 	const messages = call.body.messages as unknown[];
 	if (call.kind === "anthropic") {
 		call.body.tools = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.input }));
+		if (o.webSearch) (call.body.tools as unknown[]).push({ type: "web_search_20250305", name: "web_search", max_uses: 3 });
 		for (const step of steps) {
 			if (step.role === "assistant") {
 				messages.push({
@@ -183,6 +187,8 @@ export function toolStreamCall(cfg: LLMConfig, p: StreamPrompt, steps: ToolMsg[]
 		return call;
 	}
 	call.body.tools = tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.input } }));
+	// Grill Cloud runs the search on its side.
+	if (o.webSearch && cfg.provider === "grillcloud") call.body.web_search = true;
 	for (const step of steps) {
 		if (step.role === "assistant") {
 			messages.push({
@@ -367,6 +373,9 @@ export async function streamText(call: StreamCall, run: StreamRun): Promise<Stre
 	const parts = new Map<number, { id: string; name: string; args: string }>();
 	const note = (piece: StreamPiece): void => {
 		for (const part of piece.callParts ?? []) {
+			// The input of a tool the provider runs itself (its web search) comes in the
+			// same pieces as a tool call, under a block never started as one: not Grill's.
+			if (!parts.has(part.index) && !part.id && !part.name) continue;
 			const call = parts.get(part.index) ?? { id: "", name: "", args: "" };
 			if (part.id) call.id = part.id;
 			if (part.name) call.name = part.name;

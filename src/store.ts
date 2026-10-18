@@ -902,7 +902,7 @@ export class GrillStore {
 	async saveLearnThread(
 		note: string,
 		turns: Array<{ role: "student" | "tutor"; text: string; diagram?: string }>,
-		meta: { provider: string; model: string; startedAt: Date },
+		meta: { provider: string; model: string; startedAt: Date; into?: TFile; from?: number },
 	): Promise<TFile | null> {
 		if (!turns.length) return null;
 		const d = meta.startedAt;
@@ -912,7 +912,9 @@ export class GrillStore {
 		await this.ensureFolder(normalizePath(`${this.folder()}/Learn`));
 		await this.ensureFolder(dir);
 		const day = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-		const title = learnTitle(turns, note === "Your notes" ? "" : note);
+		// A conversation carried on keeps the title it has, which may be one given to it.
+		const had: unknown = meta.into ? this.app.metadataCache.getFileCache(meta.into)?.frontmatter?.title : undefined;
+		const title = typeof had === "string" && had.trim() ? had.trim() : learnTitle(turns, note === "Your notes" ? "" : note);
 		const lines: string[] = [
 			"---",
 			`date: ${day}`,
@@ -932,6 +934,20 @@ export class GrillStore {
 			lines.push(turn.role === "student" ? "> [!question] You asked" : "> [!note] Grill", ...quoted, "");
 			const drawn = safeDiagram(turn.diagram ?? "");
 			if (drawn) lines.push("```mermaid", drawn, "```", "");
+		}
+		// A conversation carried on is kept in the note it was saved in: what was said since
+		// is added at its end, and the rest of the note, with anything added to it by
+		// hand, is left as it is.
+		if (meta.into && this.app.vault.getAbstractFileByPath(meta.into.path)) {
+			const more: string[] = [];
+			for (const turn of turns.slice(meta.from ?? 0)) {
+				const quoted = safeMarkdown(turn.text).split("\n").map((l) => `> ${l}`);
+				more.push(turn.role === "student" ? "> [!question] You asked" : "> [!note] Grill", ...quoted, "");
+				const drawn = safeDiagram(turn.diagram ?? "");
+				if (drawn) more.push("```mermaid", drawn, "```", "");
+			}
+			if (more.length) await this.app.vault.process(meta.into, (text) => `${text.replace(/\s+$/, "")}\n\n${more.join("\n")}`);
+			return meta.into;
 		}
 		// Dated first, so the folder reads in order and the name can't be taken for a
 		// note of the student's own with the same title.

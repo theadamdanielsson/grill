@@ -1,11 +1,11 @@
 /** Quiz session side panel. */
 
-import { ItemView, loadMermaid, MarkdownRenderer, Menu, Modal, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
+import { getAllTags, ItemView, loadMermaid, MarkdownRenderer, Menu, Modal, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
 import { INTENSITY_PRESETS } from "./main";
 import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, cloudEnabled, creditsInWords, lowBalance, planInWords, usageInWords } from "./cloud";
 import { CLAUDE_MODELS, selectionMessage, STARTER_PROMPTS } from "./selection";
-import { adjudicateBridges, ConceptTarget, contentWords, debriefSession, discussQuestion, embedTexts, explainQuestion, formatSatisfies, generateQuestions, Grade, CloudError, cleanDiagram, cleanText, gradeAnswer, learnFromNotes, learnWithTools, listModels, LLMConfig, replyInProgress, offeredProviders, PROVIDERS, ProviderId, Question, supportsEmbeddings, supportsVision, testModel, ThreadTurn, type StudyOfferButton, Verdict } from "./llm";
+import { adjudicateBridges, ConceptTarget, contentWords, debriefSession, discussQuestion, embedTexts, explainQuestion, formatSatisfies, generateQuestions, Grade, CloudError, cleanDiagram, cleanText, gradeAnswer, learnFromNotes, learnWithTools, summarizeChat, listModels, LLMConfig, replyInProgress, offeredProviders, PROVIDERS, ProviderId, Question, supportsEmbeddings, supportsVision, testModel, ThreadTurn, type StudyOfferButton, Verdict } from "./llm";
 import { detectOcclusionRegions } from "./ocr";
 import {
 	Concept,
@@ -81,9 +81,9 @@ import { celebrate, playSfx } from "./sfx";
 import { stopSpeaking, toSpeechText, ttsAvailable } from "./tts";
 import { SessionEntry } from "./store";
 import { renderThreadHistory } from "./thread";
-import { listSome, missesLine, noteLine, shortDate } from "./suggest";
+import { listSome, missesLine, mostLinked, noteLine, shortDate, startingNote } from "./suggest";
 import { drawPicks, renderChatHome, renderCreditsRing, type HomeMode, type HomeSuggestion } from "./home";
-import { aboutTheVault, learnContext, learnRecord, namesANote, parseLearnNote, parseSessionNote, namesInFull, rankNotes, replyTitle, sessionTitle, vaultMap, vaultNotes, type PastAnswer } from "./learn";
+import { aboutTheVault, compactAt, learnContext, learnRecord, namesANote, parseLearnNote, parseLearnThread, parseSessionNote, namesInFull, rankNotes, replyTitle, sessionTitle, vaultMap, vaultNotes, vaultStructure, type PastAnswer, type VaultNote } from "./learn";
 import { safeDiagram, safeMarkdown } from "./safemd";
 import { activitySummary, AgentEvent, agentBrief, AGENT_LEVELS, claudeCommands, findProgram, PermissionAnswer, PermissionAsk, runAgent } from "./agent";
 import type { VaultPort } from "./vaulttools";
@@ -519,6 +519,15 @@ export class SessionView extends ItemView {
 		quote?: string;
 		turns: ThreadTurn[];
 		startedAt: Date;
+		/** A past conversation carried on: the note it is kept in, and how many of the
+		 * turns were already there, so leaving without a new one changes nothing. */
+		file?: TFile;
+		had?: number;
+		/** A long conversation's start, summed up so it can go on (see `compactAt`): the
+		 * summary, and how many turns it covers. The saved note keeps every turn. */
+		summary?: string;
+		summarized?: number;
+		summaryFailures?: number;
 		persona: string;
 		instructions: string;
 		/** The kinds of change the student has said to always allow in this chat. */
@@ -1063,7 +1072,12 @@ export class SessionView extends ItemView {
 	private async enoughToTest(f: TFile): Promise<boolean> {
 		const s = this.plugin.data.settings;
 		try {
-			const concepts = extractConcepts(f.basename, await this.app.vault.cachedRead(f), s.questionFormats);
+			// With the text of the PDFs it embeds, as a session reads it: a note that is
+			// only a PDF embed is not short.
+			const cache = await this.plugin.store.loadPdfCache();
+			const text = await noteStudyText(this.app, f, cache);
+			await this.plugin.store.savePdfCache(cache);
+			const concepts = extractConcepts(f.basename, text, s.questionFormats);
 			return concepts.length >= TEST_NOTE_CONCEPTS;
 		} catch {
 			return true;
@@ -1498,11 +1512,7 @@ export class SessionView extends ItemView {
 		const untested = learning ? [] : untestedFiles(eligible, concepts);
 		if (untested.length && untested.length < eligible.length) {
 			// Named by the notes the rest lean on most: the ones most linked to.
-			const linksIn = new Map<string, number>();
-			for (const targets of Object.values(this.app.metadataCache.resolvedLinks)) {
-				for (const path of Object.keys(targets)) linksIn.set(path, (linksIn.get(path) ?? 0) + 1);
-			}
-			const first = [...untested].sort((a, b) => (linksIn.get(b.path) ?? 0) - (linksIn.get(a.path) ?? 0)).map((f) => f.basename);
+			const first = mostLinked(untested, this.app.metadataCache.resolvedLinks).map((f) => f.basename);
 			suggestions.push({
 				label: "Something new",
 				detail: `Not tested yet. The most linked-to: ${listSome(first)}`,
@@ -1532,7 +1542,42 @@ export class SessionView extends ItemView {
 			});
 		}
 
+		// Someone new, with nothing tested and no conversation yet: the same few ways in
+		// whichever side is showing, on the note they have open or edited last.
+		const isNew = !Object.values(concepts).some((cm) => cm.correct + cm.partial + cm.incorrect > 0) && !this.recentSessions().length;
+		if (isNew) {
+			suggestions.length = 0;
+			const note = startingNote(openNote, eligible);
+			if (note) {
+				const where = note === openNote ? "The note you have open" : "The note you edited last";
+				suggestions.push({
+					label: `Test me on ${note.basename}`,
+					detail: where,
+					run: () => begin([note], false),
+					check: async () => ((await this.enoughToTest(note)) ? null : "Too short to test"),
+				});
+				suggestions.push({
+					label: `Walk me through ${note.basename}`,
+					detail: where,
+					run: () => void this.startLearn(note, "Walk me through the main ideas in this note."),
+				});
+			}
+			if (eligible.length > 1) {
+				const links = this.app.metadataCache.resolvedLinks;
+				const first = mostLinked(eligible, links);
+				const linked = Object.values(links).some((targets) => first[0]?.path in targets);
+				const names = listSome(first.map((f) => f.basename));
+				suggestions.push({
+					label: linked ? "Test me on my key notes" : "Test me on my notes",
+					detail: linked ? `The most linked-to: ${names}` : names,
+					count: String(eligible.length),
+					run: () => begin(first, false),
+				});
+			}
+		}
+
 		renderChatHome(screen, {
+			suggestionsLabel: isNew ? "Get started" : undefined,
 			mode: this.homeMode,
 			setMode: (mode) => {
 				this.homeMode = mode;
@@ -1552,7 +1597,7 @@ export class SessionView extends ItemView {
 							: sessionTitle((cache?.headings ?? []).filter((h) => h.level === 2).map((h) => h.heading));
 						return {
 							title: title || f.basename,
-							open: () => void this.app.workspace.getLeaf(false).openFile(f),
+							open: () => void (chatted ? this.resumeLearn(f) : this.app.workspace.getLeaf(false).openFile(f)),
 						};
 					})[0] ?? null,
 			openNote: openNote?.basename ?? null,
@@ -1586,6 +1631,7 @@ export class SessionView extends ItemView {
 				this.questionsView = null;
 				void this.renderManageQuestions();
 			},
+			showChats: () => this.renderChats(),
 		});
 		this.creditsRing(screen);
 	}
@@ -1829,6 +1875,7 @@ export class SessionView extends ItemView {
 		firstAsk?: string,
 		also: TFile[] = [],
 		vault?: { text: string; reading: string; whole: boolean },
+		resume?: { file: TFile; turns: ThreadTurn[] },
 	): Promise<void> {
 		const cfg = this.plugin.llmConfig();
 		if (!this.agentProgram() && !cfg) {
@@ -1841,7 +1888,22 @@ export class SessionView extends ItemView {
 		const ctx = vault?.whole ? { noteText: "", linkedText: "" } : await this.learnNotes(note, also);
 		const record = vault?.whole ? "" : await this.recordFor(note.basename);
 		const testable = !vault?.whole && (await this.enoughToTest(note));
-		this.learn = { note, also, reading: vault?.reading ?? "", vault: vault?.text ?? "", whole: !!vault?.whole, ...ctx, record, testable, turns: [], startedAt: new Date(), persona: instr.persona, instructions: instr.preferences, allowed: new Set() };
+		this.learn = {
+			note,
+			also,
+			reading: vault?.reading ?? "",
+			vault: vault?.text ?? "",
+			whole: !!vault?.whole,
+			...ctx,
+			record,
+			testable,
+			turns: resume ? [...resume.turns] : [],
+			startedAt: resume ? new Date(resume.file.stat.ctime) : new Date(),
+			...(resume ? { file: resume.file, had: resume.turns.length } : {}),
+			persona: instr.persona,
+			instructions: instr.preferences,
+			allowed: new Set(),
+		};
 		this.renderLearn();
 		if (firstAsk) await this.askLearn(firstAsk);
 	}
@@ -1867,6 +1929,8 @@ export class SessionView extends ItemView {
 		this.learn = null;
 		this.learnStop?.abort();
 		if (!L || !L.turns.some((t) => t.role === "tutor")) return;
+		// Carried on and left without a new word: the note stays as it was.
+		if (L.file && L.turns.length <= (L.had ?? 0)) return;
 		const cfg = this.plugin.llmConfig();
 		const s = this.plugin.data.settings;
 		// What answered: the program Chat ran on, or the model.
@@ -1876,9 +1940,188 @@ export class SessionView extends ItemView {
 				provider: ran ?? cfg?.provider ?? "",
 				model: ran === "claudecode" ? s.claudeModel || "default" : ran === "opencode" ? s.opencodeModel || "default" : ran ? "default" : cfg?.provider === "grillcloud" ? "hosted" : (cfg?.model ?? ""),
 				startedAt: L.startedAt,
+				into: L.file,
+				from: L.had,
 			});
 		} catch (e) {
 			console.error("Grill: the chat could not be saved", e);
+		}
+	}
+
+	/** Carry on with a conversation saved under Learn: its turns, read back, are where it
+	 * picks up, and what is said next is kept in the same note. */
+	private async resumeLearn(file: TFile): Promise<void> {
+		const turns = parseLearnThread(await this.app.vault.cachedRead(file));
+		if (!turns.length) {
+			await this.app.workspace.getLeaf(false).openFile(file);
+			return;
+		}
+		const about: unknown = this.app.metadataCache.getFileCache(file)?.frontmatter?.note;
+		const eligible = this.allEligible();
+		const note = typeof about === "string" ? eligible.find((f) => f.basename === about) : undefined;
+		const active = this.app.workspace.getActiveFile();
+		const anchor = note ?? (active && active.extension === "md" ? active : eligible[0]);
+		if (!anchor) {
+			new Notice("Grill: there are no notes to read yet.", 8000);
+			return;
+		}
+		// About the notes as a whole (or a note since removed): the map of the vault, with
+		// the tools to read what it needs.
+		const mapped = note ? [] : await this.vaultMapNotes(eligible);
+		const vault = note ? undefined : { text: this.modelHasTools() ? vaultStructure(mapped) : vaultMap(mapped), reading: "", whole: true };
+		await this.startLearn(anchor, undefined, [], vault, { file, turns });
+	}
+
+	/** The notes as the vault maps list them, with what Obsidian's index knows of each. */
+	private async vaultMapNotes(eligible: TFile[]): Promise<VaultNote[]> {
+		const cache = this.app.metadataCache;
+		const linksIn = new Map<string, number>();
+		for (const targets of Object.values(cache.resolvedLinks)) {
+			for (const path of Object.keys(targets)) linksIn.set(path, (linksIn.get(path) ?? 0) + 1);
+		}
+		const words: Record<string, string> = { known: "known", struggling: "learning", untested: "not tested yet" };
+		return Promise.all(
+			eligible.map(async (f) => {
+				const meta = cache.getFileCache(f);
+				const out = Object.keys(cache.resolvedLinks[f.path] ?? {})
+					.filter((p) => p.endsWith(".md"))
+					.map((p) => p.split("/").pop()!.replace(/\.md$/, ""));
+				return {
+					name: f.basename,
+					text: await this.app.vault.cachedRead(f),
+					folder: f.parent?.path === "/" ? "" : (f.parent?.path ?? ""),
+					linksIn: linksIn.get(f.path) ?? 0,
+					status: words[statusOf(this.plugin.mastery[f.basename])] ?? "not tested yet",
+					headings: (meta?.headings ?? []).filter((h) => h.level <= 2).slice(0, 6).map((h) => h.heading),
+					out: out.slice(0, 10),
+					tags: meta ? [...new Set(getAllTags(meta) ?? [])].slice(0, 6) : [],
+				};
+			}),
+		);
+	}
+
+	/** A note as Obsidian indexes it, for `note_outline`. */
+	private outlineOf(path: string): string | null {
+		const f = this.app.vault.getAbstractFileByPath(path);
+		if (!(f instanceof TFile) || this.plugin.isExcluded(path)) return null;
+		const cache = this.app.metadataCache;
+		const meta = cache.getFileCache(f);
+		const name = (p: string): string => p.split("/").pop()!.replace(/\.md$/, "");
+		const out = Object.keys(cache.resolvedLinks[f.path] ?? {}).map(name);
+		const unresolved = Object.keys(cache.unresolvedLinks[f.path] ?? {});
+		const back = Object.entries(cache.resolvedLinks)
+			.filter(([from, to]) => from !== f.path && to[f.path])
+			.map(([from]) => name(from));
+		const props = Object.entries(meta?.frontmatter ?? {})
+			.filter(([k]) => k !== "position")
+			.map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`.slice(0, 160));
+		const lines = [
+			`${f.path} (${f.stat.size} bytes, changed ${new Date(f.stat.mtime).toISOString().slice(0, 10)})`,
+			props.length ? `Properties:\n${props.map((p) => `  ${p}`).join("\n")}` : "",
+			meta?.headings?.length ? `Headings:\n${meta.headings.slice(0, 80).map((h) => `${"  ".repeat(h.level)}${h.heading}`).join("\n")}` : "No headings.",
+			`Links to: ${out.length ? out.join(", ") : "nothing"}${unresolved.length ? ` (and to notes not yet written: ${unresolved.slice(0, 20).join(", ")})` : ""}`,
+			`Linked from: ${back.length ? back.slice(0, 40).join(", ") : "nothing"}`,
+			meta ? `Tags: ${[...new Set(getAllTags(meta) ?? [])].join(" ") || "none"}` : "",
+		];
+		return lines.filter(Boolean).join("\n");
+	}
+
+	/** Every saved conversation, newest first: open one to carry on with it. */
+	private renderChats(): void {
+		const wrap = this.root();
+		const screen = wrap.createDiv({ cls: "grill-body" });
+		const header = screen.createDiv({ cls: "grill-meta-row grill-mgmt-header" });
+		header.createSpan({ cls: "grill-score", text: "Chats" });
+		const back = header.createSpan({ cls: "grill-chip-link", text: "Back" });
+		back.onclick = () => this.renderStart();
+		const dir = `${this.plugin.data.settings.folder}/Learn/`;
+		const all = this.app.vault
+			.getMarkdownFiles()
+			.filter((f) => f.path.startsWith(dir))
+			.sort((a, b) => b.stat.ctime - a.stat.ctime);
+		const search = screen.createEl("input", { cls: "grill-mgmt-search", attr: { type: "search", placeholder: "Search chats...", "aria-label": "Search chats" } });
+		const list = screen.createDiv({ cls: "grill-home-suggestions grill-chats" });
+		const draw = (): void => {
+			list.empty();
+			const q = search.value.trim().toLowerCase();
+			const shown = all
+				.map((f) => {
+					const fm = this.app.metadataCache.getFileCache(f)?.frontmatter;
+					return { f, title: String(fm?.title ?? f.basename), note: String(fm?.note ?? ""), date: String(fm?.date ?? "") };
+				})
+				.filter((c) => !q || `${c.title} ${c.note}`.toLowerCase().includes(q))
+				.slice(0, 100);
+			if (!shown.length) {
+				list.createDiv({ cls: "grill-meta", text: all.length ? "No chat matches that." : "No chats yet. What you talk about in Chat is kept here." });
+				return;
+			}
+			for (const c of shown) {
+				const item = list.createDiv({ cls: "grill-chat-item" });
+				const row = item.createEl("button", { cls: "grill-home-suggestion", attr: { type: "button" } });
+				const words = row.createSpan({ cls: "grill-home-suggestion-words" });
+				words.createSpan({ cls: "grill-home-suggestion-label", text: c.title });
+				words.createSpan({ cls: "grill-home-suggestion-detail", text: [c.note && c.note !== "Your notes" ? c.note : "Your notes", shortDate(c.date)].filter(Boolean).join(" · ") });
+				row.onclick = () => void this.resumeLearn(c.f);
+				const acts = item.createDiv({ cls: "grill-chat-actions" });
+				const rename = acts.createEl("button", { cls: "grill-chip-link", text: "Rename", attr: { type: "button" } });
+				const remove = acts.createEl("button", { cls: "grill-chip-link", text: "Delete", attr: { type: "button" } });
+				rename.onclick = () => {
+					row.hide();
+					acts.hide();
+					const input = item.createEl("input", { cls: "grill-mgmt-search", attr: { type: "text", "aria-label": "New name" } });
+					input.value = c.title;
+					input.focus();
+					input.select();
+					let done = false;
+					const finish = async (keep: boolean): Promise<void> => {
+						if (done) return;
+						done = true;
+						const name = input.value.replace(/[\\/:*?"<>|#^[\]]/g, " ").replace(/\s+/g, " ").trim();
+						if (keep && name && name !== c.title) {
+							await this.renameChat(c.f, name);
+							// Obsidian reads the new title back a moment later.
+							window.setTimeout(draw, 300);
+						} else draw();
+					};
+					input.addEventListener("keydown", (e) => {
+						if (e.key === "Enter") void finish(true);
+						if (e.key === "Escape") void finish(false);
+					});
+					input.addEventListener("blur", () => void finish(true));
+				};
+				remove.onclick = () => {
+					acts.empty();
+					acts.createSpan({ cls: "grill-meta", text: "Delete this chat? " });
+					const yes = acts.createEl("button", { cls: "grill-chip-link grill-chat-delete", text: "Delete", attr: { type: "button" } });
+					const no = acts.createEl("button", { cls: "grill-chip-link", text: "Keep", attr: { type: "button" } });
+					yes.onclick = async () => {
+						await this.app.fileManager.trashFile(c.f);
+						all.splice(all.indexOf(c.f), 1);
+						draw();
+					};
+					no.onclick = () => draw();
+				};
+			}
+		};
+		search.addEventListener("input", draw);
+		draw();
+	}
+
+	/** Give a saved chat a name of one's own: its title, its heading, and its file name,
+	 * which stays dated so the folder still reads in order. */
+	private async renameChat(file: TFile, name: string): Promise<void> {
+		try {
+			await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+				fm.title = name;
+			});
+			await this.app.vault.process(file, (text) => text.replace(/^# .*$/m, () => `# ${name}`));
+			const day = /^\d{4}-\d{2}-\d{2}/.exec(file.basename)?.[0];
+			const dir = file.parent?.path ?? "";
+			let path = `${dir}/${day ? `${day} ` : ""}${name}.md`;
+			for (let n = 2; this.app.vault.getAbstractFileByPath(path) && path !== file.path; n++) path = `${dir}/${day ? `${day} ` : ""}${name} ${n}.md`;
+			if (path !== file.path) await this.app.fileManager.renameFile(file, path);
+		} catch (e) {
+			new Notice(`Grill: the chat could not be renamed: ${e instanceof Error ? e.message : String(e)}`, 8000);
 		}
 	}
 
@@ -1940,20 +2183,7 @@ export class SessionView extends ItemView {
 			new Notice("Grill: Chat needs a model. Start Grill Cloud or add a key in settings.", 8000);
 			return;
 		}
-		const linksIn = new Map<string, number>();
-		for (const targets of Object.values(this.app.metadataCache.resolvedLinks)) {
-			for (const path of Object.keys(targets)) linksIn.set(path, (linksIn.get(path) ?? 0) + 1);
-		}
-		const words: Record<string, string> = { known: "known", struggling: "learning", untested: "not tested yet" };
-		const notes = await Promise.all(
-			eligible.map(async (f) => ({
-				name: f.basename,
-				text: await this.app.vault.cachedRead(f),
-				folder: f.parent?.path === "/" ? "" : (f.parent?.path ?? ""),
-				linksIn: linksIn.get(f.path) ?? 0,
-				status: words[statusOf(this.plugin.mastery[f.basename])] ?? "not tested yet",
-			})),
-		);
+		const notes = await this.vaultMapNotes(eligible);
 		const byName = new Map(eligible.map((f) => [f.basename, f] as const));
 		const found = rankNotes(text, notes, 5, openNote?.basename ?? "").flatMap((n) => byName.get(n.name) ?? []);
 		const map = vaultMap(notes);
@@ -1992,6 +2222,12 @@ export class SessionView extends ItemView {
 		const anchor = openNote ?? eligible[0];
 		if (!anchor) {
 			new Notice("Grill: there are no notes to read yet.", 8000);
+			return;
+		}
+		// A model that can read notes itself works from Obsidian's own map of the vault and
+		// reads what it needs, so the conversation can go on as long as one about a note.
+		if (this.modelHasTools()) {
+			await this.startLearn(anchor, text, [], { text: vaultStructure(notes), reading: `Working from a map of your ${notes.length} notes`, whole: true });
 			return;
 		}
 		// A local model reads far less at once than a hosted one.
@@ -2192,7 +2428,10 @@ export class SessionView extends ItemView {
 		if (!L || (!cfg && !program)) return;
 		// Claude Code keeps its own conversation and reads what it needs each turn, so
 		// the limit that keeps a resent conversation affordable doesn't apply to it.
-		if (!program && L.turns.filter((t) => t.role === "student").length >= (L.whole ? WHOLE_VAULT_TURNS : THREAD_LIMIT)) {
+		// A conversation about one note goes on as long as it's wanted: its start is summed
+		// up when it gets long (see askModel). One that sends the whole vault again with
+		// every message is still kept short.
+		if (!program && L.whole && L.vault.includes("NOTES IN FULL") && L.turns.filter((t) => t.role === "student").length >= WHOLE_VAULT_TURNS) {
 			new Notice("Grill: that's a long conversation. Test yourself on it, or start a new one.", 8000);
 			return;
 		}
@@ -2261,10 +2500,13 @@ export class SessionView extends ItemView {
 			};
 			this.pendingOffers = [];
 			this.turnBefore.clear();
+			// What is open in the editor now, which may not be the note the chat is about:
+			// the user may have moved on to another note since the chat began.
+			const sent = this.withOpenNow(L, text);
 			const reply =
 				program && waiting
-					? await this.askAgent(L, program, text, waiting, live)
-					: await this.askModel(cfg as LLMConfig, L, text, waiting, live);
+					? await this.askAgent(L, program, sent, waiting, live)
+					: await this.askModel(cfg as LLMConfig, L, sent, waiting, live);
 			if (this.learn !== L) return;
 			if (this.pendingOffers.length) reply.offers = this.pendingOffers;
 			this.pendingOffers = [];
@@ -2336,7 +2578,7 @@ export class SessionView extends ItemView {
 					};
 					const once = row.createEl("button", { cls: "mod-cta", text: "Allow once", attr: { type: "button" } });
 					once.onclick = () => decide("once", "Allowed");
-					row.createEl("button", { text: req.always, attr: { type: "button" } }).onclick = () => decide("always", "Allowed for this chat");
+					if (req.always) row.createEl("button", { text: req.always, attr: { type: "button" } }).onclick = () => decide("always", "Allowed for this chat");
 					row.createEl("button", { text: "Deny", attr: { type: "button" } }).onclick = () => decide("deny", "Denied. Nothing was changed");
 					// Leaving the conversation with a card open is a no.
 					live.signal.addEventListener("abort", () => answer("deny"), { once: true });
@@ -2373,6 +2615,7 @@ export class SessionView extends ItemView {
 				await vault.create(path, content);
 			},
 			exists: (path) => !!vault.getAbstractFileByPath(path),
+			outline: (path) => this.outlineOf(path),
 			// Grill's own folder under any spelling of its case: on most computers
 			// "grill/" and "Grill/" are one folder.
 			locked: (path) => this.plugin.isExcluded(path) || path.toLowerCase().startsWith(`${this.plugin.data.settings.folder.toLowerCase()}/`),
@@ -2549,6 +2792,49 @@ export class SessionView extends ItemView {
 		return cfg.provider === "anthropic" || cfg.provider === "openai" || cfg.provider === "deepseek" || cfg.provider === "custom";
 	}
 
+	/** A message as it is sent: led by the note open in the editor, when that is not the
+	 * note the chat is about. The conversation shows and keeps what was typed. */
+	private withOpenNow(L: NonNullable<SessionView["learn"]>, text: string): string {
+		const f = this.app.workspace.getActiveFile();
+		if (!f || f.extension !== "md" || this.plugin.isExcluded(f.path)) return text;
+		if (!L.whole && f === L.note) return text;
+		return `(Open in the editor now: [[${f.basename}]].)\n\n${text}`;
+	}
+
+	/** The conversation so far as it is sent to the model: whole while it fits, and once
+	 * it doesn't, its start summed up and its latest turns as they were, the way Claude
+	 * Code compacts. A summary that can't be written leaves the latest turns alone. */
+	private async compacted(cfg: LLMConfig, L: NonNullable<SessionView["learn"]>): Promise<ThreadTurn[]> {
+		const before = L.turns.slice(0, -1);
+		const from = L.summarized ?? 0;
+		const cut = compactAt(before, from);
+		if (cut > 0) {
+			// Only a summary that was written moves the start on: without one, the turns it
+			// would have covered are still sent, and summing up is tried again next time.
+			let summary = "";
+			try {
+				summary = await summarizeChat(cfg, before.slice(from, cut), L.summary ?? "");
+			} catch (e) {
+				console.error("Grill: the chat could not be summed up", e);
+			}
+			if (summary) {
+				L.summary = summary;
+				L.summarized = cut;
+				L.summaryFailures = 0;
+				new Notice("Grill: the start of this chat was summed up, so it can keep going.", 6000);
+			} else if ((L.summaryFailures = (L.summaryFailures ?? 0) + 1) >= 2) {
+				// Twice it could not be summed up: the start is no longer sent, rather than
+				// sending a conversation that grows until no request can carry it.
+				L.summarized = cut;
+				L.summaryFailures = 0;
+				new Notice("Grill: the start of this chat could not be summed up, so only its latest part is sent. The saved chat keeps all of it.", 8000);
+			}
+		}
+		const start = L.summarized ?? 0;
+		const summary: ThreadTurn[] = L.summary ? [{ role: "tutor", text: `(The earlier part of this chat, summed up.)\n${L.summary}` }] : [];
+		return [...summary, ...before.slice(start)];
+	}
+
 	/** One turn answered by the chosen model: with the vault tools where it can use
 	 * them, plainly where it can't. */
 	private async askModel(
@@ -2558,7 +2844,7 @@ export class SessionView extends ItemView {
 		waiting: HTMLElement | null | undefined,
 		live: { onText(soFar: string): void; signal: AbortSignal },
 	): Promise<ThreadTurn> {
-		const said = L.turns.slice(0, -1);
+		const said = await this.compacted(cfg, L);
 		if (waiting && this.modelHasTools()) {
 			const ui = this.turnUi(waiting, live);
 			const done = await learnWithTools(cfg, L.note.basename, L.noteText, L.linkedText, said, text, L.persona, L.instructions, L.record, L.vault, live, {
@@ -2567,6 +2853,7 @@ export class SessionView extends ItemView {
 				onEvent: ui.onEvent,
 				ask: ui.ask,
 				allowed: L.allowed,
+				extra: await this.plugin.chatExtras(),
 			});
 			// Could not be opened as a stream: asked once more, whole, which is the request
 			// that knows how to say what a provider refused and why.
@@ -3361,12 +3648,10 @@ export class SessionView extends ItemView {
 						renderList();
 					};
 				} else {
-					empty.createDiv({ cls: "grill-mgmt-empty-title", text: "Nothing cached yet" });
+					empty.createDiv({ cls: "grill-mgmt-empty-title", text: "No questions yet" });
 					empty.createDiv({
 						cls: "grill-meta",
-						text:
-							"Questions Grill has written show up here once you've reviewed some. " +
-							"Authored \"> [!grill]\" questions aren't listed here — edit those directly in the note.",
+						text: "The questions Grill writes for you show up here after your first test. Questions you write in a note yourself stay in that note.",
 					});
 				}
 				return;

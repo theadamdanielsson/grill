@@ -38,6 +38,8 @@ export interface HomeData {
 	/** Chat: you ask or say what to do, nothing graded. Test: Grill asks and it counts. */
 	mode: HomeMode;
 	setMode(mode: HomeMode): void;
+	/** The heading over the suggestions, when not "Suggestions". */
+	suggestionsLabel?: string;
 	suggestions: HomeSuggestion[];
 	/** The conversation or session last had, to pick up from. */
 	last: HomeRecent | null;
@@ -64,6 +66,7 @@ export interface HomeData {
 	send(text: string, withOpenNote: boolean): void;
 	showProgress: () => void;
 	showQuestions: () => void;
+	showChats: () => void;
 }
 
 /** How much is left, as a ring with no number on it: a balance that ticks down in
@@ -103,7 +106,7 @@ export function renderChatHome(screen: HTMLElement, d: HomeData): void {
 
 	if (d.suggestions.length) {
 		const list = body.createDiv({ cls: "grill-home-suggestions" });
-		list.createDiv({ cls: "grill-home-label", text: "Suggestions" });
+		list.createDiv({ cls: "grill-home-label", text: d.suggestionsLabel ?? "Suggestions" });
 		for (const s of d.suggestions) {
 			const row = list.createEl("button", { cls: "grill-home-suggestion", attr: { type: "button" } });
 			const words = row.createSpan({ cls: "grill-home-suggestion-words" });
@@ -176,6 +179,7 @@ export function renderChatHome(screen: HTMLElement, d: HomeData): void {
 	};
 	link("Progress", d.showProgress);
 	link("Questions", d.showQuestions);
+	link("Chats", d.showChats);
 }
 
 /** The buttons under a message box: what answers, its permission level, its model, and

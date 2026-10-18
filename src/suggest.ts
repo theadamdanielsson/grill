@@ -42,3 +42,20 @@ export function noteLine(concepts: ConceptMastery[]): string {
 	const when = shortDate(last);
 	return parts.join(", ") + (when ? `. Last tested ${when}` : "");
 }
+
+/** The note to suggest first to someone new: the one open, or else the one edited
+ * most recently. */
+export function startingNote<T extends { stat: { mtime: number } }>(open: T | null, eligible: T[]): T | null {
+	if (open) return open;
+	return [...eligible].sort((a, b) => b.stat.mtime - a.stat.mtime)[0] ?? null;
+}
+
+/** Notes in order of how many others link to them, most first: the ones the rest
+ * lean on. `links` is Obsidian's resolvedLinks, source path to target paths. */
+export function mostLinked<T extends { path: string }>(files: T[], links: Record<string, Record<string, number>>): T[] {
+	const linksIn = new Map<string, number>();
+	for (const targets of Object.values(links)) {
+		for (const path of Object.keys(targets)) linksIn.set(path, (linksIn.get(path) ?? 0) + 1);
+	}
+	return [...files].sort((a, b) => (linksIn.get(b.path) ?? 0) - (linksIn.get(a.path) ?? 0));
+}

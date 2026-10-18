@@ -207,6 +207,60 @@ export function parseLearnNote(text: string): string[] {
 	return out.filter(Boolean);
 }
 
+/** A saved conversation read back as its turns, to carry on with. Diagrams are left
+ * out: the words are what the model needs. */
+export function parseLearnThread(text: string): Array<{ role: "student" | "tutor"; text: string; diagram?: string }> {
+	const lines = text.split(/\r?\n/);
+	const out: Array<{ role: "student" | "tutor"; lines: string[]; diagram?: string[] }> = [];
+	let open = false;
+	let drawing: string[] | null = null;
+	lines.forEach((line, i) => {
+		const start = i === 0 || lines[i - 1].trim() === "";
+		// A reply's diagram is written after it, fenced.
+		if (drawing) {
+			if (line.trim() === "```") drawing = null;
+			else drawing.push(line);
+			return;
+		}
+		if (!open && line.trim() === "```mermaid" && out[out.length - 1]?.role === "tutor") {
+			drawing = out[out.length - 1].diagram = [];
+			return;
+		}
+		if (start && line.startsWith("> [!question] You asked")) {
+			out.push({ role: "student", lines: [] });
+			open = true;
+		} else if (start && line.startsWith("> [!note] Grill")) {
+			out.push({ role: "tutor", lines: [] });
+			open = true;
+		} else if (open && line.startsWith(">")) {
+			out[out.length - 1].lines.push(line.replace(/^> ?/, ""));
+		} else open = false;
+	});
+	return out
+		.map((t) => ({ role: t.role, text: t.lines.join("\n").trim(), ...(t.diagram?.length ? { diagram: t.diagram.join("\n") } : {}) }))
+		.filter((t) => t.text);
+}
+
+/** How much of a conversation is sent again with each message before its start is
+ * summed up, and how much of its end is always kept word for word. */
+export const CHAT_CHARS = 24_000;
+export const KEEP_CHARS = 8_000;
+
+/** Where to cut a conversation that has grown too long to send again whole: the turns
+ * from `from` up to the returned index are summed up, the rest kept as they are. -1
+ * when it still fits. The last two turns are always kept. */
+export function compactAt(turns: Array<{ text: string }>, from: number, most = CHAT_CHARS, keep = KEEP_CHARS): number {
+	const live = turns.slice(from).reduce((n, t) => n + t.text.length, 0);
+	if (live <= most) return -1;
+	let i = turns.length;
+	let kept = 0;
+	while (i > from && (turns.length - i < 2 || kept + turns[i - 1].text.length <= keep)) {
+		kept += turns[i - 1].text.length;
+		i--;
+	}
+	return i > from ? i : -1;
+}
+
 const STOP = new Set(
 	"a an and are as at be but by can did do does for from had has have how i if in into is it its me my no not of on or so than that the their them then there these they this to up us was we were what when where which who why will with would you your about tell explain more".split(" "),
 );
@@ -275,6 +329,47 @@ export interface VaultNote extends LearnNote {
 	linksIn: number;
 	/** How the student is doing on it, in a word or two. */
 	status: string;
+	/** From Obsidian's index, for the structural map: its top headings, the notes it
+	 * links to, and its tags. */
+	headings?: string[];
+	out?: string[];
+	tags?: string[];
+}
+
+/** The vault as Obsidian already knows it, for a question about the notes as a whole on
+ * a model that can read notes itself: folder by folder, each note with its headings,
+ * what it links to, how many link to it, its tags and how the user is doing on it. The
+ * notes themselves are read as needed, so a long conversation about the whole vault
+ * costs no more per message than one about a note. Detail is given up, headings first,
+ * when the vault is too big for all of it. */
+export function vaultStructure(notes: VaultNote[], cap = 60_000): string {
+	const byFolder = new Map<string, VaultNote[]>();
+	for (const n of notes) byFolder.set(n.folder, [...(byFolder.get(n.folder) ?? []), n]);
+	const folders = [...byFolder.keys()].sort((a, b) => a.localeCompare(b));
+	const draw = (headings: boolean, links: boolean): string => {
+		const out: string[] = [];
+		for (const f of folders) {
+			out.push(`## ${f || "(top level)"}`);
+			for (const n of byFolder.get(f)!.sort((a, b) => a.name.localeCompare(b.name))) {
+				const parts = [n.name];
+				if (headings && n.headings?.length) parts.push(`headings: ${n.headings.join("; ")}`);
+				if (n.out?.length) parts.push(links ? `links to: ${n.out.join(", ")}` : `links to ${n.out.length}`);
+				if (n.linksIn) parts.push(`linked from ${n.linksIn}`);
+				if (n.tags?.length) parts.push(n.tags.join(" "));
+				parts.push(n.status);
+				out.push(`- ${parts.join(" | ")}`);
+			}
+		}
+		return out.join("\n");
+	};
+	let body = draw(true, true);
+	if (body.length > cap) body = draw(false, true);
+	if (body.length > cap) body = draw(false, false);
+	return (
+		`VAULT MAP: all ${notes.length} notes, folder by folder, from Obsidian's own index. Each line: name | headings | links | how many notes link to it | tags | how the user is doing. ` +
+		"You have the map, not the notes: find what the question needs here, look closer with note_outline, search_notes or find_by_meaning, and read_note what you use.\n" +
+		safeSlice(body, cap)
+	);
 }
 
 /** Every note in the vault on a line: its name, where it is, how many notes link to

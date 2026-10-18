@@ -1155,7 +1155,7 @@ test("one balance per device: Start free in a second vault uses the key the firs
 	const second = await boot({}, {}, undefined, true);
 	assert.equal(second.plugin.data.settings.apiKeys.grillcloud, "", "nothing happens until it is asked for");
 	assert.equal(second.plugin.deviceCloudKey(), key);
-	assert.equal(await second.plugin.startCloud(), "Grill Cloud is on. 814 credits left.");
+	assert.equal(await second.plugin.startCloud(), "Grill Cloud is on, with this computer's account. 814 credits left.");
 	assert.equal(second.plugin.data.settings.apiKeys.grillcloud, key);
 	assert.ok(seen.every((r) => r.auth === `Bearer ${key}`), "no second key was ever made");
 	// A vault that deliberately let go of that key makes its own instead.

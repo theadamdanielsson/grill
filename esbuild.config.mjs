@@ -40,6 +40,8 @@ const ctx = await esbuild.context({
   logLevel: "info",
   sourcemap: prod ? false : "inline",
   treeShaking: true,
+  // Under 5 MB, or Obsidian Sync Standard won't carry main.js.
+  minify: prod,
   outfile: "main.js",
 });
 

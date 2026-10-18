@@ -416,3 +416,71 @@ test("a suggestion says how a note has gone", () => {
 	assert.equal(shortDate("2026-08-20"), "20 Aug");
 	assert.equal(shortDate("nonsense"), "");
 });
+
+test("someone new is pointed at the open note, else the one edited last", async () => {
+	const { startingNote } = await import("../src/suggest");
+	const a = { basename: "A", stat: { mtime: 1 } };
+	const b = { basename: "B", stat: { mtime: 3 } };
+	const c = { basename: "C", stat: { mtime: 2 } };
+	assert.equal(startingNote(c, [a, b, c]), c);
+	assert.equal(startingNote(null, [a, b, c]), b);
+	assert.equal(startingNote(null, []), null);
+});
+
+test("most linked-to notes come first", async () => {
+	const { mostLinked } = await import("../src/suggest");
+	const f = (path: string) => ({ path });
+	const links = { "x.md": { "b.md": 1, "c.md": 2 }, "y.md": { "b.md": 1 } };
+	assert.deepEqual(mostLinked([f("a.md"), f("c.md"), f("b.md")], links).map((n) => n.path), ["b.md", "c.md", "a.md"]);
+});
+
+test("a saved chat reads back as its turns, diagrams kept, to carry on with", async () => {
+	const { parseLearnThread } = await import("../src/learn");
+	const note = [
+		"---", "type: learn", "---", "# Title", "About [[X]].", "",
+		"> [!question] You asked", "> What is IS-LM?", "",
+		"> [!note] Grill", "> Two curves.", "> ", "> A second line.", "",
+		"```mermaid", "flowchart LR", "A --> B", "```", "",
+		"> [!question] You asked", "> And LM?", "",
+	].join("\n");
+	assert.deepEqual(parseLearnThread(note), [
+		{ role: "student", text: "What is IS-LM?" },
+		{ role: "tutor", text: "Two curves.\n\nA second line.", diagram: "flowchart LR\nA --> B" },
+		{ role: "student", text: "And LM?" },
+	]);
+});
+
+test("a long chat's start is summed up and its latest turns kept as they were", async () => {
+	const { compactAt } = await import("../src/learn");
+	const t = (n: number) => ({ text: "x".repeat(n) });
+	assert.equal(compactAt([t(100), t(100)], 0, 1000, 300), -1, "fits: nothing to do");
+	const turns = [t(500), t(500), t(500), t(200), t(200)];
+	assert.equal(compactAt(turns, 0, 1000, 450), 3, "the last turns that fit in the kept share stay");
+	assert.equal(compactAt([t(5000), t(5000)], 0, 1000, 10), -1, "the last two turns are always kept");
+	assert.equal(compactAt(turns, 3, 1000, 450), -1, "what is already summed up isn't counted again");
+});
+
+test("the vault map is Obsidian's structure, folder by folder, giving up headings first when it is too big", async () => {
+	const { vaultStructure } = await import("../src/learn");
+	const n = (name: string, folder: string, more: object = {}) => ({ name, text: "", folder, linksIn: 0, status: "learning", ...more });
+	const notes = [
+		n("Inflation", "Macro/Ch1", { headings: ["Definition", "Costs"], out: ["GDP"], linksIn: 3, tags: ["#macro"] }),
+		n("GDP", "Macro/Ch1", { out: [] }),
+		n("Index", "", {}),
+	];
+	const map = vaultStructure(notes);
+	assert.match(map, /## \(top level\)\n- Index \| learning/);
+	assert.match(map, /## Macro\/Ch1\n- GDP \| learning\n- Inflation \| headings: Definition; Costs \| links to: GDP \| linked from 3 \| #macro \| learning/);
+	assert.match(map, /You have the map, not the notes/);
+	const small = vaultStructure(notes, 120);
+	assert.doesNotMatch(small, /headings:/);
+});
+
+test("a note can be looked over without being read", async () => {
+	const { runTool } = await import("../src/vaulttools");
+	const port = { notes: () => ["A/Note.md"], read: async () => "x", write: async () => {}, create: async () => {}, exists: () => true, locked: () => false, outline: (p: string) => `${p}\nHeadings:\n  One` } as any;
+	const r = await runTool(port, { id: "1", name: "note_outline", input: { path: "Note" } });
+	assert.equal(r.content, "A/Note.md\nHeadings:\n  One");
+	const none = await runTool({ ...port, outline: undefined }, { id: "2", name: "note_outline", input: { path: "Note" } });
+	assert.equal(none.failed, true);
+});
