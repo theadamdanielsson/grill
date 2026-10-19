@@ -1,5 +1,16 @@
 # Changelog
 
+## 8.6.1
+
+- **One box on fill-in questions.** The answer goes in the blanks. The box for asking
+  about a question is no longer shown under them, where an answer typed into it was lost.
+- **Plainer steps in Chat.** On Claude Code, the step where it loads its tools reads
+  "Load its tools".
+- **Notes at the top of the vault** are listed under the vault's name on the Progress
+  screen.
+- **Documentation.** The README opens with how Grill keeps state, with a short clip.
+  Paying for Grill Cloud, refunds and your account have their own page.
+
 ## 8.6.0
 
 - **MCP servers.** Chat on Grill Cloud and your own key uses the tools of the MCP

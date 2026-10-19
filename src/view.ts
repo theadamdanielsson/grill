@@ -3495,7 +3495,7 @@ export class SessionView extends ItemView {
 			// "parent/name" for paths whose bare name collides with another path in
 			// this same list, so the common case stays short and only the genuinely
 			// ambiguous ones pay for disambiguation.
-			const nameOf = (path: string): string => (path === "/" ? "(root)" : path === "?" ? "Other" : path.split("/").pop() ?? path);
+			const nameOf = (path: string): string => (path === "/" ? this.app.vault.getName() : path === "?" ? "Other" : path.split("/").pop() ?? path);
 			const nameCounts = new Map<string, number>();
 			for (const path of byFolder.keys()) nameCounts.set(nameOf(path), (nameCounts.get(nameOf(path)) ?? 0) + 1);
 			const labelOf = (path: string): string => {
@@ -4608,10 +4608,11 @@ export class SessionView extends ItemView {
 			void this.submitAnswer(answer, giveUp, hintsUsed, isMulti ? [...multiSelected] : undefined, isMatch ? matchPicks : undefined);
 		};
 		skip.onclick = () => doAction(true);
-		// A question answered by picking or by filling blanks has no box to ask in, so
-		// the thread view gives it one. Whatever is typed here can only be a question:
-		// it goes straight to an answer, with no call to decide what it was.
-		const askCfg = thread && !ta && !this.replayMode && !q.missingLink ? this.plugin.llmConfig() : null;
+		// A question answered by picking has no box to ask in, so the thread view gives it
+		// one. Whatever is typed here can only be a question: it goes straight to an
+		// answer, with no call to decide what it was. Fill-in questions get none: a second
+		// text box under the blanks is where people type the answer, and it is lost there.
+		const askCfg = thread && !ta && !isBlank && !this.replayMode && !q.missingLink ? this.plugin.llmConfig() : null;
 		if (askCfg) {
 			const ask = card.createDiv({ cls: "grill-thread-ask" });
 			const input = ask.createEl("textarea", {

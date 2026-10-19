@@ -1,7 +1,7 @@
 {
   "name": "grill",
-  "version": "8.6.0",
-  "description": "Chat with your notes and get grilled on them. An agentic AI that reads, edits and tests you on your notes, remembers what you got wrong, and shares that record with your other agents. For Obsidian.",
+  "version": "8.6.1",
+  "description": "An agentic learning system for Obsidian. Grill keeps state on what you know, note by note. Chat, tests and your other agents all work from it.",
   "main": "main.js",
   "scripts": {
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",

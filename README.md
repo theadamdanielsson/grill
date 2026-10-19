@@ -1,8 +1,16 @@
-![Grill: your notes, your AI, your weak spots](docs/hero.svg)
+![Grill: an agentic learning system](docs/hero.svg)
 
-I take a lot of notes to learn new material, and I needed a way to learn them more deeply. Grill is a chat that works inside your Obsidian vault and keeps a record of what you know. It tests you on your own notes, grades what you write, and schedules each concept with spaced repetition. In turn, the chat answers from that record: it knows which questions you missed, which you skipped, and what you asked about last week. The record is not confined to Obsidian either. Claude Code, Codex and other AI agents can read it, test you on it and add what you answer them, so what you get wrong comes back wherever you study.
+I take a lot of notes to learn new material, and I needed a way to learn them more deeply. Grill is an agentic learning system for Obsidian: it keeps state on what you know, note by note. It tests you on your own notes, grades what you write and schedules each concept with spaced repetition. In turn, every answer goes into a record in your vault, and the chat reads that record before it replies. A new conversation therefore starts from the confusions you keep showing. Claude Code, Codex and other agents can read the same record, test you on it and add what you answer them.
 
-![Grill's home screen: suggestions from your record above the chat box](docs/screenshot-home-8.png)
+![A test marks an answer partly right, the Progress screen shows the same confusion recorded in two notes, and a new chat with no note attached names it](docs/state.webp)
+
+[Watch the 1-minute tour, with sound](https://grill.onbridger.com/v/tour.mp4)
+
+## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/check-dark.svg"><img src="docs/icons/check.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> How state builds up
+
+1. **Tested.** Grill writes questions from what you wrote and grades what you type back, with partial credit and feedback on what was missing.
+2. **Recorded.** Every answer is kept in your vault. When the same confusion shows up in two notes, Grill names it once and counts it, and the Progress screen lists it under *What you keep getting wrong*.
+3. **Used.** A chat reads the record before it replies, whichever note is open, or none. Asking what you keep getting wrong returns the confusion and the notes it appeared in.
 
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/play-dark.svg"><img src="docs/icons/play.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> How to use it
 
@@ -12,8 +20,6 @@ I take a lot of notes to learn new material, and I needed a way to learn them mo
 4. **Bring your agents in.** Settings → Agents → Connect an agent gives Claude Code or Codex your record, in one line pasted in a terminal. See [In your other agents](#in-your-other-agents).
 
 The home screen suggests where to go from your record: the questions you last missed, the notes not yet tested, the note you have open. Specifically, each suggestion states a fact (how many concepts are known, what was missed last time) and leaves the choice of what matters to you.
-
-![A reply built from the record: what was answered correctly, what was skipped, and what to understand next](docs/screenshot-chat-record.png)
 
 ## <img src="docs/icons/flame.svg" height="24" alt="" style="display:inline;height:24px;width:auto"> What you get
 
@@ -69,8 +75,6 @@ What Grill Cloud gives you that the free options do not:
 
 After that Grill Cloud is a monthly plan: $7.99 a month, plus tax where it applies, and you can cancel it whenever you like. The plan covers Chat and tests up to usage limits, which apply to any five hours, to any week and to each month. The limits are not given as figures, because what a session uses depends on how long your notes are and how much you ask of it. Importantly, a Chat turn that works in the vault takes several steps, and each step counts as a reply, so editing through Chat uses more than asking a question. When a limit is reached, Grill says so and roughly when it frees up. For anyone who wants to keep going at once, credit packs come up at that point: 400 credits for $3.99 or 1,100 for $9.99. Credits are used only past a limit, and they do not expire.
 
-The checkout is run by Stripe, so the page says "Sold through Link" and your card statement shows Link. The plan starts in Grill a few seconds after you pay. You cancel it at link.com, signed in with the email address you paid with, and it stays usable until the end of the month already paid for. Buying happens in Grill and nowhere else.
-
 Grill Cloud runs on two of Anthropic's Claude models, each chosen by testing it on real notes and kept current. A fast model writes the test questions. A stronger one marks your answers and runs Chat, because marking is where the stronger model was clearly better.
 
 One thing differs from every other way of running Grill. With Grill Cloud, the notes in a session, the images in them, your answers and your custom instructions go through my server to Anthropic. In Chat, the notes the model asks to read go the same way, as do the results of the tools it uses: a web page it reads, what an MCP server returns, a skill it loads. A web search is run by Anthropic and counts towards the plan's limits like the rest of a reply. My server does not keep them: it does not store or log your notes, the questions, or your answers. Anthropic keeps them for up to 30 days to watch for abuse and does not train on them. If you turn on the natural voice, the text being read aloud goes to OpenAI the same way. What my server does store is a short list, set out in the privacy policy.
@@ -78,9 +82,7 @@ One thing differs from every other way of running Grill. With Grill Cloud, the n
 - [Privacy policy](https://grill.onbridger.com/privacy)
 - [Terms](https://grill.onbridger.com/terms)
 
-There is nothing to look after. Grill makes a key on your device when you press Start free, and that key is your balance. Every vault on the same device shares it, and it follows a synced vault to your other devices. If you ever lose them all, email inquiries@onbridger.com from the address you paid with and I will move your plan and your purchased credits to your new install. Settings has the rest under Account, including a Delete account button that erases your balance and usage from my server. Deleting the account does not cancel a plan, so cancel the plan first.
-
-The first month of a plan is refunded if you ask within 14 days of subscribing. Used credits cannot be refunded, and unused ones can if you ask within 14 days. Grill Cloud is for people 18 and over.
+Paying, cancelling, refunds and moving your plan to a new install are covered in **[docs/cloud.md](docs/cloud.md)**.
 
 <a name="with-claude-code-or-codex"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/screen-dark.svg"><img src="docs/icons/screen.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> With Claude Code, Codex or opencode
@@ -120,7 +122,7 @@ npx skills add theadamdanielsson/grill --skill grill-test
 
 It works in Claude Code, Codex, Cursor and the other agents that read Agent Skills. It asks one question at a time, grades each answer against the source, and records every answer, so a concept you missed comes back the next time you ask to be tested, even in a new session. That record is kept in your home folder (`~/.grill/record/`), never in the project, and Grill's Progress screen shows it under Tested in other agents.
 
-![A Claude Code session with grill-test: a wrong answer is recorded, and a new session starts from it](skills/grill-test/grill-test.gif)
+![A Claude Code session with grill-test: a wrong answer is recorded, and a new session starts from it](docs/agents.webp)
 
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/key-dark.svg"><img src="docs/icons/key.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> With your own key
 
@@ -130,6 +132,7 @@ To pay a model provider directly, pick "use my own API key or Ollama" on first r
 
 - **[docs/features.md](docs/features.md)**: how Chat, the permission levels, scheduling, the record, custom questions and PDFs work.
 - **[docs/privacy.md](docs/privacy.md)**: what leaves your machine, where it goes, and what Grill stores.
+- **[docs/cloud.md](docs/cloud.md)**: paying for Grill Cloud, cancelling, refunds and your account.
 - **[docs/models.md](docs/models.md)**: which model to use, by budget and by how much RAM your machine has.
 - **[docs/troubleshooting.md](docs/troubleshooting.md)**: the mechanics behind the common "is this a bug" questions.
 

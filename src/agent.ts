@@ -75,6 +75,8 @@ export function activityLine(tool: string, input: Input): string {
 			return `Hand off: ${clip(text(input.description), 60)}`;
 		case "TodoWrite":
 			return "Update its to-do list";
+		case "ToolSearch":
+			return "Load its tools";
 		default:
 			if (tool.startsWith(RECORD_PREFIX) && isRecordTool(tool.slice(RECORD_PREFIX.length))) return recordToolLine(tool.slice(RECORD_PREFIX.length), input);
 			return tool.startsWith("mcp__") ? `Use ${tool.split("__").slice(1).join(" ")}` : `Use ${tool}`;
