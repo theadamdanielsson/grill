@@ -39,7 +39,9 @@ import {
 	recordConceptRating,
 	reconcileConcepts,
 	trueRetentionLine,
+	noteAnswer,
 } from "./concepts";
+import { asRecordData, learnerBrief } from "./brief";
 import { collectNoteImages, ImageInput, hasEmbeddedImage } from "./images";
 import { extractPdfTextCached, noteStudyText } from "./pdf";
 import { hashStr, mapWithConcurrency, safeSlice } from "./text";
@@ -1886,7 +1888,11 @@ export class SessionView extends ItemView {
 		if (this.dirty || this.bankDirty || this.bridgesDirty) await this.flush();
 		const instr = await this.plugin.store.loadInstructions();
 		const ctx = vault?.whole ? { noteText: "", linkedText: "" } : await this.learnNotes(note, also);
-		const record = vault?.whole ? "" : await this.recordFor(note.basename);
+		// Every chat gets the digest of the whole record, ranked toward this note; a chat
+		// about a note also gets that note's answers in full.
+		const brief = await this.learnerBriefFor(vault?.whole ? null : note);
+		const onNote = vault?.whole ? "" : await this.recordFor(note.basename);
+		const record = asRecordData([brief, onNote ? `On ${note.basename} in particular:\n${onNote}` : ""].filter(Boolean).join("\n\n"));
 		const testable = !vault?.whole && (await this.enoughToTest(note));
 		this.learn = {
 			note,
@@ -1906,6 +1912,25 @@ export class SessionView extends ItemView {
 		};
 		this.renderLearn();
 		if (firstAsk) await this.askLearn(firstAsk);
+	}
+
+	/** The learner digest (see brief.ts), ranked toward a note and the notes it links to
+	 * or is linked from. Empty when nothing has been tested yet. */
+	private async learnerBriefFor(note: TFile | null): Promise<string> {
+		let registry: MisconceptionRegistry = {};
+		try {
+			registry = await this.plugin.store.loadRegistry();
+		} catch {
+			// The digest is still worth giving without the confusions.
+		}
+		const state = { concepts: this.plugin.concepts, mastery: this.plugin.mastery, registry };
+		if (!note) return learnerBrief({ state });
+		const links = this.app.metadataCache.resolvedLinks;
+		const near = new Set<string>();
+		for (const path of Object.keys(links[note.path] ?? {})) near.add(path);
+		for (const [from, to] of Object.entries(links)) if (to[note.path]) near.add(from);
+		const name = (path: string): string => path.split("/").pop()!.replace(/\.md$/, "");
+		return learnerBrief({ state, focus: { note: note.basename, near: [...near].map(name) } });
 	}
 
 	/** The note a conversation is about and the notes that go with it, as they read now,
@@ -6823,7 +6848,7 @@ export class SessionView extends ItemView {
 				return;
 			}
 		}
-		await this.applyGrade(q, verdict, null, misconceptionTag || undefined, hintsUsed);
+		await this.applyGrade(q, verdict, null, misconceptionTag || undefined, hintsUsed, { question: q.question, answer, feedback });
 		this.captureConfidence(verdict);
 		// Missed it: route to a weak prerequisite next, if this note builds on one, or
 		// check whether the same confusion applies to a linked neighbor. Mid-session this
@@ -6995,6 +7020,7 @@ export class SessionView extends ItemView {
 		rating: Rating | null,
 		misconceptionTag: string | undefined,
 		hintsUsed = 0,
+		said?: { question?: string; answer: string; feedback?: string },
 	): Promise<void> {
 		// Cleared by default; only the AI/deterministic-verdict path below (re)populates
 		// it. Never carries over from a previous question.
@@ -7042,6 +7068,7 @@ export class SessionView extends ItemView {
 					hintsUsed,
 					this.easyWeekdays(),
 				);
+				noteAnswer(this.concepts[cid], verdict, { ...said, tag: misconceptionTag });
 			}
 		}
 		recordNoteStats(this.plugin.mastery, q.node, verdict, misconceptionTag);

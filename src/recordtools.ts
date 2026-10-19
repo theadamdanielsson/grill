@@ -8,7 +8,8 @@
  * plugin (see vaulttools.ts); Claude Code gets them as an in-process MCP server (see
  * agent.ts). Outside Grill, grill-mcp offers them too, with testing tools besides.
  */
-import { overview, weakSpots, whatTheyKnow, type RecordState } from "./record";
+import { conceptLine, confusions, day } from "./brief";
+import { overview, topicScore, weakSpots, whatTheyKnow, type RecordState } from "./record";
 import type { ToolCall, ToolSpec } from "./stream";
 
 /** Studying Chat may offer: a button under its reply starts it in Test. */
@@ -58,7 +59,8 @@ export const RECORD_TOOLS: ToolSpec[] = [
 
 /** Said to the model with the tools. */
 export const RECORD_RULES =
-	"Grill keeps a record of what the student knows, per concept: read it with grill_weak_spots, grill_what_they_know and grill_overview rather than from Grill's files, which only Grill reads correctly. " +
+	"Grill keeps a record of what the student knows, per concept. A digest of it is already in what you were given: answer from that when it is enough. " +
+	"Read more of it with grill_weak_spots, grill_what_they_know and grill_overview when the question needs what the digest leaves out, rather than from Grill's files, which only Grill reads correctly. " +
 	"A status of learning means tested but not yet proven twice, not wrong: what they got wrong is what lastAnswer and the weak spots say. " +
 	"Don't quiz the student in the chat, and don't offer to: testing is Grill's Test, where answers are graded and scheduled. " +
 	"When you recommend studying something (the reviews due, a retry of what they missed, a test on particular notes), call grill_offer_study for it, and a button that starts it appears under your reply. Say what you recommend and why; don't describe the buttons or tell them where to click.";
@@ -92,14 +94,31 @@ export async function runRecordQuery(port: RecordPort | undefined, name: string,
 	switch (name) {
 		case "grill_overview":
 			return { content: JSON.stringify(overview(s)) };
-		case "grill_weak_spots":
-			return { content: JSON.stringify(weakSpots(s, t, n ?? 15)) };
-		case "grill_what_they_know":
+		case "grill_weak_spots": {
+			const w = weakSpots(s, t, n ?? 15);
+			const lines = w.concepts.map((v) => conceptLine(s.concepts[v.id]));
+			return { content: [lines.length ? `Weak spots${t ? ` on ${t}` : ""}, weakest first:\n${lines.join("\n")}` : `No weak spots${t ? ` on ${t}` : ""}.`, openConfusions(s, t)].filter(Boolean).join("\n\n") };
+		}
+		case "grill_what_they_know": {
 			if (!t) return { content: "Name a topic.", failed: true };
-			return { content: JSON.stringify(whatTheyKnow(s, t, n ?? 25)) };
+			const k = whatTheyKnow(s, t, n ?? 25);
+			if (!k.concepts.length) return { content: `Nothing in the record matches ${t}.` };
+			const notes = k.notes.map((x) => `- ${x.note}: ${x.status}${x.answered ? ` (${x.answered.correct} right, ${x.answered.partial} partly, ${x.answered.incorrect} wrong)` : ""}`);
+			return { content: [`Notes:\n${notes.join("\n")}`, `Concepts:\n${k.concepts.map((v) => conceptLine(s.concepts[v.id])).join("\n")}`, openConfusions(s, t)].filter(Boolean).join("\n\n") };
+		}
 		default:
 			return { content: `There is no tool called ${name}.`, failed: true };
 	}
+}
+
+/** The confusions still showing in answers, optionally on a topic, as lines. */
+function openConfusions(s: RecordState, topic: string | undefined): string {
+	const open = confusions(s)
+		.filter((c) => c.state === "open")
+		.filter((c) => !topic || c.notes.some((n) => topicScore(topic, { note: n, label: c.label }) > 0) || topicScore(topic, { note: "", label: c.label }) > 0)
+		.slice(0, 6);
+	if (!open.length) return "";
+	return `Confusions still showing in their answers:\n${open.map((c) => `- "${c.label}": named ${c.count} time${c.count === 1 ? "" : "s"}, in ${c.notes.join(", ")}; last ${day(c.lastSeen)}${c.said ? `. Last time wrote: "${c.said}"` : ""}`).join("\n")}`;
 }
 
 export const runRecordTool = (port: RecordPort | undefined, call: ToolCall) => runRecordQuery(port, call.name, call.input);

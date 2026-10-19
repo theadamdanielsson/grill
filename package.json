@@ -1,6 +1,6 @@
 {
   "name": "grill",
-  "version": "8.6.1",
+  "version": "8.7.0",
   "description": "An agentic learning system for Obsidian. Grill keeps state on what you know, note by note. Chat, tests and your other agents all work from it.",
   "main": "main.js",
   "scripts": {

@@ -1,5 +1,19 @@
 # Changelog
 
+## 8.7.0
+
+- **Every chat starts from your record.** A short digest of the whole record goes
+  with every message, including chats with no note attached: what is due, your
+  weakest concepts nearest the note you are on, and the confusions still showing in
+  your answers. Chat needs fewer lookups before it answers.
+- **Chat knows why you missed something.** A wrong or partly right answer is now kept
+  with its concept, with the reason it was marked down, so Chat can name the exact
+  mistake. Answers from before this version are read once from your session notes.
+- **Confusions open and close by your answers.** A confusion counts as open while it
+  shows in your last few answers on a concept, and as fixed once it stops showing.
+- **Plainer labels.** A concept named after a quoted heading or an embedded picture is
+  described in words.
+
 ## 8.6.1
 
 - **One box on fill-in questions.** The answer goes in the blanks. The box for asking

@@ -12,7 +12,7 @@
  * the results itself with the same function.
  */
 
-import { ConceptMap, ConceptMastery, conceptTested, lastAnswerMissed, noteAggregate, recordConceptAnswer } from "./concepts";
+import { ConceptMap, ConceptMastery, conceptTested, lastAnswerMissed, noteAggregate, noteAnswer, recordConceptAnswer } from "./concepts";
 import { MisconceptionRegistry, mergeAssignments } from "./debrief";
 import { MasteryMap, QDifficulty, Verdict, emptyMastery, isLeech, recordNoteStats, retrievability, statusOf } from "./mastery";
 import type { QuestionBank } from "./store";
@@ -136,7 +136,10 @@ export function applyResults(
 				if (!fitName(cid, 300)) throw new Error("concept id not fit");
 				if (!has(state.concepts, cid)) state.concepts[cid] = newConcept(r.note, r.label || r.question.slice(0, 80));
 			}
-			if (cid) recordConceptAnswer(state.concepts, cid, r.verdict, r.difficulty ?? "medium", at, opts.desiredRetention);
+			if (cid) {
+				recordConceptAnswer(state.concepts, cid, r.verdict, r.difficulty ?? "medium", at, opts.desiredRetention);
+				noteAnswer(state.concepts[cid], r.verdict, { question: r.question, answer: r.answer, feedback: r.feedback, tag: r.misconception?.tag }, at);
+			}
 			else if (r.conceptId) unknownConcept.push(r);
 			if (!has(state.mastery, r.note)) state.mastery[r.note] = emptyMastery();
 			recordNoteStats(state.mastery, r.note, r.verdict, r.misconception?.tag);
@@ -188,7 +191,7 @@ function refreshNote(state: RecordState, note: string): void {
 
 /** False for a concept its note no longer has: reconcileConcepts parks its due date
  * in `orphanedDueAt` and clears `dueAt`. */
-function live(c: ConceptMastery): boolean {
+export function live(c: ConceptMastery): boolean {
 	return c.dueAt !== null || !c.orphanedDueAt;
 }
 
@@ -330,13 +333,13 @@ export function activeMisconceptions(state: RecordState, topic: string | undefin
 
 /** How weak a tested concept is right now: a missed last answer first, then struggling,
  * then whatever is least likely to be recalled. */
-function weakness(c: ConceptMastery, now: Date): number {
+export function weakness(c: ConceptMastery, now: Date): number {
 	const r = recallNow(c, now) ?? 100;
 	return (lastAnswerMissed(c) ? 200 : lastAnswerPartial(c) ? 120 : 0) + (statusOf(c) === "struggling" ? 100 : 0) + (isLeech(c) ? 50 : 0) + (100 - r);
 }
 
 /** The last answer was only partly right (rated Hard): not a miss, but a gap. */
-function lastAnswerPartial(c: ConceptMastery): boolean {
+export function lastAnswerPartial(c: ConceptMastery): boolean {
 	return c.reviewLog?.[c.reviewLog.length - 1]?.rating === 2;
 }
 
@@ -344,7 +347,7 @@ function lastAnswerPartial(c: ConceptMastery): boolean {
  * else marks it. */
 const WEAK_RECALL = 70;
 
-function isWeak(c: ConceptMastery, now: Date): boolean {
+export function isWeak(c: ConceptMastery, now: Date): boolean {
 	const r = recallNow(c, now);
 	// Not "struggling" alone: Grill calls a concept that until it is proven twice, so one
 	// right answer would read as a weak spot.

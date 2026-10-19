@@ -109,10 +109,11 @@ import { VAULT_TOOLS, TOOL_RULES, toolLine } from "../src/vaulttools";
 test("Chat's record tools read the record and never offer testing", async () => {
 	const s = state();
 	const port = { state: async () => s };
-	const w = JSON.parse((await runRecordQuery(port, "grill_weak_spots", { topic: "GDP" })).content);
-	assert.equal(w.concepts.length, 0, "a concept recalled well is not a weak spot");
-	const k = JSON.parse((await runRecordQuery(port, "grill_what_they_know", { topic: "recession" })).content);
-	assert.equal(k.concepts[0].id, "GDP::term:recession");
+	const w = (await runRecordQuery(port, "grill_weak_spots", { topic: "GDP" })).content;
+	assert.match(w, /^No weak spots on GDP\./, "a concept recalled well is not a weak spot");
+	const k = (await runRecordQuery(port, "grill_what_they_know", { topic: "recession" })).content;
+	assert.match(k, /^Notes:\n- GDP: /);
+	assert.match(k, /Concepts:\n- recession \[GDP\]: /, "one line per concept, in words: no ids, no JSON");
 	assert.equal((await runRecordQuery(port, "grill_what_they_know", {})).failed, true);
 	assert.equal((await runRecordQuery(undefined, "grill_overview", {})).failed, true);
 	const names = VAULT_TOOLS.map((t) => t.name);

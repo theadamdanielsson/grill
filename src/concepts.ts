@@ -38,6 +38,20 @@ export interface ReviewLogEntry {
 	t: string;
 	elapsedDays: number;
 	rating: number;
+	/** The confusion the grader named on this answer, as its raw tag. A confusion's
+	 * state is read from these (see confusions in brief.ts): open while one of the last
+	 * few answers on a concept carries it, fixed once none does. */
+	tag?: string;
+}
+
+/** The last answer on a concept that was wrong or only partly right, kept so the model
+ * can say why it was marked down without rereading the session notes. Cut to size. */
+export interface LastMiss {
+	t: string;
+	/** The question it answered, for an answer too short to read alone ("True", "B"). */
+	question?: string;
+	answer: string;
+	feedback?: string;
 }
 
 export interface ConceptMastery extends Schedulable {
@@ -56,6 +70,7 @@ export interface ConceptMastery extends Schedulable {
 	 * turns out to be temporary (a partial extraction, occlusion off for one session,
 	 * a PDF that failed to read) doesn't silently drop the concept from review forever. */
 	orphanedDueAt?: string;
+	lastMiss?: LastMiss;
 }
 
 /** Appends one entry to `cm.reviewLog`, using the elapsed time since its OLD `lastSeen`
@@ -648,6 +663,29 @@ export function migrateResetScheduling(map: MasteryMap): void {
 			m.streak = 0;
 		}
 	}
+}
+
+const MISS_CHARS = 240;
+
+const clip = (s: string, most: number): string => {
+	const t = s.replace(/\s+/g, " ").trim();
+	return t.length > most ? `${t.slice(0, most - 1).trimEnd()}…` : t;
+};
+
+/** After an answer is recorded: a wrong or partly right one is kept as the concept's
+ * last miss, with the grader's reason, and the confusion named on it goes on its log
+ * entry. Call it right after recordConceptAnswer, which wrote that entry. */
+export function noteAnswer(cm: ConceptMastery | undefined, verdict: Verdict, said: { question?: string; answer?: string; feedback?: string; tag?: string }, now = new Date()): void {
+	if (!cm) return;
+	const entry = cm.reviewLog?.[cm.reviewLog.length - 1];
+	if (entry && said.tag?.trim()) entry.tag = said.tag.trim();
+	if (verdict === "correct" || !said.answer?.trim()) return;
+	cm.lastMiss = {
+		t: now.toISOString(),
+		...(said.question?.trim() ? { question: clip(said.question, MISS_CHARS) } : {}),
+		answer: clip(said.answer, MISS_CHARS),
+		...(said.feedback?.trim() ? { feedback: clip(said.feedback, MISS_CHARS) } : {}),
+	};
 }
 
 /** True when the last graded answer on this concept was a miss. The review log says so

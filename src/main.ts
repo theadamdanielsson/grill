@@ -24,6 +24,8 @@ import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, CloudPack, CloudPlan, plan
 import { drawPlanOffer, drawPlanUsage, RefillModal } from "./refill";
 import { CHECK_EVERY_MS, isNewer, latestVersion } from "./update";
 import { AgentResult, applyResults, restoreNoteCounts } from "./record";
+import { missesFromSessions, type PastSession } from "./brief";
+import { parseSessionNote } from "./learn";
 import { CATCH_UP, ConceptMap, dueConceptCount, migrateResetScheduling, rebalanceDueDates, reconcileConcepts } from "./concepts";
 import { pairKey } from "./bridges";
 import {
@@ -236,6 +238,9 @@ interface GrillSettings {
 	conceptsMigrated: boolean;
 	/** One-time flag: note counts lost before 8.0 have been rebuilt (see restoreNoteCounts). */
 	noteCountsRestored: boolean;
+	/** One-time flag: concepts have had their last miss filled in from the session notes
+	 * written before Grill kept it with the concept (see missesFromSessions). */
+	missesFilled: boolean;
 	/** One-time flag: legacy installs have had their stored old shipped defaults
 	 * (graphNumberMode "off", newConceptsPerDay 0) carried to the current defaults.
 	 * Guards the migration so it fires exactly once — after it, the user can freely
@@ -393,6 +398,7 @@ function defaultSettings(): GrillSettings {
 		localEmbedContext: false,
 		conceptsMigrated: false,
 		noteCountsRestored: false,
+		missesFilled: false,
 		graphColorMode: "mastery",
 		graphNumberMode: "percent",
 		graphCoverageWeight: 15,
@@ -510,6 +516,7 @@ export default class GrillPlugin extends Plugin {
 		if (typeof s.localEmbedContext === "boolean") settings.localEmbedContext = s.localEmbedContext;
 		if (typeof s.conceptsMigrated === "boolean") settings.conceptsMigrated = s.conceptsMigrated;
 		if (typeof s.noteCountsRestored === "boolean") settings.noteCountsRestored = s.noteCountsRestored;
+		if (typeof s.missesFilled === "boolean") settings.missesFilled = s.missesFilled;
 		if (["mastery", "recency", "dueness", "misconceptions"].includes(s.graphColorMode as string)) {
 			settings.graphColorMode = s.graphColorMode as ColorMode;
 		}
@@ -1040,6 +1047,15 @@ export default class GrillPlugin extends Plugin {
 						console.error("Grill: couldn't rebuild note counts; will retry next launch", e);
 					}
 				}
+				if (!this.data.settings.missesFilled) {
+					try {
+						if (await this.fillMissesFromSessions()) await this.store.saveConcepts(this.concepts);
+						this.data.settings.missesFilled = true;
+						await this.persist();
+					} catch (e) {
+						console.error("Grill: couldn't read past misses from the session notes; will retry next launch", e);
+					}
+				}
 				this.recordLoaded = true;
 				this.registerInterval(window.setInterval(() => void this.foldInbox(), 120_000));
 				this.refreshStatusBar();
@@ -1493,6 +1509,22 @@ export default class GrillPlugin extends Plugin {
 	 * time it warned (a new collision appeared, or an old one got renamed away) —
 	 * runs on every plugin load, but the same unresolved duplicates you haven't gotten
 	 * around to renaming yet don't re-nag you every single time you open Obsidian. */
+	/** Past answers that were marked down, read once from the session notes into each
+	 * concept's last miss, so a chat can say why something was missed. Returns how many
+	 * concepts it filled. */
+	private async fillMissesFromSessions(): Promise<number> {
+		const dir = normalizePath(`${this.data.settings.folder}/Sessions`) + "/";
+		const sessions: PastSession[] = [];
+		for (const f of this.app.vault.getMarkdownFiles()) {
+			if (!f.path.startsWith(dir)) continue;
+			const m = /^(\d{4}-\d\d-\d\d) (\d\d)\.(\d\d)/.exec(f.basename);
+			const at = m ? new Date(`${m[1]}T${m[2]}:${m[3]}:00`) : new Date(f.stat.ctime);
+			if (Number.isNaN(at.getTime())) continue;
+			sessions.push({ at: at.toISOString(), answers: parseSessionNote(await this.app.vault.cachedRead(f)) });
+		}
+		return sessions.length ? missesFromSessions(this.concepts, await this.store.loadQuestionBank(), sessions) : 0;
+	}
+
 	private warnOnDuplicateBasenames(): void {
 		const eligible = this.app.vault.getMarkdownFiles().filter((f) => !this.isExcluded(f.path));
 		const dupes = duplicateBasenames(eligible); // already sorted, so array equality below is order-stable
