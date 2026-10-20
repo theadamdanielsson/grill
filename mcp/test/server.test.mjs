@@ -61,11 +61,11 @@ const call = async (c, name, args = {}) => {
 	return { error: !!r.isError, body: r.isError ? r.content[0].text : JSON.parse(r.content[0].text) };
 };
 
-test("lists the five tools and says how to use them", async () => {
+test("lists the six tools and says how to use them", async () => {
 	const { root } = makeVault();
 	const c = await connect(["--vault", root]);
 	const names = (await c.listTools()).tools.map((t) => t.name).sort();
-	assert.deepEqual(names, ["grill_overview", "grill_questions", "grill_record_answer", "grill_weak_spots", "grill_what_they_know"]);
+	assert.deepEqual(names, ["grill_digest", "grill_overview", "grill_questions", "grill_record_answer", "grill_weak_spots", "grill_what_they_know"]);
 	assert.match(c.getInstructions(), /ONE at a time/);
 	await c.close();
 });
@@ -249,4 +249,18 @@ test("an Obsidian vault without Grill uses the person's own record, so answers a
 	await c.close();
 	assert.ok(existsSync(join(home, "concepts.json")));
 	assert.equal(existsSync(join(root, "Grill")), false, "nothing is written into a vault Grill isn't in");
+});
+
+test("the digest names the open confusion and the weakest concept, and is not offered in --chat", async () => {
+	const { root } = makeVault();
+	const c = await connect(["--vault", root]);
+	const r = await c.callTool({ name: "grill_digest", arguments: { note: "Inflation" } });
+	const text = r.content[0].text;
+	assert.match(text, /2 of 3 concepts tested/);
+	assert.match(text, /bracket creep/);
+	assert.doesNotMatch(text, /an old heading/);
+	await c.close();
+	const chat = await connect(["--vault", root, "--chat"]);
+	assert.ok(!(await chat.listTools()).tools.some((t) => t.name === "grill_digest"));
+	await chat.close();
 });

@@ -27,6 +27,7 @@ import {
 	whatTheyKnow,
 	has,
 } from "../../src/record";
+import { learnerBrief } from "../../src/brief";
 import { safeMarkdown } from "../../src/safemd";
 import type { QuestionBank } from "../../src/store";
 
@@ -179,7 +180,7 @@ function agentName(client: string | undefined): string {
 const INSTRUCTIONS = `Grill keeps a record of what this person knows: every concept from their notes they have been tested on, how likely they are to recall it today, what they got wrong last time, and the misconceptions they keep showing.
 
 Use it in two ways.
-1. To help them: before explaining something, call grill_what_they_know or grill_weak_spots on the topic and pitch the explanation at their level. Name the specific confusion if the record shows one.
+1. To help them: at the start of a conversation about what they study, call grill_digest once for a short summary of the record. Before explaining something, call grill_what_they_know or grill_weak_spots on the topic and pitch the explanation at their level. Name the specific confusion if the record shows one.
 2. To test them, when they ask to be tested or grilled: get questions from grill_questions. Ask ONE at a time and wait for the answer. Never show the expected answer before they answer. Grade strictly against the expected answer and acceptable answers: "correct", "partial" or "incorrect". Then tell them the verdict and what was missing, and call grill_record_answer for that answer before asking the next question. When an answer shows a confusion the record already names (the misconceptions in grill_weak_spots or grill_what_they_know), record it under that same tag rather than a new one. If there are no stored questions, write your own from their notes and record those too.
 
 Recorded answers update their schedule in Grill, the same as answers given inside Grill.`;
@@ -257,6 +258,24 @@ export function buildServer(where: Where, chatOnly = false): McpServer {
 	);
 
 	if (chatOnly) return server;
+
+	// Grill's own Chat already starts with the digest, so it is offered only outside it.
+	server.registerTool(
+		"grill_digest",
+		{
+			title: "Digest of the record",
+			description: "Grill's record in a few hundred words, the same digest Grill's own Chat starts with: how much is tested and due, the confusions that still show in recent answers, the weakest concepts with what they wrote last time, confusions fixed lately, and notes that are fully known. Read it once at the start of a conversation about what they study.",
+			inputSchema: {
+				note: z.string().optional().describe("A note to rank the weakest concepts toward. Leave out for the whole record."),
+			},
+		},
+		guarded(async ({ note }: { note?: string }) => {
+			const s = inView(where, load(where));
+			if (!hasRecord(s)) return empty();
+			const text = learnerBrief({ state: s, ...(note ? { focus: { note, near: [] } } : {}) });
+			return { content: [{ type: "text" as const, text: text || "Nothing has been tested yet." }] };
+		}),
+	);
 
 	server.registerTool(
 		"grill_questions",
@@ -422,7 +441,7 @@ function writeRepoRecord(where: Where, r: AgentResult): void {
 
 /** The same reads and writes as plain commands, for an agent with a shell and no MCP
  * set up (the grill-test skill uses these). Prints JSON; exits 1 on a bad call. */
-const COMMANDS = ["overview", "weak-spots", "know", "questions", "record"];
+const COMMANDS = ["overview", "digest", "weak-spots", "know", "questions", "record"];
 
 function runCommand(cmd: string, rest: string[]): number {
 	const where = locate();
@@ -464,6 +483,7 @@ function runCommand(cmd: string, rest: string[]): number {
 		return 0;
 	}
 	if (cmd === "overview") out(overview(s));
+	else if (cmd === "digest") console.log(learnerBrief({ state: s, ...(topic ? { focus: { note: topic, near: [] } } : {}) }) || "Nothing has been tested yet.");
 	else if (cmd === "weak-spots") out(weakSpots(s, topic, 15));
 	else if (cmd === "know") {
 		if (!topic) {
