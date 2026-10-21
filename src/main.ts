@@ -19,12 +19,13 @@ import {
 } from "obsidian";
 import { configureFSRSWeights, MasteryMap } from "./mastery";
 import { CalPoint, isCalPoint } from "./calibration";
-import { LLMConfig, offeredProviders, PROVIDERS, ProviderId, Question, listModels, migrateLegacyModels, synthesizeArc, testModel } from "./llm";
+import { LLMConfig, offeredProviders, PROVIDERS, ProviderId, Question, listModels, migrateLegacyModels, readPriorKnowledge, synthesizeArc, testModel } from "./llm";
 import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, CloudPack, CloudPlan, planInWords, planLabel, cloudAccount, cloudBalance, cloudSpeech, cloudCheckoutUrl, cloudDelete, cloudEnabled, cloudStart, creditsInWords, isCloudKey, newCloudKey, packLabel, usageInWords } from "./cloud";
 import { drawPlanOffer, drawPlanUsage, RefillModal } from "./refill";
 import { CHECK_EVERY_MS, isNewer, latestVersion } from "./update";
 import { AgentResult, applyResults, restoreNoteCounts } from "./record";
-import { missesFromSessions, type PastSession } from "./brief";
+import { learnerBrief, missesFromSessions, type PastSession } from "./brief";
+import { type AskSource, claudeCodeConversation, codexConversation, type Conversation, conversationsFromZip, exportConversations, importedLines, importedNames, matchConversations, mergeImported, plainPrior, type PriorKnowledge } from "./imported";
 import { parseSessionNote } from "./learn";
 import { CATCH_UP, ConceptMap, dueConceptCount, migrateResetScheduling, rebalanceDueDates, reconcileConcepts } from "./concepts";
 import { pairKey } from "./bridges";
@@ -45,7 +46,7 @@ import { terminateOcrWorker } from "./ocr";
 import { countTrainableReviews, MIN_REVIEWS_FOR_OPTIMIZATION, optimizeFSRSWeights } from "./optimizer";
 import { dueFiles, duplicateBasenames } from "./scope";
 import { KeyStash, secretStore, vaultId } from "./secrets";
-import { CLAUDE_MODELS, NEW_PROMPT, promptMessage, SELECTION_ASKS, SelectionAsk, selectionMessage } from "./selection";
+import { CLAUDE_MODEL_ALIASES, CLAUDE_MODELS, NEW_PROMPT, promptMessage, SELECTION_ASKS, SelectionAsk, selectionMessage } from "./selection";
 import { GrillStore, type SessionEntry } from "./store";
 import { GRILL_ICON, registerGrillIcon } from "./icon";
 import { LoopbackToolServer } from "./loopback";
@@ -189,6 +190,11 @@ interface GrillSettings {
 	claudeModel: string;
 	/** Where Codex is, when it isn't in one of the usual places. */
 	codexPath: string;
+	codexModel: string;
+	/** The offer to bring in questions asked in other AI chats has been answered. */
+	importAsked: boolean;
+	/** What another AI tool knows about the student, pasted by them. */
+	aboutMe: string;
 	/** Where opencode is, when it isn't Grill's own install or in one of the usual places. */
 	opencodePath: string;
 	/** Which of opencode's models answers in Chat, by its id; "" leaves it to opencode. */
@@ -384,6 +390,9 @@ function defaultSettings(): GrillSettings {
 		claudePath: "",
 		claudeModel: "",
 		codexPath: "",
+		codexModel: "",
+		importAsked: false,
+		aboutMe: "",
 		opencodePath: "",
 		opencodeModel: "",
 		agentLevel: "safe",
@@ -500,8 +509,14 @@ export default class GrillPlugin extends Plugin {
 		else if (old.questionSource === "local" || old.gradingMode === "self") settings.modelAgreed = false;
 		if (s.chatEngine === "model" || s.chatEngine === "claudecode" || s.chatEngine === "codex" || s.chatEngine === "opencode") settings.chatEngine = s.chatEngine;
 		if (typeof s.claudePath === "string") settings.claudePath = s.claudePath;
-		if (typeof s.claudeModel === "string" && CLAUDE_MODELS.some((m) => m.id === s.claudeModel)) settings.claudeModel = s.claudeModel;
+		if (typeof s.claudeModel === "string") {
+			const id = CLAUDE_MODEL_ALIASES[s.claudeModel] ?? s.claudeModel;
+			if (CLAUDE_MODELS.some((m) => m.id === id)) settings.claudeModel = id;
+		}
 		if (typeof s.codexPath === "string") settings.codexPath = s.codexPath;
+		if (typeof s.codexModel === "string") settings.codexModel = s.codexModel;
+		if (typeof s.importAsked === "boolean") settings.importAsked = s.importAsked;
+		if (typeof s.aboutMe === "string") settings.aboutMe = s.aboutMe;
 		if (typeof s.opencodePath === "string") settings.opencodePath = s.opencodePath;
 		if (typeof s.opencodeModel === "string") settings.opencodeModel = s.opencodeModel;
 		if (s.agentLevel === "safe" || s.agentLevel === "plan" || s.agentLevel === "auto") settings.agentLevel = s.agentLevel;
@@ -2114,6 +2129,144 @@ export default class GrillPlugin extends Plugin {
 		return this.modelConfig() ?? this.agentConfig();
 	}
 
+	/** How many conversations Claude Code and Codex keep on this computer, for the offer
+	 * to bring them in. Zero on a phone. */
+	agentChats(): { claudeCode: number; codex: number } {
+		const req = (window as unknown as { require?: (m: string) => unknown }).require;
+		if (!Platform.isDesktopApp || !req) return { claudeCode: 0, codex: 0 };
+		try {
+			const fs = req("fs") as { existsSync(p: string): boolean; readdirSync(p: string): string[]; statSync(p: string): { isDirectory(): boolean } };
+			const home = (req("os") as { homedir(): string }).homedir();
+			const count = (dir: string, deep: boolean): number => {
+				if (!fs.existsSync(dir)) return 0;
+				let n = 0;
+				for (const f of fs.readdirSync(dir)) {
+					const p = `${dir}/${f}`;
+					if (f.endsWith(".jsonl")) n++;
+					else if (deep && fs.statSync(p).isDirectory()) n += count(p, true);
+				}
+				return n;
+			};
+			const projects = `${home}/.claude/projects`;
+			const claudeCode = fs.existsSync(projects) ? fs.readdirSync(projects).reduce((n, d) => n + count(`${projects}/${d}`, false), 0) : 0;
+			return { claudeCode, codex: count(`${home}/.codex/sessions`, true) + count(`${home}/.codex/archived_sessions`, true) };
+		} catch {
+			return { claudeCode: 0, codex: 0 };
+		}
+	}
+
+	/** The notes Grill tests, as text, for matching imported questions to. */
+	private async notesForMatching(): Promise<Array<{ name: string; text: string }>> {
+		const files = this.app.vault.getMarkdownFiles().filter((f) => !this.isExcluded(f.path));
+		return Promise.all(files.map(async (f) => ({ name: f.basename, text: await this.app.vault.cachedRead(f) })));
+	}
+
+	/** Reads the conversations about the student's notes into one line a note of what they
+	 * knew before Grill, with the model Chat uses, and keeps those lines; the conversations
+	 * are not kept. With no model set up, a plainer line from the bare fact of the chats. */
+	private async keepImported(convs: Conversation[], read: Partial<Record<AskSource, number>>): Promise<{ notes: number; names: string[] }> {
+		const excerpts = matchConversations(convs, await this.notesForMatching());
+		const names = Object.keys(excerpts);
+		const cfg = this.llmConfig();
+		let read_: Record<string, string> = {};
+		if (cfg && names.length) {
+			try {
+				read_ = await readPriorKnowledge(cfg, excerpts);
+			} catch (e) {
+				console.warn("Grill: couldn't read the imported conversations", e);
+			}
+		}
+		const prior: Record<string, PriorKnowledge> = {};
+		for (const name of names) {
+			const text = cfg ? read_[name] : plainPrior(excerpts[name]);
+			if (!text) continue;
+			const latest = excerpts[name][0];
+			prior[name] = { text, at: latest.at, source: latest.source as AskSource };
+		}
+		await this.store.saveImported(mergeImported(await this.store.loadImported(), read, prior));
+		const kept = Object.keys(prior);
+		return { notes: kept.length, names: kept };
+	}
+
+	/** Reads the student's Claude Code and Codex conversations on this computer, for what
+	 * they show about the notes (see keepImported). */
+	async importAgentChats(only?: "claude-code" | "codex"): Promise<{ notes: number; names: string[] }> {
+		const req = (window as unknown as { require?: (m: string) => unknown }).require;
+		if (!Platform.isDesktopApp || !req) return { notes: 0, names: [] };
+		const fs = (req("fs") as { promises: { readdir(p: string, o: { withFileTypes: true }): Promise<Array<{ name: string; isDirectory(): boolean }>>; readFile(p: string, e: string): Promise<string> } }).promises;
+		const home = (req("os") as { homedir(): string }).homedir();
+		const files = async (dir: string, deep: boolean): Promise<string[]> => {
+			try {
+				const out: string[] = [];
+				for (const e of await fs.readdir(dir, { withFileTypes: true })) {
+					const p = `${dir}/${e.name}`;
+					if (e.name.endsWith(".jsonl")) out.push(p);
+					else if (deep && e.isDirectory()) out.push(...(await files(p, true)));
+				}
+				return out;
+			} catch {
+				return [];
+			}
+		};
+		const convs: Conversation[] = [];
+		const read: Partial<Record<AskSource, number>> = {};
+		if (only !== "codex") {
+			const dirs = await fs.readdir(`${home}/.claude/projects`, { withFileTypes: true }).catch(() => [] as Array<{ name: string; isDirectory(): boolean }>);
+			for (const dir of dirs.filter((e) => e.isDirectory())) {
+				for (const f of await files(`${home}/.claude/projects/${dir.name}`, false)) {
+					convs.push(claudeCodeConversation(await fs.readFile(f, "utf8").catch(() => "")));
+					read["claude-code"] = (read["claude-code"] ?? 0) + 1;
+				}
+			}
+		}
+		if (only !== "claude-code") {
+			for (const f of [...(await files(`${home}/.codex/sessions`, true)), ...(await files(`${home}/.codex/archived_sessions`, true))]) {
+				convs.push(codexConversation(await fs.readFile(f, "utf8").catch(() => "")));
+				read.codex = (read.codex ?? 0) + 1;
+			}
+		}
+		return this.keepImported(convs, read);
+	}
+
+	/** Reads a ChatGPT or Claude data export: the zip they send, or the conversations.json
+	 * inside it. */
+	async importExport(file: File): Promise<{ notes: number; names: string[] }> {
+		const bytes = new Uint8Array(await file.arrayBuffer());
+		let text: string | null;
+		if (file.name.toLowerCase().endsWith(".zip")) {
+			const req = (window as unknown as { require?: (m: string) => unknown }).require;
+			const zlib = req?.("zlib") as { inflateRawSync(d: Uint8Array): Uint8Array } | undefined;
+			if (!zlib) throw new Error("Unzip it first and choose conversations.json inside.");
+			text = conversationsFromZip(bytes, (d) => zlib.inflateRawSync(d));
+			if (text === null) throw new Error("There is no conversations.json in this zip.");
+		} else {
+			text = new TextDecoder().decode(bytes);
+		}
+		const convs = exportConversations(text);
+		const read: Partial<Record<AskSource, number>> = {};
+		for (const c of convs) read[c.source] = (read[c.source] ?? 0) + 1;
+		return this.keepImported(convs, read);
+	}
+
+	/** Grill's profile of the student, as text to paste into another AI or send to someone:
+	 * the digest every chat reads, with more room. */
+	async profileText(): Promise<string> {
+		const registry = await this.store.loadRegistry().catch(() => ({}));
+		const imported = await this.store.loadImported().catch(() => null);
+		const body = learnerBrief({
+			state: { concepts: this.concepts, mastery: this.mastery, registry },
+			about: this.data.settings.aboutMe,
+			asked: importedLines(imported, "", 20),
+			budget: 12000,
+		});
+		return body ? `# My Grill profile
+
+What Grill knows about how I study, from my notes and tests.
+
+${body}
+` : "";
+	}
+
 	/** The agent program Chat is set to, standing in for a model: see agentjson.ts. */
 	agentConfig(): LLMConfig | null {
 		const s = this.data.settings;
@@ -2121,7 +2274,7 @@ export default class GrillPlugin extends Plugin {
 		const engine = s.chatEngine;
 		const program = engine === "claudecode" ? findProgram(s.claudePath) : engine === "codex" ? findCodex(s.codexPath) : findOpencode(s.opencodePath);
 		if (!program) return null;
-		const model = engine === "claudecode" ? s.claudeModel : engine === "opencode" ? s.opencodeModel : "";
+		const model = engine === "claudecode" ? s.claudeModel : engine === "opencode" ? s.opencodeModel : s.codexModel;
 		return {
 			provider: "custom",
 			apiKey: "",
@@ -4181,7 +4334,128 @@ export class GrillSettingTab extends PluginSettingTab {
 			{ tab: "agents" as const, heading: "Tools and skills", rows: this.toolRows() },
 			{ tab: "study", heading: "Studying", rows: studying },
 			{ tab: "study", heading: "Folders", rows: scope },
+			{ tab: "study", heading: "From other AI chats", rows: this.importRows(all) },
+			{ tab: "study", heading: "Your profile", rows: [this.profileRow()] },
 		];
+	}
+
+	/** Bringing in what the student asked other AI tools, and what they know about them. */
+	private importRows(all: boolean): Row[] {
+		const s = this.plugin.data.settings;
+		const told = (r: { notes: number; names: string[] }): void => {
+			new Notice(r.notes ? `Grill: your past chats say something about ${importedNames(r.names)}. Chat and your tests now start from that.` : "Grill: none of those conversations were about your notes.", 8000);
+		};
+		const rows: Row[] = [];
+		if (all || Platform.isDesktopApp) {
+			const found = this.plugin.agentChats();
+			rows.push({
+				name: "Claude Code and Codex",
+				desc: `Let Grill learn what you already know from your ${found.claudeCode} Claude Code and ${found.codex} Codex conversations: whether you were quizzed on a topic in your notes, and where you started. The model Chat uses reads the parts about your notes, once; Grill keeps one line a note.`,
+				aliases: ["import", "history", "personalize"],
+				build: (setting) =>
+					setting.addButton((b) =>
+						b.setButtonText("Import").onClick(async () => {
+							b.setDisabled(true).setButtonText("Reading…");
+							try {
+								told(await this.plugin.importAgentChats());
+							} catch (e) {
+								new Notice(`Grill: couldn't read them (${e instanceof Error ? e.message : String(e)}).`);
+							}
+							s.importAsked = true;
+							await this.plugin.persist();
+							b.setDisabled(false).setButtonText("Import");
+						}),
+					),
+			});
+		}
+		rows.push({
+			name: "ChatGPT or Claude",
+			desc: "In ChatGPT or Claude, open Settings and export your data. Choose the zip they send you, or conversations.json inside it.",
+			aliases: ["import", "export", "chatgpt", "openai", "history"],
+			build: (setting) =>
+				setting.addButton((b) =>
+					b.setButtonText("Choose file").onClick(() => {
+						const input = document.createElement("input");
+						input.type = "file";
+						input.accept = ".zip,.json";
+						input.onchange = async () => {
+							const file = input.files?.[0];
+							if (!file) return;
+							b.setDisabled(true).setButtonText("Reading…");
+							try {
+								told(await this.plugin.importExport(file));
+							} catch (e) {
+								new Notice(`Grill: couldn't read that file. ${e instanceof Error ? e.message : String(e)}`, 8000);
+							}
+							b.setDisabled(false).setButtonText("Choose file");
+						};
+						input.click();
+					}),
+				),
+		});
+		rows.push({
+			name: "What they know about you",
+			desc: 'Ask ChatGPT or Claude "What do you know about me?" and paste the answer. Grill\'s chats and questions read it.',
+			aliases: ["memory", "about me", "profile"],
+			build: (setting) =>
+				setting.addTextArea((t) => {
+					t.inputEl.rows = 5;
+					t.setValue(s.aboutMe).onChange(async (v) => {
+						s.aboutMe = v;
+						await this.plugin.persist();
+					});
+				}),
+		});
+		rows.push({
+			name: "Forget what was brought in",
+			desc: "Removes what Grill learned from your past chats. Your tests and the text above stay.",
+			build: (setting) =>
+				setting.addButton((b) =>
+					b
+						.setButtonText("Forget")
+						.setWarning()
+						.onClick(async () => {
+							await this.plugin.store.saveImported(null);
+							new Notice("Grill: removed what was learned from your past chats.");
+						}),
+				),
+		});
+		return rows;
+	}
+
+	/** Grill's profile of the student, to paste into another AI or send to someone. */
+	private profileRow(): Row {
+		return {
+			name: "Share your profile",
+			desc: "What Grill knows about how you study, as text: what you know, what you keep getting wrong, what you asked elsewhere. Paste it into another AI, or send it to someone.",
+			aliases: ["export", "share", "profile", "record"],
+			build: (setting) => {
+				const get = async (): Promise<string | null> => {
+					const text = await this.plugin.profileText();
+					if (!text) new Notice("Grill: nothing to share yet. Take a test or bring in your AI chats first.");
+					return text || null;
+				};
+				setting.addButton((b) =>
+					b.setButtonText("Copy").onClick(async () => {
+						const text = await get();
+						if (!text) return;
+						await navigator.clipboard.writeText(text);
+						new Notice("Grill: profile copied.");
+					}),
+				);
+				setting.addButton((b) =>
+					b.setButtonText("Save as note").onClick(async () => {
+						const text = await get();
+						if (!text) return;
+						const path = normalizePath(`${this.plugin.data.settings.folder}/Profile.md`);
+						const at = this.app.vault.getAbstractFileByPath(path);
+						if (at instanceof TFile) await this.app.vault.modify(at, text);
+						else await this.app.vault.create(path, text);
+						await this.app.workspace.getLeaf(true).openFile(this.app.vault.getAbstractFileByPath(path) as TFile);
+					}),
+				);
+			},
+		};
 	}
 
 	/** MCP servers and skills for Chat on Grill Cloud or a key of one's own. Claude Code,

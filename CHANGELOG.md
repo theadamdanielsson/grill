@@ -1,5 +1,20 @@
 # Changelog
 
+## 8.7.2
+
+- **Grill starts from what you already know.** If you have used Claude Code or Codex,
+  Grill offers once to look through those conversations for the topics in your notes:
+  whether you were quizzed on them, how it went, and where you started. Chat and your
+  tests then start from there. A ChatGPT or Claude data export can be added in
+  settings, and you can paste what those tools remember about you. Only tests change
+  what counts as known.
+- **Share your profile.** Settings, Study, Your profile: copy what Grill knows about how
+  you study, or save it as a note, to paste into another AI or send to someone.
+- **Exact model names.** The Claude Code model menu lists each model by name, with
+  earlier ones below a line.
+- **Codex models.** With Codex as the engine, the model menu lists the models your Codex
+  offers.
+
 ## 8.7.1
 
 - **Add context during a test.** Beside "I don't know", Add context lets you say how the

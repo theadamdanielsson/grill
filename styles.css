@@ -4266,3 +4266,33 @@ textarea.grill-mgmt-field {
 .grill-home-panel .grill-home-bar {
   gap: clamp(5px, 1.6cqi, 12px);
 }
+
+/* Once, on the home screen: bring in what was asked in other AI chats. */
+.grill-import-offer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6em;
+  padding: 0.8em 0.9em;
+  border: 1px dashed var(--grill-gold, #ffd23f);
+  background: rgba(255, 210, 63, 0.05);
+}
+.grill-import-offer-text {
+  color: var(--grill-ink, #ffe98a);
+  line-height: 1.45;
+}
+.grill-import-offer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5em;
+}
+.grill-import-offer-actions .grill-quiet-btn {
+  margin-left: 0;
+}
+.grill-import-offer-title {
+  color: var(--grill-ink-gold, #ffd23f);
+  font-weight: var(--font-semibold, 600);
+  font-size: 1.05em;
+}
+.grill-import-offer-text {
+  color: var(--grill-ink-dim, #c9a875);
+}

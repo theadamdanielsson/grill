@@ -150,6 +150,10 @@ export interface BriefInput {
 	state: RecordState;
 	focus?: Focus;
 	conclusions?: Conclusion[];
+	/** What the student pasted from another AI tool about themselves. */
+	about?: string;
+	/** What their past chats with other AI tools show they knew (see importedLines in imported.ts). */
+	asked?: string[];
 	budget?: number;
 	now?: Date;
 }
@@ -161,7 +165,9 @@ export function learnerBrief(i: BriefInput): string {
 	const all = Object.entries(i.state.concepts).filter(([, c]) => live(c));
 	const tested = all.filter(([, c]) => conceptTested(c));
 	const own = (i.conclusions ?? []).filter((c) => c.text.trim());
-	if (!tested.length && !own.length) return "";
+	const about = (i.about ?? "").trim();
+	const asked = i.asked ?? [];
+	if (!tested.length && !own.length && !about && !asked.length) return "";
 
 	const sections: Array<{ head: string; lines: string[] }> = [];
 	let used = 0;
@@ -183,6 +189,11 @@ export function learnerBrief(i: BriefInput): string {
 	if (own.length) {
 		const s = section("The student's own conclusions, in their words (weigh these first):");
 		for (const c of own) if (!add(s, `- [${c.kind}] ${c.text.trim()}`)) break;
+	}
+
+	if (about) {
+		const s = section("What the student's other AI tools know about them, as they pasted it:");
+		add(s, about.length > 800 ? `${about.slice(0, 800)}…` : about);
 	}
 
 	if (tested.length) {
@@ -236,6 +247,11 @@ export function learnerBrief(i: BriefInput): string {
 		const shown = solid.slice(0, 6).map(([n, e]) => `${n} (${e.known})`);
 		const s = section("Notes where every tested concept is known:");
 		add(s, `- ${shown.join(", ")}${solid.length > 6 ? `, and ${solid.length - 6} more notes` : ""}`);
+	}
+
+	if (asked.length) {
+		const s = section("What the student knew before Grill, from their past chats with other AI tools (not test results):");
+		for (const line of asked) if (!add(s, line)) break;
 	}
 
 	return sections

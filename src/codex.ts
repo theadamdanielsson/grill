@@ -56,6 +56,8 @@ export interface CodexRun {
 	/** Grill's own tools, given to a new conversation as Codex's dynamic tools and run
 	 * here when it calls them. A conversation keeps the tools it started with. */
 	tools?: { specs: ToolSpec[]; call: ToolRunner };
+	/** The model to answer with, by Codex's own name for it; empty for Codex's default. */
+	model?: string;
 }
 
 /** The namespace Grill's dynamic tools are listed under. */
@@ -252,13 +254,13 @@ export async function runCodexTurn(run: CodexRun, wire: CodexWire): Promise<Agen
 		await request("initialize", { clientInfo: { name: "grill", version: "1.0.0" }, capabilities: { experimentalApi: true } });
 		wire.send(JSON.stringify({ jsonrpc: "2.0", method: "initialized" }));
 		const policy = codexPolicy(run.level);
-		const config = { cwd: run.cwd, approvalPolicy: policy.approvalPolicy, approvalsReviewer: "user", sandbox: policy.sandbox };
+		const config = { cwd: run.cwd, approvalPolicy: policy.approvalPolicy, approvalsReviewer: "user", sandbox: policy.sandbox, ...(run.model ? { model: run.model } : {}) };
 		const tools = run.tools ? { dynamicTools: run.tools.specs.map((t) => ({ namespace: CODEX_TOOL_NAMESPACE, name: t.name, description: t.description, inputSchema: t.input })) } : {};
 		const opened = await request<Loose>(threadId ? "thread/resume" : "thread/start", threadId ? { threadId, ...config } : { ...config, ...tools });
 		threadId = str(obj(opened?.thread)?.id) || threadId;
 		if (run.signal?.aborted) throw new DOMException("Stopped.", "AbortError");
 		const first = !run.resume && run.brief ? `<context>\n${run.brief}\n</context>\n\n${run.prompt}` : run.prompt;
-		const started = await request<Loose>("turn/start", { threadId, input: [{ type: "text", text: first }], approvalPolicy: policy.approvalPolicy, approvalsReviewer: "user" });
+		const started = await request<Loose>("turn/start", { threadId, input: [{ type: "text", text: first }], approvalPolicy: policy.approvalPolicy, approvalsReviewer: "user", ...(run.model ? { model: run.model } : {}) });
 		turnId = str(obj(started?.turn)?.id) || turnId;
 		await done;
 	} finally {
@@ -308,6 +310,33 @@ export function findCodex(setPath: string): string | null {
 	} catch {
 		return null;
 	}
+}
+
+/** The models the installed Codex offers, as it last fetched them for its own picker
+ * (~/.codex/models_cache.json), best first. Empty when there is no such list. */
+export function codexModels(): Array<{ id: string; name: string }> {
+	try {
+		const req = need();
+		if (!req) return [];
+		const fs = req("fs") as { readFileSync(p: string, e: string): string };
+		const home = (req("os") as { homedir(): string }).homedir();
+		const data = JSON.parse(fs.readFileSync(`${home}/.codex/models_cache.json`, "utf8")) as { models?: unknown };
+		const list = Array.isArray(data.models) ? (data.models as Array<Record<string, unknown>>) : [];
+		return list
+			.filter((m) => typeof m.slug === "string" && m.visibility !== "hide")
+			.sort((a, b) => (Number(a.priority) || 0) - (Number(b.priority) || 0))
+			.map((m) => ({ id: m.slug as string, name: codexModelName(m.slug as string) }));
+	} catch {
+		return [];
+	}
+}
+
+/** "gpt-5.4-mini" reads "GPT-5.4-Mini": Codex's own display names are written either way. */
+export function codexModelName(slug: string): string {
+	return slug
+		.split("-")
+		.map((w, i) => (i === 0 && w === "gpt" ? "GPT" : /^[a-z]/.test(w) && i > 0 ? w[0].toUpperCase() + w.slice(1) : w))
+		.join("-");
 }
 
 interface Child {

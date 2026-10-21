@@ -80,9 +80,26 @@ export const STARTER_PROMPTS: Array<{ name: string; text: string }> = [
 export const NEW_PROMPT = "Summarise this in five bullet points, in plain words.\n";
 
 /** Claude Code's own names for its models; "" leaves the choice to Claude Code. */
-export const CLAUDE_MODELS: Array<{ id: string; name: string }> = [
+export const CLAUDE_MODELS: Array<{ id: string; name: string; earlier?: boolean }> = [
 	{ id: "", name: "Default model" },
-	{ id: "opus", name: "Opus" },
-	{ id: "sonnet", name: "Sonnet" },
-	{ id: "haiku", name: "Haiku" },
+	{ id: "claude-fable-5-1", name: "Claude Fable 5.1" },
+	{ id: "claude-opus-5-5", name: "Claude Opus 5.5" },
+	{ id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5" },
+	{ id: "claude-haiku-5-5", name: "Claude Haiku 5.5" },
+	{ id: "claude-fable-5", name: "Claude Fable 5", earlier: true },
+	{ id: "claude-opus-5", name: "Claude Opus 5", earlier: true },
+	{ id: "claude-opus-4-8", name: "Claude Opus 4.8", earlier: true },
+	{ id: "claude-opus-4-7", name: "Claude Opus 4.7", earlier: true },
+	{ id: "claude-opus-4-6", name: "Claude Opus 4.6", earlier: true },
+	{ id: "claude-sonnet-5", name: "Claude Sonnet 5", earlier: true },
+	{ id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", earlier: true },
+	{ id: "claude-haiku-4-5", name: "Claude Haiku 4.5", earlier: true },
 ];
+
+/** The short names Claude Code also takes, as kept by Grill before 8.7.2: each now
+ * reads as the current model of its family. */
+export const CLAUDE_MODEL_ALIASES: Record<string, string> = {
+	opus: "claude-opus-5-5",
+	sonnet: "claude-sonnet-5-5",
+	haiku: "claude-haiku-5-5",
+};

@@ -94,7 +94,8 @@ import { RECORD_RULES, RECORD_TOOLS, runRecordQuery, type RecordPort, type Study
 import { projectSummaries } from "./record";
 import { GRILL_ICON } from "./icon";
 import { attachPicker, linkedNames, type PickSource } from "./mention";
-import { findCodex, runCodex } from "./codex";
+import { codexModelName, codexModels, findCodex, runCodex } from "./codex";
+import { importedLines, importedNames } from "./imported";
 import { AcpModel, acpModels, runAcp } from "./acp";
 import { canInstall, findOpencode, opencodeProgram } from "./opencode";
 
@@ -1644,7 +1645,66 @@ export class SessionView extends ItemView {
 			},
 			showChats: () => this.renderChats(),
 		});
+		this.importOffer(screen);
 		this.creditsRing(screen);
+	}
+
+	/** Asked once, on a computer that has Claude Code or Codex conversations: bring in the
+	 * questions typed there that are about these notes, so Grill knows something from the
+	 * start. Answered either way, it is not asked again; settings keep the button. */
+	private importOffer(screen: HTMLElement): void {
+		const s = this.plugin.data.settings;
+		if (s.importAsked) return;
+		const found = this.plugin.agentChats();
+		// The engine Chat runs on, when it keeps conversations here; else whichever does.
+		const source: "claude-code" | "codex" | null =
+			s.chatEngine === "codex" && found.codex ? "codex" : s.chatEngine === "claudecode" && found.claudeCode ? "claude-code" : found.claudeCode ? "claude-code" : found.codex ? "codex" : null;
+		if (!source) return;
+		const name = source === "codex" ? "Codex" : "Claude Code";
+		const chats = source === "codex" ? found.codex : found.claudeCode;
+		const body = screen.querySelector(".grill-home-body");
+		if (!body) return;
+		const card = createDiv({ cls: "grill-import-offer" });
+		body.prepend(card);
+		card.createDiv({ cls: "grill-import-offer-title", text: `Share context from ${name}` });
+		card.createDiv({
+			cls: "grill-import-offer-text",
+			text: `Grill looks through your ${chats} ${name} conversation${chats === 1 ? "" : "s"} for the topics in your notes, to learn what you already know: whether you were quizzed on them and where you started. It then explains and tests you from there.`,
+		});
+		const actions = card.createDiv({ cls: "grill-import-offer-actions" });
+		const no = actions.createEl("button", { cls: "grill-quiet-btn", text: "Not now", attr: { type: "button" } });
+		const yes = actions.createEl("button", { cls: "mod-cta", text: "Share context", attr: { type: "button" } });
+		const answered = async (): Promise<void> => {
+			s.importAsked = true;
+			await this.plugin.persist();
+		};
+		no.onclick = async () => {
+			await answered();
+			card.remove();
+		};
+		yes.onclick = async () => {
+			yes.disabled = no.disabled = true;
+			yes.setText("Reading…");
+			let said: string;
+			let found = false;
+			try {
+				const r = await this.plugin.importAgentChats(source);
+				found = r.notes > 0;
+				said = found
+					? `Your ${name} chats say something about ${importedNames(r.names)}. Grill now starts from that when it explains or tests you.`
+					: `None of your ${name} conversations were about these notes. You can add a ChatGPT or Claude export in settings.`;
+			} catch (e) {
+				said = `Grill couldn't read them: ${e instanceof Error ? e.message : String(e)}`;
+			}
+			await answered();
+			// The answer stays where the question was, not in a notice that fades.
+			card.empty();
+			card.createDiv({ cls: "grill-import-offer-title", text: found ? `Context from ${name}` : `Nothing from ${name}` });
+			card.createDiv({ cls: "grill-import-offer-text", text: said });
+			const done = card.createDiv({ cls: "grill-import-offer-actions" });
+			const ok = done.createEl("button", { cls: "mod-cta", text: "Done", attr: { type: "button" } });
+			ok.onclick = () => card.remove();
+		};
 	}
 
 	/** What answers in Chat, for the button under the box: its name, and the way to
@@ -1700,13 +1760,38 @@ export class SessionView extends ItemView {
 		const program = this.agentProgram();
 		if (program && s.chatEngine === "opencode") return this.opencodeModelButton(program, after);
 		if (program) {
+			if (s.chatEngine === "codex") {
+				// Codex's own list, as its picker shows it; the default is whatever Codex is set to.
+				const models = [{ id: "", name: "Default model" }, ...codexModels()];
+				const now = models.find((m) => m.id === s.codexModel) ?? { id: s.codexModel, name: s.codexModel ? codexModelName(s.codexModel) : "Default model" };
+				return {
+					name: now.name,
+					open: (at) => {
+						const menu = new Menu();
+						for (const m of models) {
+							menu.addItem((i) =>
+								i
+									.setTitle(m.name)
+									.setChecked(m.id === now.id)
+									.onClick(() => {
+										s.codexModel = m.id;
+										void this.plugin.persist();
+										after();
+									}),
+							);
+						}
+						this.menuAt(at, menu);
+					},
+				};
+			}
 			if (s.chatEngine !== "claudecode") return null;
 			const now = CLAUDE_MODELS.find((m) => m.id === s.claudeModel) ?? CLAUDE_MODELS[0];
 			return {
 				name: now.name,
 				open: (at) => {
 					const menu = new Menu();
-					for (const m of CLAUDE_MODELS) {
+					for (const [n, m] of CLAUDE_MODELS.entries()) {
+						if (m.earlier && !CLAUDE_MODELS[n - 1]?.earlier) menu.addSeparator();
 						menu.addItem((i) =>
 							i
 								.setTitle(m.name)
@@ -1933,13 +2018,15 @@ export class SessionView extends ItemView {
 			// The digest is still worth giving without the confusions.
 		}
 		const state = { concepts: this.plugin.concepts, mastery: this.plugin.mastery, registry };
-		if (!note) return learnerBrief({ state });
+		const imported = await this.plugin.store.loadImported().catch(() => null);
+		const about = this.plugin.data.settings.aboutMe;
+		if (!note) return learnerBrief({ state, about, asked: importedLines(imported) });
 		const links = this.app.metadataCache.resolvedLinks;
 		const near = new Set<string>();
 		for (const path of Object.keys(links[note.path] ?? {})) near.add(path);
 		for (const [from, to] of Object.entries(links)) if (to[note.path]) near.add(from);
 		const name = (path: string): string => path.split("/").pop()!.replace(/\.md$/, "");
-		return learnerBrief({ state, focus: { note: note.basename, near: [...near].map(name) } });
+		return learnerBrief({ state, about, asked: importedLines(imported, note.basename), focus: { note: note.basename, near: [...near].map(name) } });
 	}
 
 	/** The note a conversation is about and the notes that go with it, as they read now,
@@ -1972,7 +2059,7 @@ export class SessionView extends ItemView {
 		try {
 			await this.plugin.store.saveLearnThread(L.whole ? "Your notes" : L.note.basename, L.turns, {
 				provider: ran ?? cfg?.provider ?? "",
-				model: ran === "claudecode" ? s.claudeModel || "default" : ran === "opencode" ? s.opencodeModel || "default" : ran ? "default" : cfg?.provider === "grillcloud" ? "hosted" : (cfg?.model ?? ""),
+				model: ran === "claudecode" ? s.claudeModel || "default" : ran === "opencode" ? s.opencodeModel || "default" : ran === "codex" ? s.codexModel || "default" : ran ? "default" : cfg?.provider === "grillcloud" ? "hosted" : (cfg?.model ?? ""),
 				startedAt: L.startedAt,
 				into: L.file,
 				from: L.had,
@@ -2952,7 +3039,7 @@ export class SessionView extends ItemView {
 		try {
 			const result =
 				s.chatEngine === "codex"
-					? await runCodex({ ...shared, brief: withRules, tools })
+					? await runCodex({ ...shared, brief: withRules, tools, model: s.codexModel })
 					: s.chatEngine === "opencode"
 						? await runAcp({
 								...shared,

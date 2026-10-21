@@ -19,6 +19,7 @@ import { BridgeMap } from "./bridges";
 import { PdfCacheMap } from "./pdf";
 import { ConceptExtractionCacheMap } from "./generate-local";
 import { safeDiagram, safeMarkdown } from "./safemd";
+import type { ImportedRecord } from "./imported";
 import { replyTitle } from "./learn";
 import { AgentResult, INBOX_DIR, parseResult } from "./record";
 
@@ -709,6 +710,21 @@ export class GrillStore {
 	}
 
 	/** Missing-link records: which note pairs have been surfaced, answered, or linked. */
+	/** Questions asked in other AI chats, matched to notes (see imported.ts). */
+	async loadImported(): Promise<ImportedRecord | null> {
+		return this.loadJSON<ImportedRecord | null>(normalizePath(`${this.folder()}/imported.json`), null);
+	}
+
+	async saveImported(rec: ImportedRecord | null): Promise<void> {
+		const path = normalizePath(`${this.folder()}/imported.json`);
+		if (!rec) {
+			if (await this.app.vault.adapter.exists(path)) await this.app.vault.adapter.remove(path);
+			return;
+		}
+		await this.ensureFolder(this.folder());
+		await this.saveJSON(path, JSON.stringify(rec, null, 1));
+	}
+
 	async loadBridges(): Promise<BridgeMap> {
 		return this.loadJSON<BridgeMap>(this.bridgesPath(), {});
 	}

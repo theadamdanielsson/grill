@@ -128,7 +128,7 @@ export async function agentJSON(run: AgentJSONRun): Promise<unknown> {
 	const quiet = { onEvent: () => undefined, ask: async () => "deny" as const, signal: run.signal };
 	const result =
 		run.engine === "codex"
-			? await runCodex({ program: run.program, prompt, cwd, level: "plan", ...quiet })
+			? await runCodex({ program: run.program, prompt, cwd, level: "plan", model: run.model, ...quiet })
 			: await runAcp({ ...opencodeProgram(run.program, "plan"), name: "opencode", prompt, cwd, level: "plan", model: run.model, ...quiet });
 	return readJSON(result.text);
 }
