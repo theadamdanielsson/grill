@@ -6,6 +6,8 @@ I take a lot of notes to learn new material, and I needed a way to learn them mo
 
 [Watch the 1-minute tour, with sound](https://grill.onbridger.com/v/tour.mp4)
 
+Featured in [This Week in Obsidian #44](https://thisweekinobsidian.substack.com/p/this-week-in-obsidian-44).
+
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/check-dark.svg"><img src="docs/icons/check.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> How state builds up
 
 1. **Tested.** Grill writes questions from what you wrote and grades what you type back, with partial credit and feedback on what was missing.
