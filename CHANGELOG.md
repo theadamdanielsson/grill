@@ -1,5 +1,21 @@
 # Changelog
 
+## 8.7.1
+
+- **Add context during a test.** Beside "I don't know", Add context lets you say how the
+  rest of the test should be asked: shorter, with numbers, a different type of question.
+  The questions still to come are rewritten, and the one on screen too if you tick it.
+  It lasts for that test only. Instructions.md stays as it is, and questions written
+  for it are not kept for later tests.
+- **A bigger home screen.** Tiles, tabs, suggestions and the box are larger and sit
+  closer to the edges. The four tiles always line up, and the buttons under the box
+  shrink with the pane instead of spilling over it.
+- **Map filters** wrap onto a second line instead of running off the edge.
+- **Remove a project tested in another agent** from the Progress screen.
+- **"Too short to test"** only shows for the note you have open, and names it.
+- **Explanations under a question** are headed with the name of what wrote them, such as
+  Claude Code, not "Grill (Claude Code)".
+
 ## 8.7.0
 
 - **Every chat starts from your record.** A short digest of the whole record goes

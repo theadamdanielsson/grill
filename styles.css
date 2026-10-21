@@ -541,15 +541,12 @@
   background-image: radial-gradient(circle, rgba(255, 178, 50, 0.11) 1px, transparent 1.4px);
   background-size: 15px 15px;
 }
-/* One continuous row, always — wrapping wasted more space (a lone "Unlinked" stranded
-   on its own second line) than it saved, so scroll horizontally instead of wrapping when
-   the pane's too narrow for all five at once. */
+/* Wraps onto a second line when the pane is too narrow: a row that scrolled sideways
+   hid the filters past the edge with nothing to say they were there. */
 .grill-filter-row {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 0.35em;
-  overflow-x: auto;
-  scrollbar-width: thin;
   padding-bottom: 2px;
 }
 /* Dim HUD tags until picked, lighting up gold-to-flame when active — matching the
@@ -1041,6 +1038,78 @@
   color: var(--text-normal);
 }
 .grill-bad-question-btn {
+  margin-left: 0;
+}
+/* "Add context" sits beside "I don't know", fainter still: rarely needed. */
+.grill-context-slot {
+  display: flex;
+  align-items: center;
+}
+.grill-view button.grill-context-btn {
+  margin-left: 0;
+  padding-left: 0.5em;
+  padding-right: 0.5em;
+  color: var(--text-faint);
+  font-size: var(--font-ui-small);
+}
+.grill-view button.grill-context-btn:hover {
+  color: var(--text-muted);
+}
+.grill-context-status {
+  padding: 0 0.5em;
+  color: var(--text-faint);
+  font-size: var(--font-ui-small);
+  white-space: nowrap;
+}
+.grill-context-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6em;
+  margin-top: 0.8em;
+  padding: 0.8em 0.9em;
+  border: 2px solid var(--grill-gold, #ffd23f);
+  background: var(--grill-screen-deep, #0f0904);
+}
+.grill-view .grill-context-input {
+  width: 100%;
+  min-height: 6em;
+  font-family: inherit;
+  line-height: 1.5;
+  resize: vertical;
+}
+.grill-view .grill-context-input::placeholder {
+  color: var(--text-faint);
+}
+.grill-context-check {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  font-size: var(--font-ui-small);
+  cursor: pointer;
+}
+.grill-context-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5em;
+}
+.grill-context-line {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  margin: 0.4em 0;
+  padding: 0.2em 0.2em 0.2em 0.7em;
+  border: 1px dashed var(--grill-ember-dark, #5c1400);
+  font-size: var(--font-ui-small);
+}
+.grill-context-line-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.grill-context-line .grill-quiet-btn {
+  flex-shrink: 0;
   margin-left: 0;
 }
 .grill-bad-question-btn:hover {
@@ -4015,4 +4084,185 @@ textarea.grill-mgmt-field {
 .grill-chat-actions button.grill-chat-delete {
 	color: var(--text-error);
 	font-weight: var(--font-semibold);
+}
+
+/* ---------------------------------------------------------------- home in a narrow pane */
+/* Every tile stacks its number over its label, whatever the width, so the four line up;
+ * the tiles shrink with the pane rather than pushing the last one off it. */
+.grill-arcade-screen.grill-home {
+  container: grill-home / inline-size;
+}
+.grill-stats {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.grill-home .grill-start-stats .grill-stat {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.2em;
+  min-width: 0;
+  overflow: hidden;
+}
+.grill-home .grill-start-stats .grill-stat-value,
+.grill-home .grill-start-stats .grill-stat-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@container grill-home (max-width: 330px) {
+  .grill-home .grill-start-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+/* The buttons under the box stay on one line with Send beside them (see the sizing at
+ * the end of this file). Only a pane too narrow even for that puts Send on its own row. */
+.grill-home-panel .grill-home-bar {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+.grill-home-picks {
+  flex: 1 1 0;
+  flex-wrap: nowrap;
+}
+.grill-view button.grill-home-engine,
+.grill-view button.grill-home-engine:hover {
+  flex: 0 0 auto;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.grill-home-engine > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.grill-home-engine > .grill-home-engine-dot {
+  flex-shrink: 0;
+}
+.grill-view .grill-home-bar .grill-home-send {
+  margin-left: auto;
+}
+/* Progress, Questions, Chats: a second row when one row cannot hold them. */
+.grill-home > .grill-home-foot {
+  flex-wrap: wrap;
+}
+.grill-view button.grill-home-nav,
+.grill-view button.grill-home-nav:hover {
+  flex: 1 1 6.5em;
+  padding-left: 0.8em;
+  padding-right: 0.8em;
+  white-space: nowrap;
+}
+
+/* Remove, on a project tested in another agent: faint, and asked once before it goes. */
+.grill-view button.grill-agent-remove,
+.grill-agent-remove-ask .grill-quiet-btn {
+  margin-left: 0;
+  padding: 0 0.4em;
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
+.grill-agent-remove-ask {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+}
+
+/* ---------------------------------------------------------------- home, upsized */
+/* The home screen fills its pane: thinner margins inside the cabinet (just clear of the
+ * corner pins), and bigger tiles, tabs, rows and box, so it reads at a glance. */
+.grill-arcade-screen.grill-home {
+  /* The foot keeps its room: Obsidian's status bar floats over the pane's last 2em. */
+  padding: 0.95em 0.95em 2.8em;
+}
+.grill-home .grill-start-stats {
+  gap: 0.6em;
+  margin: 0.2em 0 0.8em;
+}
+.grill-home .grill-start-stats .grill-stat {
+  gap: 0.45em;
+  padding: 0.85em 0.3em 0.75em;
+}
+.grill-home .grill-start-stats .grill-stat-value {
+  font-size: 1.4em;
+  line-height: 1.2;
+}
+.grill-home .grill-start-stats .grill-stat-label {
+  font-size: 0.58em;
+}
+.grill-view .grill-home-panel > .grill-home-modes button.grill-home-mode,
+.grill-view .grill-home-panel > .grill-home-modes button.grill-home-mode:hover {
+  padding: 1.15em 0;
+  font-size: 0.75em;
+}
+.grill-home .grill-home-body {
+  padding: 0.9em 0.75em 0.75em;
+}
+.grill-view .grill-home-panel button.grill-home-suggestion,
+.grill-view .grill-home-panel button.grill-home-suggestion:hover {
+  padding: 0.7em 0.9em;
+  font-size: 1.06em;
+}
+.grill-home .grill-home-suggestion-detail {
+  font-size: 0.86em;
+}
+.grill-home-panel .grill-home-box {
+  padding: 0.9em;
+}
+.grill-view .grill-home-panel .grill-home-input,
+.grill-view .grill-home-panel .grill-home-input:focus,
+.grill-view .grill-home-panel .grill-home-input:hover {
+  font-size: 1.2em;
+}
+.grill-view .grill-home-panel button.grill-home-engine,
+.grill-view .grill-home-panel button.grill-home-engine:hover {
+  min-height: 2.6em;
+  font-size: var(--font-ui-medium);
+}
+.grill-view button.grill-home-nav,
+.grill-view button.grill-home-nav:hover {
+  padding-top: 1.05em;
+  padding-bottom: 1.05em;
+  font-size: 0.7em;
+}
+/* Narrow pane: Send takes a row of its own under the buttons, full width. */
+@container grill-home (max-width: 380px) {
+  .grill-home-panel .grill-home-bar {
+    flex-wrap: wrap;
+  }
+  .grill-home-picks {
+    flex-basis: 100%;
+    flex-wrap: wrap;
+  }
+  .grill-view .grill-home-bar .grill-home-send {
+    flex: 1 0 100%;
+  }
+}
+
+/* The buttons under the box shrink with the pane, text and padding together, so they
+ * stay on one line beside Send. When even that is not enough, the model's name is
+ * what gives way (cut with an ellipsis); the other buttons keep their words. */
+.grill-view .grill-home-panel button.grill-home-engine,
+.grill-view .grill-home-panel button.grill-home-engine:hover {
+  flex-shrink: 0;
+  min-height: clamp(30px, 8cqi, 40px);
+  padding: 0 clamp(6px, 1.8cqi, 12px);
+  font-size: clamp(11px, 2.9cqi, 15px);
+}
+.grill-view .grill-home-panel button.grill-home-model,
+.grill-view .grill-home-panel button.grill-home-model:hover {
+  flex-shrink: 1;
+  min-width: 3.5em;
+}
+.grill-home-panel .grill-home-picks {
+  gap: clamp(3px, 1.1cqi, 7px);
+}
+.grill-view .grill-home-panel .grill-home-bar .grill-home-send {
+  padding-left: clamp(10px, 3cqi, 22px);
+  padding-right: clamp(10px, 3cqi, 22px);
+  font-size: clamp(9px, 2.2cqi, 12px);
+}
+.grill-home-panel .grill-home-bar {
+  gap: clamp(5px, 1.6cqi, 12px);
 }

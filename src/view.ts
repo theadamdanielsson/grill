@@ -673,6 +673,15 @@ export class SessionView extends ItemView {
 	private sessionPersona = "";
 	/** The user's question/grading preferences (Grill/Instructions.md), if any. */
 	private sessionInstructions = "";
+	/** What the student added mid-test with "Add context": it shapes question writing
+	 * for the rest of this test only. Never saved, and cleared when a session starts. */
+	private sessionContext = "";
+	/** How many queued questions are being rewritten for `sessionContext` (0 when none). */
+	private contextRewriting = 0;
+	/** The answer bar's spot for "Add context" or the rewriting status, and the opener
+	 * for the panel, both from the question on screen. */
+	private contextSlot: HTMLElement | null = null;
+	private openContext: (() => void) | null = null;
 	/** In-flight batch generation, if any. */
 	private pending: Promise<void> | null = null;
 	/** Reactive routing budget: detours spent, and prerequisites already routed to
@@ -2352,11 +2361,15 @@ export class SessionView extends ItemView {
 		L.engine ??= this.plugin.data.settings.chatEngine;
 		drawn();
 		const foot = card.createDiv({ cls: "grill-thread-help" });
-		if (!L.whole) {
+		// A note too short to test is only worth a word when it is the one open: a chat
+		// begun with no note open is anchored on a note the student never picked, and
+		// "too short to test" about it reads as nonsense.
+		const open = this.app.workspace.getActiveFile() === L.note;
+		if (!L.whole && (L.testable || open)) {
 			const test = foot.createEl("button", { cls: "grill-hint-btn", text: "Test me on this" });
 			test.disabled = !L.turns.length || !L.testable;
 			test.onclick = () => void this.endLearn(true);
-			if (!L.testable) foot.createSpan({ cls: "grill-meta", text: "This note is too short to test." });
+			if (!L.testable) foot.createSpan({ cls: "grill-meta", text: `${L.note.basename} is too short to test.` });
 		}
 		input.focus();
 	}
@@ -2688,6 +2701,24 @@ export class SessionView extends ItemView {
 			head.createSpan({ cls: "grill-misc-label", text: p.project });
 			const facts = [p.dueNow ? `${p.dueNow} due` : "", p.missedLast ? `${p.missedLast} missed` : "", `${p.tested} tested`].filter(Boolean).join(" · ");
 			head.createSpan({ cls: "grill-meta", text: facts });
+			// Asked once before it goes: the agent's record has no undo.
+			const remove = head.createEl("button", { cls: "grill-quiet-btn grill-agent-remove", text: "Remove", attr: { type: "button", "aria-label": `Remove ${p.project} from the record` } });
+			remove.onclick = () => {
+				remove.remove();
+				const ask = head.createSpan({ cls: "grill-agent-remove-ask" });
+				ask.createSpan({ cls: "grill-meta", text: "Remove from the record?" });
+				const yes = ask.createEl("button", { cls: "grill-quiet-btn", text: "Remove", attr: { type: "button" } });
+				const no = ask.createEl("button", { cls: "grill-quiet-btn", text: "Keep", attr: { type: "button" } });
+				no.onclick = () => void this.renderDashboard();
+				yes.onclick = () => {
+					try {
+						forgetAgentProject(req, p.project);
+					} catch (e) {
+						new Notice(`Grill: couldn't remove ${p.project} (${e instanceof Error ? e.message : String(e)}).`);
+					}
+					void this.renderDashboard();
+				};
+			};
 			for (const c of p.weakest) {
 				const line = row.createDiv({ cls: "grill-agent-concept" });
 				line.createSpan({ text: c.label });
@@ -4124,6 +4155,8 @@ export class SessionView extends ItemView {
 	 * nowhere), and go home. */
 	private cancelSession(): void {
 		this.sessionEpoch += 1;
+		this.sessionContext = "";
+		this.contextRewriting = 0;
 		this.pending = null;
 		void this.flush();
 		this.renderStart();
@@ -4309,8 +4342,17 @@ export class SessionView extends ItemView {
 		const wrap = this.root();
 		const thread = this.threadStrip(wrap);
 		this.progressBar(wrap);
+		if (this.sessionContext) {
+			const line = wrap.createDiv({ cls: "grill-context-line" });
+			line.createSpan({ cls: "grill-meta", text: "This test" });
+			line.createSpan({ cls: "grill-context-line-text", text: this.sessionContext });
+			const change = line.createEl("button", { cls: "grill-quiet-btn", text: "Change", attr: { type: "button" } });
+			change.onclick = () => this.openContext?.();
+		}
 		this.threadHistory(wrap, this.results);
 		this.pendingConfidence = null;
+		this.contextSlot = null;
+		this.openContext = null;
 		const q = this.questions[this.idx];
 		const card = wrap.createDiv({ cls: "grill-body" });
 		const meta = card.createDiv({ cls: "grill-meta-row" });
@@ -4596,6 +4638,52 @@ export class SessionView extends ItemView {
 			};
 		}
 		const skip = stuck.createEl("button", { text: "I don't know", cls: "grill-quiet-btn" });
+		// "Add context": change how the rest of this test's questions are written without
+		// leaving it. A redo replays questions already written, so there is nothing to change.
+		if (!this.replayMode && this.plugin.llmConfig()) {
+			this.contextSlot = stuck.createDiv({ cls: "grill-context-slot" });
+			this.openContext = () => {
+				if (actionTaken || this.contextRewriting || card.querySelector(".grill-context-panel")) return;
+				const panel = card.createDiv({ cls: "grill-context-panel" });
+				panel.createEl("label", { cls: "grill-home-label", text: "Add context", attr: { for: "grill-context-input" } });
+				const input = panel.createEl("textarea", {
+					cls: "grill-context-input",
+					attr: { id: "grill-context-input", rows: "4", placeholder: "For example: change the formatting, ask a different type of question, make them shorter or harder, focus on one part of the note" },
+				});
+				input.value = this.sessionContext;
+				// An authored question is the user's own, verbatim: there is nothing to rewrite.
+				let rewrite: HTMLInputElement | null = null;
+				if (!q.authored) {
+					const check = panel.createEl("label", { cls: "grill-context-check" });
+					rewrite = check.createEl("input", { attr: { type: "checkbox" } });
+					rewrite.checked = true;
+					check.appendText("Rewrite this question too");
+				}
+				panel.createDiv({ cls: "grill-meta", text: "Applies to the rest of this test. Instructions.md stays as it is." });
+				const actions = panel.createDiv({ cls: "grill-context-actions" });
+				const cancel = actions.createEl("button", { text: "Cancel", attr: { type: "button" } });
+				const apply = actions.createEl("button", { text: "Apply", cls: "mod-cta", attr: { type: "button" } });
+				cancel.onclick = () => panel.remove();
+				apply.onclick = () => {
+					const text = input.value.trim();
+					const again = !!rewrite?.checked;
+					if (actionTaken || (text === this.sessionContext && !again)) {
+						panel.remove();
+						return;
+					}
+					if (again) {
+						// Counts as the action on this question, like "Bad question".
+						actionTaken = true;
+						card.querySelectorAll<HTMLButtonElement | HTMLTextAreaElement | HTMLInputElement>("button, textarea, input").forEach((b) => (b.disabled = true));
+					} else {
+						panel.remove();
+					}
+					void this.applySessionContext(text, again);
+				};
+				input.focus();
+			};
+			this.drawContextSlot();
+		}
 		// Authored questions are the user's own writing, verbatim from the note — nothing
 		// generated to flag, nothing cached to purge.
 		if (!q.authored) {
@@ -4940,7 +5028,8 @@ export class SessionView extends ItemView {
 	private offerHelp(host: HTMLElement, actions: HTMLElement, r: QuestionResult): void {
 		const cfg = this.canExplain(r) ? this.plugin.llmConfig() : null;
 		const q = this.questions[this.idx];
-		const who = cfg ? `Grill (${cfg.model})` : "Grill";
+		// Who answers, by name: the pane is already Grill's, so saying "Grill" adds nothing.
+		const who = cfg?.model || "Grill";
 		let box: HTMLElement | null = null;
 		let turns: HTMLElement;
 
@@ -5675,6 +5764,8 @@ export class SessionView extends ItemView {
 		}
 		await this.plugin.noteCloudSession();
 		this.sessionEpoch += 1;
+		this.sessionContext = "";
+		this.contextRewriting = 0;
 		this.liveState = false;
 		this.replayMode = true;
 		this.sessionScope = null;
@@ -5810,7 +5901,7 @@ export class SessionView extends ItemView {
 						batchNotesText,
 						batch,
 						batchImages,
-						this.sessionInstructions,
+						this.questionInstructions(),
 						this.linksBlock,
 						this.sessionPersona,
 						this.plugin.data.settings.questionFormats,
@@ -5858,6 +5949,79 @@ export class SessionView extends ItemView {
 	 * caller) chains further calls in the background while the student is still on the
 	 * current card; loadNextBatch's `pending` guard makes that safe even if a previous
 	 * call is still in flight. */
+	/** The student's preferences for question writing, plus anything added with "Add
+	 * context" in this test, which wins where the two disagree. */
+	private questionInstructions(): string {
+		if (!this.sessionContext) return this.sessionInstructions;
+		const added = `For this test only, the student added this. Where it disagrees with anything above, it wins:\n${this.sessionContext}`;
+		return this.sessionInstructions ? `${this.sessionInstructions}\n\n${added}` : added;
+	}
+
+	/** "Add context": the student's note on how questions should be written, for the
+	 * rest of this test only. Waits out any batch already being written (it was written
+	 * without the note), then puts every question not yet shown back into the plan so it
+	 * is written again with it. With `rewriteCurrent`, the question on screen goes too.
+	 * Questions written while the note applies are never banked (see rememberGenerated),
+	 * and no cached question is served meanwhile (see isPrebuilt). */
+	private async applySessionContext(text: string, rewriteCurrent: boolean): Promise<void> {
+		const epoch = this.sessionEpoch;
+		this.contextRewriting = Math.max(1, this.questions.length - this.idx - 1);
+		this.drawContextSlot();
+		while (this.pending) {
+			await this.pending.catch(() => undefined);
+			if (epoch !== this.sessionEpoch) return;
+		}
+		this.sessionContext = text;
+		// Questions aren't positionally tied to targets (see planCursor), so match each
+		// dropped question back to a consumed target of the same concept. One with no
+		// match stays as it is rather than being lost.
+		const dropped = this.questions.splice(rewriteCurrent ? this.idx : this.idx + 1);
+		const used = new Set<number>();
+		const again: ConceptTarget[] = [];
+		for (const q of dropped) {
+			let at = -1;
+			for (let i = this.planCursor - 1; i >= 0; i--) {
+				const t = this.targets[i];
+				if (!used.has(i) && t.conceptId === q.conceptId && t.note === q.node) {
+					at = i;
+					break;
+				}
+			}
+			if (at < 0) {
+				this.questions.push(q);
+				continue;
+			}
+			used.add(at);
+			const { lastDefectReason: _d, ...t } = this.targets[at];
+			again.push(t);
+		}
+		this.targets.splice(this.planCursor, 0, ...again);
+		const rewritingNow = rewriteCurrent && this.questions.length <= this.idx;
+		this.contextRewriting = again.length - (rewritingNow ? 1 : 0);
+		if (rewritingNow) await this.goToQuestion(this.idx);
+		else this.drawContextSlot();
+		if (epoch !== this.sessionEpoch) return;
+		await this.prefetchAhead().catch(() => undefined);
+		if (epoch !== this.sessionEpoch) return;
+		this.contextRewriting = 0;
+		this.drawContextSlot();
+	}
+
+	/** The faint "Add context" button beside "I don't know", or, while queued questions
+	 * are being rewritten for it, a line saying so. */
+	private drawContextSlot(): void {
+		const slot = this.contextSlot;
+		if (!slot?.isConnected) return;
+		slot.empty();
+		const n = this.contextRewriting;
+		if (n > 0) {
+			slot.createSpan({ cls: "grill-context-status", text: `Rewriting next ${n === 1 ? "question" : `${n} questions`}…`, attr: { role: "status" } });
+			return;
+		}
+		const b = slot.createEl("button", { cls: "grill-quiet-btn grill-context-btn", text: "Add context", attr: { type: "button" } });
+		b.onclick = () => this.openContext?.();
+	}
+
 	private async prefetchAhead(): Promise<void> {
 		while (this.questions.length < this.targetCount && this.questions.length - this.idx < PREFETCH_LOOKAHEAD) {
 			const before = this.questions.length;
@@ -5927,7 +6091,8 @@ export class SessionView extends ItemView {
 	private isPrebuilt(t: ConceptTarget): boolean {
 		const c = this.conceptById.get(t.conceptId);
 		if (c?.authored) return !!c.local;
-		if (t.contagionFrom) return false;
+		// A cached question predates what the student added with "Add context".
+		if (t.contagionFrom || this.sessionContext) return false;
 		return this.cacheHit(t.conceptId) !== null;
 	}
 
@@ -5943,7 +6108,7 @@ export class SessionView extends ItemView {
 			}
 			return q;
 		}
-		if (t.contagionFrom) return null; // see isPrebuilt: never serve a stale cache hit here
+		if (t.contagionFrom || this.sessionContext) return null; // see isPrebuilt: never serve a stale cache hit here
 		const hit = this.cacheHit(t.conceptId);
 		if (!hit) return null;
 		hit.timesShown += 1;
@@ -5968,6 +6133,9 @@ export class SessionView extends ItemView {
 	 * variants, dedupes near-restatements against what's already banked, and caps the
 	 * number kept per concept. */
 	private rememberGenerated(qs: Question[]): void {
+		// Written for this test's "Add context" note, so they must not come back in a
+		// later test that never asked for it.
+		if (this.sessionContext) return;
 		for (const q of qs) {
 			if (!q.conceptId || q.missingLink) continue;
 			const c = this.conceptById.get(q.conceptId);
@@ -6414,6 +6582,8 @@ export class SessionView extends ItemView {
 		// state must stay live (and saveable) until this point.
 		this.sessionEpoch += 1;
 		const epoch = this.sessionEpoch;
+		this.sessionContext = "";
+		this.contextRewriting = 0;
 		this.liveState = false;
 		this.replayMode = false;
 		this.renderLoading("Preparing your session", "Choosing which notes to quiz you on.");
@@ -7574,4 +7744,39 @@ export class SessionView extends ItemView {
 		this.contagionUsed += 1;
 	}
 
+}
+
+/** Takes one project out of the agent record in ~/.grill/record (see agentRecordSection):
+ * its concepts, their schedule, and its share of each misconception. The session notes
+ * stay, as history. Written the way grill-mcp writes these files: a temp file, renamed. */
+function forgetAgentProject(req: (m: string) => unknown, project: string): void {
+	const fs = req("fs") as {
+		existsSync(p: string): boolean;
+		readFileSync(p: string, e: string): string;
+		writeFileSync(p: string, d: string): void;
+		renameSync(a: string, b: string): void;
+	};
+	const dir = `${(req("os") as { homedir(): string }).homedir()}/.grill/record`;
+	const inProject = (note: unknown): boolean => typeof note === "string" && (note === project || note.startsWith(`${project}/`));
+	const edit = (name: string, change: (data: Record<string, unknown>) => void): void => {
+		const path = `${dir}/${name}`;
+		if (!fs.existsSync(path)) return;
+		const data = JSON.parse(fs.readFileSync(path, "utf8")) as Record<string, unknown>;
+		change(data);
+		fs.writeFileSync(`${path}.tmp`, JSON.stringify(data, null, 1));
+		fs.renameSync(`${path}.tmp`, path);
+	};
+	edit("concepts.json", (d) => {
+		for (const [id, c] of Object.entries(d)) if (inProject((c as { note?: unknown }).note)) delete d[id];
+	});
+	edit("mastery.json", (d) => {
+		for (const k of Object.keys(d)) if (inProject(k)) delete d[k];
+	});
+	edit("misconceptions.json", (d) => {
+		for (const [tag, m] of Object.entries(d)) {
+			const entry = m as { notes?: unknown[] };
+			entry.notes = (entry.notes ?? []).filter((n) => !inProject(n));
+			if (!entry.notes.length) delete d[tag];
+		}
+	});
 }
