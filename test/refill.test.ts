@@ -134,7 +134,7 @@ test("someone without the plan is offered the plan alone, and the pop-up closes 
 	plugin.cloudCanSubscribe = true;
 	const { modal, card } = show(plugin, "out_of_credits");
 	assert.deepEqual(buttons(card()).map((b: any) => b.text), ["Get the plan"]);
-	assert.ok(["BEST VALUE", "Monthly", "$7.99", "a month", "up to 1,650 credits", "Works on your phone"].every((x) => texts(card()).includes(x)));
+	assert.ok(["BEST VALUE", "Monthly", "$7.99", "a month", "up to 1,650 credits", "On your phone too, no key needed"].every((x) => texts(card()).includes(x)));
 	assert.ok(texts(card()).includes("Get the monthly plan to keep going."));
 	let closed = 0;
 	modal.close = () => void closed++;

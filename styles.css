@@ -2437,7 +2437,7 @@ textarea.grill-mgmt-field {
 .grill-cloud-card-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 1em;
   margin-bottom: 0.7em;
 }

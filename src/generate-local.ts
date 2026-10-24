@@ -271,7 +271,7 @@ function buildClozeCards(display: string, marks: Mark[], auto: boolean, mixForma
 			question: mixFormats ? q.trim() : `Fill in the blank: ${q.trim()}`,
 			// Interactive blank: the missing text alone (matches the AI path's modelAnswer
 			// shape). Free-text fallback: the fuller reveal, unchanged from before.
-			answer: mixFormats ? termText : `**${termText}** — ${display.trim()}`,
+			answer: mixFormats ? termText : `**${termText}**: ${display.trim()}`,
 			hint: group.find((g) => g.hint)?.hint,
 			kind: auto ? "term" : "card",
 			label: termText,

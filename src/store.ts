@@ -186,7 +186,7 @@ export class GrillStore {
 		"     style, difficulty, strictness. Leave blank for the defaults.",
 		"",
 		"     This is NOT where to pick question FORMAT (multiple-choice, fill-in-the-blank,",
-		"     true/false, write-in, etc.) — that's a hard setting the model can't reliably",
+		"     true/false, write-in, etc.). That is a hard setting the model can't reliably",
 		"     override from prose, so it has its own control: Settings -> Question formats.",
 		"",
 		"     Examples you might write:",
@@ -203,11 +203,11 @@ export class GrillStore {
 		"",
 		"## Reference documents",
 		"<!-- Drop worksheets, past exams, or official solutions below and Grill reads",
-		"     their real text into every session — the same idea as attaching a file in",
+		"     their real text into every session: the same idea as attaching a file in",
 		"     an AI chat, not a description of the document, the document itself. PDFs",
 		"     are text-extracted (first 40 pages, cached so re-opening a session doesn't",
 		"     re-parse them); other file types are stored but not read yet. 30 MB per",
-		"     file, 300 documents max — this is a course library, not a single",
+		"     file, 300 documents max. This is a course library, not a single",
 		"     message's attachments, so attach every worksheet you have. Each session",
 		"     splits a shared text budget evenly across whatever's attached, so a",
 		"     bigger library means less depth per document, not documents silently",
@@ -424,7 +424,7 @@ export class GrillStore {
 		}
 		const existingCount = (await this.listReferenceDocNames()).length;
 		if (existingCount >= GrillStore.MAX_REFERENCE_DOCS) {
-			throw new Error(`You've hit the ${GrillStore.MAX_REFERENCE_DOCS}-document limit — remove one before adding another.`);
+			throw new Error(`You've hit the ${GrillStore.MAX_REFERENCE_DOCS}-document limit. Remove one before adding another.`);
 		}
 		const dir = this.attachmentsFolder();
 		await this.ensureFolder(dir);

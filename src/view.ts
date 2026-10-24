@@ -1033,7 +1033,7 @@ export class SessionView extends ItemView {
 		const folders = listFolders(eligible);
 
 		if (!folders.length) {
-			screen.createEl("p", { cls: "grill-meta", text: "No folders found — Grill will use your whole vault." });
+			screen.createEl("p", { cls: "grill-meta", text: "No folders found. Grill will use your whole vault." });
 		} else {
 			const boxes: HTMLInputElement[] = [];
 			const controls = screen.createDiv({ cls: "grill-onboard-controls" });
@@ -3293,7 +3293,7 @@ export class SessionView extends ItemView {
 			if (!graph.nodes.length) {
 				host.createDiv({
 					cls: "grill-meta grill-map-status",
-					text: "No notes in Grill's folders yet — add some, or widen Grill's folders in settings.",
+					text: "No notes in Grill's folders yet. Add some, or widen Grill's folders in settings.",
 				});
 				return;
 			}
@@ -3566,7 +3566,7 @@ export class SessionView extends ItemView {
 				// just keeps surfacing a false positive. Dismiss removes it from the rotation
 				// for good — unlike a correct re-probe, it won't come back on its own.
 				const dismiss = actions.createSpan({ cls: "grill-chip-link grill-misc-dismiss", text: "Dismiss" });
-				dismiss.setAttribute("title", "Not a real mistake — stop re-probing this");
+				dismiss.setAttribute("title", "Not a real mistake: stop re-probing this");
 				dismiss.onclick = async () => {
 					dismissMisconception(reg, c.tag);
 					if (!(await this.saveOrNotice(this.plugin.store.saveRegistry(reg)))) return;
@@ -4035,7 +4035,7 @@ export class SessionView extends ItemView {
 					const segments = modelAnswer.split(" / ").filter((s) => s.trim()).length;
 					if (blanks > 0 && segments !== blanks) {
 						errorEl.setText(
-							`Question has ${blanks} blank(s) but the answer has ${segments} segment(s) — they must match.`,
+							`Question has ${blanks} blank(s) but the answer has ${segments} segment(s). They must match.`,
 						);
 						return;
 					}
@@ -4483,7 +4483,7 @@ export class SessionView extends ItemView {
 			if (hideName) {
 				routed.createSpan({ cls: "grill-meta", text: "Shoring up a foundation of the note you just missed" });
 			} else {
-				this.md(`You missed **${q.routedFrom}** — checking a foundation it builds on`, routed.createDiv({ cls: "grill-meta" }), q.node);
+				this.md(`You missed **${q.routedFrom}**, so this checks a foundation it builds on`, routed.createDiv({ cls: "grill-meta" }), q.node);
 			}
 		}
 
@@ -4495,7 +4495,7 @@ export class SessionView extends ItemView {
 				contagion.createSpan({ cls: "grill-meta", text: "Checking whether a mistake from another note shows up here too" });
 			} else {
 				this.md(
-					`You showed the same kind of mistake on **${q.contagionFrom}** — checking if it applies here too`,
+					`You showed the same kind of mistake on **${q.contagionFrom}**, so this checks whether it applies here too`,
 					contagion.createDiv({ cls: "grill-meta" }),
 					q.node,
 				);
@@ -5318,8 +5318,8 @@ export class SessionView extends ItemView {
 		const box = card.createDiv({ cls: "grill-route-consent" });
 		const message =
 			pending.kind === "prerequisite"
-				? `That was the last question of this session. It builds on **${pending.route.prereqNote}**, which you're still catching up on — take one more question to shore up that foundation?`
-				: `That was the last question of this session. The same mistake might also apply to **${pending.route.neighborNote}**, a linked note — take one more question to check?`;
+				? `That was the last question of this session. It builds on **${pending.route.prereqNote}**, which you're still catching up on. Take one more question to shore up that foundation?`
+				: `That was the last question of this session. The same mistake might also apply to **${pending.route.neighborNote}**, a linked note. Take one more question to check?`;
 		this.md(message, box);
 		const row = card.createDiv({ cls: "grill-btn-row grill-btn-row-fill" });
 		const yes = row.createEl("button", { text: "Yes, one more", cls: "mod-cta" });
@@ -5640,7 +5640,7 @@ export class SessionView extends ItemView {
 				// Sourced from the gap's own note (not the session note): each gap can name
 				// a different note than the one the session summary is for, and a self-link
 				// always resolves cleanly regardless of vault structure.
-				this.md(`**${g.concept}** — ${g.why} ([[${g.note}]])`, row.createDiv({ cls: "grill-debrief-gap-text" }), g.note);
+				this.md(`**${g.concept}**: ${g.why} ([[${g.note}]])`, row.createDiv({ cls: "grill-debrief-gap-text" }), g.note);
 			}
 		}
 		if (debrief.strengths.length) {
@@ -5713,7 +5713,7 @@ export class SessionView extends ItemView {
 			offer(
 				"occlusion",
 				`${n} ${n === 1 ? "note" : "notes"} you just studied ${n === 1 ? "has a diagram" : "have diagrams"} Grill could quiz you on, by blanking out a label and asking what was there. ` +
-					"Reads the image on your device — no key, nothing sent anywhere — after a one-time 10MB download.",
+					"Reads the image on your device, with no key and nothing sent anywhere, after a one-time 10MB download.",
 				"Quiz my diagrams too",
 				() => {
 					s.enableOcclusion = true;
@@ -5726,7 +5726,7 @@ export class SessionView extends ItemView {
 				"local-embed-context",
 				"Some of what you studied was too long to send whole, so Grill trimmed it by matching your concepts' exact wording. " +
 					"It can pick those sections by meaning instead, which catches the paraphrases exact matching misses. " +
-					"Runs on your device — no key, no note content sent anywhere — after a one-time 25MB download.",
+					"Runs on your device, with no key and no note content sent anywhere, after a one-time 25MB download.",
 				"Pick context by meaning",
 				() => {
 					s.localEmbedContext = true;
@@ -7002,8 +7002,8 @@ export class SessionView extends ItemView {
 					// isn't on — Study intensity is the control that actually governs it now.
 					cappedOut
 						? s.newConceptsPerDay === 0
-							? `Grill: nothing due, and new concepts per day is set to 0 — "Get grilled" won't introduce new material. Raise it under Settings → Study intensity (or Tuning, for the exact number), or use "Review N due now" / "Grill this note/folder" instead.`
-							: `Grill: that's all the new material for today — you've hit your daily limit of ${s.newConceptsPerDay} new concepts. Come back tomorrow, or raise it under Settings → Study intensity.`
+							? `Grill: nothing due, and new concepts per day is set to 0, so "Get grilled" won't introduce new material. Raise it under Settings → Study intensity (or Tuning, for the exact number), or use "Review N due now" / "Grill this note/folder" instead.`
+							: `Grill: that's all the new material for today: you've hit your daily limit of ${s.newConceptsPerDay} new concepts. Come back tomorrow, or raise it under Settings → Study intensity.`
 						: "Grill: couldn't find concepts to quiz in these notes.",
 					10000,
 				);
@@ -7128,7 +7128,7 @@ export class SessionView extends ItemView {
 				// correct.size is 0, silently grading "Correct" no matter what the student
 				// typed. Fail closed instead of trusting two distant files to stay in sync.
 				verdict = "incorrect";
-				feedback = "This question couldn't be graded as written — marked incorrect rather than automatically correct.";
+				feedback = "This question couldn't be graded as written, so it was marked incorrect rather than automatically correct.";
 			} else {
 				let hits = 0;
 				for (const c of correct) if (chosen.has(c)) hits++;
@@ -7140,7 +7140,7 @@ export class SessionView extends ItemView {
 				else if (hits > 0 && wrong <= Math.max(1, Math.ceil(correct.size / 2))) verdict = "partial";
 				else verdict = "incorrect";
 				if (verdict === "correct") {
-					feedback = "Correct — every one.";
+					feedback = "Correct, every one.";
 				} else {
 					const lines: string[] = [];
 					if (extraItems.length) {

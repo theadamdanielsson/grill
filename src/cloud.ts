@@ -64,7 +64,7 @@ export interface CloudPlan {
  * terms in small print under the button. */
 export const PLAN_HEADLINE = "All of Grill. No setup.";
 export const PLAN_LEAD = "No Claude or ChatGPT subscription needed. Less than half the price of one.";
-export const PLAN_PERKS = ["Tests on any note", "An AI that reads and edits your notes", "Works on your phone"];
+export const PLAN_PERKS = ["Tests written from your own notes", "A chat that knows what you got wrong", "On your phone too, no key needed"];
 export const PLAN_LIMITS = "Usage limits reset every five hours and every week. At a limit, wait or add credits, which don't expire.";
 
 /** A running plan's three limits, as the share of each that is used. */

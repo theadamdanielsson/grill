@@ -631,7 +631,7 @@ export function trueRetentionLine(concepts: ConceptMap, desiredRetentionPct: num
 	const targetPct = Math.round(desiredRetentionPct);
 	const gap = observedPct - targetPct;
 	if (Math.abs(gap) <= 5) {
-		return `True retention: ${observedPct}% across your last ${s.n} reviews — tracking your ${targetPct}% target closely.`;
+		return `True retention: ${observedPct}% across your last ${s.n} reviews, close to your ${targetPct}% target.`;
 	}
 	// Both branches point at Study intensity rather than the raw "Review frequency"
 	// slider: that slider now lives in the settings tab's collapsed Tuning block, and
@@ -645,8 +645,8 @@ export function trueRetentionLine(concepts: ConceptMap, desiredRetentionPct: num
 		);
 	}
 	return (
-		`True retention: ${observedPct}% across your last ${s.n} reviews, above your ${targetPct}% target — ` +
-		`a harder Study intensity would space reviews further apart without losing much.`
+		`True retention: ${observedPct}% across your last ${s.n} reviews, above your ${targetPct}% target. ` +
+		`A harder Study intensity would space reviews further apart without losing much.`
 	);
 }
 

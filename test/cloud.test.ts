@@ -409,7 +409,7 @@ test("settings: Grill Cloud has the first section, says what it is before it sta
 	assert.equal(on.desc(), "In use. 42 credits left.");
 	// The card: the name, that it's in use, the balance, and what a session costs said
 	// as a range, since this vault has no sessions of its own to go by yet.
-	assert.ok(["GRILL CLOUD", "In use", "42", "credits"].every((x) => on.said.includes(x)), on.said.join(" | "));
+	assert.ok(["In use", "42", "credits"].every((x) => on.said.includes(x)), on.said.join(" | "));
 	assert.ok(on.said.some((x) => /How many credits a session uses depends on/.test(x)));
 	assert.ok(!on.said.concat(on.desc()).some((x) => /about \d+ sessions/.test(x)), "no number of sessions is promised");
 	// Once it has, they are said back instead.

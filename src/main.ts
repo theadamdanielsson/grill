@@ -1477,7 +1477,7 @@ export default class GrillPlugin extends Plugin {
 			if (!opts.silentWhenUnchanged)
 				new Notice(
 					`Grill: not enough review history yet to personalize FSRS (${trainable}/${MIN_REVIEWS_FOR_OPTIMIZATION} reviews). ` +
-						"Keep studying — this gets better with more real reviews to fit against.",
+						"Keep studying: this gets better with more real reviews to fit against.",
 				);
 			return;
 		}
@@ -1489,7 +1489,7 @@ export default class GrillPlugin extends Plugin {
 		if (!result.weights) {
 			await this.persist();
 			if (!opts.silentWhenUnchanged)
-				new Notice("Grill: your current schedule already fits this vault as well as a refit would — no change made.");
+				new Notice("Grill: your current schedule already fits this vault as well as a refit would. No change made.");
 			return;
 		}
 		const improvementPct = ((result.baselineLoss - result.finalLoss) / result.baselineLoss) * 100;
@@ -1542,7 +1542,7 @@ export default class GrillPlugin extends Plugin {
 		new Notice(
 			changed > 0
 				? `Grill: rebalanced ${changed} upcoming due date${changed === 1 ? "" : "s"}.`
-				: "Grill: upcoming due dates are already well-spread — nothing to rebalance.",
+				: "Grill: upcoming due dates are already well spread. Nothing to rebalance.",
 		);
 	}
 
@@ -3439,7 +3439,7 @@ export class GrillSettingTab extends PluginSettingTab {
 				// list asynchronously. Re-render once it actually arrives, same pattern as
 				// refreshModels' re-render on late data.
 				if (langs.length === 0) {
-					setting.setDesc("No voices found yet — reopen Settings in a moment.");
+					setting.setDesc("No voices found yet. Reopen Settings in a moment.");
 					if (!this.voicesListenerAttached) {
 						this.voicesListenerAttached = true;
 						onVoicesChanged(() => this.rerender());
@@ -3763,8 +3763,8 @@ export class GrillSettingTab extends PluginSettingTab {
 			build: (setting) => {
 				setting.settingEl.addClass("grill-cloud-hero");
 				const card = setting.settingEl.createDiv({ cls: "grill-view" }).createDiv({ cls: "grill-arcade-screen grill-cloud-card" });
+				// No name in the card: the section heading above already says Grill Cloud.
 				const head = card.createDiv({ cls: "grill-cloud-card-head" });
-				head.createSpan({ cls: "grill-arcade-mark", text: "GRILL CLOUD" });
 				// Top right: check balance, then whether it's in use.
 				const corner = head.createDiv({ cls: "grill-cloud-card-corner" });
 				const body = card.createDiv({ cls: "grill-cloud-card-body" });
@@ -4256,10 +4256,10 @@ export class GrillSettingTab extends PluginSettingTab {
 				aliases: ["retention", "spaced repetition", "fsrs", "schedule"],
 				build: (setting) =>
 					setting.addDropdown((d) => {
-						d.addOption("relaxed", "Relaxed — fewer reviews, slower intake");
-						d.addOption("steady", "Steady — recommended");
-						d.addOption("intense", "Intense — exam in a fortnight");
-						if (s.studyIntensity === "custom") d.addOption("custom", "Custom — set in Advanced");
+						d.addOption("relaxed", "Relaxed: fewer reviews, slower intake");
+						d.addOption("steady", "Steady (recommended)");
+						d.addOption("intense", "Intense: exam in a fortnight");
+						if (s.studyIntensity === "custom") d.addOption("custom", "Custom: set in Advanced");
 						d.setValue(s.studyIntensity);
 						d.onChange(async (v) => {
 							if (v === "custom") return;
@@ -4309,7 +4309,7 @@ export class GrillSettingTab extends PluginSettingTab {
 				build: (setting) =>
 					setting.addDropdown((d) =>
 						d
-							.addOption("model", cloudEnabled() && p === "grillcloud" ? "Grill Cloud" : "Your model")
+							.addOption("model", cloudEnabled() && p === "grillcloud" ? "Grill Cloud" : PROVIDERS[p].label)
 							.addOption("claudecode", "Claude Code")
 							.addOption("codex", "Codex")
 							.addOption("opencode", "opencode")
@@ -4596,7 +4596,7 @@ export class GrillSettingTab extends PluginSettingTab {
 		return [
 			{
 				name: "MCP servers",
-				desc: "For Chat on Grill Cloud or your own key, written as in Claude Code's .mcp.json. Kept in Obsidian's keychain on this device. Claude Code, Codex and opencode use their own.",
+				desc: "Written as in Claude Code's .mcp.json. Kept in Obsidian's keychain on this device. Claude Code, Codex and opencode use their own.",
 				aliases: ["mcp", "tools", "servers", "connectors", "integrations"],
 				build: (setting) => {
 					setting.settingEl.addClass("grill-setting-tall");
@@ -4645,7 +4645,7 @@ export class GrillSettingTab extends PluginSettingTab {
 			},
 			{
 				name: "Web",
-				desc: "For Chat on Grill Cloud or your own key: read web pages, and search the web on Grill Cloud and Anthropic keys. Reading a page asks first at the Safe level.",
+				desc: "Chat reads web pages and searches the web. Reading a page asks first at the Safe level.",
 				aliases: ["web", "internet", "search", "browse", "fetch", "url"],
 				build: (setting) =>
 					setting.addToggle((t) =>
@@ -4689,7 +4689,7 @@ export class GrillSettingTab extends PluginSettingTab {
 				aliases: ["skills", "skill", "agent skills", "skills.sh"],
 				build: (setting) => {
 					const where = this.plugin.skillPlaces().map((p) => p.shown).join(", ");
-					setting.setDesc(`For Chat on Grill Cloud or your own key. Grill reads them from ${where}.`);
+					setting.setDesc(`Grill reads them from ${where}.`);
 					const found = setting.descEl.createDiv({ cls: "grill-meta" });
 					void this.plugin.findSkills().then((all) => found.setText(s.useSkills ? (all.length ? `${all.length} found: ${all.slice(0, 8).map((k) => k.name).join(", ")}${all.length > 8 ? ", ..." : ""}` : "None found.") : ""));
 					setting.addToggle((t) =>
