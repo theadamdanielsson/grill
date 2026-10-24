@@ -1,5 +1,20 @@
 # Changelog
 
+## 8.7.4
+
+- **Your sessions in Bases.** Session notes now carry `correct`, `total` and the notes
+  they tested, and `Grill/Sessions.base` lists every session in one table, newest first.
+  Older session notes are filled in once.
+- **The record in your notes.** Settings, Advanced, Record in note properties writes each
+  studied note's status, due date, last tested day and confusions into its properties.
+  `Grill/Studied notes.base` then lists them by due date, and other agents in your vault
+  can read them straight from the note. It is off by default because it edits your
+  notes. Turning it off takes the properties out again.
+- **Asked once.** The offer to share context from Claude Code or Codex now shows once,
+  even if you leave it without an answer.
+- **Plainer settings.** The engine menu names your provider, the Grill Cloud card is
+  tidier with clearer reasons to buy, and the interface no longer uses em dashes.
+
 ## 8.7.3
 
 - **Draw it from memory.** For notes built around a diagram, Grill can ask you to draw it
