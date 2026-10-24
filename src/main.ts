@@ -18,6 +18,7 @@ import {
 	requestUrl,
 } from "obsidian";
 import { configureFSRSWeights, MasteryMap } from "./mastery";
+import { notesBase } from "./props";
 import { CalPoint, isCalPoint } from "./calibration";
 import { LLMConfig, offeredProviders, PROVIDERS, ProviderId, Question, listModels, migrateLegacyModels, readPriorKnowledge, synthesizeArc, testModel } from "./llm";
 import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, CloudPack, CloudPlan, planInWords, planLabel, cloudAccount, cloudBalance, cloudSpeech, cloudCheckoutUrl, cloudDelete, cloudEnabled, cloudStart, creditsInWords, isCloudKey, newCloudKey, packLabel, usageInWords } from "./cloud";
@@ -124,6 +125,10 @@ interface GrillSettings {
 	showProgress: boolean;
 	/** Wiki-link session transcripts to the quizzed notes. On; see `showProgress`. */
 	linkSessions: boolean;
+	/** Write each studied note's record (status, due, last tested, confusions) into
+	 * its own properties, for Bases views and other agents in the vault. Off: it
+	 * edits the user's notes. See props.ts. */
+	noteProperties: boolean;
 	/** Vault folders to exclude from sessions (relative paths). */
 	excludedFolders: string[];
 	/** Folders that ARE Grill's study material + graph (relative paths). Empty = the
@@ -343,6 +348,12 @@ interface GrillSettings {
 	 * a vault with genuinely no session history yet (arcLog legitimately empty)
 	 * doesn't get rescanned on every subsequent launch. */
 	arcBackfilled: boolean;
+	/** One-time flag (8.7.4): the Sessions view file was offered to a vault that
+	 * already had session notes. Not again after, so a deleted one stays deleted. */
+	sessionsBaseMade: boolean;
+	/** One-time flag (8.7.4): older session notes were given `correct`, `total` and
+	 * `notes` properties (GrillStore.backfillSessionFields). */
+	sessionsFilled: boolean;
 }
 
 interface PluginData {
@@ -371,6 +382,7 @@ function defaultSettings(): GrillSettings {
 		folder: "Grill",
 		showProgress: true,
 		linkSessions: true,
+		noteProperties: false,
 		excludedFolders: [],
 		includedFolders: [],
 		onboarded: false,
@@ -426,6 +438,8 @@ function defaultSettings(): GrillSettings {
 		modelsMigrated62: false,
 		lastWarnedDuplicateBasenames: [],
 		arcBackfilled: false,
+		sessionsBaseMade: false,
+		sessionsFilled: false,
 	};
 }
 
@@ -483,6 +497,7 @@ export default class GrillPlugin extends Plugin {
 		if (typeof s.folder === "string" && s.folder.trim()) settings.folder = s.folder.trim();
 		if (typeof s.showProgress === "boolean") settings.showProgress = s.showProgress;
 		if (typeof s.linkSessions === "boolean") settings.linkSessions = s.linkSessions;
+		if (typeof s.noteProperties === "boolean") settings.noteProperties = s.noteProperties;
 		if (Array.isArray(s.excludedFolders))
 			settings.excludedFolders = s.excludedFolders.filter((v): v is string => typeof v === "string");
 		if (Array.isArray(s.includedFolders))
@@ -573,6 +588,8 @@ export default class GrillPlugin extends Plugin {
 			settings.lastWarnedDuplicateBasenames = s.lastWarnedDuplicateBasenames.filter((v): v is string => typeof v === "string");
 		}
 		if (typeof s.arcBackfilled === "boolean") settings.arcBackfilled = s.arcBackfilled;
+		if (typeof s.sessionsBaseMade === "boolean") settings.sessionsBaseMade = s.sessionsBaseMade;
+		if (typeof s.sessionsFilled === "boolean") settings.sessionsFilled = s.sessionsFilled;
 		// One-time upgrade for legacy installs. persist() writes the whole settings
 		// object, so an existing user has the old shipped defaults saved to disk —
 		// changing defaultSettings() alone never reaches them. Carry the two changed
@@ -660,6 +677,7 @@ export default class GrillPlugin extends Plugin {
 		configureFSRSWeights(settings.fsrsPersonalization?.weights ?? null);
 
 		this.store = new GrillStore(this.app, () => this.data.settings.folder);
+		this.store.notePropsOn = () => this.data.settings.noteProperties;
 
 		this.registerView(VIEW_TYPE, (leaf: WorkspaceLeaf) => new SessionView(leaf, this));
 		// Where a phone's browser comes back to after signing in to an MCP server.
@@ -1057,6 +1075,24 @@ export default class GrillPlugin extends Plugin {
 			void (async () => {
 				this.mastery = await this.store.loadMastery();
 				this.concepts = await this.store.loadConcepts();
+				if (!this.data.settings.sessionsBaseMade) {
+					try {
+						if (await this.store.hasSessions()) await this.store.writeBaseIfMissing("Sessions.base", this.store.sessionsBaseText());
+						this.data.settings.sessionsBaseMade = true;
+						await this.persist();
+					} catch (e) {
+						console.error("Grill: couldn't add the Sessions view; will retry next launch", e);
+					}
+				}
+				if (!this.data.settings.sessionsFilled) {
+					try {
+						await this.store.backfillSessionFields(this.data.settings.linkSessions);
+						this.data.settings.sessionsFilled = true;
+						await this.persist();
+					} catch (e) {
+						console.error("Grill: couldn't fill in older session notes; will retry next launch", e);
+					}
+				}
 				// One-time move to concept-level scheduling: keep stats, reset scheduling.
 				if (!this.data.settings.conceptsMigrated) {
 					migrateResetScheduling(this.mastery);
@@ -3042,6 +3078,19 @@ ${body}
 		window.addEventListener("focus", this.cloudOnFocus);
 	}
 
+	/** Turning "Record in note properties" on writes the record into every studied
+	 * note and adds the view that lists them; turning it off takes the properties out. */
+	async syncNoteProperties(on: boolean): Promise<void> {
+		try {
+			if (on) await this.store.writeBaseIfMissing("Studied notes.base", notesBase());
+			const n = await this.store.syncNoteProps(this.mastery, on);
+			new Notice(on ? `Grill: record added to ${n} ${n === 1 ? "note" : "notes"}.` : `Grill: record removed from ${n} ${n === 1 ? "note" : "notes"}.`);
+		} catch (e) {
+			console.error("Grill: couldn't update note properties", e);
+			new Notice("Grill: couldn't update every note's properties. Turn the setting off and on to try again.", 8000);
+		}
+	}
+
 	/** The settings in memory always hold the live API keys; what's written to
 	 * data.json has them blanked wherever the keychain holds them (see secrets.ts). */
 	async persist(): Promise<void> {
@@ -3331,6 +3380,9 @@ export class GrillSettingTab extends PluginSettingTab {
 			modelsMigrated61: s.modelsMigrated61,
 			modelsMigrated62: s.modelsMigrated62,
 			arcBackfilled: s.arcBackfilled,
+			sessionsBaseMade: s.sessionsBaseMade,
+			sessionsFilled: s.sessionsFilled,
+			noteProperties: s.noteProperties,
 			fsrsLastFitAttemptReviews: s.fsrsLastFitAttemptReviews,
 		};
 		// defaultSettings() nulls fsrsPersonalization, but the fitted weights are also
@@ -3577,6 +3629,19 @@ export class GrillSettingTab extends PluginSettingTab {
 								s.folder = v.trim() || "Grill";
 								await this.plugin.persist();
 							}),
+					),
+			},
+			{
+				name: "Record in note properties",
+				desc: "Adds status, due date, last tested and confusions to each studied note, for Bases and other agents. This edits your notes.",
+				aliases: ["properties", "frontmatter", "bases", "yaml"],
+				build: (setting) =>
+					setting.addToggle((t) =>
+						t.setValue(s.noteProperties).onChange(async (v) => {
+							s.noteProperties = v;
+							await this.plugin.persist();
+							await this.plugin.syncNoteProperties(v);
+						}),
 					),
 			},
 			{

@@ -22,6 +22,7 @@ import { safeDiagram, safeMarkdown } from "./safemd";
 import type { ImportedRecord } from "./imported";
 import { replyTitle } from "./learn";
 import { AgentResult, INBOX_DIR, parseResult } from "./record";
+import { applyProps, noteProps, sessionFields, sessionsBase } from "./props";
 
 /** A generated question cached for reuse. `sourceHash` ties it to the concept's
  * source text at generation time; a mismatch means the note changed and the entry
@@ -673,6 +674,77 @@ export class GrillStore {
 	async saveMastery(map: MasteryMap): Promise<void> {
 		await this.ensureFolder(this.folder());
 		await this.saveJSON(this.masteryPath(), JSON.stringify(map, null, 1));
+		if (this.notePropsOn()) void this.syncNoteProps(map, true).catch((e) => console.error("Grill: couldn't write note properties", e));
+	}
+
+	/** The "Write the record into notes" setting; set by the plugin. */
+	notePropsOn: () => boolean = () => false;
+	/** What each note's properties were last set to, so a save only touches notes whose
+	 * record changed. Empty after a restart: the first save checks every studied note,
+	 * and still rewrites only those whose properties differ. */
+	private writtenProps = new Map<string, string>();
+
+	/** Writes each studied note's record into its properties (props.ts), or with `on`
+	 * false removes them. Notes in Grill's own folder and non-Markdown files are skipped.
+	 * A note whose properties already match is not rewritten. Returns notes changed. */
+	async syncNoteProps(map: MasteryMap, on: boolean): Promise<number> {
+		if (!on) this.writtenProps.clear();
+		let changed = 0;
+		for (const name of Object.keys(map)) {
+			const props = on ? noteProps(map[name]) : {};
+			const key = JSON.stringify(props);
+			if (on && this.writtenProps.get(name) === key) continue;
+			const file = this.app.metadataCache.getFirstLinkpathDest(name, "");
+			if (!(file instanceof TFile) || file.extension !== "md" || file.path.startsWith(`${this.folder()}/`)) continue;
+			const cached = { ...(this.app.metadataCache.getFileCache(file)?.frontmatter ?? {}) };
+			if (applyProps(cached, props)) {
+				await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => applyProps(fm, props));
+				changed++;
+			}
+			if (on) this.writtenProps.set(name, key);
+		}
+		return changed;
+	}
+
+	/** Writes a view file into Grill's folder unless one is already there: a view the
+	 * user has edited is theirs. */
+	async writeBaseIfMissing(name: string, text: string): Promise<void> {
+		await this.ensureFolder(this.folder());
+		const path = normalizePath(`${this.folder()}/${name}`);
+		if (this.app.vault.getAbstractFileByPath(path) || (await this.app.vault.adapter.exists(path))) return;
+		await this.app.vault.create(path, text);
+	}
+
+	/** Gives older session notes the `correct`, `total` and `notes` properties newer
+	 * ones are written with, read from their own text (props.ts's sessionFields), so
+	 * the Sessions view has no empty columns. `notes` are links with `link`, else plain
+	 * names. A note that already has them is left alone. Returns notes changed. */
+	async backfillSessionFields(link: boolean): Promise<number> {
+		const dir = `${this.folder()}/Sessions/`;
+		let changed = 0;
+		for (const f of this.app.vault.getMarkdownFiles()) {
+			if (!f.path.startsWith(dir)) continue;
+			const had = this.app.metadataCache.getFileCache(f)?.frontmatter;
+			if (typeof had?.correct === "number" && had.notes !== undefined) continue;
+			const fields = sessionFields(await this.app.vault.cachedRead(f));
+			if (!fields) continue;
+			await this.app.fileManager.processFrontMatter(f, (fm: Record<string, unknown>) => {
+				fm.correct = fields.correct;
+				fm.total = fields.total;
+				if (fields.notes.length && fm.notes === undefined) fm.notes = fields.notes.map((n) => (link ? `[[${n}]]` : n));
+			});
+			changed++;
+		}
+		return changed;
+	}
+
+	/** Has this vault's Grill folder got a Sessions folder yet? */
+	async hasSessions(): Promise<boolean> {
+		return this.app.vault.adapter.exists(normalizePath(`${this.folder()}/Sessions`));
+	}
+
+	sessionsBaseText(): string {
+		return sessionsBase(this.folder());
 	}
 
 	/** Cached note embeddings for the semantic bridge prefilter (bridges.ts's
@@ -793,16 +865,27 @@ export class GrillStore {
 		// couple of months and floods Obsidian's file explorer, backlinks, and search.
 		const monthDir = normalizePath(`${this.folder()}/Sessions/${d.getFullYear()}-${pad(d.getMonth() + 1)}`);
 		await this.ensureFolder(this.folder());
+		// The first session in a vault brings the view file that lists them all.
+		const first = !(await this.hasSessions());
 		await this.ensureFolder(normalizePath(`${this.folder()}/Sessions`));
 		await this.ensureFolder(monthDir);
+		if (first) await this.writeBaseIfMissing("Sessions.base", this.sessionsBaseText()).catch(() => undefined);
 		const dir = monthDir;
 		const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}.${pad(d.getMinutes())}`;
 		const right = entries.filter((e) => e.verdict === "correct").length;
 
+		// `correct` and `total` are numbers so a Bases view can sort and filter on them
+		// (`score` is text, kept for the heatmap and older notes). `notes` lists the
+		// tested notes, so a view can filter sessions by note: as links, or as plain
+		// names when sessions aren't linked to notes.
+		const tested = [...new Set(entries.map((e) => e.node))].filter((n) => /^[^[\]|#^\n\r]+$/.test(n));
 		const lines: string[] = [
 			"---",
 			`date: ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
 			`score: ${right}/${entries.length}`,
+			`correct: ${right}`,
+			`total: ${entries.length}`,
+			...(tested.length ? ["notes:", ...tested.map((n) => `  - ${JSON.stringify(link ? `[[${n}]]` : n)}`)] : []),
 			`type: ${meta.dueOnly ? "due review" : "study session"}`,
 			`provider: ${meta.provider}`,
 			`model: ${meta.model}`,
