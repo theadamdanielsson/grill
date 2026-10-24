@@ -156,7 +156,8 @@ Gemini) are more consistent about this than small local ones.
 ## Session notes / "What you keep getting wrong" piling up
 
 Session transcripts are grouped into monthly subfolders under `Grill/Sessions/` so a daily-use
-vault doesn't dump hundreds of files into one flat folder. The "What you keep getting wrong" and
+vault doesn't dump hundreds of files into one flat folder. `Grill/Sessions.base` lists them all in
+one table instead. Grill adds it once; deleted, it stays deleted. The "What you keep getting wrong" and
 "Beaten" lists in the progress dashboard are capped to the ten most-relevant entries on screen
 (worst/most-recurring first) — the underlying data isn't deleted, just not all rendered at once,
 since a canonical misconception is marked resolved rather than removed.
@@ -173,7 +174,8 @@ consistently, check that provider's status page and that your key hasn't expired
 
 Everything Grill knows about you lives in plain files inside your vault's `Grill/` folder
 (`mastery.json`, `concepts.json`, `Sessions/`), not anywhere external. Delete the whole `Grill`
-folder to wipe everything and start fresh. To reset just one note, find and remove its entry from
+folder to wipe everything and start fresh. If Record in note properties is on, turn it off first:
+that removes the `grill_` properties from your notes, which deleting the folder does not. To reset just one note, find and remove its entry from
 `mastery.json` and any `<note>::...` keyed entries from `concepts.json` — back both files up
 first, since this is a direct edit with no undo.
 

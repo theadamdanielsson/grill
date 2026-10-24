@@ -45,6 +45,7 @@ The home screen suggests where to go from your record: the questions you last mi
 - **Draw it from memory:** optional, with the Excalidraw plugin. Grill asks you to draw a diagram from your notes and marks the drawing: the curves, shifts and labels, and what is missing.
 - **Ask in the middle of a test:** type a question in the answer box and Grill answers it; the record notes that you needed help.
 - **Replies as they are written:** Chat streams its answer, and a reply can be inserted at the cursor or saved as a note.
+- **Your record in Bases:** a table of every session, and an optional setting that writes each note's status, due date and confusions into its properties, for Bases views and other agents.
 - **A map of what you know:** on the Progress screen, your notes as a graph coloured by how well you know each.
 - **A natural voice:** questions, feedback and explanations read aloud in a natural AI voice on Grill Cloud or an OpenAI key, or in your device's voice anywhere.
 - **Finds links you are missing:** spots notes that belong together and offers to add the `[[link]]`.
