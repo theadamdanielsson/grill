@@ -2434,16 +2434,14 @@ textarea.grill-mgmt-field {
   text-align: left;
   padding: 1.1em 1.3em 1.2em;
 }
+/* Floated, so the buttons sit beside the first lines of the card rather than on a row
+   of their own above them. */
 .grill-cloud-card-head {
+  float: right;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   gap: 1em;
-  margin-bottom: 0.7em;
-}
-.grill-cloud-card-head .grill-arcade-mark {
-  margin: 0;
-  font-size: 0.72em;
+  margin: 0 0 0.3em 1em;
 }
 .grill-cloud-chip {
   padding: 0.1em 0.6em;
