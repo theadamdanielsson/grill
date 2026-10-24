@@ -21,7 +21,7 @@ import { configureFSRSWeights, MasteryMap } from "./mastery";
 import { CalPoint, isCalPoint } from "./calibration";
 import { LLMConfig, offeredProviders, PROVIDERS, ProviderId, Question, listModels, migrateLegacyModels, readPriorKnowledge, synthesizeArc, testModel } from "./llm";
 import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, CloudPack, CloudPlan, planInWords, planLabel, cloudAccount, cloudBalance, cloudSpeech, cloudCheckoutUrl, cloudDelete, cloudEnabled, cloudStart, creditsInWords, isCloudKey, newCloudKey, packLabel, usageInWords } from "./cloud";
-import { drawPlanOffer, drawPlanUsage, RefillModal } from "./refill";
+import { drawOffers, drawPlanUsage, packGo, RefillModal } from "./refill";
 import { CHECK_EVERY_MS, isNewer, latestVersion } from "./update";
 import { AgentResult, applyResults, restoreNoteCounts } from "./record";
 import { learnerBrief, missesFromSessions, type PastSession } from "./brief";
@@ -692,6 +692,16 @@ export default class GrillPlugin extends Plugin {
 			},
 		});
 		this.addCommand({
+			id: "draw-from-memory",
+			name: "Draw it from memory",
+			checkCallback: (checking) => {
+				const f = this.app.workspace.getActiveFile();
+				if (!f || f.extension !== "md") return false;
+				if (!checking) void this.startDrawing(f);
+				return true;
+			},
+		});
+		this.addCommand({
 			id: "show-setup",
 			name: "Show setup again",
 			callback: async () => {
@@ -796,6 +806,12 @@ export default class GrillPlugin extends Plugin {
 							.setTitle("Grill this note")
 							.setIcon(GRILL_ICON)
 							.onClick(() => void this.startScoped([file])),
+					);
+					menu.addItem((i) =>
+						i
+							.setTitle("Draw it from memory")
+							.setIcon("pencil")
+							.onClick(() => void this.startDrawing(file)),
 					);
 				} else if (file instanceof TFolder) {
 					menu.addItem((i) =>
@@ -1943,6 +1959,12 @@ export default class GrillPlugin extends Plugin {
 		if (view instanceof SessionView) await view.startScopedSession(files, dueOnly);
 	}
 
+	async startDrawing(file: TFile): Promise<void> {
+		await this.activateView();
+		const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view;
+		if (view instanceof SessionView) await view.startDrawing(file);
+	}
+
 	/** Open Chat on a note with one of the selection asks: sent as it is, or, for a
 	 * question still to be typed, left in the box. */
 	async chatOnSelection(kind: SelectionAsk, file: TFile, selected: string): Promise<void> {
@@ -2126,6 +2148,13 @@ export default class GrillPlugin extends Plugin {
 	/** What writes and marks questions: the model set up, or else the agent program Chat
 	 * runs on (desktop only), answering one request at a time. Null when there is neither. */
 	llmConfig(): LLMConfig | null {
+		// The engine someone picked does everything: a Grill Cloud account or a key left
+		// over from before must not keep writing and marking tests behind it. The model
+		// only steps in when the program can't be found on this computer.
+		if (this.data.settings.chatEngine !== "model") {
+			const agent = this.agentConfig();
+			if (agent) return agent;
+		}
 		return this.modelConfig() ?? this.agentConfig();
 	}
 
@@ -2279,7 +2308,8 @@ ${body}
 			provider: "custom",
 			apiKey: "",
 			model: engine === "claudecode" ? "Claude Code" : engine === "codex" ? "Codex" : "opencode",
-			agent: (system, user, schema, signal) => agentJSON({ engine, program, model, system, user, schema, signal }),
+			agent: (system, user, schema, signal, images) => agentJSON({ engine, program, model, system, user, schema, signal, images }),
+			agentImages: engine !== "opencode",
 		};
 	}
 
@@ -2486,8 +2516,10 @@ ${body}
 	 * without the plan is offered the plan. Where no plan is sold, packs are the offer. */
 	get cloudShowPacks(): boolean {
 		if (!this.cloudCanBuy) return false;
+		// A subscriber needs them only at a limit. Everyone else may pay as they go: the
+		// plan is offered first, not instead.
 		if (this.cloudPlan !== null) return this.cloudPlan.limit !== "";
-		return !(this.cloudPlanLink !== "" && this.cloudPlans);
+		return true;
 	}
 
 	private async linkCloudCheckout(key: string): Promise<void> {
@@ -3700,13 +3732,19 @@ export class GrillSettingTab extends PluginSettingTab {
 					return;
 				}
 				const known = (state === "ok" || state === "none") && credits !== null;
+				// An empty balance is not the headline while the plan is on offer: the offer is.
+				const empty = known && (credits ?? 0) <= 0 && this.plugin.cloudCanSubscribe && !plan && !waiting;
 				// No number until the server has said one: a placeholder reads as a balance.
 				const figure = body.createDiv({ cls: "grill-cloud-balance" });
+				if (empty) figure.hide();
 				// On the plan with no credits beside it, the plan is what there is to show.
 				const onPlanOnly = known && plan !== null && (credits ?? 0) <= 0;
 				const number = figure.createSpan({ cls: "grill-cloud-balance-number", text: onPlanOnly ? "On" : known ? (credits ?? 0).toLocaleString("en-US") : "" });
 				if (known) figure.createSpan({ cls: "grill-cloud-balance-unit", text: onPlanOnly ? "monthly plan" : "credits" });
-				body.createDiv({
+				// Free credits used up, no plan: the balance, what sessions cost and whether
+				// Cloud is in use say nothing useful. The offer is the whole card.
+				card.toggleClass("grill-cloud-offering", empty);
+				if (!empty) body.createDiv({
 					cls: "grill-meta",
 					text:
 						state === "offline" || state === "refused"
@@ -3723,17 +3761,17 @@ export class GrillSettingTab extends PluginSettingTab {
 				});
 				if (known && plan && !waiting) drawPlanUsage(body, plan);
 				card.toggleClass("grill-cloud-waiting", waiting);
-				if (!usingCloud) {
-					setting.addButton((b) =>
-						b
-							.setButtonText("Use Grill Cloud")
-							.setCta()
-							.onClick(async () => {
-								s.provider = "grillcloud";
-								await this.plugin.persist();
-								this.rerender();
-							}),
-					);
+				if (!usingCloud && !empty) {
+					setting.addButton((b) => {
+						b.setButtonText("Use Grill Cloud").onClick(async () => {
+							s.provider = "grillcloud";
+							await this.plugin.persist();
+							this.rerender();
+						});
+						// One lit button in the card: the plan's, when it is on offer.
+						if (!this.plugin.cloudCanSubscribe) b.setCta();
+						return b;
+					});
 				}
 				if (waiting) {
 					setting.addButton((b) =>
@@ -3745,9 +3783,11 @@ export class GrillSettingTab extends PluginSettingTab {
 				} else {
 					if (state === "none") start(setting, "Try free credits", false);
 					const canSubscribe = this.plugin.cloudCanSubscribe;
+					const packs = this.plugin.cloudShowPacks ? this.plugin.cloudPacks : [];
 					if (canSubscribe) {
-						// The plan is an offer of its own in the card, with its button inside it.
-						const offer = drawPlanOffer(body);
+						// The plan and the packs as one row of prices; the buttons are Obsidian's
+						// own, moved into their columns.
+						const slots = drawOffers(body, packs);
 						setting.addButton((b) => {
 							b.setButtonText(planLabel())
 								.setCta()
@@ -3757,26 +3797,35 @@ export class GrillSettingTab extends PluginSettingTab {
 								});
 							if (b.buttonEl) {
 								b.buttonEl.addClass("grill-plan-go");
-								offer.appendChild(b.buttonEl);
+								slots.plan.appendChild(b.buttonEl);
 							}
 							return b;
 						});
-					}
-					if (this.plugin.cloudShowPacks) {
-						const packs = this.plugin.cloudPacks;
+						packs.forEach((pack, i) => {
+							setting.addButton((b) => {
+								b.setButtonText(packGo(pack)).onClick(() => {
+									this.plugin.openCloudCheckout(pack.link);
+									this.rerender();
+								});
+								if (b.buttonEl) slots.packs[i].appendChild(b.buttonEl);
+								return b;
+							});
+						});
+					} else {
 						for (const pack of packs) {
 							setting.addButton((b) => {
 								b.setButtonText(packLabel(pack)).onClick(() => {
 									this.plugin.openCloudCheckout(pack.link);
 									this.rerender();
 								});
-								if (usingCloud && !canSubscribe && pack === packs[packs.length - 1]) b.setCta();
+								if (usingCloud && pack === packs[packs.length - 1]) b.setCta();
 								return b;
 							});
 						}
 					}
-					if (this.plugin.cloudShowPacks || canSubscribe) {
-						card.createDiv({ cls: "grill-cloud-card-foot", text: canSubscribe ? "Checkout by Stripe." : "Checkout by Stripe. Credits arrive here in a few seconds." });
+					// The plan's offer says how checkout works under its own button.
+					if (this.plugin.cloudShowPacks && !canSubscribe) {
+						card.createDiv({ cls: "grill-cloud-card-foot", text: "Checkout by Stripe. Credits arrive here in a few seconds." });
 					}
 				}
 				// The policies: there when wanted, as a line of small print, not a row of their own.
@@ -3796,7 +3845,7 @@ export class GrillSettingTab extends PluginSettingTab {
 					if (b.extraSettingsEl) corner.appendChild(b.extraSettingsEl);
 					return b;
 				});
-				corner.createSpan({ cls: usingCloud ? "grill-cloud-chip is-on" : "grill-cloud-chip", text: usingCloud ? "In use" : "Not in use" });
+				if (!empty) corner.createSpan({ cls: usingCloud ? "grill-cloud-chip is-on" : "grill-cloud-chip", text: usingCloud ? "In use" : "Not in use" });
 				// When a purchase lands (or the wait ends) while this tab is open: redraw,
 				// and count the balance up from the old number to the new one.
 				this.plugin.cloudArrived = (from, to) => {
@@ -4190,7 +4239,7 @@ export class GrillSettingTab extends PluginSettingTab {
 			},
 			{
 				name: "Engine",
-				desc: "What answers in Chat. Claude Code, Codex and opencode run on this computer with your own sign-in and your own setup: skills, MCP servers, hooks and CLAUDE.md. Desktop only. With no Grill Cloud, key or Ollama set up, the program also writes and marks tests.",
+				desc: "What answers in Chat and writes and marks your tests. Claude Code, Codex and opencode run on this computer with your own sign-in and your own setup: skills, MCP servers, hooks and CLAUDE.md. Desktop only.",
 				aliases: ["claude code", "codex", "opencode", "agent", "engine", "subscription", "chatgpt", "skills", "mcp", "hooks"],
 				build: (setting) =>
 					setting.addDropdown((d) =>

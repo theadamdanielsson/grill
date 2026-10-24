@@ -1,5 +1,26 @@
 # Changelog
 
+## 8.7.3
+
+- **Draw it from memory.** For notes built around a diagram, Grill can ask you to draw it
+  in Excalidraw and mark the drawing: the curves, slopes, shifts, labels and equilibria
+  it shows, and what is missing or wrong. Run Draw it from memory from the command
+  palette or a note's right-click menu. It needs the Excalidraw plugin, and for now it
+  is practice: the drawing is marked but the schedule is left as it is. Drawings are
+  kept in `Grill/Drawings/`.
+
+  ![An IS-LM diagram drawn from memory in Excalidraw and marked partially correct](https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/screenshot-draw.png)
+
+- **Claude Code and Codex see pictures.** The pictures in your notes, and drawings, now
+  reach Claude Code and Codex when they write and mark tests, as they already did with
+  Grill Cloud and your own key. Codex also returns its answers in the exact shape asked.
+- **The engine you pick does everything.** With Claude Code, Codex or opencode as the
+  engine, it writes and marks your tests too, not only Chat. A Grill Cloud account or a
+  key left from before is no longer used behind it.
+- **Grill Cloud, clearer.** The plan and the credit packs sit side by side with their
+  prices: try it with 400 credits, the monthly plan with up to 1,650 credits a month,
+  or 1,100 credits with no subscription. Packs are on sale to everyone again.
+
 ## 8.7.2
 
 - **Grill starts from what you already know.** If you have used Claude Code or Codex,

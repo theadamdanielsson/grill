@@ -178,3 +178,27 @@ test("a resumed conversation keeps the tools it started with: none are sent agai
 	const resume = s.got.find((m) => m.method === "thread/resume")!;
 	assert.equal(resume.params.dynamicTools, undefined);
 });
+
+test("pictures go ahead of the text, and the answer's shape is set on the turn", async () => {
+	const s = server((c) => {
+		c.say("item/completed", { item: { type: "agentMessage", id: "m1", text: "{\"verdict\":\"correct\"}" } });
+		finish(c);
+	});
+	const schema = { type: "object", properties: { verdict: { type: "string" } }, required: ["verdict"], additionalProperties: false };
+	await runCodexTurn(base({ images: [{ mediaType: "image/png", dataBase64: "AAAA" }], outputSchema: schema }), s.wire);
+	const turn = s.got.find((m) => m.method === "turn/start")!.params;
+	assert.deepEqual(turn.input[0], { type: "image", url: "data:image/png;base64,AAAA" });
+	assert.equal(turn.input[1].type, "text");
+	assert.deepEqual(turn.outputSchema, schema);
+});
+
+test("a chat turn sends text only and no shape", async () => {
+	const s = server((c) => {
+		c.say("item/completed", { item: { type: "agentMessage", id: "m1", text: "Done." } });
+		finish(c);
+	});
+	await runCodexTurn(base(), s.wire);
+	const turn = s.got.find((m) => m.method === "turn/start")!.params;
+	assert.deepEqual(turn.input.map((i: Msg) => i.type), ["text"]);
+	assert.equal("outputSchema" in turn, false);
+});

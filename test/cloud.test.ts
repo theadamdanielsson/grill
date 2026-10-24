@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { deepFake, fakeEl, fakeSetting, net, notices, Plugin, TFile } from "obsidian";
 import GrillPlugin, { GrillSettingTab } from "../src/main";
-import { cloud, cloudAccount, cloudCheckoutUrl, creditsInWords, heardFromCloud, isCloudKey, lowBalance, newCloudKey, packLabel, planInWords, planLabel, planUsage, usageInWords } from "../src/cloud";
+import { cloud, cloudAccount, cloudCheckoutUrl, creditsInWords, heardFromCloud, isCloudKey, lowBalance, newCloudKey, packLabel, packPurpose, planInWords, planLabel, planUsage, usageInWords } from "../src/cloud";
 import { refillWords } from "../src/refill";
 import { KeyStash } from "../src/secrets";
 import { stopSpeaking } from "../src/tts";
@@ -162,6 +162,10 @@ test("a cloud key is 256 random bits, and only its hash ever goes in a link", as
 	// The price is said with tax to come, since the checkout adds it.
 	assert.equal(packLabel(cloud.packs[1]), "1,000 credits for $9.99 + tax");
 	assert.equal(packLabel({ credits: 1100, price: "$9.99", url: "", note: "10% extra" }), "1,100 credits for $9.99 + tax (10% extra)");
+	// Under the plan, each pack says what it is for instead.
+	assert.equal(packLabel({ credits: 400, price: "$3.99", url: "" }, packPurpose(0, 2, true)), "400 credits for $3.99 + tax (try it)");
+	assert.equal(packPurpose(1, 2, true), "no subscription");
+	assert.equal(packPurpose(0, 2, false), "");
 });
 
 test("Start free makes a key, opens the account, and switches to it", async () => {
@@ -1197,10 +1201,10 @@ test("the monthly plan is offered where it is on sale, opens its own checkout, a
 	const { plugin, tab } = await boot({ provider: "grillcloud", apiKeys: { grillcloud: mine } });
 	await plugin.refreshCloud();
 	assert.equal(plugin.cloudCanSubscribe, true);
-	assert.equal(planLabel(), "Get the monthly plan");
-	// With the plan on sale, someone without it is offered the plan and no packs.
-	assert.equal(plugin.cloudShowPacks, false);
-	assert.equal(draw(tab, "Grill Cloud").button(BIG), undefined);
+	assert.equal(planLabel(), "Get the plan");
+	// With the plan on sale, someone without it is offered the plan first and the packs under it.
+	assert.equal(plugin.cloudShowPacks, true);
+	assert.notEqual(draw(tab, "Grill Cloud").button("Get 1,000 credits"), undefined);
 	assert.equal(plugin.offerRefill("out_of_credits"), true);
 	await draw(tab, "Grill Cloud").button(planLabel()).click();
 	assert.deepEqual(opened, [await cloudCheckoutUrl(mine, "https://buy.stripe.com/plan")]);

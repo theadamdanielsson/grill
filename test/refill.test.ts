@@ -133,8 +133,8 @@ test("someone without the plan is offered the plan alone, and the pop-up closes 
 	plugin.cloudShowPacks = false;
 	plugin.cloudCanSubscribe = true;
 	const { modal, card } = show(plugin, "out_of_credits");
-	assert.deepEqual(buttons(card()).map((b: any) => b.text), ["Get the monthly plan"]);
-	assert.ok(["MONTHLY PLAN", "$7.99", "a month + tax"].every((x) => texts(card()).includes(x)));
+	assert.deepEqual(buttons(card()).map((b: any) => b.text), ["Get the plan"]);
+	assert.ok(["BEST VALUE", "Monthly", "$7.99", "a month", "up to 1,650 credits", "Works on your phone"].every((x) => texts(card()).includes(x)));
 	assert.ok(texts(card()).includes("Get the monthly plan to keep going."));
 	let closed = 0;
 	modal.close = () => void closed++;
@@ -146,6 +146,18 @@ test("someone without the plan is offered the plan alone, and the pop-up closes 
 	plugin.cloudWaitingFrom = null;
 	tell();
 	assert.equal(closed, 1);
+	modal.onClose();
+});
+
+test("someone without the plan is offered the plan first and the packs under it", () => {
+	const { plugin } = fakePlugin();
+	plugin.cloudCanSubscribe = true;
+	const { modal, card } = show(plugin, "out_of_credits");
+	const names = buttons(card()).map((b: any) => b.text);
+	// One row of prices: the smallest pack, the plan in the middle, the larger pack.
+	assert.deepEqual(names, ["Get 400 credits", "Get the plan", "Get 1,100 credits"]);
+	assert.ok(texts(card()).includes("Get the monthly plan, or add credits to keep going."));
+	assert.ok(["Try it", "No subscription", "one time"].every((x) => texts(card()).includes(x)));
 	modal.onClose();
 });
 

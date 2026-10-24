@@ -37,11 +37,12 @@ The home screen suggests where to go from your record: the questions you last mi
 - **`@` and `/` in the box:** `@` brings a note into the message and `/` picks a prompt. On Claude Code, your own commands and skills are in the list too.
 - **Your record in other agents:** Claude Code, Codex, Cursor and other agents can see your weak spots, explain at your level, and test you. Their answers count here, and what you are tested on outside the vault shows on the Progress screen.
 - **A record behind every reply:** per-concept scheduling, your past answers and the confusions Grill has named are given to the chat, so an explanation starts from what you got wrong.
-- **Nothing to set up:** [Grill Cloud](#grill-cloud) answers, writes questions and grades with no API key and no account. It works on your phone, reads the images in your notes, and your notes are not trained on. Free to try.
+- **No setup:** [Grill Cloud](#grill-cloud) answers, writes questions and grades with no API key and no account. It works on your phone, reads the images in your notes, and your notes are not trained on. Free to try.
 - **Or a program on your computer:** [Claude Code, Codex or opencode](#with-claude-code-or-codex), with your own sign-in. opencode has free models and needs no account.
 - **Or your own key:** Claude, GPT, Gemini, DeepSeek, any OpenAI-compatible endpoint (OpenRouter, Groq, LM Studio), or a local model through Ollama.
 - **Questions from your own notes:** recall questions written from what you wrote, in free text, multiple choice, true or false, fill-in and matching.
 - **Fair grading:** answers are marked against a rubric written with the question, with partial credit and the expected answer always shown.
+- **Draw it from memory:** optional, with the Excalidraw plugin. Grill asks you to draw a diagram from your notes and marks the drawing: the curves, shifts and labels, and what is missing.
 - **Ask in the middle of a test:** type a question in the answer box and Grill answers it; the record notes that you needed help.
 - **Replies as they are written:** Chat streams its answer, and a reply can be inserted at the cursor or saved as a note.
 - **A map of what you know:** on the Progress screen, your notes as a graph coloured by how well you know each.
@@ -59,6 +60,8 @@ How each of these works is described in **[docs/features.md](docs/features.md)**
 ![Chat reading across the vault: six notes read, with links back to the ones the answer draws on](docs/screenshot-chat-vault.png)
 
 ![A partially correct answer, graded with specific feedback and the expected answer](docs/screenshot-feedback.png)
+
+![An IS-LM diagram drawn from memory in Excalidraw and marked partially correct: the axes, the curves and the equilibrium are right, and the monetary expansion is missing](docs/screenshot-draw.png)
 
 <a name="grill-cloud"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/cloud-dark.svg"><img src="docs/icons/cloud.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> Grill Cloud

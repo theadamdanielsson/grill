@@ -66,6 +66,16 @@ The answer box accepts a question as well as an answer. When what you type is a 
 
 The Questions screen lists every question Grill has written, with a view of those last missed. A question can be edited there: its text, expected answer, hints and rubric, and for multiple-choice, select-all and matching questions the choices or pairs as well. Saving an edit leaves the concept's schedule as it was. A question you wrote yourself in a `> [!grill]` callout is text in your note and is edited there.
 
+## Drawing from memory
+
+Drawing from memory is an optional test for notes built around a diagram. It requires the Excalidraw plugin, which Grill drives through the scripting interface Excalidraw publishes for other plugins. Without Excalidraw, the rest of Grill works as before, and the command points to Excalidraw's page in the plugin browser.
+
+Run **Draw it from memory** from the command palette or from a note's right-click menu. Grill reads the note, picks the diagram most worth reproducing, and asks for it, usually with a change to show on it, such as the shift of a curve. An empty drawing opens beside the note. Submit then sends the finished drawing to the model as an image, together with the note and its own pictures. In turn, the grade follows the same rules as a written answer: it identifies the curves, slopes, shifts, labels and equilibria that are present, names what is missing or wrong, and gives the expected drawing in words. Neatness does not count, and where the note states a convention of its course, the note is the standard.
+
+![A drawing of the IS-LM diagram graded as partially correct: the axes, the downward IS curve and the flat LM curve are right, and the monetary expansion is missing](screenshot-draw.png)
+
+Each drawing is kept as an ordinary Excalidraw file in `Grill/Drawings/`. Grading requires a model that reads images: Grill Cloud, Claude Code, Codex, or your own Anthropic, OpenAI or Gemini key. For now a drawing test is practice, i.e. it is marked but does not change the schedule or the record.
+
 ## What it keeps track of
 
 Grill schedules you per concept, not per note. It pulls the concepts out of a note (its headings, definitions, bold terms, formulas, and any flashcards you've already written) and tracks each one on its own. That matters for anything bigger than a one-idea note: a chapter note doesn't count as "known" because you got one lucky question right, it keeps coming back until you've actually been tested across its parts. Each concept rides FSRS, the spaced-repetition algorithm Anki switched to: get it right and it won't come up again for a while, get it wrong and it's back next time. The questions climb in difficulty as you go, easy while a concept is new, harder once you've recalled it a few times spaced out. And if you edit a note, only the concepts you actually changed re-open for review; the rest stay put.

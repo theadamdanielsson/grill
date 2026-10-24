@@ -9,7 +9,8 @@
  * Grill's own in the user's home (not the shared temporary folder) rather than in the vault. What comes back is read as JSON the same way a
  * model's reply is.
  */
-import type { Options, SDKMessage, SpawnedProcess, SpawnOptions } from "@anthropic-ai/claude-agent-sdk";
+import type { Options, SDKMessage, SDKUserMessage, SpawnedProcess, SpawnOptions } from "@anthropic-ai/claude-agent-sdk";
+import type { ImageInput } from "./images";
 import { acceptPaneSignals, pathWith } from "./agent";
 import { runAcp } from "./acp";
 import { runCodex } from "./codex";
@@ -27,6 +28,9 @@ export interface AgentJSONRun {
 	schema: Record<string, unknown>;
 	/** Aborted when Grill stops waiting: the program is stopped with it. */
 	signal?: AbortSignal;
+	/** Pictures that go with the request, ahead of its text (a drawing being graded,
+	 * a note's figures). opencode is not sent them. */
+	images?: ImageInput[];
 }
 
 type Need = (name: string) => unknown;
@@ -74,6 +78,27 @@ function startProgram(o: SpawnOptions): SpawnedProcess {
 	return child as unknown as SpawnedProcess;
 }
 
+/** The request as Claude Code takes it: plain text, or one message with the pictures
+ * first and the text after, the way the Messages API takes them. */
+function withImages(run: AgentJSONRun): string | AsyncIterable<SDKUserMessage> {
+	const images = run.images ?? [];
+	if (!images.length) return run.user;
+	const message: SDKUserMessage = {
+		type: "user",
+		message: {
+			role: "user",
+			content: [
+				...images.map((im) => ({ type: "image" as const, source: { type: "base64" as const, media_type: im.mediaType as "image/png", data: im.dataBase64 } })),
+				{ type: "text" as const, text: run.user },
+			],
+		},
+		parent_tool_use_id: null,
+	} as SDKUserMessage;
+	return (async function* () {
+		yield message;
+	})();
+}
+
 async function claudeJSON(run: AgentJSONRun, cwd: string): Promise<unknown> {
 	const req = need();
 	if (!req) throw new Error("Claude Code can only be run on desktop.");
@@ -102,7 +127,7 @@ async function claudeJSON(run: AgentJSONRun, cwd: string): Promise<unknown> {
 	let text = "";
 	let failed = "";
 	try {
-		for await (const m of query({ prompt: run.user, options }) as AsyncIterable<SDKMessage>) {
+		for await (const m of query({ prompt: withImages(run), options }) as AsyncIterable<SDKMessage>) {
 			if (m.type !== "result") continue;
 			const r = m as { subtype: string; result?: string; structured_output?: unknown; errors?: string[] };
 			if (r.subtype === "success") {
@@ -128,7 +153,7 @@ export async function agentJSON(run: AgentJSONRun): Promise<unknown> {
 	const quiet = { onEvent: () => undefined, ask: async () => "deny" as const, signal: run.signal };
 	const result =
 		run.engine === "codex"
-			? await runCodex({ program: run.program, prompt, cwd, level: "plan", model: run.model, ...quiet })
+			? await runCodex({ program: run.program, prompt, cwd, level: "plan", model: run.model, images: run.images, outputSchema: run.schema, ...quiet })
 			: await runAcp({ ...opencodeProgram(run.program, "plan"), name: "opencode", prompt, cwd, level: "plan", model: run.model, ...quiet });
 	return readJSON(result.text);
 }

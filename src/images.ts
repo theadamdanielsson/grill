@@ -24,7 +24,7 @@ const MEDIA: Record<string, string> = {
 	gif: "image/gif",
 };
 
-function toBase64(buf: ArrayBuffer): string {
+export function toBase64(buf: ArrayBuffer): string {
 	const bytes = new Uint8Array(buf);
 	let bin = "";
 	const chunk = 0x8000;

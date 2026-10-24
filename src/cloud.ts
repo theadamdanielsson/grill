@@ -60,13 +60,12 @@ export interface CloudPlan {
 	period?: number;
 }
 
-/** What the plan is, a line each, under its price where it is offered. */
-export const PLAN_DETAILS = [
-	"Chat and tests, with no API key.",
-	"Usage limits reset every five hours and every week.",
-	"At a limit, wait or add credits. Credits don't expire.",
-	"Cancel anytime.",
-];
+/** The plan's offer: a headline over the price, what it gets you under it, and the
+ * terms in small print under the button. */
+export const PLAN_HEADLINE = "All of Grill. No setup.";
+export const PLAN_LEAD = "No Claude or ChatGPT subscription needed. Less than half the price of one.";
+export const PLAN_PERKS = ["Tests on any note", "An AI that reads and edits your notes", "Works on your phone"];
+export const PLAN_LIMITS = "Usage limits reset every five hours and every week. At a limit, wait or add credits, which don't expire.";
 
 /** A running plan's three limits, as the share of each that is used. */
 export function planUsage(plan: CloudPlan): Array<{ name: string; used: number }> {
@@ -82,7 +81,7 @@ export function planUsage(plan: CloudPlan): Array<{ name: string; used: number }
 
 /** What the plan's button says. The price stands above it, in the offer. */
 export function planLabel(): string {
-	return "Get the monthly plan";
+	return "Get the plan";
 }
 
 /** When a reached limit frees up, in words. */
@@ -98,8 +97,18 @@ export function planInWords(plan: CloudPlan): string {
 }
 
 /** What a pack's button says. */
-export function packLabel(pack: CloudPack): string {
-	return `${pack.credits.toLocaleString("en-US")} credits for ${pack.price} + tax${pack.note ? ` (${pack.note})` : ""}`;
+export function packLabel(pack: CloudPack, purpose = ""): string {
+	const why = purpose || pack.note || "";
+	return `${pack.credits.toLocaleString("en-US")} credits for ${pack.price} + tax${why ? ` (${why})` : ""}`;
+}
+
+/** What a pack is for, said beside it when the plan is offered above: the smallest is
+ * the way to try Grill Cloud, the largest is for someone who won't subscribe. */
+export function packPurpose(index: number, count: number, planOffered: boolean): string {
+	if (!planOffered) return "";
+	if (index === 0 && count > 1) return "try it";
+	if (index === count - 1) return "no subscription";
+	return "";
 }
 
 export const cloud = {
@@ -112,7 +121,13 @@ export const cloud = {
 		{ credits: 1100, price: "$9.99", url: "https://buy.stripe.com/bJefZh1fOcKZcHP0g20ZW00", note: "10% extra" },
 	] as CloudPack[],
 	/** The monthly plan and its Stripe payment link. With no link it isn't offered. */
-	plan: { price: "$7.99", url: "https://buy.stripe.com/28EcN57EcdP323bd2O0ZW03" },
+	plan: {
+		price: "$7.99",
+		url: "https://buy.stripe.com/28EcN57EcdP323bd2O0ZW03",
+		/** The most a month of the plan holds, in credits: the server's PLAN_PERIOD_USD at
+		 * $0.004 a credit. Said so the plan and the packs read in the same unit. */
+		credits: 1650,
+	},
 	/** Where the privacy policy and the terms live. */
 	privacyUrl: "https://grill.onbridger.com/privacy",
 	termsUrl: "https://grill.onbridger.com/terms",
@@ -129,7 +144,7 @@ export const cloud = {
 };
 
 /** Why pick it, in one line under its name: nothing to get, nothing to fill in. */
-export const CLOUD_LEAD = "No API key. No sign-up. One click and you're studying.";
+export const CLOUD_LEAD = "No API key, no sign-up, no AI subscription. One click and you're studying.";
 
 /** The three things to know before starting, said wherever Grill Cloud is offered. */
 export const CLOUD_FACTS = [

@@ -1391,6 +1391,29 @@
   max-width: 100%;
   margin-top: var(--grill-space-sm);
 }
+/* Draw from memory: the answer is drawn in an Excalidraw tab beside the notes. */
+.grill-draw-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--grill-space-sm);
+  margin-top: var(--grill-space-sm);
+  padding: var(--grill-space-sm) var(--grill-space-md);
+  border: 1px dashed var(--background-modifier-border);
+  border-radius: var(--grill-radius-m);
+}
+.grill-draw-text {
+  color: var(--text-muted);
+}
+.grill-draw-answer {
+  display: block;
+  max-width: 100%;
+  max-height: 320px;
+  margin-top: var(--grill-space-sm);
+  background: #fff;
+  border-radius: var(--grill-radius-m);
+  border: 1px solid var(--background-modifier-border);
+}
 .grill-occlusion-img {
   display: block;
   max-width: 100%;
@@ -2564,15 +2587,131 @@ textarea.grill-mgmt-field {
 }
 /* The monthly plan, offered: a lit panel inside the screen with the price in the
    wordmark's lettering and one wide button. It is the thing to press on the card. */
+/* The offer: what Grill Cloud is, then one row of prices with the plan in the middle,
+   lit. No boxes: thin rules between the columns, and the plan's own glow. */
 .grill-plan-offer {
-  margin-top: 0.9em;
-  padding: 0.95em 1.05em 1.05em;
-  border: 1px solid var(--grill-gold, #ffd23f);
-  background: linear-gradient(180deg, rgba(255, 122, 34, 0.2), rgba(255, 122, 34, 0.05));
-  box-shadow: 0 0 0 3px var(--grill-ember-dark, #5c1400), 0 0 22px rgba(255, 122, 34, 0.28);
+  margin-top: 0.4em;
+}
+.grill-plan-lead {
+  margin-top: 0.3em;
+  color: var(--grill-ink-dim, #c9a875);
+}
+.grill-tiers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10.5em, 1fr));
+  margin: 1.1em 0 0.4em;
+}
+.grill-tier {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 0.8em 0.9em 1em;
+  border-left: 1px solid rgba(255, 122, 34, 0.28);
+}
+.grill-tier:first-child {
+  border-left: 0;
+}
+.grill-tier.is-best {
+  border-left: 0;
+  border-radius: 6px;
+  background: linear-gradient(180deg, rgba(255, 122, 34, 0.22), rgba(255, 122, 34, 0.06));
+  box-shadow: inset 0 0 0 1px rgba(255, 210, 63, 0.55), 0 0 22px rgba(255, 122, 34, 0.25);
+}
+.grill-tier.is-best + .grill-tier {
+  border-left: 0;
+}
+.grill-tier-flag {
+  min-height: 1.2em;
+  font-family: "Grill Pixel", var(--font-monospace);
+  font-size: 0.6em;
+  letter-spacing: 0.08em;
+  color: var(--grill-ink-gold, #ffd23f);
+}
+.grill-tier-name {
+  margin-top: 0.25em;
+  color: var(--grill-ink-dim, #c9a875);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: var(--font-ui-smaller, 0.8em);
+}
+.grill-tier-price {
+  margin-top: 0.3em;
+  font-family: "Grill Pixel", var(--font-monospace);
+  font-size: 1.45em;
+  line-height: 1.15;
+  color: var(--grill-ink, #ffe98a);
+}
+.grill-tier.is-best .grill-tier-price {
+  font-size: 1.9em;
+  text-shadow: 0 0 2px var(--grill-gold-white, #fff2b0), 0 0 10px var(--grill-flame, #ff7a22), 0 0 20px var(--grill-flame-hot, #ff5a1f);
+}
+.grill-tier-unit {
+  margin-top: 0.15em;
+  color: var(--grill-ink-dim, #c9a875);
+  font-size: var(--font-ui-small, 0.87em);
+}
+.grill-tier-extra {
+  min-height: 1.3em;
+  color: var(--grill-ink-gold, #ffd23f);
+  font-size: var(--font-ui-small, 0.87em);
+  font-weight: 600;
+}
+.grill-tier-go {
+  margin-top: auto;
+  padding-top: 0.8em;
+  width: 100%;
+}
+.grill-arcade-screen .grill-tier-go button {
+  justify-content: center;
+  text-align: center;
+  width: 100%;
+  white-space: normal;
+  height: auto;
+  padding: 0.55em 0.6em;
+}
+.grill-arcade-screen .grill-tier-go button:not(.mod-cta) {
+  background: transparent;
+  color: var(--grill-ink-gold, #ffd23f);
+  border: 1px solid rgba(255, 210, 63, 0.45);
+  box-shadow: none;
+}
+.grill-arcade-screen .grill-tier .grill-plan-go {
+  margin-top: 0;
+  padding: 0.55em 0.6em;
+}
+.grill-plan-limits {
+  margin-top: 0.3em;
+  font-size: var(--font-ui-smaller, 0.8em);
+  color: var(--grill-ink-dim, #c9a875);
+}
+.grill-plan-limits summary {
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.grill-plan-limits p {
+  margin: 0.4em 0 0;
+  line-height: 1.4;
+}
+.grill-cloud-card.grill-cloud-offering .grill-cloud-card-head {
+  margin-bottom: 0.2em;
 }
 .grill-refill-packs .grill-plan-offer {
   margin-top: 0;
+}
+/* The pop-up's row of prices is narrower: smaller figures, tighter columns. */
+.grill-refill .grill-tier {
+  padding: 0.6em 0.45em 0.8em;
+}
+.grill-refill .grill-tier-price {
+  font-size: 1.15em;
+}
+.grill-refill .grill-tier.is-best .grill-tier-price {
+  font-size: 1.45em;
+}
+.grill-refill .grill-tier-name {
+  font-size: 0.72em;
 }
 .grill-plan-tag {
   font-family: "Grill Pixel", var(--font-monospace);
@@ -2600,9 +2739,42 @@ textarea.grill-mgmt-field {
   letter-spacing: 0.08em;
   font-size: var(--font-ui-smaller, 0.8em);
 }
-.grill-plan-line {
+.grill-plan-headline {
+  margin-top: 0.45em;
+  color: var(--grill-ink, #ffe98a);
+  font-size: 1.45em;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.grill-plan-perks {
+  list-style: none;
+  margin: 0.4em 0 0;
+  padding: 0;
+}
+.grill-plan-perks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2em 1.4em;
+  margin-top: 0.6em;
+}
+.grill-plan-perks li {
+  position: relative;
+  padding-left: 1.5em;
+  margin: 0.35em 0;
+  color: var(--grill-ink-gold, #ffd23f);
+}
+.grill-plan-perks li::before {
+  content: "✓";
+  position: absolute;
+  left: 0.15em;
+  color: var(--grill-flame, #ff7a22);
+  font-weight: 700;
+}
+.grill-plan-fine {
+  margin-top: 0.6em;
   color: var(--grill-ink-dim, #c9a875);
-  font-size: var(--font-ui-small, 0.87em);
+  font-size: var(--font-ui-smaller, 0.8em);
+  line-height: 1.4;
 }
 .grill-arcade-screen .grill-plan-offer button.grill-plan-go {
   display: block;
@@ -2855,7 +3027,7 @@ textarea.grill-mgmt-field {
 /* Out of credits: the pop-up is the card itself, so the modal around it is only a
    holder. "Not now" and Escape close it; Obsidian's own cross would sit on the frame. */
 .modal.grill-refill-modal {
-  width: min(27em, 92vw);
+  width: min(36em, 94vw);
   padding: 0;
   border: 0;
   background: none;

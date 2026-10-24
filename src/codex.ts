@@ -58,6 +58,10 @@ export interface CodexRun {
 	tools?: { specs: ToolSpec[]; call: ToolRunner };
 	/** The model to answer with, by Codex's own name for it; empty for Codex's default. */
 	model?: string;
+	/** Pictures sent with the first message, as data a model reads. */
+	images?: { mediaType: string; dataBase64: string }[];
+	/** JSON Schema the final answer must match (turn/start's outputSchema). */
+	outputSchema?: Record<string, unknown>;
 }
 
 /** The namespace Grill's dynamic tools are listed under. */
@@ -260,7 +264,8 @@ export async function runCodexTurn(run: CodexRun, wire: CodexWire): Promise<Agen
 		threadId = str(obj(opened?.thread)?.id) || threadId;
 		if (run.signal?.aborted) throw new DOMException("Stopped.", "AbortError");
 		const first = !run.resume && run.brief ? `<context>\n${run.brief}\n</context>\n\n${run.prompt}` : run.prompt;
-		const started = await request<Loose>("turn/start", { threadId, input: [{ type: "text", text: first }], approvalPolicy: policy.approvalPolicy, approvalsReviewer: "user", ...(run.model ? { model: run.model } : {}) });
+		const pictures = (run.images ?? []).map((im) => ({ type: "image", url: `data:${im.mediaType};base64,${im.dataBase64}` }));
+		const started = await request<Loose>("turn/start", { threadId, input: [...pictures, { type: "text", text: first }], ...(run.outputSchema ? { outputSchema: run.outputSchema } : {}), approvalPolicy: policy.approvalPolicy, approvalsReviewer: "user", ...(run.model ? { model: run.model } : {}) });
 		turnId = str(obj(started?.turn)?.id) || turnId;
 		await done;
 	} finally {

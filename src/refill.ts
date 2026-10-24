@@ -6,7 +6,7 @@
 
 import { Modal } from "obsidian";
 import type GrillPlugin from "./main";
-import { cloud, CloudPlan, PLAN_DETAILS, planBack, planLabel, planUsage } from "./cloud";
+import { cloud, CloudPlan, PLAN_HEADLINE, PLAN_LEAD, PLAN_LIMITS, PLAN_PERKS, packPurpose, planBack, planLabel, planUsage } from "./cloud";
 
 /** What the pop-up says for each way credits fall short. The server's own sentences
  * point at settings, which is no longer where this is fixed, so these are said here. */
@@ -17,16 +17,55 @@ export function refillWords(code: string): { title: string; body: string } {
 	return { title: "Out of credits", body: "Add credits to keep going." };
 }
 
-/** The monthly plan as an offer: its name, its price writ large, and one line on what
- * it is. The button that buys it goes inside, added by the caller. */
-export function drawPlanOffer(parent: HTMLElement): HTMLElement {
+/** Where an offer's buy buttons go: the plan's column, and each pack's, in pack order. */
+export interface OfferSlots {
+	plan: HTMLElement;
+	packs: HTMLElement[];
+}
+
+/** The plan and the packs as one row of prices, the plan in the middle and lit: what
+ * Grill Cloud is and gets you above it, the terms below. Packs come smallest first;
+ * the smallest stands left of the plan as the way to try it, the rest right of it.
+ * The buttons are the caller's, put in the slots. */
+export function drawOffers(parent: HTMLElement, packs: Array<{ credits: number; price: string }>, brief = false): OfferSlots {
 	const offer = parent.createDiv({ cls: "grill-plan-offer" });
-	offer.createDiv({ cls: "grill-plan-tag", text: "MONTHLY PLAN" });
-	const row = offer.createDiv({ cls: "grill-plan-price-row" });
-	row.createSpan({ cls: "grill-plan-price", text: cloud.plan.price });
-	row.createSpan({ cls: "grill-plan-per", text: "a month + tax" });
-	for (const line of PLAN_DETAILS) offer.createDiv({ cls: "grill-plan-line", text: line });
-	return offer;
+	// In the pop-up its own title says why it is up; the pitch would only repeat it.
+	if (!brief) {
+		offer.createDiv({ cls: "grill-plan-headline", text: PLAN_HEADLINE });
+		offer.createDiv({ cls: "grill-plan-lead", text: PLAN_LEAD });
+	}
+	const perks = offer.createEl("ul", { cls: "grill-plan-perks" });
+	for (const perk of PLAN_PERKS) perks.createEl("li", { text: perk });
+	const tiers = offer.createDiv({ cls: "grill-tiers" });
+	// One row however narrow: the plan reads as the middle of a set only beside the packs.
+	if (tiers.style) tiers.style.gridTemplateColumns = `repeat(${packs.length + 1}, minmax(0, 1fr))`;
+	const tier = (name: string, price: string, unit: string, extra: string, best = false): HTMLElement => {
+		const t = tiers.createDiv({ cls: best ? "grill-tier is-best" : "grill-tier" });
+		t.createDiv({ cls: "grill-tier-flag", text: best ? "BEST VALUE" : "" });
+		t.createDiv({ cls: "grill-tier-name", text: name });
+		t.createDiv({ cls: "grill-tier-price", text: price });
+		t.createDiv({ cls: "grill-tier-unit", text: unit });
+		t.createDiv({ cls: "grill-tier-extra", text: extra });
+		return t.createDiv({ cls: "grill-tier-go" });
+	};
+	const credits = (n: number): string => `${n.toLocaleString("en-US")} credits`;
+	const packTier = (i: number): HTMLElement =>
+		tier(packPurpose(i, packs.length, true) === "try it" ? "Try it" : "No subscription", packs[i].price, "one time", credits(packs[i].credits));
+	const slots: HTMLElement[] = [];
+	if (packs.length > 1) slots[0] = packTier(0);
+	const allowance = (cloud.plan as { credits?: number }).credits;
+	const plan = tier("Monthly", cloud.plan.price, "a month", allowance ? `up to ${credits(allowance)}` : "", true);
+	for (let i = packs.length > 1 ? 1 : 0; i < packs.length; i++) slots[i] = packTier(i);
+	offer.createDiv({ cls: "grill-plan-fine", text: "Prices plus tax. Credits never expire. Cancel the plan anytime. Secure checkout by Stripe." });
+	const limits = offer.createEl("details", { cls: "grill-plan-limits" });
+	limits.createEl("summary", { text: "How the plan's limits work" });
+	limits.createEl("p", { text: PLAN_LIMITS });
+	return { plan, packs: slots };
+}
+
+/** What a pack's button says in the row of prices; its price is above it. */
+export function packGo(pack: { credits: number }): string {
+	return `Get ${pack.credits.toLocaleString("en-US")} credits`;
 }
 
 /** A running plan's limits as bars: how much of each is used. Nothing when the
@@ -116,33 +155,41 @@ export class RefillModal extends Modal {
 		const body =
 			this.code === "plan_limit" && plan?.limit
 				? `Your plan's usage limit is reached. It frees up again ${planBack(plan)}. Add credits to keep going now.`
-				: offerPlan && !onSale.length
+				: offerPlan
 					? this.code === "free_paused"
-						? "Free use of Grill Cloud is paused for today. Get the monthly plan to keep going, or try again tomorrow."
-						: "Get the monthly plan to keep going."
+						? `Free use of Grill Cloud is paused for today. ${onSale.length ? "Get the monthly plan or add credits" : "Get the monthly plan"} to keep going, or try again tomorrow.`
+						: onSale.length
+							? "Get the monthly plan, or add credits to keep going."
+							: "Get the monthly plan to keep going."
 					: words.body;
 		card.createDiv({ cls: "grill-meta", text: this.tail ? `${body} ${this.tail}` : body });
 		const packs = card.createDiv({ cls: "grill-refill-packs" });
-		if (offerPlan) {
-			const b = drawPlanOffer(packs).createEl("button", { cls: "grill-plan-go mod-cta", text: planLabel() });
-			b.onclick = () => {
-				this.before = this.plugin.cloudCredits ?? 0;
-				this.hadPlan = this.plugin.cloudPlan !== null;
-				this.plugin.openCloudPlanCheckout();
-			};
-		}
-		for (const pack of onSale) {
-			const b = packs.createEl("button", { cls: "grill-refill-pack" });
-			b.createSpan({ text: `${pack.credits.toLocaleString("en-US")} credits` });
-			b.createSpan({ cls: "grill-refill-price", text: `${pack.price} + tax${pack.note ? `, ${pack.note}` : ""}` });
-			if (!offerPlan && pack === onSale[onSale.length - 1]) b.addClass("mod-cta");
+		const buyPack = (b: HTMLElement, pack: (typeof onSale)[number]): void => {
 			b.onclick = () => {
 				this.before = this.plugin.cloudCredits ?? 0;
 				this.hadPlan = this.plugin.cloudPlan !== null;
 				this.plugin.openCloudCheckout(pack.link);
 			};
+		};
+		if (offerPlan) {
+			const slots = drawOffers(packs, onSale, true);
+			const b = slots.plan.createEl("button", { cls: "grill-plan-go mod-cta", text: planLabel() });
+			b.onclick = () => {
+				this.before = this.plugin.cloudCredits ?? 0;
+				this.hadPlan = this.plugin.cloudPlan !== null;
+				this.plugin.openCloudPlanCheckout();
+			};
+			onSale.forEach((pack, i) => buyPack(slots.packs[i].createEl("button", { cls: "grill-refill-pack", text: packGo(pack) }), pack));
+		} else {
+			for (const pack of onSale) {
+				const b = packs.createEl("button", { cls: "grill-refill-pack" });
+				b.createSpan({ text: `${pack.credits.toLocaleString("en-US")} credits` });
+				b.createSpan({ cls: "grill-refill-price", text: `${pack.price} + tax${pack.note ? `, ${pack.note}` : ""}` });
+				if (pack === onSale[onSale.length - 1]) b.addClass("mod-cta");
+				buyPack(b, pack);
+			}
 		}
-		if (onSale.length || offerPlan) card.createDiv({ cls: "grill-cloud-card-foot", text: offerPlan ? "Checkout by Stripe." : "Checkout by Stripe. Credits arrive here in a few seconds." });
+		if (onSale.length && !offerPlan) card.createDiv({ cls: "grill-cloud-card-foot", text: "Checkout by Stripe. Credits arrive here in a few seconds." });
 		const links = card.createDiv({ cls: "grill-refill-links" });
 		links.createEl("a", { text: "Not now" }).onclick = () => this.close();
 		links.createEl("a", { text: "Use your own key" }).onclick = () => {

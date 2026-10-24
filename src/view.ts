@@ -5,8 +5,9 @@ import type GrillPlugin from "./main";
 import { INTENSITY_PRESETS } from "./main";
 import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, cloudEnabled, creditsInWords, lowBalance, planInWords, usageInWords } from "./cloud";
 import { CLAUDE_MODELS, selectionMessage, STARTER_PROMPTS } from "./selection";
-import { adjudicateBridges, ConceptTarget, contentWords, debriefSession, discussQuestion, embedTexts, explainQuestion, formatSatisfies, generateQuestions, Grade, CloudError, cleanDiagram, cleanText, gradeAnswer, learnFromNotes, learnWithTools, summarizeChat, listModels, LLMConfig, replyInProgress, offeredProviders, PROVIDERS, ProviderId, Question, supportsEmbeddings, supportsVision, testModel, ThreadTurn, type StudyOfferButton, Verdict } from "./llm";
+import { adjudicateBridges, ConceptTarget, contentWords, debriefSession, discussQuestion, embedTexts, explainQuestion, formatSatisfies, generateDrawQuestion, generateQuestions, Grade, CloudError, cleanDiagram, cleanText, gradeAnswer, learnFromNotes, learnWithTools, summarizeChat, listModels, LLMConfig, replyInProgress, offeredProviders, PROVIDERS, ProviderId, Question, readsImages, supportsEmbeddings, supportsVision, testModel, ThreadTurn, type StudyOfferButton, Verdict } from "./llm";
 import { detectOcclusionRegions } from "./ocr";
+import { canDraw, captureDrawing, EXCALIDRAW_PLUGIN_ID, newDrawing, showDrawing } from "./draw";
 import {
 	Concept,
 	ConceptKind,
@@ -603,6 +604,10 @@ export class SessionView extends ItemView {
 	 * generation, and practice-only — grading and feedback run, but nothing is written to
 	 * the schedule, stats, or misconception registry. */
 	private replayMode = false;
+	/** A draw-from-memory test (see draw.ts): runs like a replay, practice only for now. */
+	private drawSession = false;
+	/** The drawing being graded, sent ahead of the note's own pictures. */
+	private drawingImage: ImageInput | null = null;
 	/** Dashboard's "Concept coverage" list starts capped (see MISC_SHOWN_CAP) even
 	 * for a vault with dozens of folders — a "Show N more" click sets this and
 	 * re-renders with the full list, rather than the dashboard ever building every
@@ -4514,6 +4519,7 @@ export class SessionView extends ItemView {
 		const isTf = q.type === "tf";
 		const isMulti = q.type === "multi" && !!q.choices && q.choices.length >= 2 && !!q.correctChoices?.length;
 		const isMatch = q.type === "match" && !!q.pairs && q.pairs.length >= 2;
+		const isDraw = q.type === "draw" && !!q.drawing;
 		const blankInputs: HTMLInputElement[] = [];
 		if (isBlank) {
 			// Each blank splits the text around a live input. A stretch with a formula or
@@ -4668,6 +4674,11 @@ export class SessionView extends ItemView {
 				};
 				rightBtns.set(right, b);
 			}
+		} else if (isDraw) {
+			const box = card.createDiv({ cls: "grill-draw-box" });
+			box.createDiv({ cls: "grill-draw-text", text: "Draw it in the Excalidraw tab, then press Submit." });
+			const open = box.createEl("button", { text: "Show my drawing", cls: "grill-quiet-btn", attr: { type: "button" } });
+			open.onclick = () => void showDrawing(this.app, q.drawing as string);
 		} else if (!isBlank) {
 			ta = card.createEl("textarea", {
 				cls: "grill-answer",
@@ -4803,7 +4814,10 @@ export class SessionView extends ItemView {
 				else if (isMatch)
 					answer = (q.pairs ?? []).map((p) => `${p.left} → ${matchPicks[p.left] ?? "(unmatched)"}`).join("; ");
 				else if (isBlank) answer = blankInputs.map((el) => el.value.trim()).join(" / ");
-				else answer = ta?.value.trim() ?? "";
+				else if (isDraw) {
+					void this.submitDrawing(q, hintsUsed);
+					return;
+				} else answer = ta?.value.trim() ?? "";
 			}
 			void this.submitAnswer(answer, giveUp, hintsUsed, isMulti ? [...multiSelected] : undefined, isMatch ? matchPicks : undefined);
 		};
@@ -4905,7 +4919,7 @@ export class SessionView extends ItemView {
 	 * screen under it is in the thread view. */
 	private threadStrip(wrap: HTMLElement, endable = true): boolean {
 		const strip = wrap.createDiv({ cls: "grill-thread-strip" });
-		strip.createSpan({ cls: "grill-thread-kind", text: this.replayMode ? "Redo" : "Test" });
+		strip.createSpan({ cls: "grill-thread-kind", text: this.drawSession ? "Draw" : this.replayMode ? "Redo" : "Test" });
 		strip.createSpan({ cls: "grill-thread-count", text: `${Math.min(this.idx + 1, this.targetCount)} of ${this.targetCount}` });
 		if (endable) {
 			const end = strip.createEl("button", { cls: "grill-thread-end", text: "End session" });
@@ -4994,7 +5008,10 @@ export class SessionView extends ItemView {
 		// screen may be pressed: Next in that gap would redraw this result on the next
 		// question.
 		const lock = (): void => this.contentEl.querySelectorAll<HTMLButtonElement>(".grill-body button").forEach((b) => (b.disabled = true));
-		if (!r.gaveUp && r.answer) {
+		if (!r.gaveUp && this.drawSession && this.drawingImage) {
+			verdictCard.createDiv({ cls: "grill-block-label", text: "Your drawing" });
+			verdictCard.createEl("img", { cls: "grill-draw-answer", attr: { src: `data:image/png;base64,${this.drawingImage.dataBase64}`, alt: "Your drawing" } });
+		} else if (!r.gaveUp && r.answer) {
 			verdictCard.createDiv({ cls: "grill-block-label", text: "Your answer" });
 			const ans = verdictCard.createDiv({ cls: "grill-your-answer" });
 			this.md(`> ${r.answer.split("\n").join("\n> ")}`, ans, r.node);
@@ -5823,10 +5840,81 @@ export class SessionView extends ItemView {
 		this.renderLearn();
 	}
 
+	/** Draw from memory on one note: the model picks a diagram from it, an empty
+	 * Excalidraw drawing opens beside the notes, and the drawing is graded as an image.
+	 * Practice only for now: runs as a replay, so nothing is written to the record. */
+	async startDrawing(file: TFile): Promise<void> {
+		const cfg = this.plugin.llmConfig();
+		if (!cfg) {
+			if (this.plugin.askToUseModel()) return;
+			new Notice("Grill: drawing tests need a model to grade them. Start Grill Cloud or add a key in settings.", 8000);
+			return;
+		}
+		if (!readsImages(cfg)) {
+			new Notice("Grill: drawing tests need a model that reads pictures: Grill Cloud, Claude Code, Codex, or your own Anthropic, OpenAI or Gemini key.", 10000);
+			return;
+		}
+		if (!canDraw()) {
+			new Notice(
+				createFragment((frag) => {
+					frag.appendText("Grill: drawing tests use the Excalidraw plugin. ");
+					const get = frag.createEl("a", { text: "Get Excalidraw" });
+					get.onclick = (e) => {
+						e.preventDefault();
+						window.open(`obsidian://show-plugin?id=${EXCALIDRAW_PLUGIN_ID}`);
+					};
+					frag.appendText(", turn it on, then try again.");
+				}),
+				12000,
+			);
+			return;
+		}
+		await this.leaveLearn();
+		this.renderLoading("Picking something to draw", `Reading ${file.basename}.`);
+		let q: Question | null;
+		let images: ImageInput[] = [];
+		try {
+			const raw = await this.app.vault.cachedRead(file);
+			const text = raw.length > NOTE_CHAR_CAP ? safeSlice(raw, NOTE_CHAR_CAP) + "\n[truncated]" : raw;
+			if (this.plugin.data.settings.sendImages) images = await collectNoteImages(this.app, file, IMAGES_PER_NOTE_CAP);
+			q = await generateDrawQuestion(cfg, file.basename, text, images);
+			if (q) q.drawing = await newDrawing(this.plugin.data.settings.folder, file.basename);
+		} catch (e) {
+			this.tellError(e, "");
+			this.renderStart();
+			return;
+		}
+		if (!q) {
+			new Notice(`Grill: nothing in ${file.basename} worth drawing. Try a note with a graph or a diagram.`, 8000);
+			this.renderStart();
+			return;
+		}
+		await this.startReplay([q], true);
+		if (images.length) this.noteImages[q.node] = images;
+	}
+
+	/** Submit on a drawing: read it from the Excalidraw tab and grade it. An empty
+	 * drawing is not an answer; the question stays as it was. */
+	private async submitDrawing(q: Question, hintsUsed: number): Promise<void> {
+		let got: Awaited<ReturnType<typeof captureDrawing>> = null;
+		try {
+			got = await captureDrawing(this.app, q.drawing as string);
+		} catch (e) {
+			this.tellError(e, "");
+		}
+		if (!got) {
+			new Notice("Grill: draw your answer in the Excalidraw tab first.");
+			this.renderQuestion();
+			return;
+		}
+		this.drawingImage = got.image;
+		await this.submitAnswer(got.labels || "(no text in the drawing)", false, hintsUsed);
+	}
+
 	/** Redo a saved session's questions verbatim (from a note's grill-redo block): no
 	 * generation, no scheduling writes, graded per the current setting. Practice, not a
 	 * review. */
-	async startReplay(questions: Question[]): Promise<void> {
+	async startReplay(questions: Question[], draw = false): Promise<void> {
 		const cfg = this.plugin.llmConfig();
 		if (!cfg) {
 			if (this.plugin.askToUseModel()) return;
@@ -5855,6 +5943,8 @@ export class SessionView extends ItemView {
 		this.contextRewriting = 0;
 		this.liveState = false;
 		this.replayMode = true;
+		this.drawSession = draw;
+		this.drawingImage = null;
 		this.sessionScope = null;
 		this.dueOnly = false;
 		this.sessionStart = new Date();
@@ -6673,6 +6763,8 @@ export class SessionView extends ItemView {
 		this.contextRewriting = 0;
 		this.liveState = false;
 		this.replayMode = false;
+		this.drawSession = false;
+		this.drawingImage = null;
 		this.renderLoading("Preparing your session", "Choosing which notes to quiz you on.");
 		this.scanningEpoch = epoch;
 		this.scanningSince = Date.now();
@@ -6725,7 +6817,7 @@ export class SessionView extends ItemView {
 			};
 			const seed = pickCandidates(orderedNames, this.plugin.mastery, notesCap, priority, freshPolicy);
 			const names = expandSelectionWithLinks(this.app, seed, byName, this.plugin.mastery, notesCap);
-			const vision = !!cfg && !cfg.agent && s.sendImages && supportsVision(cfg.provider, cfg.model);
+			const vision = !!cfg && s.sendImages && readsImages(cfg);
 			this.sessionVision = vision;
 			// Desktop-only for now: Tesseract.js's worker+WASM combination is unverified on
 			// mobile's webview, so occlusion silently no-ops there rather than risking a
@@ -7230,7 +7322,7 @@ export class SessionView extends ItemView {
 				q,
 				this.noteText[q.node] ?? "",
 				answer,
-				this.noteImages[q.node] ?? [],
+				q.type === "draw" && this.drawingImage ? [this.drawingImage, ...(this.noteImages[q.node] ?? [])] : (this.noteImages[q.node] ?? []),
 				this.sessionInstructions,
 				this.sessionPersona,
 				mayAsk,
