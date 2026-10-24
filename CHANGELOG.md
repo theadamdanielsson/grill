@@ -1,5 +1,17 @@
 # Changelog
 
+## 8.7.5
+
+- **Harder questions as you improve.** A concept you keep getting right now moves from
+  easy to medium to hard questions, as it was meant to. Before, the first question
+  saved for a concept was asked again at every review, so most concepts never got past
+  easy. A right answer to a hard question also waits longer before it comes back.
+- **Answer keys are checked.** Each new question is answered separately from its note
+  before you see it. If the note shows the expected answer is wrong, the question is
+  written again, and dropped if it still fails.
+- **More in the record.** Each answer now notes the difficulty and kind of question it
+  was, so later versions can pitch questions at the right level for you.
+
 ## 8.7.4
 
 - **Your sessions in Bases.** Session notes now carry `correct`, `total` and the notes
