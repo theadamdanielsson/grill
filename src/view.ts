@@ -1656,7 +1656,8 @@ export class SessionView extends ItemView {
 
 	/** Asked once, on a computer that has Claude Code or Codex conversations: bring in the
 	 * questions typed there that are about these notes, so Grill knows something from the
-	 * start. Answered either way, it is not asked again; settings keep the button. */
+	 * start. Shown once, answered or not: it is not asked again, and settings keep the
+	 * button. */
 	private importOffer(screen: HTMLElement): void {
 		const s = this.plugin.data.settings;
 		if (s.importAsked) return;
@@ -1677,16 +1678,11 @@ export class SessionView extends ItemView {
 			text: `Grill looks through your ${chats} ${name} conversation${chats === 1 ? "" : "s"} for the topics in your notes, to learn what you already know: whether you were quizzed on them and where you started. It then explains and tests you from there.`,
 		});
 		const actions = card.createDiv({ cls: "grill-import-offer-actions" });
-		const no = actions.createEl("button", { cls: "grill-quiet-btn", text: "Not now", attr: { type: "button" } });
+		const no = actions.createEl("button", { cls: "grill-quiet-btn", text: "No thanks", attr: { type: "button" } });
 		const yes = actions.createEl("button", { cls: "mod-cta", text: "Share context", attr: { type: "button" } });
-		const answered = async (): Promise<void> => {
-			s.importAsked = true;
-			await this.plugin.persist();
-		};
-		no.onclick = async () => {
-			await answered();
-			card.remove();
-		};
+		s.importAsked = true;
+		void this.plugin.persist();
+		no.onclick = () => card.remove();
 		yes.onclick = async () => {
 			yes.disabled = no.disabled = true;
 			yes.setText("Reading…");
@@ -1701,7 +1697,6 @@ export class SessionView extends ItemView {
 			} catch (e) {
 				said = `Grill couldn't read them: ${e instanceof Error ? e.message : String(e)}`;
 			}
-			await answered();
 			// The answer stays where the question was, not in a notice that fades.
 			card.empty();
 			card.createDiv({ cls: "grill-import-offer-title", text: found ? `Context from ${name}` : `Nothing from ${name}` });
