@@ -1708,13 +1708,174 @@ async function runGenerationPass(
 	return { questions: out, defects };
 }
 
+// ------------------------------------------------------------------ answer-key check
+
+/** Formats whose key can be checked from a text excerpt. Match pairs, occlusion and
+ * draw rest on pictures or layouts the excerpt doesn't carry. */
+const KEY_CHECKED = new Set<Question["type"]>(["write", "blank", "mc", "tf", "multi"]);
+
+/** Most characters of a concept's source shown to the checker, per question. */
+const KEY_SOURCE_CHARS = 2500;
+
+const SOLVE_RULES = `You are answering test questions on a student's notes, to check them before the student sees them. For each question you are given the question and the passage of the notes it was written from. Answer it as a careful student who has studied that passage would: work it out from the passage, not from the wording of the question. For a question with choices, put the exact text of every choice you think is correct in 'picked' (one for single-answer and true/false questions, two or more where more than one is correct) and repeat them in 'answer'. For any other question leave 'picked' empty and write a short answer. Use plain punctuation and never use em dashes.`;
+
+const JUDGE_RULES = `You are checking the answer keys of test questions on a student's notes before the student sees them. For each question you are given the passage of the notes it was written from, the question, its answer key, and an answer written independently, without the key, from the same passage.
+
+Decide whether the key holds. It holds when the passage supports it as a correct answer to the question as asked. Where the key and the independent answer differ, decide from the passage which is right: an independent answer that is wrong or incomplete does not make the key wrong, and different wording of the same answer is agreement.
+
+Set keyHolds to false only on positive evidence: the passage shows the key is wrong, the key answers a different question than the one asked, or a question with choices has a correct choice the key leaves out or a wrong one it includes. If the passage does not contain enough to decide, the key holds. For a key that does not hold, give the reason in one sentence naming what the passage says. Otherwise leave reason empty. Use plain punctuation and never use em dashes.`;
+
+// Grill Cloud sends these two shapes to its question model by their field names
+// (checksKeys in grill-cloud's core.ts): rename answers/picked or verdicts/keyHolds
+// there too, or the check moves to the costlier hosted model.
+const solveSchema = {
+	type: "object",
+	properties: {
+		answers: {
+			type: "array",
+			items: {
+				type: "object",
+				properties: { n: { type: "integer" }, answer: { type: "string" }, picked: { type: "array", items: { type: "string" } } },
+				required: ["n", "answer", "picked"],
+				additionalProperties: false,
+			},
+		},
+	},
+	required: ["answers"],
+	additionalProperties: false,
+};
+
+const judgeSchema = {
+	type: "object",
+	properties: {
+		verdicts: {
+			type: "array",
+			items: {
+				type: "object",
+				properties: { n: { type: "integer" }, keyHolds: { type: "boolean" }, reason: { type: "string" } },
+				required: ["n", "keyHolds", "reason"],
+				additionalProperties: false,
+			},
+		},
+	},
+	required: ["verdicts"],
+	additionalProperties: false,
+};
+
+/** The key a question is graded against, as the checker reads it. */
+function keyOf(q: Question): string {
+	if (q.type === "multi") return (q.correctChoices ?? []).join(" | ");
+	return q.modelAnswer;
+}
+
+/** Whether an independent pick agrees with a choice question's key exactly. */
+function picksAgree(q: Question, picked: string[]): boolean {
+	const want = q.type === "multi" ? (q.correctChoices ?? []) : [q.modelAnswer];
+	const a = new Set(want.map(normalizeForMatch));
+	const b = new Set(picked.map(normalizeForMatch));
+	return a.size > 0 && a.size === b.size && [...a].every((x) => b.has(x));
+}
+
+/** Check freshly written questions' answer keys before they are shown or banked. Each
+ * question is first answered blind, from its concept's own passage only. A choice
+ * question whose blind pick matches its key passes there; every other question goes to
+ * a judge, which sees the key, the blind answer and the passage, and fails a key only
+ * on positive evidence that the passage contradicts it. Returns each failed question's
+ * index with the judge's reason. Fails open: a check that can't run returns no
+ * failures, so the session goes on as it would have without it. */
+export async function checkAnswerKeys(cfg: LLMConfig, questions: Question[], targets: ConceptTarget[]): Promise<Map<number, string>> {
+	const failed = new Map<number, string>();
+	const items: { i: number; q: Question; source: string }[] = [];
+	questions.forEach((q, i) => {
+		if (q.missingLink || !KEY_CHECKED.has(q.type ?? "write")) return;
+		const t = targets.find((x) => x.conceptId === q.conceptId);
+		if (t?.context.trim()) items.push({ i, q, source: safeSlice(t.context, KEY_SOURCE_CHARS) });
+	});
+	if (!items.length) return failed;
+	const choicesOf = (q: Question): string =>
+		q.type === "tf" ? "\n   choices: True / False" : q.type === "mc" || q.type === "multi" ? `\n   choices: ${(q.choices ?? []).join(" / ")}` : "";
+	try {
+		const solveList = items
+			.map((it, k) => `${k + 1}. question: ${it.q.question}${choicesOf(it.q)}\n   passage: ${it.source}`)
+			.join("\n\n");
+		const solved = (await callJSON(
+			cfg,
+			SOLVE_RULES,
+			`Answer each of these ${items.length} questions. Set 'n' to its number.\n\nQUESTIONS:\n${solveList}`,
+			solveSchema,
+			3000,
+			[],
+			"low",
+		)) as { answers?: { n?: number; answer?: string; picked?: string[] }[] };
+		const blind = new Map<number, { answer: string; picked: string[] }>();
+		for (const a of solved.answers ?? []) {
+			if (typeof a.n === "number" && a.n >= 1 && a.n <= items.length && !blind.has(a.n - 1))
+				blind.set(a.n - 1, { answer: cleanText(a.answer ?? ""), picked: (a.picked ?? []).map(cleanText) });
+		}
+		const toJudge = items
+			.map((it, k) => ({ ...it, blind: blind.get(k) }))
+			.filter((it) => it.blind && !(it.q.type && it.q.type !== "write" && it.q.type !== "blank" && picksAgree(it.q, it.blind.picked)));
+		if (!toJudge.length) return failed;
+		const judgeList = toJudge
+			.map(
+				(it, k) =>
+					`${k + 1}. question: ${it.q.question}${choicesOf(it.q)}\n   key: ${keyOf(it.q)}\n   independent answer: ${it.blind!.answer || "(none)"}\n   passage: ${it.source}`,
+			)
+			.join("\n\n");
+		const judged = (await callJSON(
+			cfg,
+			JUDGE_RULES,
+			`Check the key of each of these ${toJudge.length} questions. Set 'n' to its number.\n\nQUESTIONS:\n${judgeList}`,
+			judgeSchema,
+			2000,
+			[],
+			"low",
+		)) as { verdicts?: { n?: number; keyHolds?: boolean; reason?: string }[] };
+		for (const v of judged.verdicts ?? []) {
+			if (typeof v.n !== "number" || v.n < 1 || v.n > toJudge.length || v.keyHolds !== false) continue;
+			failed.set(toJudge[v.n - 1].i, cleanText(v.reason ?? "").trim() || "the passage does not support the key");
+		}
+	} catch (e) {
+		console.warn("Grill: answer-key check unavailable, keeping the questions as written", e);
+		return new Map();
+	}
+	return failed;
+}
+
+/** Take the questions whose keys failed out of a generation pass, each with its reason
+ * as the target's defect, so the one retry knows what to fix. */
+async function dropBadKeys(
+	cfg: LLMConfig,
+	pass: { questions: Question[]; defects: Map<number, string> },
+	targets: ConceptTarget[],
+): Promise<void> {
+	const failed = await checkAnswerKeys(cfg, pass.questions, targets);
+	if (!failed.size) return;
+	const kept: Question[] = [];
+	pass.questions.forEach((q, i) => {
+		const reason = failed.get(i);
+		if (reason === undefined) {
+			kept.push(q);
+			return;
+		}
+		console.debug(`Grill: answer key failed the check (${q.conceptId}): ${reason}`);
+		const idx = targets.findIndex((t) => t.conceptId === q.conceptId);
+		if (idx !== -1)
+			pass.defects.set(idx, `its answer key did not hold up against the source (${reason}); write a question whose answer the source clearly supports`);
+	});
+	pass.questions = kept;
+}
+
 /** Generate one question per target, in AI mode. On top of the single generation
  * pass (`runGenerationPass`), retries ONCE for any target whose first attempt was
  * dropped by validation or never came back — with the specific defect reason fed
  * into the retry's prompt, so the model has a concrete problem to fix rather than
  * a bare second attempt at the same instructions that's about as likely to
  * reproduce the same defect. Bounded to one retry round total (not per-target,
- * not recursive) so a persistently bad target costs at most 2x calls, never spirals. */
+ * not recursive) so a persistently bad target costs at most 2x calls, never spirals.
+ *
+ * `checkKeys` runs checkAnswerKeys on each pass: a question whose key fails goes to the
+ * retry with the reason, and one that fails again on the retry is dropped. */
 export async function generateQuestions(
 	cfg: LLMConfig,
 	notesText: string,
@@ -1726,6 +1887,7 @@ export async function generateQuestions(
 	formatMode: FormatMode = "write",
 	formatCounts: Partial<Record<string, number>> = {},
 	hints = true,
+	checkKeys = false,
 ): Promise<Question[]> {
 	const first = await runGenerationPass(
 		cfg,
@@ -1739,6 +1901,7 @@ export async function generateQuestions(
 		formatCounts,
 		hints,
 	);
+	if (checkKeys) await dropBadKeys(cfg, first, targets);
 	if (first.defects.size === 0) return first.questions;
 	const retryTargets = [...first.defects.entries()].map(([idx, reason]) => ({
 		...targets[idx],
@@ -1759,6 +1922,7 @@ export async function generateQuestions(
 		formatCounts,
 		hints,
 	);
+	if (checkKeys) await dropBadKeys(cfg, retry, retryTargets);
 	return [...first.questions, ...retry.questions];
 }
 

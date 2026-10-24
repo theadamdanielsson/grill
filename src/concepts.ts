@@ -42,6 +42,13 @@ export interface ReviewLogEntry {
 	 * state is read from these (see confusions in brief.ts): open while one of the last
 	 * few answers on a concept carries it, fixed once none does. */
 	tag?: string;
+	/** The difficulty the question was asked at, its format and the grader's verdict
+	 * (absent on a self-graded answer). With these the log says what kind of question
+	 * each rating came from, which a model of the chance of answering a question right
+	 * needs; the rating alone can't tell an easy question from a medium one. */
+	tier?: QDifficulty;
+	type?: string;
+	verdict?: Verdict;
 }
 
 /** The last answer on a concept that was wrong or only partly right, kept so the model
@@ -671,6 +678,16 @@ const clip = (s: string, most: number): string => {
 	const t = s.replace(/\s+/g, " ").trim();
 	return t.length > most ? `${t.slice(0, most - 1).trimEnd()}…` : t;
 };
+
+/** After an answer is recorded: what kind of question it answered, on its log entry.
+ * Call it right after recordConceptAnswer or recordConceptRating, which wrote that entry. */
+export function noteShape(cm: ConceptMastery | undefined, shape: { tier?: QDifficulty; type?: string; verdict?: Verdict }): void {
+	const entry = cm?.reviewLog?.[cm.reviewLog.length - 1];
+	if (!entry) return;
+	if (shape.tier) entry.tier = shape.tier;
+	if (shape.type) entry.type = shape.type;
+	if (shape.verdict) entry.verdict = shape.verdict;
+}
 
 /** After an answer is recorded: a wrong or partly right one is kept as the concept's
  * last miss, with the grader's reason, and the confusion named on it goes on its log

@@ -12,7 +12,7 @@
  * the results itself with the same function.
  */
 
-import { ConceptMap, ConceptMastery, conceptTested, lastAnswerMissed, noteAggregate, noteAnswer, recordConceptAnswer } from "./concepts";
+import { ConceptMap, ConceptMastery, conceptTested, lastAnswerMissed, noteAggregate, noteAnswer, noteShape, recordConceptAnswer } from "./concepts";
 import { MisconceptionRegistry, mergeAssignments } from "./debrief";
 import { MasteryMap, QDifficulty, Verdict, emptyMastery, isLeech, recordNoteStats, retrievability, statusOf } from "./mastery";
 import type { QuestionBank } from "./store";
@@ -139,6 +139,7 @@ export function applyResults(
 			if (cid) {
 				recordConceptAnswer(state.concepts, cid, r.verdict, r.difficulty ?? "medium", at, opts.desiredRetention);
 				noteAnswer(state.concepts[cid], r.verdict, { question: r.question, answer: r.answer, feedback: r.feedback, tag: r.misconception?.tag }, at);
+				noteShape(state.concepts[cid], { tier: r.difficulty ?? "medium", verdict: r.verdict });
 			}
 			else if (r.conceptId) unknownConcept.push(r);
 			if (!has(state.mastery, r.note)) state.mastery[r.note] = emptyMastery();

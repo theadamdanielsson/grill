@@ -210,3 +210,27 @@ test("rename/delete sync: flush first, reload the shared stores after", async ()
 	await view.reloadSharedStores();
 	assert.deepEqual(view.questionBank, { fresh: [] });
 });
+
+test("a saved question is served only at the difficulty its concept is due for", () => {
+	const { view, plugin } = makeView();
+	(plugin.data.settings as any).questionFormats = "mixed";
+	view.conceptById = new Map([["N::a", { id: "N::a", note: "N", label: "a", sourceHash: "h" }]]);
+	const saved = (difficulty: string | undefined, question: string) => ({ question, difficulty, sourceHash: "h", timesShown: 0, type: "write" });
+	view.questionBank = { "N::a": [saved("easy", "easy one"), saved(undefined, "old one")] };
+	const target = (targetDifficulty: string) => ({ conceptId: "N::a", note: "N", label: "a", context: "", targetDifficulty });
+	assert.equal(view.buildPrebuilt(target("easy")).question, "easy one");
+	// From before questions carried a difficulty: counts as medium.
+	assert.equal(view.buildPrebuilt(target("medium")).question, "old one");
+	// None saved at hard: a new one is written.
+	assert.equal(view.isPrebuilt(target("hard")), false);
+	assert.equal(view.buildPrebuilt(target("hard")), null);
+});
+
+test("a harder question that reads like the banked easy one is banked at its own difficulty", () => {
+	const { view } = makeView();
+	view.conceptById = new Map([["N::a", { id: "N::a", note: "N", label: "a", sourceHash: "h" }]]);
+	const easy = { question: "What does Okun's law relate?", difficulty: "easy", sourceHash: "h", timesShown: 1, conceptId: "N::a", node: "N" };
+	view.questionBank = { "N::a": [easy] };
+	view.rememberGenerated([{ ...easy, difficulty: "medium", timesShown: undefined, sourceHash: undefined }]);
+	assert.deepEqual(view.questionBank["N::a"].map((e: any) => e.difficulty), ["easy", "medium"]);
+});

@@ -36,6 +36,7 @@ import {
 	pickConcepts,
 	priorityNotes,
 	disperseSiblingDueDates,
+	noteShape,
 	recordConceptAnswer,
 	recordConceptRating,
 	reconcileConcepts,
@@ -743,6 +744,7 @@ export class SessionView extends ItemView {
 		originalVerdict: Verdict;
 		originalMisconceptionTag: string | undefined;
 		difficulty: QDifficulty;
+		type: string;
 		confidence: number | null;
 		hintsUsed: number;
 		/** Set when this answer also added a calibration point, so taking the answer
@@ -6079,6 +6081,7 @@ export class SessionView extends ItemView {
 						this.plugin.data.settings.questionFormats,
 						formatCounts,
 						this.plugin.data.settings.testHints,
+						true,
 					);
 					console.debug(`Grill: generateQuestions (${batch.length} target(s)) took ${Date.now() - genStart}ms`);
 					// The session this batch was generated for has since been replaced (a new
@@ -6211,24 +6214,34 @@ export class SessionView extends ItemView {
 	 * serving old write-in questions forever. Rotates to the least-shown variant among
 	 * whatever's left.
 	 *
-	 * The model only ever writes a question once per concept (per source text — an edit
-	 * that changes `sourceHash` reopens it): every later review of the same concept
-	 * reuses that same cached text, forever. Rewording on a schedule used to be the
-	 * default (a fresh variant once a calendar day had passed since it was last shown,
-	 * to avoid testing sentence-recognition instead of recall) but in practice this
-	 * reliably drifted the *content* of the question, not just its phrasing — a real
-	 * failure mode on precision material like a language drill, where a "fresher"
-	 * variant can quietly test a different grammar point or invent a wrong answer.
+	 * The entry must also be at the difficulty the concept is due for now (`tier`, from
+	 * conceptTargetDifficulty via the target). Without that, the first question written
+	 * for a concept, nearly always an easy one, was the only one it ever got, so the
+	 * easy-medium-hard ramp never reached the student and a right answer could never
+	 * earn a hard question's longer interval. An entry from before questions carried a
+	 * difficulty counts as medium, the same default grading gives it.
+	 *
+	 * The model only ever writes a question once per concept and difficulty (per source
+	 * text — an edit that changes `sourceHash` reopens it): every later review of the
+	 * same concept at that difficulty reuses that same cached text, forever. A newly
+	 * written one has passed checkAnswerKeys (llm.ts) before it is banked. Rewording on
+	 * a schedule used to be the default (a fresh variant once a calendar day had passed
+	 * since it was last shown, to avoid testing sentence-recognition instead of recall)
+	 * but in practice this reliably drifted the *content* of the question, not just its
+	 * phrasing — a real failure mode on precision material like a language drill, where
+	 * a "fresher" variant can quietly test a different grammar point or invent a wrong
+	 * answer.
 	 * This never grows unboundedly regardless: rememberGenerated evicts the oldest
 	 * past MAX_VARIANTS. */
-	private cacheHit(conceptId: string): CachedQuestion | null {
+	private cacheHit(conceptId: string, tier: QDifficulty): CachedQuestion | null {
 		const c = this.conceptById.get(conceptId);
 		if (!c || c.authored) return null; // authored questions are verbatim, not banked
 		const bank = this.questionBank[conceptId];
 		if (!bank || !bank.length) return null;
 		const wantFormat = this.plugin.data.settings.questionFormats;
 		const fresh = bank.filter(
-			(e) => e.sourceHash === c.sourceHash && !e.rejected && formatSatisfies(e.type, wantFormat),
+			(e) =>
+				e.sourceHash === c.sourceHash && !e.rejected && formatSatisfies(e.type, wantFormat) && (e.difficulty ?? "medium") === tier,
 		);
 		if (!fresh.length) return null;
 		fresh.sort(
@@ -6265,7 +6278,7 @@ export class SessionView extends ItemView {
 		if (c?.authored) return !!c.local;
 		// A cached question predates what the student added with "Add context".
 		if (t.contagionFrom || this.sessionContext) return false;
-		return this.cacheHit(t.conceptId) !== null;
+		return this.cacheHit(t.conceptId, t.targetDifficulty) !== null;
 	}
 
 	/** Build a target's question without a model call: the verbatim authored question,
@@ -6281,7 +6294,7 @@ export class SessionView extends ItemView {
 			return q;
 		}
 		if (t.contagionFrom || this.sessionContext) return null; // see isPrebuilt: never serve a stale cache hit here
-		const hit = this.cacheHit(t.conceptId);
+		const hit = this.cacheHit(t.conceptId, t.targetDifficulty);
 		if (!hit) return null;
 		hit.timesShown += 1;
 		hit.lastShownAt = new Date().toISOString();
@@ -6323,8 +6336,14 @@ export class SessionView extends ItemView {
 			// question" variant just because the model regenerated something similar to
 			// it; a near-restatement of a rejected question is banked as its own fresh
 			// entry instead, so it can be independently rejected again if still bad.
+			// Only a variant at the same difficulty counts: a harder question that reads
+			// like the easy one is still the one cacheHit needs at its own difficulty, or
+			// it would be written again at every review.
 			const dup = kept.find(
-				(e) => !e.rejected && questionSimilarity(e.question, q.question) >= NEAR_DUPLICATE_THRESHOLD,
+				(e) =>
+					!e.rejected &&
+					(e.difficulty ?? "medium") === q.difficulty &&
+					questionSimilarity(e.question, q.question) >= NEAR_DUPLICATE_THRESHOLD,
 			);
 			if (dup) {
 				dup.timesShown += 1;
@@ -7384,6 +7403,7 @@ export class SessionView extends ItemView {
 				// Self-grade: the student's own Again/Hard/Good/Easy already IS the ground
 				// truth (no third-party verdict to second-guess), so no override snapshot.
 				recordConceptRating(this.concepts, cid, rating, new Date(), retention, this.dueDateHistogram, this.easyWeekdays());
+				noteShape(this.concepts[cid], { tier: q.difficulty, type: q.type });
 			} else {
 				// Snapshot the pre-answer state before mutating it — see pendingOverride's
 				// doc comment. structuredClone is safe here: ConceptMastery is plain JSON
@@ -7395,6 +7415,7 @@ export class SessionView extends ItemView {
 					originalVerdict: verdict,
 					originalMisconceptionTag: misconceptionTag,
 					difficulty: q.difficulty ?? "medium",
+					type: q.type ?? "write",
 					confidence: this.pendingConfidence,
 					hintsUsed,
 				};
@@ -7413,6 +7434,7 @@ export class SessionView extends ItemView {
 					this.easyWeekdays(),
 				);
 				noteAnswer(this.concepts[cid], verdict, { ...said, tag: misconceptionTag });
+				noteShape(this.concepts[cid], { tier: q.difficulty ?? "medium", type: q.type ?? "write", verdict });
 			}
 		}
 		recordNoteStats(this.plugin.mastery, q.node, verdict, misconceptionTag);
@@ -7453,6 +7475,7 @@ export class SessionView extends ItemView {
 				o.hintsUsed,
 				this.easyWeekdays(),
 			);
+			noteShape(cm, { tier: o.difficulty, type: o.type, verdict: "correct" });
 		}
 		// Correct note-level counters: undo the wrong bucket, credit the right one, and
 		// remove the misconception tally if a tag was recorded off the wrong verdict.
