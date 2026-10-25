@@ -139,6 +139,9 @@ interface GrillSettings {
 	/** Folders with an exam date: their notes are scheduled to be ready by then (see
 	 * exams.ts). Set in Settings, Study, Exams; empty means no exams. */
 	exams: Exam[];
+	/** Notes outside an exam: studied like one (the default, as before), or kept to
+	 * remember what was read, on a gentler schedule (KEEP_RETENTION, KEEP_NEW_PER_DAY). */
+	everythingElse: "study" | "keep";
 	/** One-time flag: the first-run "what's Grill's" onboarding has been completed. */
 	onboarded: boolean;
 	/** Ids of point-of-use offers the user has turned down (see SessionView's
@@ -391,6 +394,7 @@ function defaultSettings(): GrillSettings {
 		excludedFolders: [],
 		includedFolders: [],
 		exams: [],
+		everythingElse: "study",
 		onboarded: false,
 		dismissedOffers: [],
 		retiredCloudKeys: [],
@@ -513,6 +517,7 @@ export default class GrillPlugin extends Plugin {
 				.filter((e): e is Exam => !!e && Array.isArray(e.folders) && typeof e.date === "string" && !!examDay(e.date))
 				.map((e) => ({ folders: e.folders.filter((v): v is string => typeof v === "string"), date: e.date }))
 				.filter((e) => e.folders.length);
+		if (s.everythingElse === "study" || s.everythingElse === "keep") settings.everythingElse = s.everythingElse;
 		if (typeof s.onboarded === "boolean") settings.onboarded = s.onboarded;
 		if (Array.isArray(s.cloudGone)) settings.cloudGone = s.cloudGone.filter(isAccountId).slice(-GONE_KEYS_KEPT);
 		if (Array.isArray(s.cloudUsage)) settings.cloudUsage = s.cloudUsage.filter((n) => typeof n === "number" && n > 0 && n < 100_000).slice(-10);
@@ -3379,6 +3384,7 @@ export class GrillSettingTab extends PluginSettingTab {
 			includedFolders: s.includedFolders,
 			excludedFolders: s.excludedFolders,
 			exams: s.exams,
+			everythingElse: s.everythingElse,
 			onboarded: s.onboarded,
 			modelAgreed: s.modelAgreed,
 			dismissedOffers: s.dismissedOffers,
@@ -4514,6 +4520,22 @@ export class GrillSettingTab extends PluginSettingTab {
 			desc: "What it covers and the day of the exam. Those notes are scheduled to be ready by then.",
 			aliases: ["exam", "deadline", "test date", "course"],
 			build: (setting) => setting.addButton((b) => b.setButtonText("Add").onClick(() => open(null))),
+		});
+		rows.push({
+			name: "Everything else",
+			desc: "Notes outside an exam. Keep what I read brings fewer new ones in each day and lets reviews wait longer.",
+			aliases: ["casual", "reading", "books", "keep", "remember"],
+			build: (setting) =>
+				setting.addDropdown((d) =>
+					d
+						.addOption("study", "Study it like an exam")
+						.addOption("keep", "Keep what I read")
+						.setValue(s.everythingElse)
+						.onChange(async (v) => {
+							s.everythingElse = v === "keep" ? "keep" : "study";
+							await this.plugin.persist();
+						}),
+				),
 		});
 		return rows;
 	}

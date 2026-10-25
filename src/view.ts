@@ -21,7 +21,7 @@ import { BridgeMap, CANDIDATE_CAP, detectBridgeCandidates, detectSemanticBridgeC
 import { buildGraph, formatGrade, gradeScore, type GraphNode } from "./graph";
 import { GraphAppearance, LearningMap, MapPalette } from "./mapview";
 import type { CachedQuestion, EmbeddingMap, QuestionBank } from "./store";
-import { daysLeft, EXAM_RETENTION, examFor, examLines, examName, examNewQuota, fitDueToExam, inExam, pullInForExams, whenWords } from "./exams";
+import { daysLeft, EXAM_RETENTION, KEEP_NEW_PER_DAY, KEEP_RETENTION, examFor, examLines, examName, examNewQuota, fitDueToExam, inExam, pullInForExams, whenWords } from "./exams";
 import {
 	ConceptMap,
 	ConceptMastery,
@@ -6272,7 +6272,10 @@ export class SessionView extends ItemView {
 		const wantFormat = this.plugin.data.settings.questionFormats;
 		const fresh = bank.filter(
 			(e) =>
-				e.sourceHash === c.sourceHash && !e.rejected && formatSatisfies(e.type, wantFormat) && (e.difficulty ?? "medium") === tier,
+				e.sourceHash === c.sourceHash &&
+				!e.rejected &&
+				formatSatisfies(e.type, wantFormat) &&
+				(e.difficulty ?? "medium") === tier,
 		);
 		if (!fresh.length) return null;
 		fresh.sort(
@@ -7050,7 +7053,7 @@ export class SessionView extends ItemView {
 						want,
 						this.dueOnly,
 						new Date(),
-						s.newConceptsPerDay,
+						s.everythingElse === "keep" ? Math.min(s.newConceptsPerDay, KEEP_NEW_PER_DAY) : s.newConceptsPerDay,
 						freshPolicy,
 						applyDailyCap,
 						examNewQuota(pickable, this.concepts, this.examLeftFor),
@@ -7418,11 +7421,15 @@ export class SessionView extends ItemView {
 		return shared / expected.size < SessionView.THIN_ANSWER_RATIO;
 	}
 
-	/** The recall to schedule a concept for: the setting, or more with an exam ahead. */
-	private examRetention(left: number | null): number {
+	/** The recall to schedule a concept for: the setting, more with an exam ahead, and
+	 * no more than KEEP_RETENTION for a note kept to remember what was read. */
+	private recallFor(left: number | null): number {
 		const base = this.plugin.data.settings.desiredRetention / 100;
-		return left === null ? base : Math.max(base, EXAM_RETENTION);
+		if (left !== null) return Math.max(base, EXAM_RETENTION);
+		return this.plugin.data.settings.everythingElse === "keep" ? Math.min(base, KEEP_RETENTION) : base;
 	}
+
+
 
 	/** Each note's days to its exam, by basename, over the whole vault: a concept's
 	 * schedule follows its exam whatever this session is scoped to. */
@@ -7465,7 +7472,7 @@ export class SessionView extends ItemView {
 		const cid = q.conceptId;
 		if (cid && this.concepts[cid]) {
 			const left = this.examLeftFor(q.node);
-			const retention = this.examRetention(left);
+			const retention = this.recallFor(left);
 			if (rating !== null) {
 				// Self-grade: the student's own Again/Hard/Good/Easy already IS the ground
 				// truth (no third-party verdict to second-guess), so no override snapshot.
@@ -7532,7 +7539,7 @@ export class SessionView extends ItemView {
 		if (cm) {
 			restoreConcept(cm, o.conceptSnapshot);
 			const left = this.examLeftFor(o.note);
-			const retention = this.examRetention(left);
+			const retention = this.recallFor(left);
 			recordConceptAnswer(
 				this.concepts,
 				o.conceptId,

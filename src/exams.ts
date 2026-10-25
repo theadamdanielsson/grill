@@ -20,6 +20,11 @@ export interface Exam {
 /** Recall held for an exam's concepts, at least: the old "Intense" preset's figure. */
 export const EXAM_RETENTION = 0.95;
 
+/** For notes outside an exam under "Keep what I read" (Settings, Study): recall held at
+ * most this high, and at most this many new concepts a day. The Relaxed preset's figures. */
+export const KEEP_RETENTION = 0.85;
+export const KEEP_NEW_PER_DAY = 10;
+
 const DAY = 86400_000;
 
 /** Local midnight at the start of a YYYY-MM-DD day, or null for anything else. */
