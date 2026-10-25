@@ -132,19 +132,12 @@
 .grill-arcade-screen .grill-chip {
   color: var(--grill-ink-dim, #c9a875);
 }
-.grill-arcade-screen .grill-recent-row:hover {
-  background: rgba(255, 122, 34, 0.09);
-}
-.grill-arcade-screen .grill-scope-caret,
 .grill-arcade-screen .grill-onboard-row label {
   color: var(--grill-ink-dim, #c9a875);
 }
 .grill-arcade-screen .grill-onboard-folders {
   border-color: var(--grill-ember-dark, #5c1400);
   background: var(--grill-screen-deep, #0f0904);
-}
-.grill-arcade-screen .grill-scope-group {
-  color: var(--grill-ink-flame, #ff7a22);
 }
 .grill-arcade-screen .grill-score {
   color: var(--grill-ink, #ffe98a);
@@ -237,15 +230,13 @@
   margin-top: var(--grill-space-sm);
 }
 /* Full-width, consistent CTAs. */
-.grill-view .grill-start-btn,
-.grill-view .grill-due-cta {
+.grill-view .grill-start-btn {
   width: 100%;
 }
 /* Primary "Get grilled": the hottest thing on screen, a mechanical arcade button with a
    skirt shadow it presses into on click. The due shortcut is the ghost/secondary version
    — outlined, not filled, so the two aren't competing at the same visual weight. */
-.grill-view .grill-primary-cta,
-.grill-view .grill-due-cta {
+.grill-view .grill-primary-cta {
   font-family: "Grill Pixel", var(--font-monospace);
   font-size: 0.62em;
   letter-spacing: 0.04em;
@@ -273,91 +264,6 @@
   background: linear-gradient(#ffb44e, var(--grill-accent) 45%, var(--grill-ember) 100%);
   transform: translateY(3px);
   box-shadow: 0 1px 0 var(--grill-ember-deep), 0 1px 6px rgba(255, 90, 31, 0.3);
-}
-.grill-view .grill-due-cta {
-  background: linear-gradient(rgba(255, 122, 34, 0.06), rgba(255, 90, 31, 0.02));
-  color: var(--grill-ink-gold);
-  border: 2px solid var(--grill-flame);
-  box-shadow: 0 3px 0 var(--grill-ember-dark);
-}
-.grill-view .grill-due-cta:hover {
-  background: linear-gradient(rgba(255, 122, 34, 0.1), rgba(255, 90, 31, 0.04));
-  color: var(--grill-ink);
-  border-color: var(--grill-gold);
-  filter: none;
-}
-.grill-view .grill-due-cta:active {
-  background: linear-gradient(rgba(255, 122, 34, 0.06), rgba(255, 90, 31, 0.02));
-  transform: translateY(3px);
-  box-shadow: none;
-}
-/* "No reviews for now": a status readout, not a dead-end action — dimmed and inert
-   rather than hover/press-reactive like the real due-CTA it stands in for. */
-.grill-view .grill-due-cta:disabled {
-  opacity: 0.55;
-  cursor: default;
-  pointer-events: none;
-}
-/* Holds the due-CTA (when present) and the pencil as full, separate boxes side by side —
-   not one clipped into the other's edge, which made the pencil read as a bare icon
-   instead of its own button and cut its hover highlight off against the due-CTA's
-   rounded corner. The two CSS-only attempts at matching their heights (shared
-   font-size/padding math, then an absolute-positioned overlay) both produced a worse
-   result than the actual fix: after both buttons exist in the DOM, JS below reads the
-   due-CTA's real rendered height and applies it directly to the pencil — an exact match
-   with nothing left to approximate. */
-.grill-view .grill-cta-row {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--grill-space-sm, 0.5em);
-  margin: 0.4em 0 0.8em;
-}
-.grill-view .grill-cta-row .grill-due-cta {
-  flex: 1;
-  width: auto;
-  margin: 0;
-}
-.grill-view .grill-manage-btn {
-  /* The JS height set on this button (renderStart, once the due-CTA exists to measure)
-     is meant as a total box height, padding and border included — without this, an
-     inherited content-box model would add the fallback rule's padding on top of that
-     height instead of within it, making the button taller than the due-CTA again. */
-  box-sizing: border-box;
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 2.8em;
-  margin: 0;
-  border-radius: var(--grill-radius-s);
-  border: 2px solid var(--grill-flame);
-  background: linear-gradient(rgba(255, 122, 34, 0.06), rgba(255, 90, 31, 0.02));
-  color: var(--grill-ink-gold);
-  transition: transform 0.08s ease, box-shadow 0.08s ease, filter 0.08s ease;
-  /* The due-CTA draws a solid "skirt" below its own border for the mechanical-button
-     look (.grill-due-cta below) — without the same shadow here, the pencil's border-box
-     could match its height exactly (per the JS measurement above) and still visibly read
-     as sitting higher, since the due-CTA's actual bottom edge, to the eye, is the bottom
-     of ITS shadow, not its border. */
-  box-shadow: 0 3px 0 var(--grill-ember-dark);
-}
-/* Fallback sizing for before the JS measurement runs, and for the no-due-CTA case where
-   there's nothing to measure against. */
-.grill-view .grill-cta-row > .grill-manage-btn {
-  padding-top: 0.9em;
-  padding-bottom: 0.9em;
-}
-.grill-view .grill-manage-btn:hover {
-  color: var(--grill-ink);
-  border-color: var(--grill-gold);
-}
-.grill-view .grill-manage-btn:active {
-  transform: translateY(3px);
-  box-shadow: none;
-}
-.grill-view .grill-manage-btn svg {
-  width: 1em;
-  height: 1em;
 }
 /* Section labels: dim flame-orange HUD tags with a trailing hairline rule, matching the
    1UP / HI-SCORE pairing on the banner — a label that reads as part of the score readout,
@@ -635,36 +541,6 @@
   font-size: var(--font-ui-small);
 }
 
-/* First-run onboarding: AI vs. fully-offline choice, before folder selection so a
-   no-key user's very first "Get grilled" click already works — see renderOnboarding. */
-.grill-mode-choice {
-  display: flex;
-  gap: 0.6em;
-  margin: 0.6em 0 1.2em;
-}
-.grill-mode-card {
-  flex: 1;
-  cursor: pointer;
-  padding: 0.7em 0.8em;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--grill-radius-s);
-  transition: border-color 0.1s ease, background 0.1s ease;
-}
-.grill-mode-card:hover {
-  border-color: var(--grill-flame);
-}
-.grill-mode-card.is-active {
-  border-color: var(--grill-gold-lit);
-  background: var(--grill-screen);
-  box-shadow: 0 0 10px rgba(255, 210, 63, 0.2);
-}
-.grill-mode-title {
-  font-weight: var(--font-semibold, 600);
-  margin-bottom: 0.2em;
-}
-.grill-mode-card .grill-meta {
-  line-height: 1.4;
-}
 /* Key setup inside onboarding, shown while "AI-powered" is picked. */
 .grill-onboard-setup {
   display: flex;
@@ -769,28 +645,6 @@
   border-image: none;
   margin-top: 0.6em;
   padding-top: 0.4em;
-}
-
-/* The Tuning escape hatch: every number the scheduler runs on, reachable but never
-   asked about. Deliberately reads as an appendix rather than a fifth section — no
-   ember rule, muted summary — so nothing about it invites a browse. */
-.grill-tuning {
-  margin-top: 2em;
-  border-top: 1px solid var(--background-modifier-border);
-  padding-top: 0.6em;
-}
-.grill-tuning > summary {
-  cursor: pointer;
-  color: var(--text-muted);
-  font-size: 0.9em;
-  padding: 0.4em 0;
-  list-style-position: outside;
-}
-.grill-tuning > summary:hover {
-  color: var(--text-normal);
-}
-.grill-tuning > p {
-  margin: 0.2em 0 0.4em;
 }
 
 /* "Redo this quiz" button rendered from a session note's grill-redo code block. */
@@ -909,36 +763,6 @@
   border-radius: var(--grill-radius-s);
   background: var(--background-secondary);
 }
-/* End-of-session recap of the note-pairs bridged. */
-.grill-conn-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25em;
-}
-.grill-conn-row {
-  display: flex;
-  align-items: center;
-  gap: 0.4em;
-  flex-wrap: wrap;
-  font-size: var(--font-ui-small);
-}
-.grill-recent {
-  display: flex;
-  flex-direction: column;
-}
-.grill-recent-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 0.75em;
-  padding: 0.3em 0.4em;
-  border-radius: var(--grill-radius-s);
-  cursor: var(--cursor-link, pointer);
-  font-size: var(--font-ui-small);
-}
-.grill-recent-row:hover {
-  background: var(--background-modifier-hover);
-}
-
 /* ---------------------------------------------------------------- progress */
 .grill-progress {
   display: flex;
@@ -1331,9 +1155,6 @@
 .grill-feedback p:first-child { margin-top: 0; }
 .grill-model-answer { font-size: var(--font-ui-medium); }
 .grill-review-card .grill-model-answer p { margin: 0; }
-.grill-view .grill-explain-box {
-  margin-top: var(--grill-space-md);
-}
 .grill-explanation {
   margin-top: var(--grill-space-md);
   padding-top: var(--grill-space-md);
@@ -1694,11 +1515,6 @@ settings:
   margin-right: 0.75em;
 }
 
-.grill-nokey-note {
-  border-left: 2px solid var(--grill-correct);
-  padding-left: 0.75em;
-}
-
 /* ---------------------------------------------------------------- debrief */
 .grill-debrief {
   margin: 0.75em 0 1em;
@@ -1725,75 +1541,7 @@ settings:
   gap: 0.35em;
 }
 
-/* ---------------------------------------------------------------- scope picker */
-/* The Custom Study card: same bordered-box language as the map/graph wrap, so it reads
- * as its own deliberately-entered section, not a floating accordion in the main flow —
- * see the "Get grilled" onclick comment in view.ts for why this lives here now. */
-.grill-custom-study {
-  margin: 0.75em 0;
-}
-.grill-custom-study .grill-scope-header {
-  margin-top: 0;
-}
-.grill-scope-preview {
-  margin: 0.5em 0;
-  min-height: 1.2em;
-}
-.grill-scope-commit {
-  width: 100%;
-}
-/* Generic show/hide toggle, e.g. the scope-commit button before anything's ticked —
- * a class instead of a direct .style.display assignment (obsidianmd/no-static-styles-
- * assignment: Obsidian's plugin review flags inline style literals as an error). */
-.grill-hidden {
-  display: none;
-}
-.grill-scope-header {
-  display: flex;
-  align-items: baseline;
-  gap: 0.4em;
-  margin: 0.5em 0 0.3em;
-}
-.grill-scope-toggle {
-  cursor: pointer;
-}
-.grill-scope-caret {
-  color: var(--text-muted);
-  font-size: 1.1em;
-}
-.grill-scope-summary {
-  margin-left: 0.15em;
-}
-/* Collapsed = a peek (a couple of rows, scroll cut off), not hidden entirely;
- * expanded lifts the cap so the full checkbox list scrolls as before. A hard
- * clip at a fixed height chopped mid-row into whatever content happened to
- * land there (a scope-group label sliced in half) — reads as broken, not as
- * "there's more below". Faded out over the last ~1.5em instead, so a partial
- * row/label reads as an intentional peek regardless of how many rows or
- * sections a given vault's Custom Study list happens to have. */
-.grill-onboard-folders.grill-scope-collapsed {
-  max-height: 5.2em;
-  overflow: hidden;
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 1.5em), transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 1.5em), transparent 100%);
-}
-.grill-scope-group {
-  font-weight: var(--font-semibold, 600);
-  font-size: var(--font-ui-small);
-  margin: 0.6em 0 0.2em;
-}
-.grill-scope-group:first-child {
-  margin-top: 0;
-}
-
 /* ---------------------------------------------------------------- retention core */
-.grill-due-cta {
-  width: 100%;
-  margin: 0.4em 0 0.8em;
-}
-.grill-dash-link {
-  margin-top: 0.75em;
-}
 .grill-debrief-gaps {
   margin-top: 0.9em;
 }
@@ -2037,10 +1785,6 @@ settings:
   gap: 0.75em;
   margin-bottom: 0.75em;
 }
-.grill-mgmt-title {
-  font-size: var(--font-ui-larger, 1.15em);
-  font-weight: var(--font-semibold, 600);
-}
 .grill-mgmt-search {
   width: 100%;
   margin-bottom: 0.85em;
@@ -2236,12 +1980,6 @@ textarea.grill-mgmt-field {
 .grill-onboard-setup {
   flex-direction: column;
 }
-.grill-mode-choice {
-  flex-wrap: wrap;
-}
-.grill-mode-card {
-  flex: 1 1 11em;
-}
 .grill-onboard-others {
   margin: 0.9em 0 0.2em;
   line-height: 1.7;
@@ -2321,13 +2059,6 @@ textarea.grill-mgmt-field {
   border-radius: var(--radius-m, 8px);
   background: var(--background-primary-alt, var(--background-secondary));
 }
-.grill-cloud-offer .grill-cloud-panel {
-  /* The offer is the box: the panel inside it is drawn without its own. */
-  border: 0;
-  padding: 0;
-  margin: 0;
-  background: none;
-}
 .grill-cloud-panel-title {
   font-size: var(--font-ui-large, 1.15em);
   font-weight: var(--font-semibold, 600);
@@ -2394,28 +2125,6 @@ textarea.grill-mgmt-field {
 }
 .grill-cloud-buy:empty {
   display: none;
-}
-
-/* The one-time note on the home screen that Grill Cloud exists. */
-.grill-cloud-offer {
-  margin-bottom: var(--size-4-3, 12px);
-  padding: 0.9em 1em;
-  border: 1px solid var(--interactive-accent);
-  border-radius: var(--radius-m, 8px);
-  background: var(--background-primary-alt, var(--background-secondary));
-  text-align: left;
-}
-.grill-cloud-offer-title {
-  font-size: var(--font-ui-smaller, 0.8em);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-accent);
-  margin-bottom: 0.4em;
-}
-.grill-cloud-offer > .grill-chip-link {
-  display: inline-block;
-  margin-top: 0.6em;
-  cursor: pointer;
 }
 
 /* Settings: Grill Cloud is one card in Grill's own colours. The row around it is
@@ -2535,13 +2244,9 @@ textarea.grill-mgmt-field {
 
 /* Inside the arcade screens the ground is always dark, whatever the theme, so Grill
    Cloud's pieces there take the cabinet's colours, not the theme's. */
-.grill-arcade-screen .grill-cloud-panel,
-.grill-arcade-screen .grill-cloud-offer {
+.grill-arcade-screen .grill-cloud-panel {
   background: var(--grill-screen-deep, #0f0904);
   border-color: var(--grill-gold, #ffd23f);
-}
-.grill-arcade-screen .grill-cloud-offer .grill-cloud-panel {
-  background: none;
 }
 .grill-arcade-screen .grill-cloud-panel-title {
   color: var(--grill-ink, #ffe98a);
@@ -2553,8 +2258,7 @@ textarea.grill-mgmt-field {
 .grill-arcade-screen .grill-cloud-more {
   color: var(--grill-ink-dim, #c9a875);
 }
-.grill-arcade-screen .grill-cloud-fact::before,
-.grill-arcade-screen .grill-cloud-offer-title {
+.grill-arcade-screen .grill-cloud-fact::before {
   color: var(--grill-ink-flame, #ff7a22);
 }
 .grill-arcade-screen .grill-cloud-more summary,
@@ -2583,8 +2287,6 @@ textarea.grill-mgmt-field {
   border: 1px solid var(--grill-ember, #b91c00);
   box-shadow: none;
 }
-/* The monthly plan, offered: a lit panel inside the screen with the price in the
-   wordmark's lettering and one wide button. It is the thing to press on the card. */
 /* The offer: what Grill Cloud is, then one row of prices with the plan in the middle,
    lit. No boxes: thin rules between the columns, and the plan's own glow. */
 .grill-plan-offer {
@@ -2711,32 +2413,6 @@ textarea.grill-mgmt-field {
 .grill-refill .grill-tier-name {
   font-size: 0.72em;
 }
-.grill-plan-tag {
-  font-family: "Grill Pixel", var(--font-monospace);
-  font-size: 0.62em;
-  letter-spacing: 0.08em;
-  color: var(--grill-ink-gold, #ffd23f);
-}
-.grill-plan-price-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.2em 0.6em;
-  margin: 0.45em 0 0.25em;
-}
-.grill-plan-price {
-  font-family: "Grill Pixel", var(--font-monospace);
-  font-size: 2em;
-  line-height: 1.1;
-  color: var(--grill-ink, #ffe98a);
-  text-shadow: 0 0 2px var(--grill-gold-white, #fff2b0), 0 0 10px var(--grill-flame, #ff7a22), 0 0 20px var(--grill-flame-hot, #ff5a1f);
-}
-.grill-plan-per {
-  color: var(--grill-ink-dim, #c9a875);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: var(--font-ui-smaller, 0.8em);
-}
 .grill-plan-headline {
   margin-top: 0.45em;
   color: var(--grill-ink, #ffe98a);
@@ -2812,42 +2488,6 @@ textarea.grill-mgmt-field {
    lettering, size and baseline. A link to settings, where more can be added. */
 .grill-arcade-mark {
   position: relative;
-}
-.grill-arcade-mark > .grill-cloud-counter {
-  position: absolute;
-  top: 0;
-  right: 0;
-  display: flex;
-  align-items: baseline;
-  gap: 0.6em;
-  font: inherit;
-  letter-spacing: inherit;
-  line-height: inherit;
-  text-decoration: none;
-  cursor: pointer;
-}
-.grill-cloud-counter:empty {
-  display: none;
-}
-.grill-cloud-counter-label {
-  color: var(--grill-ink-dim, #c9a875);
-  text-shadow: none;
-  text-transform: uppercase;
-}
-.grill-cloud-counter-number {
-  color: var(--grill-ink, #ffe98a);
-}
-.grill-cloud-counter:hover .grill-cloud-counter-number {
-  color: var(--grill-ink-white, #fff2b0);
-}
-.grill-cloud-counter.is-low .grill-cloud-counter-number {
-  color: var(--grill-ink-hot, #ff5a1f);
-  animation: grill-cloud-wait 1.2s ease-in-out infinite;
-}
-@media (prefers-reduced-motion: reduce) {
-  .grill-cloud-counter.is-low .grill-cloud-counter-number {
-    animation: none;
-  }
 }
 
 /* ---------------------------------------------------------------- the question bar
@@ -2981,18 +2621,6 @@ textarea.grill-mgmt-field {
   .grill-tts-btn.is-loading {
     animation: none;
   }
-}
-
-/* "New in Grill 7.0", once, on the home screen. */
-.grill-whats-new .grill-cloud-facts {
-  margin: 0.2em 0 0.6em;
-}
-.grill-whats-new .grill-cloud-fact strong {
-  color: var(--grill-ink, #ffe98a);
-}
-.grill-whats-new .grill-cloud-panel-title,
-.grill-whats-new .grill-cloud-panel-lead {
-  display: none;
 }
 
 /* What Start free agrees to, in plain sight under the button. */
@@ -3307,10 +2935,6 @@ textarea.grill-mgmt-field {
   display: flex;
   flex-direction: column;
 }
-.grill-home-space {
-  flex: 1 1 auto;
-  min-height: 1.2em;
-}
 .grill-stats.grill-stats-link {
   cursor: pointer;
 }
@@ -3401,12 +3025,6 @@ textarea.grill-mgmt-field {
   margin-top: 0.5em;
   padding-bottom: 4px;
 }
-.grill-home-open {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .grill-view .grill-home-bar .grill-home-send {
   width: auto;
   flex-shrink: 0;
@@ -3444,32 +3062,6 @@ textarea.grill-mgmt-field {
 }
 /* The review heatmap in the room between the recent list and the suggestions: it takes
  * the height that is left, up to a size where the days still read as days. */
-.grill-home-space {
-  display: flex;
-  flex-direction: column;
-  max-height: 24em;
-}
-.grill-home-space > .grill-card {
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-.grill-home-space .grill-heatmap-wrap {
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
-  min-height: 7em;
-}
-.grill-home-space .grill-heatmap {
-  flex: 1 1 auto;
-  grid-template-rows: repeat(7, minmax(0, 1fr));
-}
-.grill-home-space .grill-heatmap .grill-hm-cell {
-  aspect-ratio: auto;
-  height: auto;
-  min-height: 7px;
-}
 .grill-home-suggestions {
   margin-top: 1.1em;
 }
