@@ -1,5 +1,17 @@
 # Changelog
 
+## 8.7.6
+
+- **Exams.** Settings, Study, Exams: add an exam, tick what it covers (the whole vault,
+  or the folders you choose, leaving any out) and set its date. Those notes are then
+  scheduled to be ready by that day. Reviews come back before the exam and more often
+  as it nears, recall is held higher, and new material is paced so all of it is covered
+  a day early. After the date they are scheduled as usual again.
+- **Your exam in Progress.** Each exam shows its date, the days left and how its
+  concepts stand.
+- **The model knows.** Questions on an exam's notes are written the way that exam is
+  likely to ask them, and the summary Chat starts from names your exams.
+
 ## 8.7.5
 
 - **Harder questions as you improve.** A concept you keep getting right now moves from
