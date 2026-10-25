@@ -22,17 +22,13 @@
    pane background exposed on both sides. The cabinet's own content (a 4-column stat
    grid, full-width buttons, a canvas) all scale with available width without becoming
    unreadable the way running prose would, so it can just fill whatever width it's given. */
-.grill-wrap.grill-arcade-mode {
-  max-width: none;
-}
-.grill-wrap.grill-arcade-mode {
-  padding: 0;
-}
 /* And its height: the cabinet was only as tall as what was in it, so in a pane taller
    than that it sat as a box at the top with the raw pane background showing below.
    The wrap is at least the pane's height, and the cabinet takes all of it; when there
    is more in it than the pane holds, it grows and the pane scrolls as before. */
 .grill-wrap.grill-arcade-mode {
+  max-width: none;
+  padding: 0;
   display: flex;
   flex-direction: column;
   min-height: 100%;
@@ -244,8 +240,6 @@
   padding-bottom: 0.9em;
   border-radius: var(--grill-radius-s);
   transition: transform 0.08s ease, box-shadow 0.08s ease, filter 0.08s ease;
-}
-.grill-view .grill-primary-cta {
   background: linear-gradient(#ffb44e, var(--grill-accent) 45%, var(--grill-ember) 100%);
   color: var(--grill-accent-contrast, #140b07);
   border: 2px solid var(--grill-gold);
@@ -2424,8 +2418,6 @@ textarea.grill-mgmt-field {
   list-style: none;
   margin: 0.4em 0 0;
   padding: 0;
-}
-.grill-plan-perks {
   display: flex;
   flex-wrap: wrap;
   gap: 0.2em 1.4em;
@@ -2822,9 +2814,6 @@ textarea.grill-mgmt-field {
 }
 /* What is in the frame takes the pane's width, as the home screen does. The reading
    width the plain session screens keep made a narrow column in a wide pane. */
-.grill-wrap.grill-thread-frame > * {
-  max-width: none;
-}
 
 /* The thread view's layout: a strip saying what is running, the finished questions,
  * the question in hand as a card, and the box to answer in at the foot of the pane,
@@ -2834,6 +2823,7 @@ textarea.grill-mgmt-field {
   flex-direction: column;
 }
 .grill-wrap.grill-thread-frame > * {
+  max-width: none;
   width: 100%;
 }
 .grill-thread-strip {
