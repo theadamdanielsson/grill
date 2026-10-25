@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { defaultSettings, readSettings, restoredSettings } from "../src/settings";
+import { migrateRecord, migrateSettings } from "../src/migrations";
 
 test("a stored setting that can't be read is its default, and the rest are kept", () => {
 	const s = readSettings({
@@ -36,14 +37,48 @@ test("a stored setting that can't be read is its default, and the rest are kept"
 });
 
 test("Restore defaults keeps credentials, folders and one-time records, and resets preferences", () => {
-	const s = { ...defaultSettings(), provider: "openai" as const, folder: "Study", questionsPerSession: 30, sounds: false, onboarded: true, modelsMigrated62: true, noteCountsRestored: true, exams: [{ folders: ["A"], date: "2026-12-01" }] };
+	const s = { ...defaultSettings(), provider: "openai" as const, folder: "Study", questionsPerSession: 30, sounds: false, onboarded: true, migrated: ["modelsMigrated62", "noteCountsRestored"], exams: [{ folders: ["A"], date: "2026-12-01" }] };
 	const r = restoredSettings(s);
 	assert.equal(r.provider, "openai");
 	assert.equal(r.folder, "Study");
 	assert.equal(r.onboarded, true);
-	assert.equal(r.modelsMigrated62, true);
+	assert.deepEqual(r.migrated, ["modelsMigrated62"], "except the steps Restore runs again");
 	assert.deepEqual(r.exams, s.exams);
 	assert.equal(r.questionsPerSession, 5);
 	assert.equal(r.sounds, true);
-	assert.equal(r.noteCountsRestored, false);
+});
+
+test("an older settings file's one-time flags are read as done, and a step marked done never runs again", () => {
+	const old = { graphNumberMode: "off", newConceptsPerDay: 0, legacyDefaultsMigrated: true, newConceptsCapMigrated: true, conceptsMigrated: true, intensityMigrated: false };
+	const s = readSettings(old);
+	assert.deepEqual([...s.migrated].sort(), ["conceptsMigrated", "legacyDefaultsMigrated", "newConceptsCapMigrated"]);
+	migrateSettings(s);
+	assert.equal(s.graphNumberMode, "off", "a choice made after the upgrade sticks");
+	assert.equal(s.newConceptsPerDay, 0);
+	assert.ok(s.migrated.includes("intensityMigrated"));
+	assert.ok(s.migrated.includes("modelsMigrated62"));
+	const fresh = readSettings({ graphNumberMode: "off" });
+	migrateSettings(fresh);
+	assert.equal(fresh.graphNumberMode, "percent");
+});
+
+test("a record step that fails is tried again later and doesn't stop the others", async () => {
+	const s = { migrated: [] as string[] };
+	const ran: string[] = [];
+	const quiet = console.error;
+	console.error = () => undefined;
+	try {
+		await migrateRecord(
+			s,
+			[
+				{ id: "sessionsFilled", doing: "x", run: async () => { throw new Error("locked"); } },
+				{ id: "missesFilled", doing: "y", run: async () => void ran.push("misses") },
+			],
+			async () => undefined,
+		);
+	} finally {
+		console.error = quiet;
+	}
+	assert.deepEqual(s.migrated, ["missesFilled"]);
+	assert.deepEqual(ran, ["misses"]);
 });

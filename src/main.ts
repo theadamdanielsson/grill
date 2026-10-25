@@ -69,6 +69,7 @@ import { FETCH_TOOL, fetchedUrl, fetchPage } from "./web";
 import { listLanguages, listVoices, listVoicesForLang, onVoicesChanged, speak, speakNatural } from "./tts";
 import { countAgentChats, readAgentChats } from "./agentrecord";
 import { applyIntensity, intensityOf, type StudyIntensity } from "./settingstools";
+import { isDone, legacyFlags, markDone, migrateRecord, migrateSettings } from "./migrations";
 import { defaultSettings, GONE_KEYS_KEPT, type GrillSettings, type SettingsHandle, isAccountId, readSettings, restoredSettings, RETIRED_KEYS_KEPT } from "./settings";
 
 interface PluginData {
@@ -148,54 +149,7 @@ export default class GrillPlugin extends Plugin {
 		// slider; carry untouched installs to the new default instead of leaving them
 		// stuck weighting coverage 4x heavier than intended against the new score.
 		if (s.graphCoverageWeight === 60) settings.graphCoverageWeight = 15;
-		// One-time upgrade for legacy installs. persist() writes the whole settings
-		// object, so an existing user has the old shipped defaults saved to disk —
-		// changing defaultSettings() alone never reaches them. Carry the two changed
-		// defaults across exactly once (percentages visible on the graph; a sane
-		// new-concepts cap), then set the flag so a deliberate later choice of "off" or
-		// 0 sticks instead of being re-flipped every launch. Fresh installs already hold
-		// the new defaults, so this is a no-op for them beyond setting the flag.
-		if (!settings.legacyDefaultsMigrated) {
-			if (settings.graphNumberMode === "off") settings.graphNumberMode = "percent";
-			if (settings.newConceptsPerDay === 0) settings.newConceptsPerDay = 20;
-			settings.legacyDefaultsMigrated = true;
-		}
-		// A second, later one-shot: 0 stopped meaning "no daily cap" (unlimited new
-		// material in "Get grilled") and started meaning what it reads as, zero, ever.
-		// legacyDefaultsMigrated already fired for existing installs before this change
-		// existed, so it won't catch them — this carries an untouched 0 forward to the
-		// shipped default exactly once, same as above, so nobody upgrades straight from
-		// "unlimited" to "none" with no signal. A deliberate 0 chosen after this sticks.
-		// Not redundant with the block above, despite applying the same coercion: installs
-		// that upgraded BEFORE this second change already hold legacyDefaultsMigrated
-		// true, so only a separate flag can still reach them. Both firing on the same
-		// load (a fresh install) is a harmless no-op, not a duplicate.
-		if (!settings.newConceptsCapMigrated) {
-			if (settings.newConceptsPerDay === 0) settings.newConceptsPerDay = 20;
-			settings.newConceptsCapMigrated = true;
-		}
-		// Read the four scheduling numbers (post-migration, so the coercions above are
-		// reflected) back into the preset the settings tab now asks about. Exact match or
-		// "custom" — an install that hand-tuned any of them keeps its exact numbers and
-		// simply reads as Custom, so upgrading to the preset picker never reschedules
-		// anyone. Runs once; after this the preset is whatever was last chosen.
-		if (!settings.intensityMigrated) {
-			settings.studyIntensity = intensityOf(settings);
-			settings.intensityMigrated = true;
-		}
-		// persist() writes the whole models map, so every install still holds the model
-		// that was the default when it was set up (gpt-5-mini shuts down 2026-12-11).
-		// Move former defaults to the current ones once; a hand-picked model is kept.
-		if (!settings.modelsMigrated61) {
-			migrateLegacyModels(settings.models);
-			settings.modelsMigrated61 = true;
-		}
-		// Same move for the default that changed in 6.2 (claude-sonnet-5). A separate
-		// flag because modelsMigrated61 is already true on every install that ran 6.1.
-		if (!settings.modelsMigrated62) {
-			migrateLegacyModels(settings.models);
-			settings.modelsMigrated62 = true;
-		}
+		migrateSettings(settings);
 		const calibration = Array.isArray(stored?.calibration) ? stored.calibration.filter(isCalPoint) : [];
 		const arcLog = Array.isArray(stored?.arcLog) ? stored.arcLog.filter(isArcEntry) : [];
 		const storedArc = stored?.arc;
@@ -633,54 +587,44 @@ export default class GrillPlugin extends Plugin {
 			void (async () => {
 				this.mastery = await this.store.loadMastery();
 				this.concepts = await this.store.loadConcepts();
-				if (!this.data.settings.sessionsBaseMade) {
-					try {
-						if (await this.store.hasSessions()) await this.store.writeBaseIfMissing("Sessions.base", this.store.sessionsBaseText());
-						this.data.settings.sessionsBaseMade = true;
-						await this.persist();
-					} catch (e) {
-						console.error("Grill: couldn't add the Sessions view; will retry next launch", e);
-					}
-				}
-				if (!this.data.settings.sessionsFilled) {
-					try {
-						await this.store.backfillSessionFields(this.data.settings.linkSessions);
-						this.data.settings.sessionsFilled = true;
-						await this.persist();
-					} catch (e) {
-						console.error("Grill: couldn't fill in older session notes; will retry next launch", e);
-					}
-				}
-				// One-time move to concept-level scheduling: keep stats, reset scheduling.
-				if (!this.data.settings.conceptsMigrated) {
-					migrateResetScheduling(this.mastery);
-					try {
-						await this.store.saveMastery(this.mastery);
-						this.data.settings.conceptsMigrated = true;
-						await this.persist();
-					} catch (e) {
-						console.error("Grill: couldn't save the scheduling migration; will retry next launch", e);
-					}
-				}
-				if (!this.data.settings.noteCountsRestored) {
-					try {
-						const registry = await this.store.loadRegistry();
-						if (restoreNoteCounts({ concepts: this.concepts, mastery: this.mastery, registry })) await this.store.saveMastery(this.mastery);
-						this.data.settings.noteCountsRestored = true;
-						await this.persist();
-					} catch (e) {
-						console.error("Grill: couldn't rebuild note counts; will retry next launch", e);
-					}
-				}
-				if (!this.data.settings.missesFilled) {
-					try {
-						if (await this.fillMissesFromSessions()) await this.store.saveConcepts(this.concepts);
-						this.data.settings.missesFilled = true;
-						await this.persist();
-					} catch (e) {
-						console.error("Grill: couldn't read past misses from the session notes; will retry next launch", e);
-					}
-				}
+				await migrateRecord(
+					this.data.settings,
+					[
+						{
+							id: "sessionsBaseMade",
+							doing: "add the Sessions view",
+							run: async () => {
+								if (await this.store.hasSessions()) await this.store.writeBaseIfMissing("Sessions.base", this.store.sessionsBaseText());
+							},
+						},
+						{ id: "sessionsFilled", doing: "fill in older session notes", run: async () => void (await this.store.backfillSessionFields(this.data.settings.linkSessions)) },
+						{
+							// The move to concept-level scheduling: keep stats, reset scheduling.
+							id: "conceptsMigrated",
+							doing: "save the scheduling migration",
+							run: async () => {
+								migrateResetScheduling(this.mastery);
+								await this.store.saveMastery(this.mastery);
+							},
+						},
+						{
+							id: "noteCountsRestored",
+							doing: "rebuild note counts",
+							run: async () => {
+								const registry = await this.store.loadRegistry();
+								if (restoreNoteCounts({ concepts: this.concepts, mastery: this.mastery, registry })) await this.store.saveMastery(this.mastery);
+							},
+						},
+						{
+							id: "missesFilled",
+							doing: "read past misses from the session notes",
+							run: async () => {
+								if (await this.fillMissesFromSessions()) await this.store.saveConcepts(this.concepts);
+							},
+						},
+					],
+					() => this.persist(),
+				);
 				this.recordLoaded = true;
 				this.registerInterval(window.setInterval(() => void this.foldInbox(), 120_000));
 				this.refreshStatusBar();
@@ -1676,16 +1620,16 @@ export default class GrillPlugin extends Plugin {
 		// its own session file) is a harmless no-op, not a double-count. Runs once,
 		// ever, per vault; only marked done on success, so a read error retries on
 		// the next launch instead of silently giving up forever.
-		if (!this.data.settings.arcBackfilled) {
+		if (!isDone(this.data.settings, "arcBackfilled")) {
 			try {
 				const historical = await this.store.backfillArcLog(ARC_LOG_CAP);
 				let merged = this.data.arcLog;
 				for (const entry of historical) merged = logArcEntry(merged, entry);
 				this.data.arcLog = merged;
-				this.data.settings.arcBackfilled = true;
+				markDone(this.data.settings, "arcBackfilled");
 				await this.persist();
 			} catch {
-				// best-effort; arcBackfilled stays false so this retries next launch
+				// best-effort; not marked done, so this retries next launch
 			}
 		}
 		const days = activeDayCount(this.data.arcLog);
@@ -2615,7 +2559,7 @@ ${body}
 		const took = await this.mergeCloudFromDisk();
 		const s = this.data.settings;
 		const apiKeys = this.keys.stash(s.apiKeys);
-		await this.saveData({ ...this.data, settings: { ...s, apiKeys } });
+		await this.saveData({ ...this.data, settings: { ...s, apiKeys, ...legacyFlags(s.migrated) } });
 		this.saveCloudBackup();
 		if (took) {
 			void this.refreshCloud().then(() => this.tellCloud());
@@ -2859,12 +2803,8 @@ export class GrillSettingTab extends PluginSettingTab {
 	/** Reset the behavioural settings to the recommended defaults, keeping the user's
 	 * credentials, provider, and folder choices.
 	 *
-	 * Every one-time migration flag is carried across too, not just `conceptsMigrated`.
-	 * They aren't preferences — they record that a coercion has already happened — so
-	 * resetting them to false re-armed each migration to fire again on the next plugin
-	 * load, which silently undid a deliberate post-Restore choice of `newConceptsPerDay`
-	 * 0 or `graphNumberMode` "off": exactly what the flags exist to prevent (see their
-	 * doc comments on GrillSettings). */
+	 * The record of which one-time upgrades have run is kept (see restoredSettings): they
+	 * aren't preferences, and running one again would undo a choice made after Restore. */
 	private async restoreDefaults(): Promise<void> {
 		const s = this.plugin.data.settings;
 		this.plugin.data.settings = restoredSettings(s);

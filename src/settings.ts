@@ -9,6 +9,7 @@ import { OLLAMA_DEFAULT_URL, PROVIDERS, type ProviderId } from "./providers";
 import { DEFAULT_FOLDER } from "./recordpaths";
 import { CLAUDE_MODEL_ALIASES, CLAUDE_MODELS } from "./selection";
 import type { StudyIntensity } from "./settingstools";
+import { readLegacyFlags, RERUN_ON_RESTORE } from "./migrations";
 
 export interface GrillSettings {
 	provider: ProviderId;
@@ -158,26 +159,6 @@ export interface GrillSettings {
 	 * model (the 25MB bge-micro-v2, before the 130MB multilingual one) is dropped on
 	 * load, so the offer asks again with the new size. */
 	localEmbedModel: string;
-	/** One-time flag: the note→concept scheduling reset has run. */
-	conceptsMigrated: boolean;
-	/** One-time flag: note counts lost before 8.0 have been rebuilt (see restoreNoteCounts). */
-	noteCountsRestored: boolean;
-	/** One-time flag: concepts have had their last miss filled in from the session notes
-	 * written before Grill kept it with the concept (see missesFromSessions). */
-	missesFilled: boolean;
-	/** One-time flag: legacy installs have had their stored old shipped defaults
-	 * (graphNumberMode "off", newConceptsPerDay 0) carried to the current defaults.
-	 * Guards the migration so it fires exactly once — after it, the user can freely
-	 * pick "off" / 0 again without being re-flipped on the next launch. */
-	legacyDefaultsMigrated: boolean;
-	/** One-time flag: installs where `newConceptsPerDay` was 0 have had it carried to
-	 * the shipped default once, the same protective one-shot as legacyDefaultsMigrated
-	 * above but for a later semantic change — 0 used to mean "no daily cap" (unlimited
-	 * new material every "Get grilled"); it now means what it reads as, zero new
-	 * concepts ever, so an untouched 0 needs carrying forward or those installs go
-	 * silently from unlimited to none. After this fires once, 0 sticks as a deliberate
-	 * choice. */
-	newConceptsCapMigrated: boolean;
 	/** What the graph's node colour encodes: the default 4-state mastery colour, or a
 	 * green-to-red gradient over a continuous metric. */
 	graphColorMode: ColorMode;
@@ -241,32 +222,14 @@ export interface GrillSettings {
 	 * changes. "custom" means the numbers were hand-edited in the Tuning block and
 	 * match no preset — it is never offered as a choice, only reflected back. */
 	studyIntensity: StudyIntensity;
-	/** One-time flag: the four raw scheduling numbers above have been mapped onto a
-	 * `studyIntensity` preset (or onto "custom" when they match none). Guards the
-	 * mapping so it fires exactly once — after it, the preset is whatever the user
-	 * last chose, and hand-edited numbers keep reading as "custom". */
-	intensityMigrated: boolean;
-	/** One-time flag (6.1.0): stored models that are former shipped defaults were
-	 * moved to the current defaults (see migrateLegacyModels). */
-	modelsMigrated61: boolean;
-	modelsMigrated62: boolean;
 	/** Sorted basenames `warnOnDuplicateBasenames` last actually warned about, so the
 	 * same unresolved duplicate list doesn't re-notify on every single plugin load —
 	 * only a CHANGE in the duplicate set (a new collision, or an old one resolved)
 	 * warns again. The underlying check stays on: this only silences repeating
 	 * yourself, not the warning itself. */
 	lastWarnedDuplicateBasenames: string[];
-	/** One-time flag: has this vault's arcLog been seeded from its existing session
-	 * history yet (see GrillStore.backfillArcLog)? Sticks after the first launch so
-	 * a vault with genuinely no session history yet (arcLog legitimately empty)
-	 * doesn't get rescanned on every subsequent launch. */
-	arcBackfilled: boolean;
-	/** One-time flag (8.7.4): the Sessions view file was offered to a vault that
-	 * already had session notes. Not again after, so a deleted one stays deleted. */
-	sessionsBaseMade: boolean;
-	/** One-time flag (8.7.4): older session notes were given `correct`, `total` and
-	 * `notes` properties (GrillStore.backfillSessionFields). */
-	sessionsFilled: boolean;
+	/** The one-time upgrades that have run on this install (see migrations.ts). */
+	migrated: string[];
 }
 
 /** How a setting is kept: its default, how a stored value is read (undefined keeps the
@@ -279,8 +242,6 @@ interface Field<T> {
 }
 
 const bool = (d: boolean, keep?: true): Field<boolean> => ({ default: () => d, read: (v) => (typeof v === "boolean" ? v : undefined), keep });
-/** A one-time record that something has run. Never reset by Restore. */
-const done = (): Field<boolean> => bool(false, true);
 const num = (d: number, keep?: true): Field<number> => ({ default: () => d, read: (v) => (typeof v === "number" ? v : undefined), keep });
 const text = (d = "", keep?: true): Field<string> => ({ default: () => d, read: (v) => (typeof v === "string" ? v : undefined), keep });
 const oneOf = <T extends string>(d: T, values: readonly T[], keep?: true): Field<T> => ({
@@ -389,12 +350,6 @@ const SETTINGS: { [K in keyof GrillSettings]: Field<GrillSettings[K]> } = {
 	// Read with localEmbedModel, below.
 	localEmbedContext: bool(false),
 	localEmbedModel: text(),
-	conceptsMigrated: done(),
-	// Reset by Restore, unlike the other one-time records: Restore runs these again.
-	noteCountsRestored: bool(false),
-	missesFilled: bool(false),
-	legacyDefaultsMigrated: done(),
-	newConceptsCapMigrated: done(),
 	graphColorMode: oneOf<ColorMode>("mastery", ["mastery", "recency", "dueness", "misconceptions"]),
 	graphNumberMode: oneOf<NumberMode>("percent", ["off", "percent", "letter"]),
 	graphCoverageWeight: num(15),
@@ -412,13 +367,9 @@ const SETTINGS: { [K in keyof GrillSettings]: Field<GrillSettings[K]> } = {
 	freshContentShare: num(30),
 	freshContentAlwaysGuarantee: bool(false),
 	studyIntensity: oneOf<StudyIntensity>("steady", ["relaxed", "steady", "intense", "custom"]),
-	intensityMigrated: done(),
-	modelsMigrated61: done(),
-	modelsMigrated62: done(),
 	lastWarnedDuplicateBasenames: strings(),
-	arcBackfilled: done(),
-	sessionsBaseMade: done(),
-	sessionsFilled: done(),
+	// Read with the flags older versions kept, below.
+	migrated: strings(true),
 };
 
 export function defaultSettings(): GrillSettings {
@@ -435,6 +386,7 @@ export function readSettings(stored: Record<string, unknown>): GrillSettings {
 		if (v !== undefined) settings[k] = v;
 	}
 	const s = settings as unknown as GrillSettings;
+	s.migrated = [...new Set([...s.migrated, ...readLegacyFlags(stored)])];
 	// An acceptance given for another model is dropped, so the offer asks again.
 	if (stored.localEmbedModel !== localEmbedModel() || typeof stored.localEmbedContext !== "boolean") {
 		s.localEmbedContext = false;
@@ -449,6 +401,7 @@ export function readSettings(stored: Record<string, unknown>): GrillSettings {
 export function restoredSettings(s: GrillSettings): GrillSettings {
 	const out = defaultSettings() as unknown as Record<string, unknown>;
 	for (const [k, f] of Object.entries(SETTINGS) as Array<[keyof GrillSettings, Field<unknown>]>) if (f.keep) out[k] = s[k];
+	out.migrated = s.migrated.filter((id) => !(RERUN_ON_RESTORE as readonly string[]).includes(id));
 	return out as unknown as GrillSettings;
 }
 

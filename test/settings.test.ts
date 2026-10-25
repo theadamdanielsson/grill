@@ -191,7 +191,8 @@ test("upgrading keeps the key working and moves it out of data.json on the next 
 	assert.equal(disk.data.settings.apiKeys.anthropic, "sk-ant-live", "kept until the keychain proves itself");
 	// The former default moved to the current one, exactly once.
 	assert.equal(first.plugin.llmConfig().model, "claude-sonnet-5-5");
-	assert.equal((disk.data.settings as Record<string, unknown>).modelsMigrated62, true);
+	assert.ok(first.plugin.data.settings.migrated.includes("modelsMigrated62"));
+	assert.equal((disk.data.settings as Record<string, unknown>).modelsMigrated62, true, "still written for an older Grill");
 
 	kc.restart();
 	const second = await boot(disk, kc);
