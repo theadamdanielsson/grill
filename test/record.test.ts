@@ -1,6 +1,7 @@
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
 import { SessionView } from "../src/view";
+import { RecordHandle } from "../src/recordhandle";
 
 /** The record of what was answered, and how, is the part of Grill nothing else can
  * rebuild. These tests pin the three ways an answer is allowed to leave it: graded,
@@ -10,8 +11,19 @@ function makeView() {
 		data: {
 			settings: { sounds: false, showProgress: false, desiredRetention: 90, easyDays: [] },
 		} as Record<string, any>,
-		mastery: {} as Record<string, any>,
-		concepts: {} as Record<string, any>,
+		record: null as unknown as RecordHandle,
+		get mastery(): Record<string, any> {
+			return this.record.mastery;
+		},
+		set mastery(m) {
+			this.record.mastery = m;
+		},
+		get concepts(): Record<string, any> {
+			return this.record.concepts;
+		},
+		set concepts(m) {
+			this.record.concepts = m;
+		},
 		store: {
 			saveConcepts: async () => undefined,
 			saveMastery: async () => undefined,
@@ -29,6 +41,7 @@ function makeView() {
 		refreshStatusBar: () => undefined,
 		persist: async () => undefined,
 	};
+	plugin.record = new RecordHandle(() => plugin.store as never);
 	const app = { vault: { getMarkdownFiles: () => [], cachedRead: async () => "" } };
 	const view = new SessionView({ app } as never, plugin as never) as any;
 	view.renderStart = () => undefined;

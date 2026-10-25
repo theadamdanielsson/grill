@@ -2,6 +2,7 @@ import { test, mock } from "node:test";
 import assert from "node:assert/strict";
 import { notices } from "./obsidian-stub";
 import { SessionView } from "../src/view";
+import { RecordHandle } from "../src/recordhandle";
 
 /** A real SessionView over a stub plugin whose store records every save. Render
  * methods are replaced with counters: these tests are about what gets saved when,
@@ -18,8 +19,19 @@ function makeView(opts: { failSaves?: number; readProtected?: boolean } = {}) {
 	};
 	const plugin = {
 		data: { settings: { sounds: false, showProgress: false } },
-		mastery: {},
-		concepts: {},
+		record: null as unknown as RecordHandle,
+		get mastery() {
+			return this.record.mastery;
+		},
+		set mastery(m) {
+			this.record.mastery = m;
+		},
+		get concepts() {
+			return this.record.concepts;
+		},
+		set concepts(m) {
+			this.record.concepts = m;
+		},
 		store: {
 			saveConcepts: save("concepts"),
 			saveMastery: save("mastery"),
@@ -37,6 +49,7 @@ function makeView(opts: { failSaves?: number; readProtected?: boolean } = {}) {
 		refreshStatusBar: () => undefined,
 		persist: async () => undefined,
 	};
+	plugin.record = new RecordHandle(() => plugin.store as never);
 	const app = { vault: { getMarkdownFiles: () => [], cachedRead: async () => "" } };
 	const view = new SessionView({ app } as never, plugin as never) as any;
 	const renders = { start: 0, question: 0 };

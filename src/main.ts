@@ -69,6 +69,7 @@ import { FETCH_TOOL, fetchedUrl, fetchPage } from "./web";
 import { listLanguages, listVoices, listVoicesForLang, onVoicesChanged, speak, speakNatural } from "./tts";
 import { countAgentChats, readAgentChats } from "./agentrecord";
 import { applyIntensity, type StudyIntensity } from "./settingstools";
+import { RecordHandle } from "./recordhandle";
 import { isDone, legacyFlags, markDone, migrateRecord, migrateSettings } from "./migrations";
 import { defaultSettings, GONE_KEYS_KEPT, type GrillSettings, type SettingsHandle, isAccountId, readSettings, restoredSettings, RETIRED_KEYS_KEPT } from "./settings";
 
@@ -103,12 +104,21 @@ export default class GrillPlugin extends Plugin {
 		},
 	};
 	store!: GrillStore;
-	/** In-memory mastery cache; source of truth is <folder>/mastery.json. */
-	mastery: MasteryMap = {};
-	/** In-memory concept-schedule cache; source of truth is <folder>/concepts.json.
-	 * SessionView points this at its own (freshly loaded) map when a session starts,
-	 * so in-session rating updates stay visible here without a separate re-sync. */
-	concepts: ConceptMap = {};
+	/** The record in memory: concepts, note mastery and misconceptions. Every pane reads
+	 * the same maps from here. Its files are <folder>/concepts.json and the rest. */
+	record = new RecordHandle(() => this.store);
+	get mastery(): MasteryMap {
+		return this.record.mastery;
+	}
+	set mastery(m: MasteryMap) {
+		this.record.mastery = m;
+	}
+	get concepts(): ConceptMap {
+		return this.record.concepts;
+	}
+	set concepts(m: ConceptMap) {
+		this.record.concepts = m;
+	}
 	/** Per-file debounce timers for `onModify`'s concept refresh, so rapid-fire
 	 * autosave/keystroke "modify" events during active editing collapse into one
 	 * re-extraction after editing actually pauses, not one per event. */

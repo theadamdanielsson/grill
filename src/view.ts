@@ -578,10 +578,26 @@ export class SessionView extends ItemView {
 	private progressTotal = 0;
 	/** Relationships between the session's notes, from their links. */
 	private linksBlock = "";
+	/** Empty stand-ins for the record before a session has loaded it and during a redo
+	 * (see liveState): what a redo grades lands here and is never saved. */
+	private scratch: { concepts: ConceptMap; registry: MisconceptionRegistry } = { concepts: {}, registry: {} };
+	/** Per-concept scheduling state (the source of truth for scheduling): the plugin's
+	 * record once a session has loaded it. */
+	private get concepts(): ConceptMap {
+		return this.liveState ? this.plugin.record.concepts : this.scratch.concepts;
+	}
+	private set concepts(m: ConceptMap) {
+		if (this.liveState) this.plugin.record.concepts = m;
+		else this.scratch.concepts = m;
+	}
 	/** Canonical misconception registry, held for the session (re-probe + resolve). */
-	private registry: MisconceptionRegistry = {};
-	/** Per-concept scheduling state (the source of truth for scheduling). */
-	private concepts: ConceptMap = {};
+	private get registry(): MisconceptionRegistry {
+		return this.liveState ? this.plugin.record.registry : this.scratch.registry;
+	}
+	private set registry(m: MisconceptionRegistry) {
+		if (this.liveState) this.plugin.record.registry = m;
+		else this.scratch.registry = m;
+	}
 	/** How many concepts already land on each due date, built once at session start
 	 * from the full concept map — lets fuzzInterval spread newly-scheduled reviews
 	 * across less-crowded days instead of pure random jitter. See applyGrade. */
@@ -6811,7 +6827,7 @@ export class SessionView extends ItemView {
 		this.scanningSince = Date.now();
 		try {
 			this.plugin.mastery = await this.plugin.store.loadMastery();
-			this.registry = await this.plugin.store.loadRegistry();
+			await this.plugin.record.load("registry");
 			this.bridges = await this.plugin.store.loadBridges();
 			this.embeddings = await this.plugin.store.loadEmbeddings();
 			this.questionBank = await this.plugin.store.loadQuestionBank();
@@ -6833,7 +6849,7 @@ export class SessionView extends ItemView {
 			const byName = this.byName;
 			// Loaded here, ahead of pickCandidates below, so it can prioritize off live
 			// concept data (see priorityNotes) instead of the note-level mastery cache.
-			this.concepts = this.plugin.concepts = await this.plugin.store.loadConcepts();
+			await this.plugin.record.load("concepts");
 			this.liveState = true;
 			this.examLeftFor = this.examDaysByNote();
 			// A concept due after an exam it is part of comes back before it instead.
@@ -7695,12 +7711,8 @@ export class SessionView extends ItemView {
 		if (this.dirty) {
 			this.dirty = false;
 			try {
-				// Mastery first: one unwritable file mustn't hold the others back.
-				await this.plugin.store.saveMastery(this.plugin.mastery);
-				if (this.liveState && !this.replayMode) {
-					await this.plugin.store.saveConcepts(this.concepts);
-					await this.plugin.store.saveRegistry(this.registry);
-				}
+				if (this.liveState && !this.replayMode) await this.plugin.record.save("mastery", "concepts", "registry");
+				else await this.plugin.record.save("mastery");
 			} catch (e) {
 				this.dirty = true;
 				throw e;
@@ -7774,7 +7786,7 @@ export class SessionView extends ItemView {
 	async reloadSharedStores(): Promise<void> {
 		this.questionBank = await this.plugin.store.loadQuestionBank();
 		this.bridges = await this.plugin.store.loadBridges();
-		if (!this.replayMode) this.registry = await this.plugin.store.loadRegistry();
+		if (!this.replayMode) await this.plugin.record.load("registry");
 	}
 
 	/** Debounced mid-session save: CHECKPOINT_MS after the last grade, so a burst
