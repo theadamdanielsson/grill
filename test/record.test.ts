@@ -9,7 +9,7 @@ function makeView() {
 	const plugin = {
 		data: {
 			settings: { sounds: false, showProgress: false, desiredRetention: 90, easyDays: [] },
-		},
+		} as Record<string, any>,
 		mastery: {} as Record<string, any>,
 		concepts: {} as Record<string, any>,
 		store: {

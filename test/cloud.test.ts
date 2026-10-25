@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { deepFake, fakeEl, fakeSetting, net, notices, Plugin, TFile } from "obsidian";
+import { Plugin, TFile } from "obsidian";
+import { deepFake, fakeEl, fakeSetting, net, notices } from "./obsidian-stub";
 import GrillPlugin, { GrillSettingTab } from "../src/main";
 import { cloud, cloudAccount, cloudCheckoutUrl, creditsInWords, heardFromCloud, isCloudKey, lowBalance, newCloudKey, packLabel, packPurpose, planInWords, planLabel, planUsage, usageInWords } from "../src/cloud";
 import { refillWords } from "../src/refill";
@@ -1192,7 +1193,7 @@ test("one balance per device: Start free in a second vault uses the key the firs
 test("the monthly plan is offered where it is on sale, opens its own checkout, and is noticed when it starts", async () => {
 	cloud.url = URL;
 	cloud.packs = [{ credits: 1000, price: "$9.99", url: "https://buy.stripe.com/abc" }];
-	cloud.plan = { price: "$7.99", url: "https://buy.stripe.com/plan" };
+	cloud.plan = { price: "$7.99", url: "https://buy.stripe.com/plan" } as typeof cloud.plan;
 	const mine = newCloudKey();
 	let told: Record<string, unknown> = { credits: 0, account: true, purchases: 0, sales: true, plan: null, plans: true };
 	net.handler = async () => ({ status: 200, json: told, text: "" }) as any;
@@ -1237,7 +1238,7 @@ test("the monthly plan is offered where it is on sale, opens its own checkout, a
 	told = { ...told, plan: null, plans: false };
 	await plugin.refreshCloud();
 	assert.equal(plugin.cloudCanSubscribe, false);
-	cloud.plan = { price: "$7.99", url: "" };
+	cloud.plan = { price: "$7.99", url: "" } as typeof cloud.plan;
 });
 
 test("a running plan's limits show as shares used, and an older server's answer shows none", () => {

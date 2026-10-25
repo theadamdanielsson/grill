@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { TFile } from "obsidian";
+import { TFile } from "./obsidian-stub";
 import { emptyMastery, type NoteMastery } from "../src/mastery";
 import { applyProps, noteProps, notesBase, sessionFields, sessionsBase } from "../src/props";
 import { GrillStore } from "../src/store";

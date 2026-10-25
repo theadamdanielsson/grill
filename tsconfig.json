@@ -9,7 +9,13 @@
     "strictNullChecks": true,
     "esModuleInterop": true,
     "isolatedModules": true,
-    "lib": ["DOM", "ES2022"]
+    "lib": [
+      "DOM",
+      "ES2022"
+    ],
+    "strict": true
   },
-  "include": ["src/**/*.ts"]
+  "include": [
+    "src/**/*.ts"
+  ]
 }

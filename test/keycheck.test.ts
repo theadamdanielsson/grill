@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { net } from "obsidian";
+import { net } from "./obsidian-stub";
 import { checkAnswerKeys, generateQuestions, type ConceptTarget, type LLMConfig, type Question } from "../src/llm";
 import { noteShape, recordConceptAnswer, type ConceptMap } from "../src/concepts";
 

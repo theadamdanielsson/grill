@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { deepFake, fakeEl, fakeSetting, Plugin, settingNames } from "obsidian";
+import { Plugin } from "obsidian";
+import { deepFake, fakeEl, fakeSetting, settingNames } from "./obsidian-stub";
 import GrillPlugin, { GrillSettingTab } from "../src/main";
 import { KeyStash, type ApiKeys, type SecretStore } from "../src/secrets";
 import { cloud } from "../src/cloud";
@@ -19,7 +20,7 @@ const withoutCloud = (): void => {
 };
 withoutCloud();
 
-const noKeys = (): ApiKeys => ({ anthropic: "", openai: "", gemini: "", deepseek: "", ollama: "", custom: "" });
+const noKeys = (): ApiKeys => ({ anthropic: "", openai: "", gemini: "", deepseek: "", ollama: "", custom: "" }) as ApiKeys;
 const VAULT = "2fe04f6f57789abb";
 const sid = (p: string): string => `grill-${VAULT}-${p}`;
 
@@ -209,7 +210,7 @@ test("upgrading keeps the key working and moves it out of data.json on the next 
 	assert.equal(disk.data.settings.apiKeys.anthropic, "sk-ant-live", "kept until the keychain proves itself");
 	// The former default moved to the current one, exactly once.
 	assert.equal(first.plugin.llmConfig().model, "claude-sonnet-5-5");
-	assert.equal(disk.data.settings.modelsMigrated62, true);
+	assert.equal((disk.data.settings as Record<string, unknown>).modelsMigrated62, true);
 
 	kc.restart();
 	const second = await boot(disk, kc);

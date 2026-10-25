@@ -1,6 +1,6 @@
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
-import { notices } from "obsidian";
+import { notices } from "./obsidian-stub";
 import { SessionView } from "../src/view";
 
 /** A real SessionView over a stub plugin whose store records every save. Render

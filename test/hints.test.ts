@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { net } from "obsidian";
+import { net } from "./obsidian-stub";
 import { generateQuestions, type ConceptTarget, type LLMConfig } from "../src/llm";
 
 (globalThis as any).window ??= globalThis;

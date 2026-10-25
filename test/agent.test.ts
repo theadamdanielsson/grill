@@ -41,7 +41,7 @@ test("a turn is followed as it is written: prose, the work between, and the resu
 	const starts = { type: "stream_event", session_id: "s1", parent_tool_use_id: null, event: { type: "content_block_start", content_block: { type: "text" } } };
 	r.take(starts);
 	r.take(delta("Let me look."));
-	r.take({ type: "assistant", session_id: "s1", parent_tool_use_id: null, message: { content: [{ type: "tool_use", name: "Read", input: { file_path: "/v/A.md" } }] } });
+	r.take({ type: "assistant", session_id: "s1", parent_tool_use_id: null, message: { content: [{ type: "tool_use", name: "Read", input: { file_path: "/v/A.md" } }] } } as any);
 	// A helper's words are not the reply.
 	r.take(delta("helper chatter", "tool-1"));
 	r.take(starts);
