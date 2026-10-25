@@ -9,10 +9,56 @@
  */
 import type { ToolCall, ToolSpec } from "./stream";
 
+/** How hard the schedule pushes, as one choice instead of four numbers. Each preset is a
+ * complete set of the four FSRS/new-material values Grill actually schedules on; picking
+ * one writes all four. "custom" is not offered in the picker — it's what the tab reports
+ * back when the numbers were hand-edited in the Tuning block to something no preset
+ * expresses, so a deliberate hand-tuning is never silently rounded to a preset. */
+export type StudyIntensity = "relaxed" | "steady" | "intense" | "custom";
+
+/** The four scheduling numbers each preset stands for. `desiredRetention` is FSRS's
+ * target recall probability at the due date; the rest are the Anki-modeled new-material
+ * policy (see FreshContentPolicy in mastery.ts). "steady" is the shipped default and is
+ * value-identical to the defaults these four settings had as individual sliders, so an
+ * untouched install maps onto it exactly and nobody's schedule moves. */
+export interface IntensityNumbers {
+	desiredRetention: number;
+	newConceptsPerDay: number;
+	freshContentShare: number;
+	freshContentAlwaysGuarantee: boolean;
+}
+
+export const INTENSITY_PRESETS: Record<Exclude<StudyIntensity, "custom">, IntensityNumbers> = {
+	relaxed: { desiredRetention: 85, newConceptsPerDay: 10, freshContentShare: 25, freshContentAlwaysGuarantee: false },
+	steady: { desiredRetention: 90, newConceptsPerDay: 20, freshContentShare: 30, freshContentAlwaysGuarantee: false },
+	intense: { desiredRetention: 95, newConceptsPerDay: 40, freshContentShare: 40, freshContentAlwaysGuarantee: true },
+};
+
+/** Which preset (if any) a stored set of the four numbers exactly expresses. Exact match
+ * only, deliberately: a near-miss is a hand-tuning, and rounding it to the nearest preset
+ * would change someone's schedule behind their back on upgrade. */
+export function intensityOf(s: IntensityNumbers): StudyIntensity {
+	for (const [name, p] of Object.entries(INTENSITY_PRESETS) as [Exclude<StudyIntensity, "custom">, IntensityNumbers][]) {
+		if (
+			s.desiredRetention === p.desiredRetention &&
+			s.newConceptsPerDay === p.newConceptsPerDay &&
+			s.freshContentShare === p.freshContentShare &&
+			s.freshContentAlwaysGuarantee === p.freshContentAlwaysGuarantee
+		)
+			return name;
+	}
+	return "custom";
+}
+
+/** Writes a preset's four numbers, and its name, into the settings. */
+export function applyIntensity(s: IntensityNumbers & { studyIntensity: StudyIntensity }, name: Exclude<StudyIntensity, "custom">): void {
+	Object.assign(s, INTENSITY_PRESETS[name], { studyIntensity: name });
+}
+
 /** The study settings, as far as these tools need them. */
 export interface StudySettings {
 	questionsPerSession: number;
-	studyIntensity: "relaxed" | "steady" | "intense" | "custom";
+	studyIntensity: StudyIntensity;
 	questionFormats: "write" | "mixed" | "mc";
 	easyDays: number[];
 	includedFolders: string[];
@@ -41,6 +87,8 @@ interface Spec {
 	check(value: unknown, port: SettingsPort): Check;
 }
 
+const P = INTENSITY_PRESETS;
+
 const SPECS: Spec[] = [
 	{
 		name: "questions_per_session",
@@ -57,8 +105,9 @@ const SPECS: Spec[] = [
 		name: "study_intensity",
 		label: "Study intensity",
 		about:
-			"How hard the review schedule pushes. relaxed: aims for 85% recall, up to 10 new concepts a day. steady (the default): 90%, up to 20 a day. " +
-			"intense: 95%, up to 40 a day, and new material always gets room in a session. custom means the numbers were tuned by hand in settings; it cannot be chosen here.",
+			`How hard the review schedule pushes. relaxed: aims for ${P.relaxed.desiredRetention}% recall, up to ${P.relaxed.newConceptsPerDay} new concepts a day. ` +
+			`steady (the default): ${P.steady.desiredRetention}%, up to ${P.steady.newConceptsPerDay} a day. ` +
+			`intense: ${P.intense.desiredRetention}%, up to ${P.intense.newConceptsPerDay} a day, and new material always gets room in a session. custom means the numbers were tuned by hand in settings; it cannot be chosen here.`,
 		shown: (s) => s.studyIntensity,
 		check: (v) => {
 			if (v !== "relaxed" && v !== "steady" && v !== "intense") return { error: "study_intensity must be relaxed, steady or intense." };

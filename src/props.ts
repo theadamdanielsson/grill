@@ -6,15 +6,13 @@
  * every day, so writing it would rewrite every studied note daily; a Bases formula
  * can work days-until-due out of `grill_due` instead. */
 
-import { statusOf, type NoteMastery } from "./mastery";
+import { STATUS_WORDS, statusOf, type NoteMastery } from "./mastery";
 import { MARK } from "./sessionnote";
 
 export const PROP_KEYS = ["grill_status", "grill_due", "grill_last_tested", "grill_confusions"] as const;
 export type PropKey = (typeof PROP_KEYS)[number];
 export type NoteProps = Partial<Record<PropKey, string | string[]>>;
 
-/** The same words the rest of Grill shows for a status. */
-const STATUS_WORDS = { known: "known", struggling: "learning", untested: "not tested yet" } as const;
 
 /** Local calendar date of an ISO time: what a note's date property should say. */
 function localDate(iso: string): string | null {

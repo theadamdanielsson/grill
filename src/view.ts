@@ -2,7 +2,6 @@
 
 import { getAllTags, ItemView, loadMermaid, MarkdownRenderer, Menu, Modal, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
-import { INTENSITY_PRESETS } from "./main";
 import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, cloudEnabled, creditsInWords, lowBalance, planInWords, usageInWords } from "./cloud";
 import { CLAUDE_MODELS, selectionMessage, STARTER_PROMPTS } from "./selection";
 import { adjudicateBridges, ConceptTarget, debriefSession, discussQuestion, embedTexts, explainQuestion, generateDrawQuestion, generateQuestions, gradeAnswer, learnFromNotes, learnWithTools, listModels, replyInProgress, type StudyOfferButton, summarizeChat, testModel, ThreadTurn } from "./llm";
@@ -65,6 +64,7 @@ import {
 	QDifficulty,
 	Rating,
 	recordNoteStats,
+	STATUS_WORDS,
 	statusOf,
 } from "./mastery";
 import {
@@ -98,7 +98,7 @@ import { aboutTheVault, compactAt, learnContext, learnRecord, namesANote, parseL
 import { safeDiagram, safeMarkdown } from "./safemd";
 import { activitySummary, AgentEvent, agentBrief, AGENT_LEVELS, claudeCommands, findProgram, PermissionAnswer, PermissionAsk, runAgent } from "./agent";
 import type { VaultPort } from "./vaulttools";
-import type { SettingsPort } from "./settingstools";
+import { applyIntensity, type SettingsPort } from "./settingstools";
 import { RECORD_RULES, RECORD_TOOLS, runRecordQuery, type RecordPort, type StudyOffer } from "./recordtools";
 import { projectSummaries } from "./record";
 import { forgetAgentProject, readAgentConcepts } from "./agentrecord";
@@ -2113,7 +2113,6 @@ export class SessionView extends ItemView {
 		for (const targets of Object.values(cache.resolvedLinks)) {
 			for (const path of Object.keys(targets)) linksIn.set(path, (linksIn.get(path) ?? 0) + 1);
 		}
-		const words: Record<string, string> = { known: "known", struggling: "learning", untested: "not tested yet" };
 		return Promise.all(
 			eligible.map(async (f) => {
 				const meta = cache.getFileCache(f);
@@ -2125,7 +2124,7 @@ export class SessionView extends ItemView {
 					text: await this.app.vault.cachedRead(f),
 					folder: f.parent?.path === "/" ? "" : (f.parent?.path ?? ""),
 					linksIn: linksIn.get(f.path) ?? 0,
-					status: words[statusOf(this.plugin.mastery[f.basename])] ?? "not tested yet",
+					status: STATUS_WORDS[statusOf(this.plugin.mastery[f.basename])],
 					headings: (meta?.headings ?? []).filter((h) => h.level <= 2).slice(0, 6).map((h) => h.heading),
 					out: out.slice(0, 10),
 					tags: meta ? [...new Set(getAllTags(meta) ?? [])].slice(0, 6) : [],
@@ -2931,7 +2930,7 @@ export class SessionView extends ItemView {
 				const { studyIntensity, ...rest } = changes;
 				Object.assign(s, rest);
 				// A preset stands for the four numbers the schedule reads, as in settings.
-				if (studyIntensity && studyIntensity !== "custom") Object.assign(s, INTENSITY_PRESETS[studyIntensity], { studyIntensity });
+				if (studyIntensity && studyIntensity !== "custom") applyIntensity(s, studyIntensity);
 				await this.plugin.persist();
 				this.plugin.refreshStatusBar();
 			},
@@ -3383,14 +3382,14 @@ export class SessionView extends ItemView {
 				// aggStatus repair pass heals plugin.mastery against), not a second,
 				// independently-computed "untested" set — see untestedFiles in scope.ts for
 				// the one true definition, which this agrees with by construction.
-				{ kind: "untested", label: "Untested", match: (n) => n.state === "unpracticed" },
+				{ kind: "untested", label: "Untested", match: (n) => n.state === "untested" },
 				{ kind: "struggling", label: "Learning", match: (n) => n.state === "struggling" },
 				{ kind: "known", label: "Known", match: (n) => n.state === "known" },
 				{
 					kind: "stale",
 					label: `Stale (${STALE_DAYS}d+)`,
 					match: (n) =>
-						n.state !== "unpracticed" &&
+						n.state !== "untested" &&
 						!!n.lastSeen &&
 						(nowMs - new Date(n.lastSeen).getTime()) / 86_400_000 >= STALE_DAYS,
 				},

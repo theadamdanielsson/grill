@@ -19,9 +19,9 @@
 
 import type { ConceptMap, ConceptMastery } from "./concepts";
 import { COVERAGE_KNOWN, conceptTested, coverageOf } from "./concepts";
-import { conceptMasteryScore, isLeech, MIN_STABILITY, statusOf } from "./mastery";
+import { conceptMasteryScore, isLeech, MIN_STABILITY, statusOf, type NoteStatus } from "./mastery";
 
-export type NodeState = "unpracticed" | "struggling" | "known";
+export type NodeState = NoteStatus;
 export type EdgeTier = "structural" | "inherited" | "proven";
 
 export interface GraphNode {
@@ -104,7 +104,7 @@ export function noteState(
 	if (!tested.length) {
 		return {
 			practiced: false,
-			state: "unpracticed",
+			state: "untested",
 			strength: 0,
 			coverage: 0,
 			mastery: null,

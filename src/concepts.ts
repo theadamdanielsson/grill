@@ -183,6 +183,15 @@ export function priorityNotes(
 	return notes;
 }
 
+/** A concept's id: its note, then its kind, then what tells it apart in the note. Ids are
+ * the record's keys, so their shape never changes (see renameTrackedNote in main.ts). */
+export function conceptId(note: string, kind: string, tail: string): string {
+	return `${note}::${kind}:${tail}`;
+}
+
+/** What every concept id of a note starts with. */
+export const conceptPrefix = (note: string): string => `${note}::`;
+
 export function conceptTested(cm: ConceptMastery | undefined): boolean {
 	return !!cm && cm.correct + cm.partial + cm.incorrect > 0;
 }

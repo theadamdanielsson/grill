@@ -125,7 +125,7 @@ const DAY_MS = 86_400_000;
  * node now visibly reads as near-known-coloured even on a session where it hasn't crossed
  * the Known bar yet — the map's job is showing the gradient, not replicating that bar. */
 function badness(nd: GraphNode, mode: ColorMode, coverageWeight: number, now: number): number | null {
-	if (nd.state === "unpracticed") return null;
+	if (nd.state === "untested") return null;
 	switch (mode) {
 		case "recency": {
 			if (!nd.lastSeen) return null;
@@ -656,7 +656,7 @@ export class LearningMap {
 			const x = this.sx(nd);
 			const y = this.sy(nd);
 			const r = this.radius(nd);
-			const square = nd.state !== "unpracticed";
+			const square = nd.state !== "untested";
 			const fill = nodeFillColour(nd, this.colorMode, this.palette, this.coverageWeight, now);
 			const alpha = dimNode(nd.id);
 			ctx.globalAlpha = alpha;

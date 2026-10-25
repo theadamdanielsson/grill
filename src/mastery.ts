@@ -55,6 +55,9 @@ export type MasteryMap = Record<string, NoteMastery>;
 
 export type NoteStatus = "untested" | "struggling" | "known";
 
+/** A status as Grill's screens and note properties say it. */
+export const STATUS_WORDS: Record<NoteStatus, string> = { known: "known", struggling: "learning", untested: "not tested yet" };
+
 /** FSRS stability (days) a concept must reach to read "known". Calibrated against
  * real data, not just the FSRS formula in the abstract: stability at streak>=2 (the
  * old "known" bar) varies hugely in practice — observed 0.48 to 10+ days across one

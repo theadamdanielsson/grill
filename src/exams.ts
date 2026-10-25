@@ -7,6 +7,7 @@
 
 import type { ConceptMap } from "./concepts";
 import { conceptTested } from "./concepts";
+import { INTENSITY_PRESETS } from "./settingstools";
 import type { Concept } from "./generate-local";
 
 export interface Exam {
@@ -17,13 +18,13 @@ export interface Exam {
 	date: string;
 }
 
-/** Recall held for an exam's concepts, at least: the old "Intense" preset's figure. */
-export const EXAM_RETENTION = 0.95;
+/** Recall held for an exam's concepts, at least: the Intense preset's figure. */
+export const EXAM_RETENTION = INTENSITY_PRESETS.intense.desiredRetention / 100;
 
 /** For notes outside an exam under "Keep what I read" (Settings, Study): recall held at
  * most this high, and at most this many new concepts a day. The Relaxed preset's figures. */
-export const KEEP_RETENTION = 0.85;
-export const KEEP_NEW_PER_DAY = 10;
+export const KEEP_RETENTION = INTENSITY_PRESETS.relaxed.desiredRetention / 100;
+export const KEEP_NEW_PER_DAY = INTENSITY_PRESETS.relaxed.newConceptsPerDay;
 
 const DAY = 86400_000;
 

@@ -21,6 +21,7 @@ import { cosineSim, embedLocal } from "./embed-local";
 import { FormatMode, Question } from "./question";
 import { QDifficulty } from "./mastery";
 import { hashStr, safeSlice } from "./text";
+import { conceptId } from "./concepts";
 
 /** The kind of structural element a concept was pulled from. "occlusion" concepts are
  * built by view.ts's appendOcclusionConcepts (a vision-model call proposing regions on
@@ -766,7 +767,7 @@ export function extractConcepts(note: string, text: string, mode: FormatMode = "
 	// land on the same base.
 	const byBase = new Map<string, LocalItem[]>();
 	for (const it of items) {
-		const base = `${note}::${it.kind}:${slug(it.label)}`;
+		const base = conceptId(note, it.kind, slug(it.label));
 		const group = byBase.get(base);
 		if (group) group.push(it);
 		else byBase.set(base, [it]);
@@ -878,7 +879,7 @@ export function extractConcepts(note: string, text: string, mode: FormatMode = "
 			const wholeIds = new Set<string>();
 			for (let chunk = 0; chunk < rawChunks.length && concepts.length < ITEM_CAP_PER_NOTE; chunk++) {
 				const { label, text: slice } = rawChunks[chunk];
-				const id = `${note}::note:whole:${chunk}`;
+				const id = conceptId(note, "note", `whole:${chunk}`);
 				if (wholeIds.has(id) || !slice) continue;
 				wholeIds.add(id);
 				concepts.push({

@@ -30,7 +30,7 @@ import { applyResults, InboxResult, restoreNoteCounts } from "./record";
 import { learnerBrief, missesFromSessions, type PastSession } from "./brief";
 import { type AskSource, claudeCodeConversation, codexConversation, type Conversation, conversationsFromZip, exportConversations, importedLines, importedNames, matchConversations, mergeImported, plainPrior, type PriorKnowledge } from "./imported";
 import { parseSessionNote, STAMP_RE } from "./sessionnote";
-import { CATCH_UP, ConceptMap, dueConceptCount, migrateResetScheduling, rebalanceDueDates, reconcileConcepts } from "./concepts";
+import { CATCH_UP, ConceptMap, conceptPrefix, dueConceptCount, migrateResetScheduling, rebalanceDueDates, reconcileConcepts } from "./concepts";
 import { pairKey } from "./bridges";
 import {
 	ACTIVE_DAYS_BETWEEN_ARCS,
@@ -70,48 +70,7 @@ import type { ColorMode, NumberMode } from "./mapview";
 import { listLanguages, listVoices, listVoicesForLang, onVoicesChanged, speak, speakNatural } from "./tts";
 import { DEFAULT_FOLDER } from "./recordpaths";
 import { countAgentChats, readAgentChats } from "./agentrecord";
-
-/** How hard the schedule pushes, as one choice instead of four numbers. Each preset is a
- * complete set of the four FSRS/new-material values Grill actually schedules on; picking
- * one writes all four. "custom" is not offered in the picker — it's what the tab reports
- * back when the numbers were hand-edited in the Tuning block to something no preset
- * expresses, so a deliberate hand-tuning is never silently rounded to a preset. */
-export type StudyIntensity = "relaxed" | "steady" | "intense" | "custom";
-
-/** The four scheduling numbers each preset stands for. `desiredRetention` is FSRS's
- * target recall probability at the due date; the rest are the Anki-modeled new-material
- * policy (see FreshContentPolicy in mastery.ts). "steady" is the shipped default and is
- * value-identical to the defaults these four settings had as individual sliders, so an
- * untouched install maps onto it exactly and nobody's schedule moves. */
-export const INTENSITY_PRESETS: Record<
-	Exclude<StudyIntensity, "custom">,
-	{ desiredRetention: number; newConceptsPerDay: number; freshContentShare: number; freshContentAlwaysGuarantee: boolean }
-> = {
-	relaxed: { desiredRetention: 85, newConceptsPerDay: 10, freshContentShare: 25, freshContentAlwaysGuarantee: false },
-	steady: { desiredRetention: 90, newConceptsPerDay: 20, freshContentShare: 30, freshContentAlwaysGuarantee: false },
-	intense: { desiredRetention: 95, newConceptsPerDay: 40, freshContentShare: 40, freshContentAlwaysGuarantee: true },
-};
-
-/** Which preset (if any) a stored set of the four numbers exactly expresses. Exact match
- * only, deliberately: a near-miss is a hand-tuning, and rounding it to the nearest preset
- * would change someone's schedule behind their back on upgrade. */
-function intensityOf(s: {
-	desiredRetention: number;
-	newConceptsPerDay: number;
-	freshContentShare: number;
-	freshContentAlwaysGuarantee: boolean;
-}): StudyIntensity {
-	for (const [name, p] of Object.entries(INTENSITY_PRESETS) as [Exclude<StudyIntensity, "custom">, (typeof INTENSITY_PRESETS)["steady"]][]) {
-		if (
-			s.desiredRetention === p.desiredRetention &&
-			s.newConceptsPerDay === p.newConceptsPerDay &&
-			s.freshContentShare === p.freshContentShare &&
-			s.freshContentAlwaysGuarantee === p.freshContentAlwaysGuarantee
-		)
-			return name;
-	}
-	return "custom";
-}
+import { applyIntensity, intensityOf, type StudyIntensity } from "./settingstools";
 
 interface GrillSettings {
 	provider: ProviderId;
@@ -1831,8 +1790,8 @@ export default class GrillPlugin extends Plugin {
 		// suffix after the first "::" depends only on kind+label, never the note name, so
 		// this reconstructs exactly the id the next extraction (same, unchanged content)
 		// will compute, and scheduling carries over correctly instead of resetting.
-		const oldPrefix = `${oldName}::`;
-		const newPrefix = `${newName}::`;
+		const oldPrefix = conceptPrefix(oldName);
+		const newPrefix = conceptPrefix(newName);
 		for (const [id, cm] of Object.entries(this.concepts)) {
 			if (cm.note !== oldName || !id.startsWith(oldPrefix)) continue;
 			const newId = newPrefix + id.slice(oldPrefix.length);
@@ -1932,7 +1891,7 @@ export default class GrillPlugin extends Plugin {
 			delete this.mastery[name];
 			touched = true;
 		}
-		const prefix = `${name}::`;
+		const prefix = conceptPrefix(name);
 		for (const id of Object.keys(this.concepts)) {
 			if (this.concepts[id].note === name || id.startsWith(prefix)) {
 				delete this.concepts[id];
@@ -4256,12 +4215,7 @@ export class GrillSettingTab extends PluginSettingTab {
 						d.setValue(s.studyIntensity);
 						d.onChange(async (v) => {
 							if (v === "custom") return;
-							const preset = INTENSITY_PRESETS[v as Exclude<StudyIntensity, "custom">];
-							s.desiredRetention = preset.desiredRetention;
-							s.newConceptsPerDay = preset.newConceptsPerDay;
-							s.freshContentShare = preset.freshContentShare;
-							s.freshContentAlwaysGuarantee = preset.freshContentAlwaysGuarantee;
-							s.studyIntensity = v as StudyIntensity;
+							applyIntensity(s, v as Exclude<StudyIntensity, "custom">);
 							await this.plugin.persist();
 							this.rerender();
 						});

@@ -12,7 +12,7 @@
  * the results itself with the same function.
  */
 
-import { ConceptMap, ConceptMastery, conceptTested, lastAnswerMissed, newConceptMastery, noteAggregate, noteAnswer, noteShape, recordConceptAnswer } from "./concepts";
+import { ConceptMap, ConceptMastery, conceptTested, conceptId, lastAnswerMissed, newConceptMastery, noteAggregate, noteAnswer, noteShape, recordConceptAnswer } from "./concepts";
 import { MisconceptionRegistry, mergeAssignments } from "./debrief";
 import { MasteryMap, QDifficulty, Verdict, emptyMastery, isLeech, recordNoteStats, retrievability, statusOf } from "./mastery";
 import type { QuestionBank } from "./store";
@@ -136,7 +136,7 @@ export function applyResults(
 			// another one.
 			const r = cid ? { ...given, note: state.concepts[cid].note } : given;
 			if (!cid && opts.allowNew) {
-				cid = r.conceptId || `${r.note}::agent:${slug(r.label || r.question.slice(0, 60))}`;
+				cid = r.conceptId || conceptId(r.note, "agent", slug(r.label || r.question.slice(0, 60)));
 				if (!fitName(cid, 300)) throw new Error("concept id not fit");
 				if (!has(state.concepts, cid)) state.concepts[cid] = newConcept(r.note, r.label || r.question.slice(0, 80));
 			}
