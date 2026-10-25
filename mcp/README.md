@@ -20,7 +20,7 @@ Without `--vault`, grill-mcp uses the vault it is started in, including from one
 | Tool | What it returns |
 |---|---|
 | `grill_overview` | Counts of tested, known and still-learning concepts, what is due now or fading this week, the weakest notes and active misconceptions. |
-| `grill_digest` | The record in a few hundred words, the same digest Grill's own Chat starts with: open confusions, the weakest concepts with what was written last time, confusions fixed lately. Optionally ranked toward one note. |
+| `grill_digest` | The record in a few hundred words, the same digest Grill's own Chat starts with: exams coming up, open confusions, the weakest concepts with what was written last time, confusions fixed lately. Optionally ranked toward one note. |
 | `grill_weak_spots` | Concepts missed last time, missed repeatedly, or likely forgotten, weakest first, optionally for one topic. |
 | `grill_what_they_know` | Everything the record holds on a topic, for pitching an explanation. |
 | `grill_questions` | Questions Grill already wrote for the concepts most worth testing, with expected answers for grading. |
