@@ -1,5 +1,14 @@
 # Changelog
 
+## 8.7.8
+
+- **Notes in any language.** Search by meaning and picking context by meaning now use a
+  model that reads most languages, so a question in Swedish finds notes written in
+  English, and notes in other languages are matched by meaning, not only by words.
+  The model is about 130 MB, downloaded once on desktop. If you had turned on picking
+  context by meaning, Grill asks again with the new size.
+- **Chat buttons.** The buttons under the chat box no longer stretch to fill the pane.
+
 ## 8.7.7
 
 - **Keep what I read.** Settings, Study, Everything else sets how notes outside an exam
