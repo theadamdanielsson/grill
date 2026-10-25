@@ -75,3 +75,17 @@ test("an agent engine is sent the pictures only when it reads them", async () =>
 	await gradeAnswer({ ...base, agentImages: false }, drawQ, note, "IS", [drawing, notePicture]);
 	assert.deepEqual(seen, [2, 0]);
 });
+
+test("a verdict the grader didn't give is asked for again, then refused, never read as incorrect", async () => {
+	const q = { ...drawQ, type: "write" as const };
+	let calls = 0;
+	const replies = [{ verdict: "Correct", feedback: "x", misconceptionTag: "" }, { verdict: "partial", feedback: "Half.", misconceptionTag: " mixes_up " }];
+	net.handler = async () => {
+		const json = { stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify(replies[Math.min(calls++, 1)]) }] };
+		return { status: 200, json, text: "", headers: {} } as any;
+	};
+	assert.deepEqual(await gradeAnswer(cfg, q, note, "IS"), { verdict: "partial", feedback: "Half.", misconceptionTag: "mixes_up" });
+	assert.equal(calls, 2);
+	answerWith({ verdict: "maybe", feedback: "", misconceptionTag: "" });
+	await assert.rejects(gradeAnswer(cfg, q, note, "IS"), /verdict couldn't be read/);
+});

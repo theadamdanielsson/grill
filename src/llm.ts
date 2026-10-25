@@ -12,7 +12,7 @@ import type { Arc, CanonMisconception, SessionDebrief, TagAssignment } from "./d
 import type { BridgeCandidate, RawBridge } from "./bridges";
 import type { Verdict } from "./mastery";
 import { anthropicAuth, anthropicTakesEffort, API_BASE, ollamaUrl, type LLMConfig, type ProviderId } from "./providers";
-import { cleanDiagram, cleanText, formatSatisfies, normalizeForMatch, questionDefect, type Explanation, type FormatMode, type Grade, type Question } from "./question";
+import { cleanDiagram, cleanText, formatSatisfies, normalizeForMatch, parseGrade, questionDefect, UnreadableReply, type Explanation, type FormatMode, type Grade, type Question } from "./question";
 import { apiError, callJSON, requestTimeoutMs, timedRequest, unreachable } from "./transport";
 import { DEFAULT_PERSONA } from "./persona";
 
@@ -1033,16 +1033,19 @@ export async function gradeAnswer(
 				`<preferences>\n${instructions}\n</preferences>`
 			: "") +
 		(mayAsk ? MAY_ASK : "");
-	const g = (await callJSON(cfg, graderSystem(persona), { cacheable, rest }, mayAsk ? GRADE_OR_ASK_SCHEMA : GRADE_SCHEMA, 2000, images)) as Grade & {
-		kind?: string;
-	};
-	if (mayAsk && g.kind === "question") return { verdict: "incorrect", feedback: "", misconceptionTag: "", asked: true };
-	const verdict: Verdict = g.verdict === "correct" || g.verdict === "partial" ? g.verdict : "incorrect";
-	return {
-		verdict,
-		feedback: cleanText(g.feedback ?? ""),
-		misconceptionTag: verdict === "correct" ? "" : (g.misconceptionTag ?? "").trim(),
-	};
+	const ask = () => callJSON(cfg, graderSystem(persona), { cacheable, rest }, mayAsk ? GRADE_OR_ASK_SCHEMA : GRADE_SCHEMA, 2000, images);
+	return readOrAskAgain(ask, (raw) => parseGrade(raw, mayAsk));
+}
+
+/** A reply read with `read`; one that can't be read is asked for once more. Providers that
+ * don't enforce the schema (DeepSeek, custom endpoints) now and then answer off it. */
+async function readOrAskAgain<T>(ask: () => Promise<unknown>, read: (raw: unknown) => T): Promise<T> {
+	try {
+		return read(await ask());
+	} catch (e) {
+		if (!(e instanceof UnreadableReply)) throw e;
+		return read(await ask());
+	}
 }
 
 // ------------------------------------------------------------------ draw from memory

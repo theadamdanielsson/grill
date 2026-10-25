@@ -262,3 +262,23 @@ export function questionDefect(q: Question, source: string): string | null {
 	}
 	return null;
 }
+
+/** A model reply that doesn't say what was asked: asked again once, then said. */
+export class UnreadableReply extends Error {}
+
+/** The grader's reply, read strictly: a verdict outside the three is not taken as
+ * "incorrect", which would schedule a lapse for an answer nobody judged. `mayAsk` lets
+ * the reply say the message was a question, not an answer. */
+export function parseGrade(raw: unknown, mayAsk: boolean): Grade {
+	const g = (raw ?? {}) as { verdict?: unknown; feedback?: unknown; misconceptionTag?: unknown; kind?: unknown };
+	if (mayAsk && g.kind === "question") return { verdict: "incorrect", feedback: "", misconceptionTag: "", asked: true };
+	if (g.verdict !== "correct" && g.verdict !== "partial" && g.verdict !== "incorrect") {
+		throw new UnreadableReply(`The grader's verdict couldn't be read (${JSON.stringify(g.verdict ?? null).slice(0, 40)}). Try again.`);
+	}
+	const tag = typeof g.misconceptionTag === "string" ? g.misconceptionTag.trim() : "";
+	return {
+		verdict: g.verdict,
+		feedback: cleanText(typeof g.feedback === "string" ? g.feedback : ""),
+		misconceptionTag: g.verdict === "correct" ? "" : tag,
+	};
+}
