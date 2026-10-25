@@ -6,7 +6,9 @@ import { cloud, cloudAccount, cloudCheckoutUrl, creditsInWords, heardFromCloud, 
 import { refillWords } from "../src/refill";
 import { KeyStash } from "../src/secrets";
 import { stopSpeaking } from "../src/tts";
-import { CloudError, cloudWait, offeredProviders, testModel } from "../src/llm";
+import { CloudError, cloudWait } from "../src/transport";
+import { offeredProviders } from "../src/providers";
+import { testModel } from "../src/llm";
 import { SessionView as GrillView } from "../src/view";
 import { sectionDefs } from "./fixtures";
 
@@ -1134,7 +1136,7 @@ test("a deleted key can't be put back into use, and says why", async () => {
 });
 
 test("a diagram can't break the session note it is written into", async () => {
-	const { cleanDiagram } = await import("../src/llm");
+	const { cleanDiagram } = await import("../src/question");
 	assert.equal(cleanDiagram("flowchart TD\n  A --> B"), "flowchart TD\n  A --> B");
 	// The model wrapped it in a fence of its own: the fence comes off.
 	assert.equal(cleanDiagram("```mermaid\nflowchart TD\n  A --> B\n```"), "flowchart TD\n  A --> B");

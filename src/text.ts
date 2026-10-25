@@ -56,3 +56,18 @@ export async function mapWithConcurrency<T, R>(
 	await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 	return results;
 }
+
+const QV_STOPWORDS = new Set(
+	("the a an of to in on for and or is are was were be been being it its this that these those with as by from at " +
+		"into than then so if but not no do does did what which who whom whose why how when where explain describe give " +
+		"name list your you their our has have had will would can could should").split(" "),
+);
+
+/** Significant lowercase content words (length >= 3, non-stopword) as a set. */
+export function contentWords(s: string): Set<string> {
+	const out = new Set<string>();
+	for (const w of s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/)) {
+		if (w.length >= 3 && !QV_STOPWORDS.has(w)) out.add(w);
+	}
+	return out;
+}

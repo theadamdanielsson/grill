@@ -11,7 +11,8 @@
 
 import { App, Notice, TFile, normalizePath } from "obsidian";
 import { MasteryMap, Verdict, normalizeMastery } from "./mastery";
-import { DEFAULT_PERSONA, Question } from "./llm";
+import { DEFAULT_PERSONA } from "./persona";
+import { Question } from "./question";
 import { ArcEntry, MisconceptionRegistry, SessionDebrief } from "./debrief";
 import { ConceptMap } from "./concepts";
 import { safeSlice } from "./text";

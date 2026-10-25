@@ -1,7 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { net } from "./obsidian-stub";
-import { generateDrawQuestion, gradeAnswer, type LLMConfig, type Question } from "../src/llm";
+import { generateDrawQuestion, gradeAnswer } from "../src/llm";
+import { type LLMConfig } from "../src/providers";
+import { type Question } from "../src/question";
 import { llmCfg } from "./fixtures";
 
 const cfg = llmCfg();

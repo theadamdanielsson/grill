@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { net } from "./obsidian-stub";
-import { generateQuestions, type ConceptTarget } from "../src/llm";
+import { type ConceptTarget, generateQuestions } from "../src/llm";
 import { llmCfg } from "./fixtures";
 
 const cfg = llmCfg();

@@ -1,6 +1,6 @@
 // Shapes several test files build: a concept's record, a model config, the settings rows.
 import { newConceptMastery, type ConceptMastery } from "../src/concepts";
-import type { LLMConfig } from "../src/llm";
+import type { LLMConfig } from "../src/providers";
 
 /** A concept record, untested unless `over` says otherwise. */
 export function concept(over: Partial<ConceptMastery> = {}): ConceptMastery {

@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { net, notices } from "./obsidian-stub";
-import { listModels, providerRetry, testModel } from "../src/llm";
+import { listModels, testModel } from "../src/llm";
+import { providerRetry } from "../src/transport";
 import { GrillStore } from "../src/store";
 import { llmCfg } from "./fixtures";
 

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { safeDiagram, safeMarkdown } from "../src/safemd";
-import { cleanDiagram } from "../src/llm";
+import { cleanDiagram } from "../src/question";
 
 const ZW = "​";
 /** What Obsidian would act on if it were left in: checked on the text as it will be rendered. */

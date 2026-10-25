@@ -20,7 +20,9 @@ import {
 import { configureFSRSWeights, MasteryMap } from "./mastery";
 import { notesBase } from "./props";
 import { CalPoint, isCalPoint } from "./calibration";
-import { LLMConfig, offeredProviders, PROVIDERS, ProviderId, Question, listModels, migrateLegacyModels, readPriorKnowledge, synthesizeArc, testModel } from "./llm";
+import { API_BASE, LLMConfig, migrateLegacyModels, OLLAMA_DEFAULT_URL, offeredProviders, ProviderId, PROVIDERS } from "./providers";
+import { Question } from "./question";
+import { listModels, readPriorKnowledge, synthesizeArc, testModel } from "./llm";
 import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, CloudPack, CloudPlan, planInWords, planLabel, cloudAccount, cloudBalance, cloudSpeech, cloudCheckoutUrl, cloudDelete, cloudEnabled, cloudStart, creditsInWords, isCloudKey, newCloudKey, packLabel, usageInWords } from "./cloud";
 import { drawOffers, drawPlanUsage, packGo, RefillModal } from "./refill";
 import { CHECK_EVERY_MS, isNewer, latestVersion } from "./update";
@@ -390,7 +392,7 @@ function defaultSettings(): GrillSettings {
 		models: Object.fromEntries(
 			(Object.keys(PROVIDERS) as ProviderId[]).map((p) => [p, PROVIDERS[p].defaultModel]),
 		) as Record<ProviderId, string>,
-		ollamaUrl: "http://localhost:11434",
+		ollamaUrl: OLLAMA_DEFAULT_URL,
 		customBaseUrl: "",
 		questionsPerSession: 5,
 		folder: DEFAULT_FOLDER,
@@ -2408,7 +2410,7 @@ ${body}
 					}
 					const r = await Promise.race([
 						requestUrl({
-							url: "https://api.openai.com/v1/audio/speech",
+							url: `${API_BASE.openai}/audio/speech`,
 							method: "POST",
 							headers: { authorization: `Bearer ${s.apiKeys.openai}`, "content-type": "application/json" },
 							body: JSON.stringify({ model: "gpt-4o-mini-tts", voice: "sage", input: clean, response_format: "mp3" }),
@@ -4101,10 +4103,10 @@ export class GrillSettingTab extends PluginSettingTab {
 			build: (setting) =>
 				setting.addText((t) =>
 					t
-						.setPlaceholder("http://localhost:11434")
+						.setPlaceholder(OLLAMA_DEFAULT_URL)
 						.setValue(s.ollamaUrl)
 						.onChange(async (v) => {
-							s.ollamaUrl = v.trim() || "http://localhost:11434";
+							s.ollamaUrl = v.trim() || OLLAMA_DEFAULT_URL;
 							delete this.modelLists.ollama;
 							delete this.modelProblems.ollama;
 							await this.plugin.persist();

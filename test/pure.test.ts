@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cleanText, LEGACY_DEFAULTS, migrateLegacyModels, PROVIDERS, withTimeout } from "../src/llm";
+import { cleanText } from "../src/question";
+import { LEGACY_DEFAULTS, migrateLegacyModels, PROVIDERS } from "../src/providers";
+import { withTimeout } from "../src/transport";
 import { stripPdfBoilerplate } from "../src/pdf";
 import { ConceptMap, reconcileConcepts } from "../src/concepts";
 import type { Concept } from "../src/generate-local";

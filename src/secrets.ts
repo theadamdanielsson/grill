@@ -13,7 +13,7 @@
  */
 
 import type { App } from "obsidian";
-import type { ProviderId } from "./llm";
+import type { ProviderId } from "./providers";
 
 /** The slice of Obsidian's SecretStorage this needs. `deleteSecret` exists in the app
  * but is not in the public typings, so it's optional here. */

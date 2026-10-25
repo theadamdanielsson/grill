@@ -11,7 +11,7 @@
  * pane, a provider that is down), it throws `StreamUnavailable` before anything has been
  * written, and the caller asks the old way instead.
  */
-import type { LLMConfig } from "./llm";
+import { anthropicAuth, API_BASE, CUT_OFF, isOpenAIReasoning, ollamaUrl, type LLMConfig } from "./providers";
 
 export type StreamKind = "anthropic" | "chat" | "gemini" | "ollama";
 
@@ -65,11 +65,10 @@ export function streamCall(cfg: LLMConfig, p: StreamPrompt, o: StreamOptions = {
 			content.push({ type: "text", text: p.rest });
 			return {
 				kind: "anthropic",
-				url: "https://api.anthropic.com/v1/messages",
+				url: `${API_BASE.anthropic}/messages`,
 				headers: {
 					...json,
-					"x-api-key": cfg.apiKey,
-					"anthropic-version": "2023-06-01",
+					...anthropicAuth(cfg.apiKey),
 					// The key is the user's own and stays on their machine; this is how
 					// Anthropic is told a request from a browser-like pane is meant.
 					"anthropic-dangerous-direct-browser-access": "true",
@@ -86,13 +85,13 @@ export function streamCall(cfg: LLMConfig, p: StreamPrompt, o: StreamOptions = {
 		}
 		case "openai": {
 			const body: Record<string, unknown> = { model: cfg.model, max_completion_tokens: p.maxTokens, stream: true, messages };
-			if (/^(gpt-[5-9]|o\d)/.test(cfg.model)) body.reasoning_effort = "medium";
-			return { kind: "chat", url: "https://api.openai.com/v1/chat/completions", headers: { ...json, authorization: `Bearer ${cfg.apiKey}` }, body };
+			if (isOpenAIReasoning(cfg.model)) body.reasoning_effort = "medium";
+			return { kind: "chat", url: `${API_BASE.openai}/chat/completions`, headers: { ...json, authorization: `Bearer ${cfg.apiKey}` }, body };
 		}
 		case "deepseek":
 			return {
 				kind: "chat",
-				url: "https://api.deepseek.com/chat/completions",
+				url: `${API_BASE.deepseek}/chat/completions`,
 				headers: { ...json, authorization: `Bearer ${cfg.apiKey}` },
 				body: { model: cfg.model, max_tokens: p.maxTokens, stream: true, messages },
 			};
@@ -115,7 +114,7 @@ export function streamCall(cfg: LLMConfig, p: StreamPrompt, o: StreamOptions = {
 		case "gemini":
 			return {
 				kind: "gemini",
-				url: `https://generativelanguage.googleapis.com/v1beta/models/${cfg.model}:streamGenerateContent?alt=sse`,
+				url: `${API_BASE.gemini}/models/${cfg.model}:streamGenerateContent?alt=sse`,
 				headers: { ...json, "x-goog-api-key": cfg.apiKey },
 				body: {
 					systemInstruction: { parts: [{ text: p.system }] },
@@ -126,7 +125,7 @@ export function streamCall(cfg: LLMConfig, p: StreamPrompt, o: StreamOptions = {
 		case "ollama":
 			return {
 				kind: "ollama",
-				url: `${(cfg.baseUrl ?? "http://localhost:11434").replace(/\/$/, "")}/api/chat`,
+				url: `${ollamaUrl(cfg.baseUrl)}/api/chat`,
 				headers: json,
 				body: { model: cfg.model, stream: true, think: false, messages, options: { num_predict: p.maxTokens } },
 			};
@@ -241,7 +240,7 @@ export function readPiece(kind: StreamKind, payload: unknown): StreamPiece {
 			if (j.type === "content_block_start" && block?.type === "tool_use") piece.callParts = [{ index, id: str(block.id), name: str(block.name) }];
 			if (j.type === "content_block_delta" && delta?.type === "input_json_delta") piece.callParts = [{ index, args: str(delta.partial_json) }];
 			if (j.type === "message_delta") {
-				if (delta?.stop_reason === "max_tokens") piece.truncated = true;
+				if (delta?.stop_reason === CUT_OFF.anthropic) piece.truncated = true;
 				if (delta?.stop_reason === "refusal") piece.error = "The model declined this request (safety refusal).";
 			}
 			// Not streamed after all: the whole message.
@@ -249,7 +248,7 @@ export function readPiece(kind: StreamKind, payload: unknown): StreamPiece {
 				piece.text = j.content.map((b) => (obj(b)?.type === "text" ? str(obj(b)?.text) : "")).join("");
 				const uses = j.content.map(obj).filter((b) => b?.type === "tool_use");
 				if (uses.length) piece.callParts = uses.map((b, i) => ({ index: i, id: str(b?.id), name: str(b?.name), args: JSON.stringify(b?.input ?? {}) }));
-				if (j.stop_reason === "max_tokens") piece.truncated = true;
+				if (j.stop_reason === CUT_OFF.anthropic) piece.truncated = true;
 			}
 			break;
 		}
@@ -257,7 +256,7 @@ export function readPiece(kind: StreamKind, payload: unknown): StreamPiece {
 			const choice = obj(Array.isArray(j.choices) ? j.choices[0] : null);
 			const text = str(obj(choice?.delta)?.content) || str(obj(choice?.message)?.content);
 			if (text) piece.text = text;
-			if (choice?.finish_reason === "length") piece.truncated = true;
+			if (choice?.finish_reason === CUT_OFF.chat) piece.truncated = true;
 			const asked = obj(choice?.delta)?.tool_calls ?? obj(choice?.message)?.tool_calls;
 			if (Array.isArray(asked)) {
 				piece.callParts = asked.map((c, i) => {
@@ -276,13 +275,13 @@ export function readPiece(kind: StreamKind, payload: unknown): StreamPiece {
 			const cand = obj(Array.isArray(j.candidates) ? j.candidates[0] : null);
 			const parts = obj(cand?.content)?.parts;
 			if (Array.isArray(parts)) piece.text = parts.map((part) => str(obj(part)?.text)).join("");
-			if (cand?.finishReason === "MAX_TOKENS") piece.truncated = true;
+			if (cand?.finishReason === CUT_OFF.gemini) piece.truncated = true;
 			break;
 		}
 		case "ollama": {
 			const text = str(obj(j.message)?.content);
 			if (text) piece.text = text;
-			if (j.done_reason === "length") piece.truncated = true;
+			if (j.done_reason === CUT_OFF.ollama) piece.truncated = true;
 			break;
 		}
 	}

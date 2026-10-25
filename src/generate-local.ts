@@ -18,7 +18,7 @@
  */
 
 import { cosineSim, embedLocal } from "./embed-local";
-import { FormatMode, Question } from "./llm";
+import { FormatMode, Question } from "./question";
 import { QDifficulty } from "./mastery";
 import { hashStr, safeSlice } from "./text";
 

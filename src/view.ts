@@ -5,7 +5,12 @@ import type GrillPlugin from "./main";
 import { INTENSITY_PRESETS } from "./main";
 import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, cloudEnabled, creditsInWords, lowBalance, planInWords, usageInWords } from "./cloud";
 import { CLAUDE_MODELS, selectionMessage, STARTER_PROMPTS } from "./selection";
-import { adjudicateBridges, ConceptTarget, contentWords, debriefSession, discussQuestion, embedTexts, explainQuestion, formatSatisfies, generateDrawQuestion, generateQuestions, Grade, CloudError, cleanDiagram, cleanText, gradeAnswer, learnFromNotes, learnWithTools, summarizeChat, listModels, LLMConfig, replyInProgress, offeredProviders, PROVIDERS, ProviderId, Question, readsImages, supportsEmbeddings, supportsVision, testModel, ThreadTurn, type StudyOfferButton, Verdict } from "./llm";
+import { adjudicateBridges, ConceptTarget, debriefSession, discussQuestion, embedTexts, explainQuestion, generateDrawQuestion, generateQuestions, gradeAnswer, learnFromNotes, learnWithTools, listModels, replyInProgress, type StudyOfferButton, summarizeChat, testModel, ThreadTurn } from "./llm";
+import { contentWords } from "./text";
+import { cleanDiagram, cleanText, formatSatisfies, Grade, Question } from "./question";
+import { CloudError } from "./transport";
+import { LLMConfig, OLLAMA_DEFAULT_URL, offeredProviders, ProviderId, PROVIDERS, readsImages, supportsEmbeddings, supportsVision } from "./providers";
+import { Verdict } from "./mastery";
 import { detectOcclusionRegions } from "./ocr";
 import { canDraw, captureDrawing, EXCALIDRAW_PLUGIN_ID, newDrawing, showDrawing } from "./draw";
 import {
@@ -1221,10 +1226,10 @@ export class SessionView extends ItemView {
 		};
 
 		if (p === "ollama") {
-			const url = row("Ollama server").createEl("input", { attr: { type: "text", placeholder: "http://localhost:11434" } });
+			const url = row("Ollama server").createEl("input", { attr: { type: "text", placeholder: OLLAMA_DEFAULT_URL } });
 			url.value = s.ollamaUrl;
 			url.onchange = () => {
-				s.ollamaUrl = url.value.trim() || "http://localhost:11434";
+				s.ollamaUrl = url.value.trim() || OLLAMA_DEFAULT_URL;
 				save();
 			};
 		}

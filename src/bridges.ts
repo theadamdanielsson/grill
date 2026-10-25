@@ -13,7 +13,7 @@
 
 import { TFile } from "obsidian";
 import type { App } from "obsidian";
-import { contentWords } from "./llm";
+import { contentWords } from "./text";
 import { outgoingBasenames } from "./links";
 
 /** A pair the lexical prefilter proposes, with excerpts for the adjudicator. */
