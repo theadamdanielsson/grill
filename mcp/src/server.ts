@@ -30,6 +30,7 @@ import {
 import { learnerBrief } from "../../src/brief";
 import { examDay, examLines, type Exam } from "../../src/exams";
 import { safeMarkdown } from "../../src/safemd";
+import { renderAnswer } from "../../src/sessionnote";
 import type { QuestionBank } from "../../src/store";
 
 declare const GRILL_MCP_VERSION: string;
@@ -447,12 +448,10 @@ function writeRepoRecord(where: Where, r: InboxResult): void {
 	const day = r.at.slice(0, 10);
 	const dir = join(where.folder, "Sessions");
 	mkdirSync(dir, { recursive: true });
-	const label = r.verdict === "correct" ? "Correct" : r.verdict === "partial" ? "Partially correct" : "Incorrect";
-	// Made inert like the plugin's session notes: this file may be opened in Obsidian, a
-	// Markdown preview or GitHub, and every line of it came from an agent.
+	// Written like the plugin's session notes, and made inert the same way: this file may
+	// be opened in Obsidian, a Markdown preview or GitHub, and every line came from an agent.
 	const safe = (t: string) => safeMarkdown(t);
-	const lines = [`## ${safe(r.note)}`, "", safe(r.question), "", "> [!quote] Your answer", ...safe(r.answer).split("\n").map((l) => `> ${l}`), "", `**${label}.** ${safe(r.feedback ?? "")}`.trim(), ""];
-	if (r.verdict !== "correct" && r.modelAnswer) lines.push(`**Expected answer:** ${safe(r.modelAnswer)}`, "");
+	const lines = renderAnswer({ node: r.note, question: r.question, answer: r.answer, verdict: r.verdict, gaveUp: false, feedback: r.feedback ?? "", modelAnswer: r.modelAnswer ?? "" }, false);
 	const file = join(dir, `${day}.md`);
 	if (!existsSync(file)) writeFileSync(file, `# Grill ${day}\n\nTested by ${safe(r.via)}.\n\n`);
 	appendFileSync(file, lines.join("\n") + "\n");

@@ -19,6 +19,7 @@ import { BridgeMap } from "./bridges";
 import { PdfCacheMap } from "./pdf";
 import { ConceptExtractionCacheMap } from "./generate-local";
 import { safeDiagram, safeMarkdown } from "./safemd";
+import { MARK, linkable, renderAnswer, stampOf, STAMP_RE } from "./sessionnote";
 import type { ImportedRecord } from "./imported";
 import { replyTitle } from "./learn";
 import { InboxResult, INBOX_DIR, parseResult } from "./record";
@@ -871,14 +872,14 @@ export class GrillStore {
 		await this.ensureFolder(monthDir);
 		if (first) await this.writeBaseIfMissing("Sessions.base", this.sessionsBaseText()).catch(() => undefined);
 		const dir = monthDir;
-		const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}.${pad(d.getMinutes())}`;
+		const stamp = stampOf(d);
 		const right = entries.filter((e) => e.verdict === "correct").length;
 
 		// `correct` and `total` are numbers so a Bases view can sort and filter on them
 		// (`score` is text, kept for the heatmap and older notes). `notes` lists the
 		// tested notes, so a view can filter sessions by note: as links, or as plain
 		// names when sessions aren't linked to notes.
-		const tested = [...new Set(entries.map((e) => e.node))].filter((n) => /^[^[\]|#^\n\r]+$/.test(n));
+		const tested = [...new Set(entries.map((e) => e.node))].filter(linkable);
 		const lines: string[] = [
 			"---",
 			`date: ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
@@ -901,7 +902,7 @@ export class GrillStore {
 		const quote = (text: string): string => safeMarkdown(text).split("\n").join("\n> ");
 
 		if (debrief) {
-			lines.push("> [!summary] Debrief", `> ${quote(debrief.headline)}`);
+			lines.push(MARK.debrief, `> ${quote(debrief.headline)}`);
 			if (debrief.pattern) lines.push(">", `> **Recurring pattern:** ${quote(debrief.pattern)}`);
 			if (debrief.gaps.length) {
 				lines.push(">", "> **To review:**");
@@ -917,18 +918,7 @@ export class GrillStore {
 			lines.push("");
 		}
 		for (const e of entries) {
-			const label = e.gaveUp ? "Skipped" : e.verdict === "correct" ? "Correct" : e.verdict === "partial" ? "Partially correct" : "Incorrect";
-			// A name that can't sit inside a [[link]] (one with ] or |, from an agent or a
-			// file made outside Obsidian) is written as plain, safe text instead.
-			const linkable = /^[^[\]|#^\n\r]+$/.test(e.node);
-			lines.push(link && linkable ? `## [[${e.node}]]` : `## ${safeMarkdown(e.node)}`, "", safeMarkdown(e.question), "");
-			if (!e.gaveUp && e.answer) {
-				lines.push(`> [!quote] Your answer`, ...safeMarkdown(e.answer).split("\n").map((l) => `> ${l}`), "");
-			}
-			lines.push(`**${label}.** ${safeMarkdown(e.feedback)}`, "");
-			if (e.verdict !== "correct" && e.modelAnswer) {
-				lines.push(`**Expected answer:** ${safeMarkdown(e.modelAnswer)}`, "");
-			}
+			lines.push(...renderAnswer(e, link));
 			// What was asked afterwards, and what the tutor said: often the part worth rereading.
 			const x = e.explanation;
 			if (x) {
@@ -944,7 +934,7 @@ export class GrillStore {
 			}
 			for (const turn of e.discussion ?? []) {
 				const quoted = safeMarkdown(turn.text).split("\n").map((l) => `> ${l}`);
-				lines.push(turn.role === "student" ? "> [!question] You asked" : "> [!note] Grill", ...quoted);
+				lines.push(turn.role === "student" ? MARK.asked : MARK.tutor, ...quoted);
 				if (turn.imagePath) lines.push(">", `> ![[${turn.imagePath}]]`);
 				lines.push("");
 				const drawn = safeDiagram(turn.diagram ?? "");
@@ -973,7 +963,7 @@ export class GrillStore {
 					: {}),
 			}));
 		if (redo.length) {
-			lines.push("## Redo", "", "```grill-redo", JSON.stringify({ v: 1, questions: redo }), "```", "");
+			lines.push(`## ${MARK.redo}`, "", MARK.redoFence, JSON.stringify({ v: 1, questions: redo }), "```", "");
 		}
 
 		if (replace && this.app.vault.getAbstractFileByPath(replace.path) === replace) {
@@ -1074,13 +1064,12 @@ export class GrillStore {
 	 * lifetime session. Best-effort: an unparseable or unreadable file just yields
 	 * no headline for that day rather than failing the whole backfill. */
 	async backfillArcLog(cap: number): Promise<ArcEntry[]> {
-		const dateFromName = /(\d{4}-\d{2}-\d{2}) \d{2}\.\d{2}(?:\.\d{2})?\.md$/;
 		const headlineFromBody = /^> \[!summary\] Debrief\n> (.+)$/m;
 		const prefix = normalizePath(`${this.folder()}/Sessions`) + "/";
 		const byDate = new Map<string, TFile>();
 		for (const f of this.app.vault.getMarkdownFiles()) {
 			if (!f.path.startsWith(prefix)) continue;
-			const m = dateFromName.exec(f.name);
+			const m = STAMP_RE.exec(f.basename);
 			if (!m) continue;
 			const existing = byDate.get(m[1]);
 			if (!existing || f.name > existing.name) byDate.set(m[1], f); // last session of the day wins

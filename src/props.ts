@@ -7,6 +7,7 @@
  * can work days-until-due out of `grill_due` instead. */
 
 import { statusOf, type NoteMastery } from "./mastery";
+import { MARK } from "./sessionnote";
 
 export const PROP_KEYS = ["grill_status", "grill_due", "grill_last_tested", "grill_confusions"] as const;
 export type PropKey = (typeof PROP_KEYS)[number];
@@ -75,7 +76,7 @@ export function sessionFields(text: string): { correct: number; total: number; n
 	for (const line of text.split("\n")) {
 		const h = /^## (.+?)\s*$/.exec(line);
 		if (!h) continue;
-		if (h[1] === "Redo") break;
+		if (h[1] === MARK.redo) break;
 		const name = /^\[\[([^\]|]+)(?:\|[^\]]*)?\]\]$/.exec(h[1])?.[1] ?? h[1];
 		if (/^[^[\]|#^]+$/.test(name) && !notes.includes(name)) notes.push(name);
 	}

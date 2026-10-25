@@ -27,7 +27,7 @@ import { CHECK_EVERY_MS, isNewer, latestVersion } from "./update";
 import { applyResults, InboxResult, restoreNoteCounts } from "./record";
 import { learnerBrief, missesFromSessions, type PastSession } from "./brief";
 import { type AskSource, claudeCodeConversation, codexConversation, type Conversation, conversationsFromZip, exportConversations, importedLines, importedNames, matchConversations, mergeImported, plainPrior, type PriorKnowledge } from "./imported";
-import { parseSessionNote } from "./learn";
+import { parseSessionNote, STAMP_RE } from "./sessionnote";
 import { CATCH_UP, ConceptMap, dueConceptCount, migrateResetScheduling, rebalanceDueDates, reconcileConcepts } from "./concepts";
 import { pairKey } from "./bridges";
 import {
@@ -1608,7 +1608,7 @@ export default class GrillPlugin extends Plugin {
 		const sessions: PastSession[] = [];
 		for (const f of this.app.vault.getMarkdownFiles()) {
 			if (!f.path.startsWith(dir)) continue;
-			const m = /^(\d{4}-\d\d-\d\d) (\d\d)\.(\d\d)/.exec(f.basename);
+			const m = STAMP_RE.exec(f.basename);
 			const at = m ? new Date(`${m[1]}T${m[2]}:${m[3]}:00`) : new Date(f.stat.ctime);
 			if (Number.isNaN(at.getTime())) continue;
 			sessions.push({ at: at.toISOString(), answers: parseSessionNote(await this.app.vault.cachedRead(f)) });
