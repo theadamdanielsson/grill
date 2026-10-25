@@ -99,6 +99,7 @@ import type { VaultPort } from "./vaulttools";
 import { applyIntensity, type SettingsPort } from "./settingstools";
 import { RECORD_RULES, RECORD_TOOLS, runRecordQuery, type RecordPort, type StudyOffer } from "./recordtools";
 import { applyAnswer, projectSummaries } from "./record";
+import { SessionSaver } from "./sessionsaver";
 import { gradeStructured } from "./grading";
 import { forgetAgentProject, readAgentConcepts } from "./agentrecord";
 import { GRILL_ICON } from "./icon";
@@ -345,7 +346,6 @@ const SCAN_LOCK_MS = 5 * 60_000;
  * question or two, or none at all. */
 const TEST_NOTE_CONCEPTS = 3;
 /** Debounce for the mid-session checkpoint save after a grade. */
-const CHECKPOINT_MS = 3000;
 /** Learn: how many of the latest session notes are read for past answers on a note, and
  * how many of those answers are sent. */
 const LEARN_SESSIONS_READ = 40;
@@ -625,9 +625,6 @@ export class SessionView extends ItemView {
 	private bankLoaded = false;
 	/** Question bank / bridges changed in memory and need flushing (separate from
 	 * `dirty`, which flushes concepts/mastery/registry). */
-	private bankDirty = false;
-	private bridgesDirty = false;
-	private embeddingsDirty = false;
 	/** Replay ("Redo this quiz") of a saved session's questions: same questions, no
 	 * generation, and practice-only — grading and feedback run, but nothing is written to
 	 * the schedule, stats, or misconception registry. */
@@ -671,15 +668,48 @@ export class SessionView extends ItemView {
 	private sessionConcepts: Concept[] = [];
 	/** Concept targets for the AI generator (one question each, by construction). */
 	private targets: ConceptTarget[] = [];
-	/** Session state changed in memory and needs flushing to disk. Writes are
-	 * batched (see flush / scheduleCheckpoint) to avoid a per-answer sync storm. */
-	private dirty = false;
-	/** Serialises flushes so a checkpoint and an explicit flush never overlap. */
-	private flushChain: Promise<void> = Promise.resolve();
-	/** Pending debounced mid-session save, if any. */
-	private checkpointTimer: number | null = null;
-	/** A failed save has already been reported; don't Notice on every retry. */
-	private flushFailNotified = false;
+	/** Saving the session's state (see sessionsaver.ts). */
+	private saver = new SessionSaver({
+		record: () => this.plugin.record,
+		store: () => this.plugin.store,
+		recordIsLive: () => this.liveState,
+		replay: () => this.replayMode,
+		bank: () => this.questionBank,
+		bridges: () => this.bridges,
+		embeddings: () => this.embeddings,
+	});
+	/** Session state changed in memory and needs saving. Writes are batched (see flush and
+	 * scheduleCheckpoint) to avoid a per-answer sync storm. */
+	private get dirty(): boolean {
+		return this.saver.dirty;
+	}
+	private set dirty(v: boolean) {
+		this.saver.dirty = v;
+	}
+	private get bankDirty(): boolean {
+		return this.saver.bankDirty;
+	}
+	private set bankDirty(v: boolean) {
+		this.saver.bankDirty = v;
+	}
+	private get bridgesDirty(): boolean {
+		return this.saver.bridgesDirty;
+	}
+	private set bridgesDirty(v: boolean) {
+		this.saver.bridgesDirty = v;
+	}
+	private get embeddingsDirty(): boolean {
+		return this.saver.embeddingsDirty;
+	}
+	private set embeddingsDirty(v: boolean) {
+		this.saver.embeddingsDirty = v;
+	}
+	private get flushChain(): Promise<void> {
+		return this.saver.chain;
+	}
+	private get checkpointTimer(): number | null {
+		return this.saver.timer;
+	}
 	/** Bumped whenever session state is reset (new session / replay). An in-flight
 	 * batch from an earlier session compares its captured epoch and discards its
 	 * results, so it can't push stale questions into the new session. */
@@ -694,7 +724,9 @@ export class SessionView extends ItemView {
 	private scanningEpoch: number | null = null;
 	private scanningSince = 0;
 	/** Why the last flush failed, for the Notice when a new start is refused. */
-	private lastFlushError = "";
+	private get lastFlushError(): string {
+		return this.saver.lastError;
+	}
 	/** Images per note, resolved once when a vision model is in use. */
 	private noteImages: Record<string, ImageInput[]> = {};
 	/** Whether this session's model can see images at all; per-batch notes text only
@@ -7610,81 +7642,15 @@ export class SessionView extends ItemView {
 		else await this.answerAsked(cfg, q, typed, r.hintsUsed);
 	}
 
-	/** Persist all session state at once (concepts, mastery, registry). Called at
-	 * session end, on pane close, before anything that resets session state, and a
-	 * few seconds after each grade (`scheduleCheckpoint`) so a killed mobile app or
-	 * a crash mid-session loses at most the last answer or two. Flushes are chained
-	 * so a checkpoint and an explicit flush never write the same file concurrently,
-	 * and a dirty flag is only cleared once its write actually succeeded: a failed
-	 * save stays dirty and is retried by the next flush instead of being forgotten. */
+	/** Persist all session state at once (see SessionSaver). Called at session end, on
+	 * pane close, before anything that resets session state, and a few seconds after each
+	 * grade (`scheduleCheckpoint`). */
 	private flush(): Promise<void> {
-		const run = this.flushChain.then(() => this.flushNow());
-		this.flushChain = run.catch(() => undefined);
-		return run.catch((e) => {
-			this.lastFlushError = (e as Error).message;
-			if (!this.flushFailNotified) {
-				this.flushFailNotified = true;
-				new Notice(`Grill: couldn't save your progress (${(e as Error).message}). It'll retry on the next answer.`, 10000);
-			}
-		});
+		return this.saver.flush();
 	}
 
-	private async flushNow(): Promise<void> {
-		if (this.checkpointTimer !== null) {
-			window.clearTimeout(this.checkpointTimer);
-			this.checkpointTimer = null;
-		}
-		if (this.dirty) {
-			this.dirty = false;
-			try {
-				if (this.liveState && !this.replayMode) await this.plugin.record.save("mastery", "concepts", "registry");
-				else await this.plugin.record.save("mastery");
-			} catch (e) {
-				this.dirty = true;
-				throw e;
-			}
-		}
-		if (this.bankDirty) {
-			this.bankDirty = false;
-			try {
-				await this.plugin.store.saveQuestionBank(this.questionBank);
-			} catch (e) {
-				this.bankDirty = true;
-				throw e;
-			}
-		}
-		if (this.bridgesDirty) {
-			this.bridgesDirty = false;
-			try {
-				await this.plugin.store.saveBridges(this.bridges);
-			} catch (e) {
-				this.bridgesDirty = true;
-				throw e;
-			}
-		}
-		if (this.embeddingsDirty) {
-			this.embeddingsDirty = false;
-			try {
-				await this.plugin.store.saveEmbeddings(this.embeddings);
-			} catch (e) {
-				this.embeddingsDirty = true;
-				throw e;
-			}
-		}
-		this.flushFailNotified = false;
-	}
-
-	/** The unsaved state can't be saved because a store file couldn't be READ (see
-	 * GrillStore.loadJSON): that state was built on an empty stand-in for the real
-	 * file, so it isn't worth keeping, and refusing to start would wedge the user,
-	 * since only a fresh session's reload can pick the real file back up. Drop it and
-	 * let the start go ahead. A plain write failure (disk full) returns false instead,
-	 * so real grades are kept and retried. */
 	private discardIfUnsaveable(): boolean {
-		if (!this.plugin.store.hasReadProtected()) return false;
-		new Notice(`Grill: couldn't save the last session (${this.lastFlushError}). Starting fresh from what's on disk.`, 10000);
-		this.dirty = this.bankDirty = this.bridgesDirty = this.embeddingsDirty = false;
-		return true;
+		return this.saver.discardIfUnsaveable();
 	}
 
 	/** For saves behind a single click (Dismiss, the question editor): report a failed
@@ -7715,16 +7681,9 @@ export class SessionView extends ItemView {
 		if (!this.replayMode) await this.plugin.record.load("registry");
 	}
 
-	/** Debounced mid-session save: CHECKPOINT_MS after the last grade, so a burst
-	 * of answers is one write (no per-answer sync storm) but an interrupted session
-	 * still keeps its work. */
+	/** Debounced mid-session save (see SessionSaver.scheduleCheckpoint). */
 	private scheduleCheckpoint(): void {
-		if (this.replayMode) return;
-		if (this.checkpointTimer !== null) window.clearTimeout(this.checkpointTimer);
-		this.checkpointTimer = window.setTimeout(() => {
-			this.checkpointTimer = null;
-			void this.flush();
-		}, CHECKPOINT_MS);
+		this.saver.scheduleCheckpoint();
 	}
 
 	async onClose(): Promise<void> {
