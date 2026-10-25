@@ -230,3 +230,22 @@ test("a cache that can't be written never throws", async () => {
 	a.fail.write.add("Grill/pdf-cache.json.tmp");
 	await storeWith(a).savePdfCache({});
 });
+
+test("a record file of the wrong shape is reset with a copy kept; one bad entry costs only that entry", async () => {
+	const a = fakeAdapter();
+	a.files.set("Grill/concepts.json", JSON.stringify([{ note: "N" }]));
+	a.files.set("Grill/questions.json", JSON.stringify({ "N::a": [{ question: "q" }], "N::b": "oops" }));
+	const store = storeWith(a);
+	const problems: LoadProblem[] = [];
+	store.onProblem = (p) => problems.push(p);
+	const warn = console.warn;
+	console.warn = () => undefined;
+	try {
+		assert.deepEqual(await store.loadConcepts(), {});
+		assert.deepEqual(Object.keys(await store.loadQuestionBank()), ["N::a"]);
+	} finally {
+		console.warn = warn;
+	}
+	assert.deepEqual(problems.map((p) => [p.name, p.why]), [["concepts.json", "it holds a list, not entries"]]);
+	assert.ok([...a.files.keys()].some((k) => k.startsWith("Grill/concepts.json.corrupt-")));
+});
