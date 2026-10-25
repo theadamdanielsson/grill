@@ -66,6 +66,7 @@ import { ExamModal } from "./exammodal";
 import { FETCH_TOOL, fetchedUrl, fetchPage } from "./web";
 import type { ColorMode, NumberMode } from "./mapview";
 import { listLanguages, listVoices, listVoicesForLang, onVoicesChanged, speak, speakNatural } from "./tts";
+import { DEFAULT_FOLDER } from "./recordpaths";
 
 /** How hard the schedule pushes, as one choice instead of four numbers. Each preset is a
  * complete set of the four FSRS/new-material values Grill actually schedules on; picking
@@ -391,7 +392,7 @@ function defaultSettings(): GrillSettings {
 		ollamaUrl: "http://localhost:11434",
 		customBaseUrl: "",
 		questionsPerSession: 5,
-		folder: "Grill",
+		folder: DEFAULT_FOLDER,
 		showProgress: true,
 		linkSessions: true,
 		noteProperties: false,
@@ -1279,7 +1280,7 @@ export default class GrillPlugin extends Plugin {
 			read: async (path) => ((await adapter.exists(path)) ? adapter.read(path) : null),
 			files: (dir) => walk(dir, (d) => adapter.list(d)),
 		};
-		const places = [{ source: vault, root: `${this.data.settings.folder}/Skills`, shown: `${this.data.settings.folder}/Skills` }];
+		const places = [{ source: vault, root: this.store.skillsDir(), shown: this.store.skillsDir() }];
 		const req = (window as unknown as { require?: (m: string) => unknown }).require;
 		if (Platform.isDesktopApp && req) {
 			const fs = req("fs") as {
@@ -1307,7 +1308,7 @@ export default class GrillPlugin extends Plugin {
 	searchProgress = { indexed: 0, total: 0 };
 
 	private searchIndexPath(): string {
-		return `${this.data.settings.folder}/search-index.json`;
+		return this.store.inFolder("search-index.json");
 	}
 
 	/** The notes Chat may search: those Grill studies. */
@@ -1574,7 +1575,7 @@ export default class GrillPlugin extends Plugin {
 	 * chosen included folders (when any are set), or in a user-excluded folder. Empty
 	 * `includedFolders` means the whole vault is Grill's. */
 	isExcluded(path: string): boolean {
-		if (path.startsWith(`${this.data.settings.folder}/`)) return true;
+		if (path.startsWith(`${this.store.folder()}/`)) return true;
 		const included = this.data.settings.includedFolders;
 		if (included.length) {
 			const inside = included.some((raw) => {
@@ -1604,7 +1605,7 @@ export default class GrillPlugin extends Plugin {
 	 * concept's last miss, so a chat can say why something was missed. Returns how many
 	 * concepts it filled. */
 	private async fillMissesFromSessions(): Promise<number> {
-		const dir = normalizePath(`${this.data.settings.folder}/Sessions`) + "/";
+		const dir = `${this.store.sessionsDir()}/`;
 		const sessions: PastSession[] = [];
 		for (const f of this.app.vault.getMarkdownFiles()) {
 			if (!f.path.startsWith(dir)) continue;
@@ -2037,7 +2038,7 @@ export default class GrillPlugin extends Plugin {
 
 	/** Where saved prompts are kept: one note each, named for what it does. */
 	private promptFolder(): string {
-		return normalizePath(`${this.data.settings.folder}/Prompts`);
+		return this.store.promptsDir();
 	}
 
 	savedPrompts(): TFile[] {
@@ -4656,7 +4657,7 @@ export class GrillSettingTab extends PluginSettingTab {
 					b.setButtonText("Save as note").onClick(async () => {
 						const text = await get();
 						if (!text) return;
-						const path = normalizePath(`${this.plugin.data.settings.folder}/Profile.md`);
+						const path = this.plugin.store.inFolder("Profile.md");
 						const at = this.app.vault.getAbstractFileByPath(path);
 						if (at instanceof TFile) await this.app.vault.modify(at, text);
 						else await this.app.vault.create(path, text);

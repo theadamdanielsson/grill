@@ -17,7 +17,7 @@ import { MisconceptionRegistry, mergeAssignments } from "./debrief";
 import { MasteryMap, QDifficulty, Verdict, emptyMastery, isLeech, recordNoteStats, retrievability, statusOf } from "./mastery";
 import type { QuestionBank } from "./store";
 
-export const INBOX_DIR = "Inbox";
+export { INBOX_DIR } from "./recordpaths";
 export const RESULT_VERSION = 1;
 
 /** One answer an agent graded, as written to `<folder>/Inbox/<id>.json`. */

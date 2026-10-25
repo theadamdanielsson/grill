@@ -28,9 +28,10 @@ import {
 	has,
 } from "../../src/record";
 import { learnerBrief } from "../../src/brief";
-import { examDay, examLines, type Exam } from "../../src/exams";
+import { examLines } from "../../src/exams";
 import { safeMarkdown } from "../../src/safemd";
 import { renderAnswer } from "../../src/sessionnote";
+import { HOME_RECORD_SEGMENTS, inboxFileName, PLUGIN_DATA_SEGMENTS, readPluginSettings, RECORD_FILES, SESSIONS_DIR } from "../../src/recordpaths";
 import type { QuestionBank } from "../../src/store";
 
 declare const GRILL_MCP_VERSION: string;
@@ -52,16 +53,19 @@ function argValue(name: string): string | undefined {
 	return i > 0 ? process.argv[i + 1] : undefined;
 }
 
+/** The plugin's settings in this vault, as grill-mcp reads them; the defaults when there
+ * are none or they can't be read. */
+function pluginSettings(vault: string): ReturnType<typeof readPluginSettings> {
+	try {
+		return readPluginSettings(JSON.parse(readFileSync(join(vault, ...PLUGIN_DATA_SEGMENTS), "utf8")));
+	} catch {
+		return readPluginSettings(null);
+	}
+}
+
 /** The Grill folder's name, from the plugin's settings when they say. */
 function grillFolderName(vault: string): string {
-	try {
-		const data = JSON.parse(readFileSync(join(vault, ".obsidian", "plugins", "grill", "data.json"), "utf8"));
-		const f = data?.settings?.folder;
-		if (typeof f === "string" && f.trim()) return f.trim().replace(/^\/+|\/+$/g, "");
-	} catch {
-		/* no plugin settings: the default */
-	}
-	return "Grill";
+	return pluginSettings(vault).folder;
 }
 
 export function locate(): Where {
@@ -70,7 +74,7 @@ export function locate(): Where {
 	const dir = argValue("--dir");
 	if (dir) return { folder: resolve(dir), vault: false };
 	// ~/.grill also holds what the plugin installs (opencode): the record has a folder of its own.
-	const home = process.env.GRILL_HOME ? resolve(process.env.GRILL_HOME) : join(homedir(), ".grill", "record");
+	const home = process.env.GRILL_HOME ? resolve(process.env.GRILL_HOME) : join(homedir(), ...HOME_RECORD_SEGMENTS);
 	// Started inside a vault, even in one of its subfolders, is that vault's record. A
 	// project that already keeps a record of its own in .grill uses that.
 	const cwd = process.cwd();
@@ -90,22 +94,13 @@ export function locate(): Where {
  * the digest. None outside a vault, or when the settings can't be read. */
 function vaultExams(where: Where): string[] {
 	if (!where.root) return [];
-	try {
-		const data = JSON.parse(readFileSync(join(where.root, ".obsidian", "plugins", "grill", "data.json"), "utf8"));
-		const raw: unknown[] = Array.isArray(data?.settings?.exams) ? data.settings.exams : [];
-		const exams = raw.filter(
-			(e): e is Exam => !!e && Array.isArray((e as Exam).folders) && typeof (e as Exam).date === "string" && !!examDay((e as Exam).date),
-		);
-		return examLines(exams, new Date());
-	} catch {
-		return [];
-	}
+	return examLines(pluginSettings(where.root).exams, new Date());
 }
 
 /** Whether Grill is installed in this vault, or has a record there. */
 function hasGrill(vault: string): boolean {
 	const folder = join(vault, grillFolderName(vault));
-	return existsSync(join(vault, ".obsidian", "plugins", "grill", "manifest.json")) || existsSync(join(folder, "concepts.json")) || existsSync(join(folder, "mastery.json"));
+	return existsSync(join(vault, ".obsidian", "plugins", "grill", "manifest.json")) || existsSync(join(folder, RECORD_FILES.concepts)) || existsSync(join(folder, RECORD_FILES.mastery));
 }
 
 /** Whether two paths are one folder, through symlinks (/var and /private/var on a Mac). */
@@ -173,15 +168,15 @@ function writeAtomic(path: string, data: string): void {
 function load(where: Where): RecordState & { bank: QuestionBank } {
 	// A file iCloud has taken off this computer is not there, but it is not gone either:
 	// read as empty, the next write would leave two records to collide.
-	for (const f of ["concepts.json", "mastery.json", "misconceptions.json", "questions.json"]) {
+	for (const f of Object.values(RECORD_FILES)) {
 		if (existsSync(join(where.folder, `.${f}.icloud`))) throw new RecordUnreadable(join(where.folder, f));
 	}
-	if (existsSync(join(where.folder, "mastery.json")) && !existsSync(join(where.folder, "concepts.json"))) throw new RecordUnreadable(join(where.folder, "concepts.json"));
+	if (existsSync(join(where.folder, RECORD_FILES.mastery)) && !existsSync(join(where.folder, RECORD_FILES.concepts))) throw new RecordUnreadable(join(where.folder, RECORD_FILES.concepts));
 	return {
-		concepts: readJSON(join(where.folder, "concepts.json"), {}),
-		mastery: readJSON(join(where.folder, "mastery.json"), {}),
-		registry: readJSON(join(where.folder, "misconceptions.json"), {}),
-		bank: readJSON(join(where.folder, "questions.json"), {}),
+		concepts: readJSON(join(where.folder, RECORD_FILES.concepts), {}),
+		mastery: readJSON(join(where.folder, RECORD_FILES.mastery), {}),
+		registry: readJSON(join(where.folder, RECORD_FILES.registry), {}),
+		bank: readJSON(join(where.folder, RECORD_FILES.bank), {}),
 	};
 }
 
@@ -362,7 +357,7 @@ export function buildServer(where: Where, chatOnly = false): McpServer {
 				const s = inView(where, load(where));
 				const why = notInVault(s, r);
 				if (why) return { isError: true, content: [{ type: "text" as const, text: why }] };
-				writeAtomic(join(where.folder, INBOX_DIR, `${r.at.replace(/[:.]/g, "-")}-${r.id.slice(0, 8)}.json`), JSON.stringify(r, null, 1));
+				writeAtomic(join(where.folder, INBOX_DIR, inboxFileName(r)), JSON.stringify(r, null, 1));
 				return json({ recorded: true, note: "Grill adds this to the record within a few seconds while it is open, or the next time it starts." });
 			}
 			recordInRepo(where, r);
@@ -438,15 +433,15 @@ function writeRepoRecord(where: Where, r: InboxResult): void {
 	const { failed } = applyResults(s, [r], { allowNew: true });
 	if (failed.length) throw new Error("That answer could not be added to the record as it is. Nothing was changed.");
 	// The last good copy of what is about to be replaced, in case a write is cut off.
-	for (const f of ["concepts.json", "mastery.json", "misconceptions.json"]) {
+	for (const f of [RECORD_FILES.concepts, RECORD_FILES.mastery, RECORD_FILES.registry]) {
 		const at = join(where.folder, f);
 		if (existsSync(at)) copyFileSync(at, `${at}.bak`);
 	}
-	writeAtomic(join(where.folder, "concepts.json"), JSON.stringify(s.concepts, null, 1));
-	writeAtomic(join(where.folder, "mastery.json"), JSON.stringify(s.mastery, null, 1));
-	writeAtomic(join(where.folder, "misconceptions.json"), JSON.stringify(s.registry, null, 1));
+	writeAtomic(join(where.folder, RECORD_FILES.concepts), JSON.stringify(s.concepts, null, 1));
+	writeAtomic(join(where.folder, RECORD_FILES.mastery), JSON.stringify(s.mastery, null, 1));
+	writeAtomic(join(where.folder, RECORD_FILES.registry), JSON.stringify(s.registry, null, 1));
 	const day = r.at.slice(0, 10);
-	const dir = join(where.folder, "Sessions");
+	const dir = join(where.folder, SESSIONS_DIR);
 	mkdirSync(dir, { recursive: true });
 	// Written like the plugin's session notes, and made inert the same way: this file may
 	// be opened in Obsidian, a Markdown preview or GitHub, and every line came from an agent.
@@ -491,7 +486,7 @@ function runCommand(cmd: string, rest: string[]): number {
 				console.error(why);
 				return 1;
 			}
-			writeAtomic(join(where.folder, INBOX_DIR, `${r.at.replace(/[:.]/g, "-")}-${r.id.slice(0, 8)}.json`), JSON.stringify(r, null, 1));
+			writeAtomic(join(where.folder, INBOX_DIR, inboxFileName(r)), JSON.stringify(r, null, 1));
 		} else recordInRepo(where, r);
 		out({ recorded: true, where: where.folder });
 		return 0;

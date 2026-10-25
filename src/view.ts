@@ -1035,7 +1035,7 @@ export class SessionView extends ItemView {
 			text: "Tick some, or leave them all unticked to use your whole vault. You can change this any time in settings.",
 		});
 
-		const folderRoot = `${this.plugin.data.settings.folder}/`;
+		const folderRoot = `${this.plugin.store.folder()}/`;
 		const eligible = this.app.vault.getMarkdownFiles().filter((f) => !f.path.startsWith(folderRoot));
 		const folders = listFolders(eligible);
 
@@ -1407,16 +1407,15 @@ export class SessionView extends ItemView {
 	 * Read from the notes Grill keeps: the Learn note names what it was about, and a
 	 * session note has a heading for every note it asked on. */
 	private lastLearnedUntested(byName: Map<string, TFile>): TFile | null {
-		const folder = this.plugin.data.settings.folder;
 		const all = this.app.vault.getMarkdownFiles();
-		const learned = all.filter((f) => f.path.startsWith(`${folder}/Learn/`)).sort((a, b) => b.stat.ctime - a.stat.ctime)[0];
+		const learned = all.filter((f) => f.path.startsWith(`${this.plugin.store.learnDir()}/`)).sort((a, b) => b.stat.ctime - a.stat.ctime)[0];
 		if (!learned) return null;
 		const name: unknown = this.app.metadataCache.getFileCache(learned)?.frontmatter?.note;
 		const note = typeof name === "string" ? byName.get(name) : undefined;
 		if (!note) return null;
 		const testedSince = all.some(
 			(f) =>
-				f.path.startsWith(`${folder}/Sessions/`) &&
+				f.path.startsWith(`${this.plugin.store.sessionsDir()}/`) &&
 				f.stat.ctime > learned.stat.ctime &&
 				(this.app.metadataCache.getFileCache(f)?.headings ?? []).some((h) => h.level === 2 && h.heading.replace(/^\[\[(.+?)\]\]$/, "$1") === note.basename),
 		);
@@ -2163,7 +2162,7 @@ export class SessionView extends ItemView {
 		header.createSpan({ cls: "grill-score", text: "Chats" });
 		const back = header.createSpan({ cls: "grill-chip-link", text: "Back" });
 		back.onclick = () => this.renderStart();
-		const dir = `${this.plugin.data.settings.folder}/Learn/`;
+		const dir = `${this.plugin.store.learnDir()}/`;
 		const all = this.app.vault
 			.getMarkdownFiles()
 			.filter((f) => f.path.startsWith(dir))
@@ -2272,7 +2271,7 @@ export class SessionView extends ItemView {
 		} catch {
 			// The record is still worth giving without them.
 		}
-		const dir = `${this.plugin.data.settings.folder}/Sessions/`;
+		const dir = `${this.plugin.store.sessionsDir()}/`;
 		const sessions = this.app.vault
 			.getMarkdownFiles()
 			.filter((f) => f.path.startsWith(dir))
@@ -2290,7 +2289,7 @@ export class SessionView extends ItemView {
 				for (const q of a.asked ?? []) asked.push({ at: f.stat.ctime, text: q });
 			}
 		}
-		const learnDir = `${this.plugin.data.settings.folder}/Learn/`;
+		const learnDir = `${this.plugin.store.learnDir()}/`;
 		const learned = this.app.vault
 			.getMarkdownFiles()
 			.filter((f) => f.path.startsWith(learnDir) && this.app.metadataCache.getFileCache(f)?.frontmatter?.note === noteName)
@@ -3138,8 +3137,8 @@ export class SessionView extends ItemView {
 	}
 
 	private recentSessions(): TFile[] {
-		const dir = `${this.plugin.data.settings.folder}/Sessions/`;
-		const learnDir = `${this.plugin.data.settings.folder}/Learn/`;
+		const dir = `${this.plugin.store.sessionsDir()}/`;
+		const learnDir = `${this.plugin.store.learnDir()}/`;
 		return this.app.vault
 			.getMarkdownFiles()
 			.filter((f) => f.path.startsWith(dir) || f.path.startsWith(learnDir))
@@ -4202,7 +4201,7 @@ export class SessionView extends ItemView {
 		const key = (d: Date): string => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 		const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-		const dir = `${this.plugin.data.settings.folder}/Sessions/`;
+		const dir = `${this.plugin.store.sessionsDir()}/`;
 		const perDay = new Map<string, number>();
 		for (const f of this.app.vault.getMarkdownFiles()) {
 			if (!f.path.startsWith(dir)) continue;

@@ -22,7 +22,8 @@ import { safeDiagram, safeMarkdown } from "./safemd";
 import { MARK, linkable, renderAnswer, stampOf, STAMP_RE } from "./sessionnote";
 import type { ImportedRecord } from "./imported";
 import { replyTitle } from "./learn";
-import { InboxResult, INBOX_DIR, parseResult } from "./record";
+import { InboxResult, parseResult } from "./record";
+import { DEFAULT_FOLDER, INBOX_DIR, LEARN_DIR, PROMPTS_DIR, RECORD_FILES, SESSIONS_DIR, SKILLS_DIR } from "./recordpaths";
 import { applyProps, noteProps, sessionFields, sessionsBase } from "./props";
 
 /** A generated question cached for reuse. `sourceHash` ties it to the concept's
@@ -88,12 +89,34 @@ export class GrillStore {
 		private folderName: () => string,
 	) {}
 
-	private folder(): string {
-		return normalizePath(this.folderName() || "Grill");
+	/** The Grill folder, normalised. */
+	folder(): string {
+		return normalizePath(this.folderName() || DEFAULT_FOLDER);
+	}
+
+	/** A path inside the Grill folder. */
+	inFolder(...parts: string[]): string {
+		return normalizePath([this.folder(), ...parts].join("/"));
+	}
+
+	sessionsDir(): string {
+		return this.inFolder(SESSIONS_DIR);
+	}
+
+	learnDir(): string {
+		return this.inFolder(LEARN_DIR);
+	}
+
+	promptsDir(): string {
+		return this.inFolder(PROMPTS_DIR);
+	}
+
+	skillsDir(): string {
+		return this.inFolder(SKILLS_DIR);
 	}
 
 	private masteryPath(): string {
-		return normalizePath(`${this.folder()}/mastery.json`);
+		return this.inFolder(RECORD_FILES.mastery);
 	}
 
 	private instructionsPath(): string {
@@ -101,11 +124,11 @@ export class GrillStore {
 	}
 
 	private registryPath(): string {
-		return normalizePath(`${this.folder()}/misconceptions.json`);
+		return this.inFolder(RECORD_FILES.registry);
 	}
 
 	private conceptsPath(): string {
-		return normalizePath(`${this.folder()}/concepts.json`);
+		return this.inFolder(RECORD_FILES.concepts);
 	}
 
 	private bridgesPath(): string {
@@ -113,7 +136,7 @@ export class GrillStore {
 	}
 
 	private questionsPath(): string {
-		return normalizePath(`${this.folder()}/questions.json`);
+		return this.inFolder(RECORD_FILES.bank);
 	}
 
 	private reviewLogPath(): string {
@@ -721,7 +744,7 @@ export class GrillStore {
 	 * the Sessions view has no empty columns. `notes` are links with `link`, else plain
 	 * names. A note that already has them is left alone. Returns notes changed. */
 	async backfillSessionFields(link: boolean): Promise<number> {
-		const dir = `${this.folder()}/Sessions/`;
+		const dir = `${this.sessionsDir()}/`;
 		let changed = 0;
 		for (const f of this.app.vault.getMarkdownFiles()) {
 			if (!f.path.startsWith(dir)) continue;
@@ -741,7 +764,7 @@ export class GrillStore {
 
 	/** Has this vault's Grill folder got a Sessions folder yet? */
 	async hasSessions(): Promise<boolean> {
-		return this.app.vault.adapter.exists(normalizePath(`${this.folder()}/Sessions`));
+		return this.app.vault.adapter.exists(this.sessionsDir());
 	}
 
 	sessionsBaseText(): string {
@@ -864,11 +887,11 @@ export class GrillStore {
 		// One subfolder per month: a daily-use vault writes a session note every
 		// sitting, so a flat Sessions/ folder turns into hundreds of files within a
 		// couple of months and floods Obsidian's file explorer, backlinks, and search.
-		const monthDir = normalizePath(`${this.folder()}/Sessions/${d.getFullYear()}-${pad(d.getMonth() + 1)}`);
+		const monthDir = this.inFolder(SESSIONS_DIR, `${d.getFullYear()}-${pad(d.getMonth() + 1)}`);
 		await this.ensureFolder(this.folder());
 		// The first session in a vault brings the view file that lists them all.
 		const first = !(await this.hasSessions());
-		await this.ensureFolder(normalizePath(`${this.folder()}/Sessions`));
+		await this.ensureFolder(this.sessionsDir());
 		await this.ensureFolder(monthDir);
 		if (first) await this.writeBaseIfMissing("Sessions.base", this.sessionsBaseText()).catch(() => undefined);
 		const dir = monthDir;
@@ -996,9 +1019,9 @@ export class GrillStore {
 		if (!turns.length) return null;
 		const d = meta.startedAt;
 		const pad = (n: number) => String(n).padStart(2, "0");
-		const dir = normalizePath(`${this.folder()}/Learn/${d.getFullYear()}-${pad(d.getMonth() + 1)}`);
+		const dir = this.inFolder(LEARN_DIR, `${d.getFullYear()}-${pad(d.getMonth() + 1)}`);
 		await this.ensureFolder(this.folder());
-		await this.ensureFolder(normalizePath(`${this.folder()}/Learn`));
+		await this.ensureFolder(this.learnDir());
 		await this.ensureFolder(dir);
 		const day = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 		// A conversation carried on keeps the title it has, which may be one given to it.
@@ -1065,7 +1088,7 @@ export class GrillStore {
 	 * no headline for that day rather than failing the whole backfill. */
 	async backfillArcLog(cap: number): Promise<ArcEntry[]> {
 		const headlineFromBody = /^> \[!summary\] Debrief\n> (.+)$/m;
-		const prefix = normalizePath(`${this.folder()}/Sessions`) + "/";
+		const prefix = `${this.sessionsDir()}/`;
 		const byDate = new Map<string, TFile>();
 		for (const f of this.app.vault.getMarkdownFiles()) {
 			if (!f.path.startsWith(prefix)) continue;
