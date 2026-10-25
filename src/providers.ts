@@ -121,24 +121,36 @@ export function migrateLegacyModels(models: Partial<Record<ProviderId, string>>)
 	return changed;
 }
 
-export interface LLMConfig {
+/** A model reached over HTTP: a provider, its key and the model. */
+export interface ModelConfig {
 	provider: ProviderId;
 	apiKey: string;
 	model: string;
 	/** Ollama server URL, e.g. http://localhost:11434 */
 	baseUrl?: string;
-	/** Set when no model is set up and an agent program answers instead (agentjson.ts):
-	 * each request goes to it whole, as one JSON answer, with no images. */
-	agent?: (system: string, user: string, schema: Record<string, unknown>, signal: AbortSignal, images: ImageInput[]) => Promise<unknown>;
-	/** The agent program reads pictures sent with a request (Claude Code and Codex do). */
-	agentImages?: boolean;
+	agent?: undefined;
 }
+
+/** An agent program standing in for a model (agentjson.ts): each request goes to it whole,
+ * as one JSON answer. */
+export interface AgentConfig {
+	/** Which program: "claudecode", "codex" or "opencode" (see engines.ts). */
+	engine: string;
+	/** The program's name, where a model's would be shown. */
+	model: string;
+	agent: (system: string, user: string, schema: Record<string, unknown>, signal: AbortSignal, images: ImageInput[]) => Promise<unknown>;
+	/** The program reads pictures sent with a request (Claude Code and Codex do). */
+	agentImages: boolean;
+	provider?: undefined;
+}
+
+export type LLMConfig = ModelConfig | AgentConfig;
 
 /** Whether this provider and model can read image inputs. */
 /** Whether pictures sent with a request reach the model: an agent program that reads
  * them, or a model that does. */
 export function readsImages(cfg: LLMConfig): boolean {
-	return cfg.agent ? !!cfg.agentImages : supportsVision(cfg.provider, cfg.model);
+	return cfg.agent ? cfg.agentImages : supportsVision(cfg.provider, cfg.model);
 }
 
 export function supportsVision(provider: ProviderId, model: string): boolean {
@@ -226,10 +238,10 @@ export interface Capabilities {
 }
 
 export function capabilities(cfg: LLMConfig): Capabilities {
-	const p = cfg.provider;
 	if (cfg.agent) {
-		return { tools: false, streams: false, webSearch: false, vision: !!cfg.agentImages, embeddings: false, local: false, metered: false, effort: false };
+		return { tools: false, streams: false, webSearch: false, vision: cfg.agentImages, embeddings: false, local: false, metered: false, effort: false };
 	}
+	const p = cfg.provider;
 	const hosted = p === "grillcloud";
 	return {
 		tools: hosted ? cloud.streams && cloud.tools : p === "anthropic" || p === "openai" || p === "deepseek" || p === "custom",

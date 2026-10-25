@@ -326,8 +326,8 @@ test("an agent's reply is read as JSON, fenced or not", () => {
 test("with an agent standing in for a model, grading goes to it whole and its JSON is used", async () => {
 	const seen: Array<{ system: string; user: string; schema: Record<string, unknown> }> = [];
 	const cfg = {
-		provider: "custom" as const,
-		apiKey: "",
+		engine: "opencode",
+		agentImages: false,
 		model: "opencode",
 		agent: async (system: string, user: string, schema: Record<string, unknown>) => {
 			seen.push({ system, user, schema });

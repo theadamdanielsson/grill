@@ -1812,8 +1812,7 @@ ${body}
 		if (!program) return null;
 		const model = s[engine.modelSetting];
 		return {
-			provider: "custom",
-			apiKey: "",
+			engine: engine.id,
 			model: engine.name,
 			agent: (system, user, schema, signal, images) => engine.json({ program, model, system, user, schema, signal, images }),
 			agentImages: engine.readsImages,

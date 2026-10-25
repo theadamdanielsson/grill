@@ -1,6 +1,6 @@
 // Shapes several test files build: a concept's record, a model config, the settings rows.
 import { newConceptMastery, type ConceptMastery } from "../src/concepts";
-import type { LLMConfig } from "../src/providers";
+import type { ModelConfig } from "../src/providers";
 
 /** A concept record, untested unless `over` says otherwise. */
 export function concept(over: Partial<ConceptMastery> = {}): ConceptMastery {
@@ -8,7 +8,7 @@ export function concept(over: Partial<ConceptMastery> = {}): ConceptMastery {
 }
 
 /** An Anthropic config whose calls go to the stub's `net.handler`. */
-export function llmCfg(over: Partial<LLMConfig> = {}): LLMConfig {
+export function llmCfg(over: Partial<ModelConfig> = {}): ModelConfig {
 	return { provider: "anthropic", apiKey: "k", model: "claude-sonnet-5-5", ...over };
 }
 

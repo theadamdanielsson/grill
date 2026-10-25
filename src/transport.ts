@@ -167,6 +167,7 @@ function buildCall(
 	images: ImageInput[],
 	effort: "low" | "medium" = "medium",
 ): HttpCall {
+	if (cfg.agent) throw new Error("An agent program isn't called over HTTP.");
 	// Every provider except Anthropic (handled specially below, for real cache
 	// breakpoints) just gets the flattened string — same request shape as before.
 	const flatUser = flattenUser(user);

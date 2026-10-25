@@ -1827,7 +1827,7 @@ export class SessionView extends ItemView {
 			};
 		}
 		const cfg = this.plugin.llmConfig();
-		if (!cfg || cfg.provider === "grillcloud") return null;
+		if (!cfg || cfg.agent || cfg.provider === "grillcloud") return null;
 		const p = cfg.provider;
 		return {
 			name: cfg.model,
@@ -5639,7 +5639,7 @@ export class SessionView extends ItemView {
 		const note = await this.plugin.store.writeSessionNote(
 			this.results,
 			{
-				provider: cfg ? cfg.provider : "local",
+				provider: cfg ? (cfg.agent ? cfg.engine : cfg.provider) : "local",
 				model: cfg ? cfg.model : "deterministic",
 				startedAt: this.sessionStart,
 				dueOnly: this.dueOnly,
@@ -6424,7 +6424,8 @@ export class SessionView extends ItemView {
 		// Custom endpoints reuse cfg.model as the embedding model (see llm.ts's
 		// embedTexts); every other supported provider embeds with one fixed model
 		// regardless of cfg.model, so the provider id alone is the right cache key.
-		const modelKey = cfg.provider === "custom" ? `custom:${cfg.model}` : cfg.provider;
+		// Agent programs were keyed as custom endpoints; kept, so their vectors stay valid.
+		const modelKey = cfg.agent || cfg.provider === "custom" ? `custom:${cfg.model}` : cfg.provider;
 		const stale = names.filter((n) => {
 			const rec = this.embeddings[n];
 			return !rec || rec.model !== modelKey || rec.hash !== hashStr(this.noteText[n] ?? "");

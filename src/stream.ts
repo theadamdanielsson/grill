@@ -48,6 +48,8 @@ export class StreamUnavailable extends Error {
 /** The request that streams a reply from this provider, or null when it can't be asked
  * for one this way. */
 export function streamCall(cfg: LLMConfig, p: StreamPrompt, o: StreamOptions = {}): StreamCall | null {
+	// An agent program gives its answer whole (see agentjson.ts).
+	if (cfg.agent) return null;
 	const flat = p.cacheable ? `${p.cacheable}\n\n${p.rest}` : p.rest;
 	const messages = [
 		{ role: "system", content: p.system },

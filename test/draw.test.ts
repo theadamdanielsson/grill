@@ -70,7 +70,7 @@ test("an agent engine is sent the pictures only when it reads them", async () =>
 		seen.push(images.length);
 		return { verdict: "correct", feedback: "Right.", misconceptionTag: "" };
 	};
-	const base: LLMConfig = { provider: "custom", apiKey: "", model: "Claude Code", agent };
+	const base = { engine: "claudecode", model: "Claude Code", agent };
 	await gradeAnswer({ ...base, agentImages: true }, drawQ, note, "IS", [drawing, notePicture]);
 	await gradeAnswer({ ...base, agentImages: false }, drawQ, note, "IS", [drawing, notePicture]);
 	assert.deepEqual(seen, [2, 0]);
