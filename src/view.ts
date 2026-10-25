@@ -69,6 +69,7 @@ import { RECORD_RULES, RECORD_TOOLS, runRecordQuery, type RecordPort, type Study
 import { applyAnswer, projectSummaries } from "./record";
 import { SessionSaver } from "./sessionsaver";
 import { QuestionsScreen } from "./screens/questions";
+import { drawChats } from "./screens/chats";
 import { gradeStructured } from "./grading";
 import { forgetAgentProject, readAgentConcepts } from "./agentrecord";
 import { GRILL_ICON } from "./icon";
@@ -2167,85 +2168,15 @@ export class SessionView extends ItemView {
 		return lines.filter(Boolean).join("\n");
 	}
 
-	/** Every saved conversation, newest first: open one to carry on with it. */
+	/** Every saved conversation, newest first (see screens/chats.ts). */
 	private renderChats(): void {
-		const wrap = this.root("chats");
-		const screen = wrap.createDiv({ cls: "grill-body" });
-		const header = screen.createDiv({ cls: "grill-meta-row grill-mgmt-header" });
-		header.createSpan({ cls: "grill-score", text: "Chats" });
-		const back = header.createSpan({ cls: "grill-chip-link", text: "Back" });
-		back.onclick = () => this.renderStart();
-		const dir = `${this.plugin.store.learnDir()}/`;
-		const all = this.app.vault
-			.getMarkdownFiles()
-			.filter((f) => f.path.startsWith(dir))
-			.sort((a, b) => b.stat.ctime - a.stat.ctime);
-		const search = screen.createEl("input", { cls: "grill-mgmt-search", attr: { type: "search", placeholder: "Search chats...", "aria-label": "Search chats" } });
-		const list = screen.createDiv({ cls: "grill-home-suggestions grill-chats" });
-		const draw = (): void => {
-			list.empty();
-			const q = search.value.trim().toLowerCase();
-			const shown = all
-				.map((f) => {
-					const fm = this.app.metadataCache.getFileCache(f)?.frontmatter;
-					return { f, title: String(fm?.title ?? f.basename), note: String(fm?.note ?? ""), date: String(fm?.date ?? "") };
-				})
-				.filter((c) => !q || `${c.title} ${c.note}`.toLowerCase().includes(q))
-				.slice(0, 100);
-			if (!shown.length) {
-				list.createDiv({ cls: "grill-meta", text: all.length ? "No chat matches that." : "No chats yet. What you talk about in Chat is kept here." });
-				return;
-			}
-			for (const c of shown) {
-				const item = list.createDiv({ cls: "grill-chat-item" });
-				const row = item.createEl("button", { cls: "grill-home-suggestion", attr: { type: "button" } });
-				const words = row.createSpan({ cls: "grill-home-suggestion-words" });
-				words.createSpan({ cls: "grill-home-suggestion-label", text: c.title });
-				words.createSpan({ cls: "grill-home-suggestion-detail", text: [c.note && c.note !== "Your notes" ? c.note : "Your notes", shortDate(c.date)].filter(Boolean).join(" · ") });
-				row.onclick = () => void this.resumeLearn(c.f);
-				const acts = item.createDiv({ cls: "grill-chat-actions" });
-				const rename = acts.createEl("button", { cls: "grill-chip-link", text: "Rename", attr: { type: "button" } });
-				const remove = acts.createEl("button", { cls: "grill-chip-link", text: "Delete", attr: { type: "button" } });
-				rename.onclick = () => {
-					row.hide();
-					acts.hide();
-					const input = item.createEl("input", { cls: "grill-mgmt-search", attr: { type: "text", "aria-label": "New name" } });
-					input.value = c.title;
-					input.focus();
-					input.select();
-					let done = false;
-					const finish = async (keep: boolean): Promise<void> => {
-						if (done) return;
-						done = true;
-						const name = input.value.replace(/[\\/:*?"<>|#^[\]]/g, " ").replace(/\s+/g, " ").trim();
-						if (keep && name && name !== c.title) {
-							await this.renameChat(c.f, name);
-							// Obsidian reads the new title back a moment later.
-							window.setTimeout(draw, 300);
-						} else draw();
-					};
-					input.addEventListener("keydown", (e) => {
-						if (e.key === "Enter") void finish(true);
-						if (e.key === "Escape") void finish(false);
-					});
-					input.addEventListener("blur", () => void finish(true));
-				};
-				remove.onclick = () => {
-					acts.empty();
-					acts.createSpan({ cls: "grill-meta", text: "Delete this chat? " });
-					const yes = acts.createEl("button", { cls: "grill-chip-link grill-chat-delete", text: "Delete", attr: { type: "button" } });
-					const no = acts.createEl("button", { cls: "grill-chip-link", text: "Keep", attr: { type: "button" } });
-					yes.onclick = async () => {
-						await this.app.fileManager.trashFile(c.f);
-						all.splice(all.indexOf(c.f), 1);
-						draw();
-					};
-					no.onclick = () => draw();
-				};
-			}
-		};
-		search.addEventListener("input", draw);
-		draw();
+		drawChats(this.root("chats"), {
+			app: this.app,
+			dir: `${this.plugin.store.learnDir()}/`,
+			back: () => this.renderStart(),
+			open: (f) => void this.resumeLearn(f),
+			rename: (f, name) => this.renameChat(f, name),
+		});
 	}
 
 	/** Give a saved chat a name of one's own: its title, its heading, and its file name,
