@@ -12,7 +12,6 @@ import { learnerBrief, missesFromSessions, type PastSession } from "./brief";
 import { type AskSource, claudeCodeConversation, codexConversation, type Conversation, conversationsFromZip, exportConversations, importedLines, matchConversations, mergeImported, plainPrior, type PriorKnowledge } from "./imported";
 import { parseSessionNote, STAMP_RE } from "./sessionnote";
 import { CATCH_UP, ConceptMap, conceptPrefix, dueConceptCount, migrateResetScheduling, rebalanceDueDates, reconcileConcepts } from "./concepts";
-import { pairKey } from "./bridges";
 import {
 	ACTIVE_DAYS_BETWEEN_ARCS,
 	activeDayCount,
@@ -47,6 +46,7 @@ import { naturalSpeech, type SpeechSource } from "./speech";
 import { CloudAccount } from "./cloudaccount";
 import { GrillSettingTab } from "./settingstab";
 import { ModelAgreeModal, SavedPromptModal } from "./modals";
+import { renameInRecord } from "./renames";
 import { examLines } from "./exams";
 import { FETCH_TOOL, fetchedUrl, fetchPage } from "./web";
 import { speak, speakNatural } from "./tts";
@@ -1278,103 +1278,27 @@ export default class GrillPlugin extends Plugin {
 	 * leaving the old-name record in place (orphaned, same as if the note had been
 	 * deleted) is the safe default there. */
 	private async renameTrackedNote(oldName: string, newName: string): Promise<void> {
-		let touched = false;
-		if (this.mastery[oldName] && !this.mastery[newName]) {
-			this.mastery[newName] = this.mastery[oldName];
-			delete this.mastery[oldName];
-			touched = true;
-		}
-		// Concept ids bake the note name in as a prefix (`${note}::${kind}:${slug(label)}`
-		// — see generate-local.ts's extractConcepts), so patching only the `.note` display
-		// field in place (the old behaviour here) left every concept keyed under an id the
-		// next real extraction of this note can never produce again: reconcileConcepts
-		// would treat the renamed note as brand new, silently resetting FSRS scheduling to
-		// scratch (stability/streak/dueAt all null) while the correctly-relabeled-but-now-
-		// unreachable old entry sat there forever as dead weight, still counted as due by
-		// dueConceptCount/priorityNotes. Fix: re-key by swapping the note-name prefix — the
-		// suffix after the first "::" depends only on kind+label, never the note name, so
-		// this reconstructs exactly the id the next extraction (same, unchanged content)
-		// will compute, and scheduling carries over correctly instead of resetting.
-		const oldPrefix = conceptPrefix(oldName);
-		const newPrefix = conceptPrefix(newName);
-		for (const [id, cm] of Object.entries(this.concepts)) {
-			if (cm.note !== oldName || !id.startsWith(oldPrefix)) continue;
-			const newId = newPrefix + id.slice(oldPrefix.length);
-			if (this.concepts[newId]) continue; // already tracked under the new id; leave the old orphaned rather than clobber
-			cm.note = newName;
-			this.concepts[newId] = cm;
-			delete this.concepts[id];
-			touched = true;
-		}
-		if (touched) {
-			await this.store.saveMastery(this.mastery);
-			await this.store.saveConcepts(this.concepts);
-		}
-
-		const reg = await this.store.loadRegistry();
-		let regTouched = false;
-		for (const c of Object.values(reg)) {
-			const idx = c.notes.indexOf(oldName);
-			if (idx === -1) continue;
-			if (c.notes.includes(newName)) {
-				c.notes.splice(idx, 1); // already tracked under the new name too; drop the stale duplicate
-			} else {
-				c.notes[idx] = newName;
+		await this.store.editRecord(async () => {
+			const kept = {
+				mastery: this.mastery,
+				concepts: this.concepts,
+				registry: await this.store.loadRegistry(),
+				bank: await this.store.loadQuestionBank(),
+				embeddings: await this.store.loadEmbeddings(),
+				layout: await this.store.loadGraphLayout(),
+				bridges: await this.store.loadBridges(),
+			};
+			const touched = renameInRecord(kept, oldName, newName);
+			if (touched.has("mastery") || touched.has("concepts")) {
+				await this.store.saveMastery(kept.mastery);
+				await this.store.saveConcepts(kept.concepts);
 			}
-			regTouched = true;
-		}
-		if (regTouched) await this.store.saveRegistry(reg);
-
-		// Question bank: same id-prefix swap as concepts.json above, so a cached
-		// question's variants survive the rename instead of being orphaned and silently
-		// regenerated from scratch on next review. Also patch the cached entries' own
-		// `node` field directly — belt-and-suspenders alongside buildPrebuilt's serve-time
-		// re-stamp in view.ts, since anything reading the bank straight off disk (not
-		// through a live session) should see the current name too.
-		const bank = await this.store.loadQuestionBank();
-		let bankTouched = false;
-		for (const [id, entries] of Object.entries(bank)) {
-			if (!id.startsWith(oldPrefix)) continue;
-			const newId = newPrefix + id.slice(oldPrefix.length);
-			if (bank[newId]) continue; // already tracked under the new id; leave the old orphaned rather than clobber
-			for (const e of entries) if (e.node === oldName) e.node = newName;
-			bank[newId] = entries;
-			delete bank[id];
-			bankTouched = true;
-		}
-		if (bankTouched) await this.store.saveQuestionBank(bank);
-
-		// Embeddings and the map's saved node layout are both keyed directly by note
-		// basename with no id to reconstruct — a plain key swap, same as mastery above.
-		const embeddings = await this.store.loadEmbeddings();
-		if (embeddings[oldName] && !embeddings[newName]) {
-			embeddings[newName] = embeddings[oldName];
-			delete embeddings[oldName];
-			await this.store.saveEmbeddings(embeddings);
-		}
-		const layout = await this.store.loadGraphLayout();
-		if (layout[oldName] && !layout[newName]) {
-			layout[newName] = layout[oldName];
-			delete layout[oldName];
-			await this.store.saveGraphLayout(layout);
-		}
-
-		// Bridge suggestions are keyed by an order-independent pair key over both notes'
-		// basenames, with the basenames also duplicated into the record's own a/b fields —
-		// recompute the key and patch whichever side (a or b) matched the rename, so a
-		// pair already suggested/answered/linked/dismissed isn't re-adjudicated from
-		// scratch (and, for "dismissed", isn't re-suggested against the user's own call).
-		const bridges = await this.store.loadBridges();
-		let bridgesTouched = false;
-		for (const [key, rec] of Object.entries(bridges)) {
-			if (rec.a !== oldName && rec.b !== oldName) continue;
-			const newRec = { ...rec, a: rec.a === oldName ? newName : rec.a, b: rec.b === oldName ? newName : rec.b };
-			const newKey = pairKey(newRec.a, newRec.b);
-			delete bridges[key];
-			if (!bridges[newKey]) bridges[newKey] = newRec; // else already tracked under the new key; drop the stale duplicate
-			bridgesTouched = true;
-		}
-		if (bridgesTouched) await this.store.saveBridges(bridges);
+			if (touched.has("registry")) await this.store.saveRegistry(kept.registry);
+			if (touched.has("bank")) await this.store.saveQuestionBank(kept.bank);
+			if (touched.has("embeddings")) await this.store.saveEmbeddings(kept.embeddings);
+			if (touched.has("layout")) await this.store.saveGraphLayout(kept.layout);
+			if (touched.has("bridges")) await this.store.saveBridges(kept.bridges);
+		});
 	}
 
 	/** Does any markdown file in the vault still have this basename? */
