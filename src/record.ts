@@ -66,13 +66,17 @@ function fitName(s: string, most = 200): boolean {
 export const has = (map: object, key: string): boolean => Object.prototype.hasOwnProperty.call(map, key);
 const DIFFICULTIES: ReadonlySet<string> = new Set(["easy", "medium", "hard"]);
 
+/** The longest each of a result's fields may be. Longer text is cut; a longer note or
+ * concept id makes the result invalid. grill-mcp's tool input says the same. */
+export const RESULT_LIMITS = { note: 200, conceptId: 600, label: 200, question: 4000, answer: 8000, feedback: 4000, modelAnswer: 4000, misconception: 200 } as const;
+
 /** A result file's contents, checked; null when it isn't one. */
 export function parseResult(raw: unknown): InboxResult | null {
 	if (!raw || typeof raw !== "object") return null;
 	const r = raw as Record<string, unknown>;
 	const str = (k: string) => (typeof r[k] === "string" ? (r[k] as string) : "");
 	if (r.v !== RESULT_VERSION || !str("id") || !str("note") || !str("question") || !VERDICTS.has(str("verdict"))) return null;
-	if (!fitName(str("note")) || (str("conceptId") && !fitName(str("conceptId"), 600)) || !/^[\w-]{1,100}$/.test(str("id"))) return null;
+	if (!fitName(str("note"), RESULT_LIMITS.note) || (str("conceptId") && !fitName(str("conceptId"), RESULT_LIMITS.conceptId)) || !/^[\w-]{1,100}$/.test(str("id"))) return null;
 	if (Number.isNaN(new Date(str("at")).getTime())) return null;
 	const m = r.misconception as Record<string, unknown> | undefined;
 	const tag = m && typeof m.tag === "string" && !RESERVED.has(toTag(m.tag)) ? toTag(m.tag) : "";
@@ -84,14 +88,14 @@ export function parseResult(raw: unknown): InboxResult | null {
 		session: str("session") || str("id"),
 		...(str("conceptId") ? { conceptId: str("conceptId") } : {}),
 		note: str("note"),
-		...(str("label") ? { label: str("label").slice(0, 200) } : {}),
-		question: str("question").slice(0, 4000),
-		answer: str("answer").slice(0, 8000),
+		...(str("label") ? { label: str("label").slice(0, RESULT_LIMITS.label) } : {}),
+		question: str("question").slice(0, RESULT_LIMITS.question),
+		answer: str("answer").slice(0, RESULT_LIMITS.answer),
 		verdict: str("verdict") as Verdict,
 		...(DIFFICULTIES.has(str("difficulty")) ? { difficulty: str("difficulty") as QDifficulty } : {}),
-		...(str("feedback") ? { feedback: str("feedback").slice(0, 4000) } : {}),
-		...(str("modelAnswer") ? { modelAnswer: str("modelAnswer").slice(0, 4000) } : {}),
-		...(tag ? { misconception: { tag, label: typeof m?.label === "string" ? m.label.slice(0, 200) : "" } } : {}),
+		...(str("feedback") ? { feedback: str("feedback").slice(0, RESULT_LIMITS.feedback) } : {}),
+		...(str("modelAnswer") ? { modelAnswer: str("modelAnswer").slice(0, RESULT_LIMITS.modelAnswer) } : {}),
+		...(tag ? { misconception: { tag, label: typeof m?.label === "string" ? m.label.slice(0, RESULT_LIMITS.misconception) : "" } } : {}),
 	};
 }
 
@@ -237,6 +241,11 @@ function words(s: string): string[] {
 		.filter((w) => w.length > 2);
 }
 
+/** Whether a misconception, shown in these notes under this label, is on the topic. */
+export function matchesTopic(topic: string, notes: string[], label: string): boolean {
+	return notes.some((n) => topicScore(topic, { note: n, label }) > 0) || topicScore(topic, { note: "", label }) > 0;
+}
+
 /** How well a concept matches a topic: 0 for no match. The note name counts more
  * than the concept's label. Plain word overlap, no model. */
 export function topicScore(topic: string, c: { note: string; label: string }): number {
@@ -313,7 +322,7 @@ export function overview(state: RecordState, now = new Date()): Overview {
 export function activeMisconceptions(state: RecordState, topic: string | undefined, limit: number) {
 	return Object.values(state.registry)
 		.filter((m) => m.status === "active")
-		.filter((m) => !topic || m.notes.some((n) => topicScore(topic, { note: n, label: m.label }) > 0) || topicScore(topic, { note: "", label: m.label }) > 0)
+		.filter((m) => !topic || matchesTopic(topic, m.notes, m.label))
 		.sort((a, b) => b.count - a.count || b.lastSeen.localeCompare(a.lastSeen))
 		.slice(0, limit)
 		.map((m) => ({ tag: m.tag, label: m.label, notes: m.notes, count: m.count }));

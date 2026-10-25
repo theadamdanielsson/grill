@@ -9,7 +9,7 @@
  * agent.ts). Outside Grill, grill-mcp offers them too, with testing tools besides.
  */
 import { conceptLine, confusions, day } from "./brief";
-import { overview, topicScore, weakSpots, whatTheyKnow, type RecordState } from "./record";
+import { matchesTopic, overview, weakSpots, whatTheyKnow, type RecordState } from "./record";
 import type { ToolCall, ToolSpec } from "./stream";
 
 /** Studying Chat may offer: a button under its reply starts it in Test. */
@@ -25,6 +25,16 @@ export interface RecordPort {
 const topic = { type: "string", description: "A topic, note name or concept, matched on note names and concept labels." };
 const limit = { type: "integer", minimum: 1, maximum: 50 };
 
+/** The record's tools by what they do. Reading changes nothing. Testing records answers:
+ * grill-mcp offers it, and Grill keeps it out of its own Chat, where Test does that. */
+export const RECORD_TOOL_NAMES = {
+	readOnly: ["grill_overview", "grill_weak_spots", "grill_what_they_know"],
+	testing: ["grill_questions", "grill_record_answer"],
+} as const;
+
+/** A call to a read-only record tool, named in a title or in the code that made it. */
+export const RECORD_TOOL_RE = new RegExp(`grill_(${RECORD_TOOL_NAMES.readOnly.map((n) => n.replace(/^grill_/, "")).join("|")})`);
+
 export const RECORD_TOOLS: ToolSpec[] = [
 	{
 		name: "grill_overview",
@@ -39,7 +49,7 @@ export const RECORD_TOOLS: ToolSpec[] = [
 	{
 		name: "grill_what_they_know",
 		description: "Everything the record holds on a topic: each concept's status, chance of recall today, past answers and due date, and related misconceptions. Use it before explaining, to pitch the explanation at their level.",
-		input: { type: "object", properties: { topic, limit }, required: ["topic"], additionalProperties: false },
+		input: { type: "object", properties: { topic: { ...topic, minLength: 1 }, limit }, required: ["topic"], additionalProperties: false },
 	},
 	{
 		name: "grill_offer_study",
@@ -66,6 +76,37 @@ export const RECORD_RULES =
 	"When you recommend studying something (the reviews due, a retry of what they missed, a test on particular notes), call grill_offer_study for it, and a button that starts it appears under your reply. Say what you recommend and why; don't describe the buttons or tell them where to click.";
 
 export const isRecordTool = (name: string): boolean => RECORD_TOOLS.some((t) => t.name === name);
+
+/** What zodShape uses of zod. Passed in, so zod loads only where a tool is offered over MCP. */
+type Zod = { string(): any; number(): any; array(item: any): any; enum(values: [string, ...string[]]): any };
+type Prop = { type?: string; description?: string; enum?: [string, ...string[]]; minLength?: number; minimum?: number; maximum?: number; items?: Prop };
+
+/** A tool's input as a zod shape, built from its JSON Schema above, for MCP servers that
+ * take zod. Covers the schema features these tools use. */
+export function zodShape(z: Zod, spec: ToolSpec): Record<string, any> {
+	const field = (p: Prop): any => {
+		let s = p.enum
+			? z.enum(p.enum)
+			: p.type === "integer"
+				? z.number().int().min(p.minimum ?? -Infinity).max(p.maximum ?? Infinity)
+				: p.type === "array"
+					? z.array(field(p.items ?? {}))
+					: p.minLength
+						? z.string().min(p.minLength)
+						: z.string();
+		if (p.description) s = s.describe(p.description);
+		return s;
+	};
+	const props = (spec.input.properties ?? {}) as Record<string, Prop>;
+	const required = new Set((spec.input.required ?? []) as string[]);
+	return Object.fromEntries(Object.entries(props).map(([k, p]) => [k, required.has(k) ? field(p) : field(p).optional()]));
+}
+
+export const recordTool = (name: string): ToolSpec => {
+	const t = RECORD_TOOLS.find((x) => x.name === name);
+	if (!t) throw new Error(`No record tool ${name}`);
+	return t;
+};
 
 /** The line shown above the reply for a call. */
 export function recordToolLine(name: string, input: Record<string, unknown>): string {
@@ -115,7 +156,7 @@ export async function runRecordQuery(port: RecordPort | undefined, name: string,
 function openConfusions(s: RecordState, topic: string | undefined): string {
 	const open = confusions(s)
 		.filter((c) => c.state === "open")
-		.filter((c) => !topic || c.notes.some((n) => topicScore(topic, { note: n, label: c.label }) > 0) || topicScore(topic, { note: "", label: c.label }) > 0)
+		.filter((c) => !topic || matchesTopic(topic, c.notes, c.label))
 		.slice(0, 6);
 	if (!open.length) return "";
 	return `Confusions still showing in their answers:\n${open.map((c) => `- "${c.label}": named ${c.count} time${c.count === 1 ? "" : "s"}, in ${c.notes.join(", ")}; last ${day(c.lastSeen)}${c.said ? `. Last time wrote: "${c.said}"` : ""}`).join("\n")}`;

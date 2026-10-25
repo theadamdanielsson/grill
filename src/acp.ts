@@ -9,7 +9,7 @@
  * the same activity list and permission card as the other engines. When it must ask
  * is the program's own configuration; Grill sets it from the level (see opencode.ts).
  */
-import { recordToolLine } from "./recordtools";
+import { RECORD_TOOL_RE, recordToolLine } from "./recordtools";
 import { AgentEvent, AgentLevel, AgentResult, PermissionAnswer, PermissionAsk, pathWith } from "./agent";
 import { diffLines } from "./codex";
 
@@ -89,7 +89,7 @@ export function acpLine(call: Loose): string {
 	const title = str(call.title);
 	// Grill's own record, over MCP: named the way Chat names it everywhere else. opencode 2
 	// calls MCP tools from a short program it runs, so the name may be in that instead.
-	const record = /grill_(overview|weak_spots|what_they_know)/.exec(`${title} ${str(input.code)}`);
+	const record = RECORD_TOOL_RE.exec(`${title} ${str(input.code)}`);
 	if (record) return recordToolLine(record[0], input);
 	switch (kind) {
 		case "read":
@@ -284,7 +284,7 @@ export async function runAcpTurn(run: AcpRun, wire: AcpWire): Promise<AgentResul
 			if (!said && ready) {
 				call.said = true;
 				// Reading Grill's record counts as reading, in the summary under the reply.
-				if (/grill_(overview|weak_spots|what_they_know)/.test(`${str(call.title)} ${str(obj(call.rawInput)?.code)}`)) recordReads.add(id);
+				if (RECORD_TOOL_RE.test(`${str(call.title)} ${str(obj(call.rawInput)?.code)}`)) recordReads.add(id);
 				run.onEvent({ kind: "activity", tool: recordReads.has(id) ? "Read" : acpTool(str(call.kind)), line: acpLine(call) });
 			}
 			// Counted once it has been done, and only if it was: a declined change is not work.

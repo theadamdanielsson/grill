@@ -16,6 +16,7 @@ import { z } from "zod";
 import {
 	InboxResult,
 	INBOX_DIR,
+	RESULT_LIMITS,
 	RESULT_VERSION,
 	RecordState,
 	applyResults,
@@ -31,6 +32,7 @@ import { learnerBrief } from "../../src/brief";
 import { examLines } from "../../src/exams";
 import { safeMarkdown } from "../../src/safemd";
 import { renderAnswer } from "../../src/sessionnote";
+import { recordTool, zodShape } from "../../src/recordtools";
 import { HOME_RECORD_SEGMENTS, inboxFileName, PLUGIN_DATA_SEGMENTS, readPluginSettings, RECORD_FILES, SESSIONS_DIR } from "../../src/recordpaths";
 import type { QuestionBank } from "../../src/store";
 
@@ -245,10 +247,7 @@ export function buildServer(where: Where, chatOnly = false): McpServer {
 		{
 			title: "Weak spots",
 			description: "Concepts the person got wrong or only partly right last time, keeps missing, or is likely to have forgotten, weakest first, with their active misconceptions. Optionally limited to a topic (matched on note names and concept labels).",
-			inputSchema: {
-				topic: z.string().optional().describe("A topic, note name or concept. Leave out for the whole record."),
-				limit: z.number().int().min(1).max(50).optional(),
-			},
+			inputSchema: zodShape(z, recordTool("grill_weak_spots")),
 		},
 		guarded(async ({ topic, limit }: { topic?: string; limit?: number }) => {
 			const s = inView(where, load(where));
@@ -261,14 +260,12 @@ export function buildServer(where: Where, chatOnly = false): McpServer {
 		{
 			title: "What they know about a topic",
 			description: "Everything the record holds on a topic: each matching concept with its status, chance of recall today, past answers and when it is due, the notes it comes from, and related misconceptions. Use before explaining something, to pitch it at their level.",
-			inputSchema: {
-				topic: z.string().min(1).describe("A topic, note name or concept."),
-				limit: z.number().int().min(1).max(60).optional(),
-			},
+			inputSchema: zodShape(z, recordTool("grill_what_they_know")),
 		},
-		guarded(async ({ topic, limit }: { topic: string; limit?: number }) => {
+		// The schema requires the topic.
+		guarded(async ({ topic, limit }: { topic?: string; limit?: number }) => {
 			const s = inView(where, load(where));
-			return hasRecord(s) ? json(whatTheyKnow(s, topic, limit ?? 25)) : empty();
+			return hasRecord(s) ? json(whatTheyKnow(s, topic ?? "", limit ?? 25)) : empty();
 		}),
 	);
 
@@ -317,8 +314,8 @@ export function buildServer(where: Where, chatOnly = false): McpServer {
 			title: "Record an answer",
 			description: "Record one graded answer so it counts in the person's Grill record and schedule. Call once per question, right after grading it. Use the conceptId and note from grill_questions or grill_weak_spots when you have them.",
 			inputSchema: {
-				note: z.string().min(1).max(200).describe("The note (or, in a code repo, the file or topic) the question was about."),
-				conceptId: z.string().max(300).optional().describe("The concept id from another grill tool, when the question came from one."),
+				note: z.string().min(1).max(RESULT_LIMITS.note).describe("The note (or, in a code repo, the file or topic) the question was about."),
+				conceptId: z.string().max(RESULT_LIMITS.conceptId).optional().describe("The concept id from another grill tool, when the question came from one."),
 				label: z.string().optional().describe("A short name for the concept, when there is no conceptId."),
 				question: z.string().min(1),
 				answer: z.string().describe("What the person answered, in their words."),

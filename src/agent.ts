@@ -12,7 +12,7 @@
  *
  * The approach follows Claudian (github.com/YishenTu/claudian, MIT).
  */
-import { isRecordTool, RECORD_RULES, RECORD_TOOLS, recordToolLine, runRecordQuery, type RecordPort } from "./recordtools";
+import { isRecordTool, RECORD_RULES, RECORD_TOOL_NAMES, RECORD_TOOLS, recordToolLine, runRecordQuery, zodShape, type RecordPort } from "./recordtools";
 import type { CanUseTool, Options, PermissionMode, PermissionUpdate, SDKMessage, SpawnedProcess, SpawnOptions } from "@anthropic-ai/claude-agent-sdk";
 
 /** Claude Code's permission levels, by the names its own interface gives them. */
@@ -367,17 +367,11 @@ export async function runAgent(run: AgentRun): Promise<AgentResult> {
 	// and Test does the testing, so that server's testing tools are kept out too.
 	const record = run.record;
 	const { z } = await import("zod");
-	const limit = z.number().int().min(1).max(50).optional();
-	const shapes: Record<string, Record<string, import("zod").ZodType>> = {
-		grill_weak_spots: { topic: z.string().optional(), limit },
-		grill_what_they_know: { topic: z.string(), limit },
-		grill_offer_study: { kind: z.enum(["due", "misses", "notes"]), notes: z.array(z.string()).optional() },
-	};
 	const recordServer = record
 		? createSdkMcpServer({
 				name: RECORD_SERVER,
 				tools: RECORD_TOOLS.map((t) =>
-					tool(t.name, t.description, shapes[t.name] ?? {}, async (args) => {
+					tool(t.name, t.description, zodShape(z, t), async (args) => {
 						const r = await runRecordQuery(record, t.name, args as Record<string, unknown>);
 						return { content: [{ type: "text" as const, text: r.content }], ...(r.failed ? { isError: true } : {}) };
 					}),
@@ -434,7 +428,7 @@ export async function runAgent(run: AgentRun): Promise<AgentResult> {
 					mcpServers: { [RECORD_SERVER]: recordServer },
 					// Reading the record changes nothing: no permission card for it.
 					allowedTools: RECORD_TOOLS.map((t) => RECORD_PREFIX + t.name),
-					disallowedTools: ["grill_questions", "grill_record_answer"].map((n) => RECORD_PREFIX + n),
+					disallowedTools: RECORD_TOOL_NAMES.testing.map((n) => RECORD_PREFIX + n),
 				}
 			: {}),
 		// The user's own settings and the vault's, as when they run it in a terminal there.
