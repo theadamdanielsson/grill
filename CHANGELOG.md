@@ -1,5 +1,15 @@
 # Changelog
 
+## 8.7.7
+
+- **Keep what I read.** Settings, Study, Everything else sets how notes outside an exam
+  are scheduled. Study it like an exam is the default and works as before. Keep what I
+  read brings fewer new concepts in each day and lets reviews wait longer, for book
+  notes, highlights, articles and meeting notes you want to remember.
+- **Better picks from your notes.** A price such as "$150 or $100" is no longer taken
+  for a formula. Lines about the note itself, such as attendees, author, source or
+  date, are no longer turned into questions.
+
 ## 8.7.6
 
 - **Exams.** Settings, Study, Exams: add an exam, tick what it covers (the whole vault,
