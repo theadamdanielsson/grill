@@ -1120,7 +1120,9 @@ export class SessionView extends ItemView {
 			await this.plugin.store.savePdfCache(cache);
 			const concepts = extractConcepts(f.basename, text, s.questionFormats);
 			return concepts.length >= TEST_NOTE_CONCEPTS;
-		} catch {
+		} catch (e) {
+			// Offered anyway: a session that can't read it says so, where hiding it wouldn't.
+			console.warn(`Grill: couldn't tell whether ${f.path} has enough to test`, e);
 			return true;
 		}
 	}
@@ -2556,8 +2558,8 @@ export class SessionView extends ItemView {
 		try {
 			const file = await this.app.vault.create(path, `${safeMarkdown(text)}\n\nFrom a chat about [[${beside.basename}]].\n`);
 			await this.app.workspace.getLeaf("tab").openFile(file);
-		} catch {
-			new Notice("Grill: couldn't save that as a note.", 6000);
+		} catch (e) {
+			new Notice(`Grill: couldn't save that as a note (${(e as Error).message}).`, 6000);
 		}
 	}
 

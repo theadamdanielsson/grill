@@ -43,8 +43,8 @@ export interface StreamOptions {
 
 /** Nothing was written and nothing can be: ask without streaming. */
 export class StreamUnavailable extends Error {
-	constructor(why: string) {
-		super(why);
+	constructor(why: string, cause?: unknown) {
+		super(why, cause === undefined ? undefined : { cause });
 		this.name = "StreamUnavailable";
 	}
 }
@@ -407,7 +407,7 @@ export async function streamText(call: StreamCall, run: StreamRun): Promise<Stre
 			resp = await send(call.url, { method: "POST", headers: call.headers, body: JSON.stringify(call.body), signal: stop.signal });
 		} catch (e) {
 			if (run.signal?.aborted) throw e;
-			throw new StreamUnavailable(timedOut ? "no answer in time" : "could not be reached");
+			throw new StreamUnavailable(timedOut ? "no answer in time" : "could not be reached", e);
 		}
 		// A refusal is told properly by the request that doesn't stream: it knows each
 		// provider's errors and which are worth waiting out.
@@ -442,7 +442,9 @@ export async function streamText(call: StreamCall, run: StreamRun): Promise<Stre
 			takeLines(`${pending}\n`, call.kind).payloads.forEach(take);
 		} catch (e) {
 			if (run.signal?.aborted) throw e;
-			if (!shown() && !parts.size) throw new StreamUnavailable(timedOut ? "no answer in time" : "broke off before it began");
+			// Asked again without streaming, which knows each provider's errors; what went
+			// wrong here is kept as the cause.
+			if (!shown() && !parts.size) throw new StreamUnavailable(timedOut ? "no answer in time" : "broke off before it began", e);
 			if (e instanceof Error && e.name !== "AbortError" && !(e instanceof TypeError)) throw e;
 			throw new Error(timedOut ? "The reply stopped arriving part way through. Try again." : "The reply broke off part way through. Try again.");
 		}

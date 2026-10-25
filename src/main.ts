@@ -1268,6 +1268,7 @@ export default class GrillPlugin extends Plugin {
 						.catch(() => null);
 					if (file) this.agentSessionNotes.set(id, { file, entries, startedAt });
 				}
+				for (const r of failed) console.warn(`Grill: set aside an answer from ${r.via} on ${r.note}: ${r.why}`);
 				const bad = new Set(failed.map((r) => r.id));
 				for (const i of inbox) await (bad.has(i.result.id) ? this.store.setAsideInboxFile(i.path) : this.store.removeInboxFile(i.path));
 				await this.store.removeEmptyInbox();
@@ -1572,8 +1573,8 @@ export default class GrillPlugin extends Plugin {
 			for (let n = 2; this.app.vault.getAbstractFileByPath(path); n++) path = `${dir}/New prompt ${n}.md`;
 			const file = await this.app.vault.create(path, NEW_PROMPT);
 			await this.app.workspace.getLeaf(true).openFile(file);
-		} catch {
-			new Notice("Grill: couldn't create the prompt.", 6000);
+		} catch (e) {
+			new Notice(`Grill: couldn't create the prompt (${(e as Error).message}).`, 6000);
 		}
 	}
 

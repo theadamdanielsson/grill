@@ -150,10 +150,10 @@ export function applyResults(
 	state: RecordState,
 	results: InboxResult[],
 	opts: { allowNew: boolean; desiredRetention?: number; seen?: ReadonlySet<string> },
-): { applied: InboxResult[]; unknownConcept: InboxResult[]; failed: InboxResult[] } {
+): { applied: InboxResult[]; unknownConcept: InboxResult[]; failed: Array<InboxResult & { why: string }> } {
 	const applied: InboxResult[] = [];
 	const unknownConcept: InboxResult[] = [];
-	const failed: InboxResult[] = [];
+	const failed: Array<InboxResult & { why: string }> = [];
 	for (const given of [...results].sort((a, b) => a.at.localeCompare(b.at))) {
 		// Never twice: a fold that stopped part way, a file that could not be deleted, or
 		// a second device folding the same synced file.
@@ -190,8 +190,8 @@ export function applyResults(
 			}
 			refreshNote(state, r.note);
 			applied.push(r);
-		} catch {
-			failed.push(given);
+		} catch (e) {
+			failed.push({ ...given, why: e instanceof Error ? e.message : String(e) });
 		}
 	}
 	return { applied, unknownConcept, failed };
