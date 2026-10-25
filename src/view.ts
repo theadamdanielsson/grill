@@ -931,9 +931,7 @@ export class SessionView extends ItemView {
 
 		const finish = async (): Promise<void> => {
 			if (step === 2) s.includedFolders = [...this.onboardFolders];
-			s.dismissedOffers = [...new Set([...s.dismissedOffers, NEW_IN_7])];
-			s.onboarded = true;
-			await this.plugin.persist();
+			await this.plugin.settings.update({ dismissedOffers: [...new Set([...s.dismissedOffers, NEW_IN_7])], onboarded: true });
 			this.plugin.refreshStatusBar();
 			this.homeMode = "chat";
 			this.renderStart();
@@ -963,8 +961,7 @@ export class SessionView extends ItemView {
 				screen.createDiv({ cls: "grill-section-label", text: `${program.name} is on this computer` });
 				const use = screen.createEl("button", { text: `Start with ${program.name}`, cls: "mod-cta grill-start-btn grill-primary-cta" });
 				use.onclick = async () => {
-					s.chatEngine = program.id;
-					await this.plugin.persist();
+					await this.plugin.settings.update({ chatEngine: program.id });
 					next();
 				};
 			}
@@ -986,8 +983,7 @@ export class SessionView extends ItemView {
 				// A key whose account is open just carries on. Anything else asks the server
 				// (again): a first try that didn't get through must not cost the free credits.
 				if (s.apiKeys.grillcloud && this.plugin.cloudState === "ok") {
-					s.provider = "grillcloud";
-					await this.plugin.persist();
+					await this.plugin.settings.update({ provider: "grillcloud" });
 					next();
 					return;
 				}
@@ -1692,8 +1688,7 @@ export class SessionView extends ItemView {
 		const actions = card.createDiv({ cls: "grill-import-offer-actions" });
 		const no = actions.createEl("button", { cls: "grill-quiet-btn", text: "No thanks", attr: { type: "button" } });
 		const yes = actions.createEl("button", { cls: "mod-cta", text: "Share context", attr: { type: "button" } });
-		s.importAsked = true;
-		void this.plugin.persist();
+		void this.plugin.settings.update({ importAsked: true });
 		no.onclick = () => card.remove();
 		yes.onclick = async () => {
 			yes.disabled = no.disabled = true;
@@ -1739,8 +1734,7 @@ export class SessionView extends ItemView {
 		const open =
 			have.length > 1
 				? (): void => {
-						s.chatEngine = have[(have.indexOf(now) + 1) % have.length];
-						void this.plugin.persist();
+						void this.plugin.settings.update({ chatEngine: have[(have.indexOf(now) + 1) % have.length] });
 						after();
 					}
 				: (): void => this.plugin.openSettings();
@@ -1786,8 +1780,7 @@ export class SessionView extends ItemView {
 									.setTitle(m.name)
 									.setChecked(m.id === now.id)
 									.onClick(() => {
-										s.codexModel = m.id;
-										void this.plugin.persist();
+										void this.plugin.settings.update({ codexModel: m.id });
 										after();
 									}),
 							);
@@ -1809,8 +1802,7 @@ export class SessionView extends ItemView {
 								.setTitle(m.name)
 								.setChecked(m.id === now.id)
 								.onClick(() => {
-									s.claudeModel = m.id;
-									void this.plugin.persist();
+									void this.plugin.settings.update({ claudeModel: m.id });
 									after();
 								}),
 						);
@@ -1882,8 +1874,7 @@ export class SessionView extends ItemView {
 								.setTitle(m.name.replace(/^opencode\//, ""))
 								.setChecked(m.id === id)
 								.onClick(() => {
-									s.opencodeModel = m.id;
-									void this.plugin.persist();
+									void this.plugin.settings.update({ opencodeModel: m.id });
 									after();
 								}),
 						);
@@ -1969,8 +1960,7 @@ export class SessionView extends ItemView {
 			name: AGENT_LEVELS[at].name,
 			says: AGENT_LEVELS[at].says,
 			next: () => {
-				s.agentLevel = AGENT_LEVELS[(at + 1) % AGENT_LEVELS.length].id;
-				void this.plugin.persist();
+				void this.plugin.settings.update({ agentLevel: AGENT_LEVELS[(at + 1) % AGENT_LEVELS.length].id });
 				after();
 			},
 		};
@@ -5738,8 +5728,7 @@ export class SessionView extends ItemView {
 			};
 			const no = row.createEl("button", { text: "No thanks", cls: "grill-menu-btn" });
 			no.onclick = async () => {
-				s.dismissedOffers = [...new Set([...s.dismissedOffers, id])];
-				await this.plugin.persist();
+				await this.plugin.settings.update({ dismissedOffers: [...new Set([...s.dismissedOffers, id])] });
 				box.remove();
 			};
 		};

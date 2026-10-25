@@ -49,7 +49,7 @@ import { terminateOcrWorker } from "./ocr";
 import { countTrainableReviews, MIN_REVIEWS_FOR_OPTIMIZATION, optimizeFSRSWeights } from "./optimizer";
 import { dueFiles, duplicateBasenames } from "./scope";
 import { KeyStash, secretStore, vaultId } from "./secrets";
-import { CLAUDE_MODEL_ALIASES, CLAUDE_MODELS, NEW_PROMPT, promptMessage, SELECTION_ASKS, SelectionAsk, selectionMessage } from "./selection";
+import { NEW_PROMPT, promptMessage, SELECTION_ASKS, SelectionAsk, selectionMessage } from "./selection";
 import { GrillStore, type SessionEntry } from "./store";
 import { GRILL_ICON, registerGrillIcon } from "./icon";
 import { LoopbackToolServer } from "./loopback";
@@ -63,273 +63,13 @@ import { findSkills, runSkillTool, SKILL_TOOL, skillRules, type Skill, type Skil
 import type { ExtraTools } from "./vaulttools";
 import { hitsText, MEANING_TOOL, meaningQuery, search, updateIndex, type SearchIndex } from "./semantic";
 import { embedLocal, localEmbedModel } from "./embed-local";
-import { daysLeft, examDay, examLines, examName, whenWords, type Exam } from "./exams";
+import { daysLeft, examLines, examName, whenWords, type Exam } from "./exams";
 import { ExamModal } from "./exammodal";
 import { FETCH_TOOL, fetchedUrl, fetchPage } from "./web";
-import type { ColorMode, NumberMode } from "./mapview";
 import { listLanguages, listVoices, listVoicesForLang, onVoicesChanged, speak, speakNatural } from "./tts";
-import { DEFAULT_FOLDER } from "./recordpaths";
 import { countAgentChats, readAgentChats } from "./agentrecord";
 import { applyIntensity, intensityOf, type StudyIntensity } from "./settingstools";
-
-interface GrillSettings {
-	provider: ProviderId;
-	apiKeys: Record<ProviderId, string>;
-	models: Record<ProviderId, string>;
-	ollamaUrl: string;
-	/** Base URL for the custom OpenAI-compatible provider, e.g. https://openrouter.ai/api/v1 */
-	customBaseUrl: string;
-	questionsPerSession: number;
-	/** Vault folder holding mastery.json and session notes. Lives in the Tuning block:
-	 * "Grill" is right for essentially everyone, and moving it is a rename, not a
-	 * preference. */
-	folder: string;
-	/** In-session progress bar. On, and no longer a control — hiding your own progress
-	 * isn't a choice worth a row. Kept as a field so an install that turned it off
-	 * stays off; the same applies to `linkSessions` and `sessionDebrief` below. */
-	showProgress: boolean;
-	/** Wiki-link session transcripts to the quizzed notes. On; see `showProgress`. */
-	linkSessions: boolean;
-	/** Write each studied note's record (status, due, last tested, confusions) into
-	 * its own properties, for Bases views and other agents in the vault. Off: it
-	 * edits the user's notes. See props.ts. */
-	noteProperties: boolean;
-	/** Vault folders to exclude from sessions (relative paths). */
-	excludedFolders: string[];
-	/** Folders that ARE Grill's study material + graph (relative paths). Empty = the
-	 * whole vault. Chosen on first run; the universe of the learning graph. */
-	includedFolders: string[];
-	/** Folders with an exam date: their notes are scheduled to be ready by then (see
-	 * exams.ts). Set in Settings, Study, Exams; empty means no exams. */
-	exams: Exam[];
-	/** Notes outside an exam: studied like one (the default, as before), or kept to
-	 * remember what was read, on a gentler schedule (KEEP_RETENTION, KEEP_NEW_PER_DAY). */
-	everythingElse: "study" | "keep";
-	/** One-time flag: the first-run "what's Grill's" onboarding has been completed. */
-	onboarded: boolean;
-	/** Ids of point-of-use offers the user has turned down (see SessionView's
-	 * renderOffers). Two of Grill's features are off until asked for, not because
-	 * they're a matter of taste but because each downloads a model file the first time
-	 * it runs — so the ask happens where the feature would have helped, once, instead of
-	 * as a toggle in a settings page that assumes the reader already knows what image
-	 * occlusion or embedding-ranked context is. Declining is remembered here. */
-	dismissedOffers: string[];
-	/** Grill Cloud keys this vault used before the current one, newest first. A key is
-	 * a balance, so replacing one never throws the old one away. */
-	retiredCloudKeys: string[];
-	/** What this vault's last few Grill Cloud sessions cost, in credits, oldest first.
-	 * Shown back as a receipt ("your last session used 11"), never sent anywhere. */
-	cloudUsage: number[];
-	/** What the credits ring measures against: the balance after the last top-up
-	 * (`full`), and the balance last seen (`last`), by which a top-up is noticed. */
-	cloudRing: { full: number; last: number };
-	/** Account ids (hashes, never keys) of Grill Cloud keys deleted from this vault, so a
-	 * stale copy on another device can't bring one back. */
-	cloudGone: string[];
-	/** Send embedded images to the model when it supports vision. No longer a control:
-	 * the capability gate (supportsVision) is the whole decision, and a text-only model
-	 * never receives them either way. Kept as a field so an install that deliberately
-	 * turned it off stays off. Independent of image occlusion (`enableOcclusion` below):
-	 * that runs local OCR, not a model call. */
-	sendImages: boolean;
-	/** Image occlusion: redact a legible region of a note-embedded image (found via
-	 * local OCR, no AI key needed — see ocr.ts) and quiz on what's hidden there. Off
-	 * until asked for, because the first run is a real (~10MB, one-time, cached) engine
-	 * download; the asking happens at the end of a session whose own notes had diagrams
-	 * (see view.ts's renderOffers), not as a settings toggle. Desktop-only for now (see
-	 * view.ts's appendOcclusionConcepts). */
-	enableOcclusion: boolean;
-	/** Question formats: plain free-response only, or a mix that also includes
-	 * multiple-choice and fill-in-the-blank. "Mixed" costs a bit more prompt (AI mode)
-	 * per generation call, so it's a real toggle, not baked in unconditionally. */
-	questionFormats: "write" | "mixed" | "mc";
-	/** End-of-session AI debrief (one extra call per session). On; see `showProgress`.
-	 * Off falls back to a deterministic summary. Ignored for no-key sessions (always
-	 * deterministic). */
-	sessionDebrief: boolean;
-	/** Play short synthesized sound cues on each answer + at session end, with a
-	 * confetti burst on a perfect session. On by default. */
-	sounds: boolean;
-	/** Offer the hints written with each question while it is being answered. Off: a
-	 * test is a test, and help is asked for in words, which is recorded as help. */
-	testHints: boolean;
-	/** False for someone who came from the mode without AI (removed in 8.0) with a key
-	 * saved, until they have said the model may be used: nothing of theirs is sent to a
-	 * provider they had chosen not to use, just because the plugin was updated. */
-	modelAgreed: boolean;
-	/** What answers in Chat: the model chosen for questions and grading, or the Claude
-	 * Code installed on this computer, which can read and change the vault. */
-	chatEngine: "model" | "claudecode" | "codex" | "opencode";
-	/** Where Claude Code is, when it isn't in one of the usual places. */
-	claudePath: string;
-	/** Which of Claude Code's models answers in Chat; "" leaves it to Claude Code. */
-	claudeModel: string;
-	/** Where Codex is, when it isn't in one of the usual places. */
-	codexPath: string;
-	codexModel: string;
-	/** The offer to bring in questions asked in other AI chats has been answered. */
-	importAsked: boolean;
-	/** What another AI tool knows about the student, pasted by them. */
-	aboutMe: string;
-	/** Where opencode is, when it isn't Grill's own install or in one of the usual places. */
-	opencodePath: string;
-	/** Which of opencode's models answers in Chat, by its id; "" leaves it to opencode. */
-	opencodeModel: string;
-	/** Claude Code's permission level in Chat. */
-	agentLevel: "safe" | "plan" | "auto";
-	/** MCP servers for Chat on Grill Cloud or a key of one's own, as `.mcp.json` writes
-	 * them. "" is none. Kept here only where Obsidian has no keychain: they can carry
-	 * tokens, and this file travels with the vault (see `mcpConfig`). */
-	mcpServers: string;
-	/** Whether Chat on Grill Cloud or a key of one's own may load skills. */
-	useSkills: boolean;
-	/** Chat may find notes by meaning, with a small model run on this device. */
-	searchByMeaning: boolean;
-	/** Chat may read web pages, and search the web where the provider can. */
-	useWeb: boolean;
-	/** Read-aloud voice language: "" auto-detects per question from its text, an
-	 * explicit code (e.g. "it") always uses that language regardless of the question. */
-	ttsLanguage: string;
-	/** Read-aloud voice: "" auto-picks the best-quality installed voice for the
-	 * resolved language, a specific voiceURI always uses that exact voice. */
-	ttsVoiceURI: string;
-	/** Read aloud in a natural AI voice where one is to be had (Grill Cloud, or an
-	 * OpenAI key), instead of the device's own. On unless switched off. Nothing is sent
-	 * until a speaker button is pressed; then the text being read goes to the speech
-	 * provider, which the privacy policy and the Start free panel both say. */
-	naturalVoice: boolean;
-	/** Missing-link finder: surface a "these two notes should be linked" question in
-	 * AI sessions and offer to write the link. On, and no longer a control — it's a
-	 * headline feature, and the semantic half of it now turns itself on wherever the
-	 * configured provider has an embeddings API (see view.ts's appendBridgeTargets).
-	 * Kept as a field so an install that deliberately turned it off stays off. How many show
-	 * up isn't a count the student dials in — it's however many pairs the adjudicator
-	 * confirms are genuinely related this session (see view.ts's appendBridgeTargets
-	 * and BRIDGE_TARGET_CAP), naturally zero on a session with no real connections. */
-	graphInsights: boolean;
-	/** Rank a long note's content by on-device embedding similarity to its own concepts
-	 * (see generate-local.ts's selectRelevantTextSemantic) instead of exact-substring
-	 * matching, when deciding what survives into the AI prompt. Off by default: the
-	 * lexical ranker it upgrades already works, and this one fetches a ~130MB
-	 * model file from Hugging Face on first use. That download is worth asking about, so
-	 * it is — at the end of a session that actually had to trim something (see view.ts's
-	 * renderOffers), where the reader can see what it would have bought them. Falls
-	 * straight back to the lexical ranker on any failure either way. */
-	localEmbedContext: boolean;
-	/** The model localEmbedContext was accepted for. An acceptance given for another
-	 * model (the 25MB bge-micro-v2, before the 130MB multilingual one) is dropped on
-	 * load, so the offer asks again with the new size. */
-	localEmbedModel: string;
-	/** One-time flag: the note→concept scheduling reset has run. */
-	conceptsMigrated: boolean;
-	/** One-time flag: note counts lost before 8.0 have been rebuilt (see restoreNoteCounts). */
-	noteCountsRestored: boolean;
-	/** One-time flag: concepts have had their last miss filled in from the session notes
-	 * written before Grill kept it with the concept (see missesFromSessions). */
-	missesFilled: boolean;
-	/** One-time flag: legacy installs have had their stored old shipped defaults
-	 * (graphNumberMode "off", newConceptsPerDay 0) carried to the current defaults.
-	 * Guards the migration so it fires exactly once — after it, the user can freely
-	 * pick "off" / 0 again without being re-flipped on the next launch. */
-	legacyDefaultsMigrated: boolean;
-	/** One-time flag: installs where `newConceptsPerDay` was 0 have had it carried to
-	 * the shipped default once, the same protective one-shot as legacyDefaultsMigrated
-	 * above but for a later semantic change — 0 used to mean "no daily cap" (unlimited
-	 * new material every "Get grilled"); it now means what it reads as, zero new
-	 * concepts ever, so an untouched 0 needs carrying forward or those installs go
-	 * silently from unlimited to none. After this fires once, 0 sticks as a deliberate
-	 * choice. */
-	newConceptsCapMigrated: boolean;
-	/** What the graph's node colour encodes: the default 4-state mastery colour, or a
-	 * green-to-red gradient over a continuous metric. */
-	graphColorMode: ColorMode;
-	/** Numeric grade overlay on graph nodes: off, or a display scale. */
-	graphNumberMode: NumberMode;
-	/** How much a note's grade score weighs coverage (how much of the note is
-	 * confirmed) vs mastery (how well you'd currently recall the parts you've
-	 * studied), 0-100. */
-	graphCoverageWeight: number;
-	/** FSRS "desired retention", as a percent (70-97): the recall probability the
-	 * scheduler aims for at each concept's due date. Lower = shorter intervals =
-	 * things come due more often = progress feels faster, at the cost of more
-	 * reviews. Higher = longer intervals, fewer but higher-stakes reviews. */
-	desiredRetention: number;
-	/** This vault's own personalized FSRS-6 weights, fit by optimizer.ts from its
-	 * logged review history (concepts.ts's `reviewLog`) instead of the library's
-	 * pooled-population defaults — the way Anki's own optimizer personalizes per
-	 * user. null = library defaults (also the state until there's enough review
-	 * history to fit from — see MIN_REVIEWS_FOR_OPTIMIZATION). */
-	fsrsPersonalization: {
-		weights: number[];
-		fitAt: string;
-		reviewCount: number;
-		/** Percent reduction in prediction loss vs the library defaults, on this
-		 * vault's own data at fit time — shown so "personalized" isn't a black box. */
-		improvementPct: number;
-	} | null;
-	/** How many trainable reviews existed the last time a fit was ATTEMPTED, successful
-	 * or not. Distinct from `fsrsPersonalization.reviewCount`, which only records a fit
-	 * that produced weights: a run that finds no improvement leaves that null, so without
-	 * this the automatic pass would have no memory of having tried and would re-run a
-	 * heavy optimization after every single session forever. 0 = never attempted. */
-	fsrsLastFitAttemptReviews: number;
-	/** Weekdays (0=Sunday..6=Saturday) fuzzInterval steers reviews AWAY from when an
-	 * equally-uncrowded alternative day exists in its jitter window — "I don't want to
-	 * study much on Sundays" without a hard cap that would just push the backlog
-	 * elsewhere. Empty = no preference, matching every existing vault's behavior. */
-	easyDays: number[];
-	/** Cap on how many never-before-tested concepts a session will introduce per
-	 * calendar day, independent of questionsPerSession (which governs one sitting, not
-	 * the day). Once hit, sessions fill remaining slots from
-	 * due/review material instead, so the due backlog can't balloon from unlimited
-	 * new material outrunning how fast it can actually be reviewed. 0 = no cap. */
-	newConceptsPerDay: number;
-	/** Ceiling on new/untested material's share of ONE session (0-100%), whenever it's
-	 * allowed to claim any room at all — see FreshContentPolicy in mastery.ts. Modeled on
-	 * Anki's real v3 scheduler, not an arbitrary number: this is the analogue of Anki's
-	 * new-card daily limit acting as a ceiling within whatever room the backlog leaves. */
-	freshContentShare: number;
-	/** Anki calls the equivalent toggle "New cards ignore review limit." Off (default,
-	 * matching Anki's own default): a due/struggling backlog that already fills a session
-	 * leaves no room for new material — reviews win, same as any real SRS tool when
-	 * you're genuinely behind. On: new material always gets its full freshContentShare
-	 * regardless of backlog size — this plugin's old, only, silent behavior, now an
-	 * explicit opt-in instead of the default. */
-	freshContentAlwaysGuarantee: boolean;
-	/** Which preset the four scheduling numbers above (`desiredRetention`,
-	 * `newConceptsPerDay`, `freshContentShare`, `freshContentAlwaysGuarantee`) currently
-	 * express. The presets are the only thing the settings tab asks about; the raw
-	 * numbers are still what every scheduling call site reads, so nothing downstream
-	 * changes. "custom" means the numbers were hand-edited in the Tuning block and
-	 * match no preset — it is never offered as a choice, only reflected back. */
-	studyIntensity: StudyIntensity;
-	/** One-time flag: the four raw scheduling numbers above have been mapped onto a
-	 * `studyIntensity` preset (or onto "custom" when they match none). Guards the
-	 * mapping so it fires exactly once — after it, the preset is whatever the user
-	 * last chose, and hand-edited numbers keep reading as "custom". */
-	intensityMigrated: boolean;
-	/** One-time flag (6.1.0): stored models that are former shipped defaults were
-	 * moved to the current defaults (see migrateLegacyModels). */
-	modelsMigrated61: boolean;
-	modelsMigrated62: boolean;
-	/** Sorted basenames `warnOnDuplicateBasenames` last actually warned about, so the
-	 * same unresolved duplicate list doesn't re-notify on every single plugin load —
-	 * only a CHANGE in the duplicate set (a new collision, or an old one resolved)
-	 * warns again. The underlying check stays on: this only silences repeating
-	 * yourself, not the warning itself. */
-	lastWarnedDuplicateBasenames: string[];
-	/** One-time flag: has this vault's arcLog been seeded from its existing session
-	 * history yet (see GrillStore.backfillArcLog)? Sticks after the first launch so
-	 * a vault with genuinely no session history yet (arcLog legitimately empty)
-	 * doesn't get rescanned on every subsequent launch. */
-	arcBackfilled: boolean;
-	/** One-time flag (8.7.4): the Sessions view file was offered to a vault that
-	 * already had session notes. Not again after, so a deleted one stays deleted. */
-	sessionsBaseMade: boolean;
-	/** One-time flag (8.7.4): older session notes were given `correct`, `total` and
-	 * `notes` properties (GrillStore.backfillSessionFields). */
-	sessionsFilled: boolean;
-}
+import { defaultSettings, GONE_KEYS_KEPT, type GrillSettings, type SettingsHandle, isAccountId, readSettings, restoredSettings, RETIRED_KEYS_KEPT } from "./settings";
 
 interface PluginData {
 	settings: GrillSettings;
@@ -344,83 +84,6 @@ interface PluginData {
 	arc: { data: Arc; atActiveDays: number } | null;
 }
 
-function defaultSettings(): GrillSettings {
-	return {
-		provider: "anthropic",
-		apiKeys: { anthropic: "", openai: "", gemini: "", deepseek: "", ollama: "", custom: "", grillcloud: "" },
-		models: Object.fromEntries(
-			(Object.keys(PROVIDERS) as ProviderId[]).map((p) => [p, PROVIDERS[p].defaultModel]),
-		) as Record<ProviderId, string>,
-		ollamaUrl: OLLAMA_DEFAULT_URL,
-		customBaseUrl: "",
-		questionsPerSession: 5,
-		folder: DEFAULT_FOLDER,
-		showProgress: true,
-		linkSessions: true,
-		noteProperties: false,
-		excludedFolders: [],
-		includedFolders: [],
-		exams: [],
-		everythingElse: "study",
-		onboarded: false,
-		dismissedOffers: [],
-		retiredCloudKeys: [],
-		cloudUsage: [],
-		cloudRing: { full: 0, last: 0 },
-		cloudGone: [],
-		sendImages: true,
-		enableOcclusion: false,
-		questionFormats: "mixed",
-		sessionDebrief: true,
-		sounds: true,
-		testHints: false,
-		modelAgreed: true,
-		chatEngine: "model",
-		claudePath: "",
-		claudeModel: "",
-		codexPath: "",
-		codexModel: "",
-		importAsked: false,
-		aboutMe: "",
-		opencodePath: "",
-		opencodeModel: "",
-		agentLevel: "safe",
-		mcpServers: "",
-		useSkills: true,
-		searchByMeaning: false,
-		useWeb: true,
-		ttsLanguage: "",
-		ttsVoiceURI: "",
-		naturalVoice: true,
-		graphInsights: true,
-		localEmbedContext: false,
-		localEmbedModel: "",
-		conceptsMigrated: false,
-		noteCountsRestored: false,
-		missesFilled: false,
-		graphColorMode: "mastery",
-		graphNumberMode: "percent",
-		graphCoverageWeight: 15,
-		desiredRetention: 90,
-		fsrsPersonalization: null,
-		fsrsLastFitAttemptReviews: 0,
-		easyDays: [],
-		newConceptsPerDay: 20,
-		freshContentShare: 30,
-		freshContentAlwaysGuarantee: false,
-		legacyDefaultsMigrated: false,
-		newConceptsCapMigrated: false,
-		studyIntensity: "steady",
-		intensityMigrated: false,
-		modelsMigrated61: false,
-		modelsMigrated62: false,
-		lastWarnedDuplicateBasenames: [],
-		arcBackfilled: false,
-		sessionsBaseMade: false,
-		sessionsFilled: false,
-	};
-}
-
 /** Makes `target` hold what `from` holds, keeping the object itself: open panes keep a
  * reference to it. */
 function replaceContents<T extends object>(target: T, from: T): void {
@@ -430,6 +93,14 @@ function replaceContents<T extends object>(target: T, from: T): void {
 
 export default class GrillPlugin extends Plugin {
 	data: PluginData = { settings: defaultSettings(), calibration: [], arcLog: [], arc: null };
+	/** Settings, read and changed together with saving them. */
+	settings: SettingsHandle = {
+		get: () => this.data.settings,
+		update: async (patch) => {
+			Object.assign(this.data.settings, patch);
+			await this.persist();
+		},
+	};
 	store!: GrillStore;
 	/** In-memory mastery cache; source of truth is <folder>/mastery.json. */
 	mastery: MasteryMap = {};
@@ -447,10 +118,8 @@ export default class GrillPlugin extends Plugin {
 
 	async onload(): Promise<void> {
 		const stored = (await this.loadData()) as Partial<PluginData> | null;
-		const settings = defaultSettings();
 		const s: Partial<GrillSettings> = stored?.settings ?? {};
-		if (s.provider && s.provider in PROVIDERS) settings.provider = s.provider;
-		if (s.apiKeys) settings.apiKeys = { ...settings.apiKeys, ...s.apiKeys };
+		const settings = readSettings(s as Record<string, unknown>);
 		// Keys still sitting in data.json (every install from before 6.2) move to
 		// Obsidian's keychain on the persist() further down; from then on they're
 		// read back from there. See secrets.ts.
@@ -468,79 +137,10 @@ export default class GrillPlugin extends Plugin {
 		};
 		this.keys = new KeyStash(secretStore(this.app), vaultId(this.app));
 		settings.apiKeys = this.keys.load(settings.apiKeys);
-		if (s.models) settings.models = { ...settings.models, ...s.models };
-		if (typeof s.ollamaUrl === "string" && s.ollamaUrl.trim()) settings.ollamaUrl = s.ollamaUrl.trim();
-		if (typeof s.customBaseUrl === "string") settings.customBaseUrl = s.customBaseUrl.trim();
-		if (typeof s.questionsPerSession === "number") settings.questionsPerSession = s.questionsPerSession;
-		if (typeof s.folder === "string" && s.folder.trim()) settings.folder = s.folder.trim();
-		if (typeof s.showProgress === "boolean") settings.showProgress = s.showProgress;
-		if (typeof s.linkSessions === "boolean") settings.linkSessions = s.linkSessions;
-		if (typeof s.noteProperties === "boolean") settings.noteProperties = s.noteProperties;
-		if (Array.isArray(s.excludedFolders))
-			settings.excludedFolders = s.excludedFolders.filter((v): v is string => typeof v === "string");
-		if (Array.isArray(s.includedFolders))
-			settings.includedFolders = s.includedFolders.filter((v): v is string => typeof v === "string");
-		if (Array.isArray(s.exams))
-			settings.exams = s.exams
-				.filter((e): e is Exam => !!e && Array.isArray(e.folders) && typeof e.date === "string" && !!examDay(e.date))
-				.map((e) => ({ folders: e.folders.filter((v): v is string => typeof v === "string"), date: e.date }))
-				.filter((e) => e.folders.length);
-		if (s.everythingElse === "study" || s.everythingElse === "keep") settings.everythingElse = s.everythingElse;
-		if (typeof s.onboarded === "boolean") settings.onboarded = s.onboarded;
-		if (Array.isArray(s.cloudGone)) settings.cloudGone = s.cloudGone.filter(isAccountId).slice(-GONE_KEYS_KEPT);
-		if (Array.isArray(s.cloudUsage)) settings.cloudUsage = s.cloudUsage.filter((n) => typeof n === "number" && n > 0 && n < 100_000).slice(-10);
-		if (s.cloudRing && typeof s.cloudRing.full === "number" && typeof s.cloudRing.last === "number") {
-			settings.cloudRing = { full: Math.max(0, s.cloudRing.full), last: Math.max(0, s.cloudRing.last) };
-		}
-		if (Array.isArray(s.retiredCloudKeys)) settings.retiredCloudKeys = s.retiredCloudKeys.filter((k) => typeof k === "string" && isCloudKey(k)).slice(0, RETIRED_KEYS_KEPT);
-		if (Array.isArray(s.dismissedOffers))
-			settings.dismissedOffers = s.dismissedOffers.filter((v): v is string => typeof v === "string");
-		if (typeof s.sendImages === "boolean") settings.sendImages = s.sendImages;
-		if (typeof s.enableOcclusion === "boolean") settings.enableOcclusion = s.enableOcclusion;
-		if (s.questionFormats === "write" || s.questionFormats === "mixed" || s.questionFormats === "mc") settings.questionFormats = s.questionFormats;
-		if (typeof s.sessionDebrief === "boolean") settings.sessionDebrief = s.sessionDebrief;
-		if (typeof s.sounds === "boolean") settings.sounds = s.sounds;
-		if (typeof s.testHints === "boolean") settings.testHints = s.testHints;
 		// 7.x had modes that used no model for questions, for grading, or for either.
 		// Whoever was on one is asked before 8.0 sends anything: see `askToUseModel`.
 		const old = s as { questionSource?: unknown; gradingMode?: unknown };
-		if (typeof s.modelAgreed === "boolean") settings.modelAgreed = s.modelAgreed;
-		else if (old.questionSource === "local" || old.gradingMode === "self") settings.modelAgreed = false;
-		if (s.chatEngine === "model" || s.chatEngine === "claudecode" || s.chatEngine === "codex" || s.chatEngine === "opencode") settings.chatEngine = s.chatEngine;
-		if (typeof s.claudePath === "string") settings.claudePath = s.claudePath;
-		if (typeof s.claudeModel === "string") {
-			const id = CLAUDE_MODEL_ALIASES[s.claudeModel] ?? s.claudeModel;
-			if (CLAUDE_MODELS.some((m) => m.id === id)) settings.claudeModel = id;
-		}
-		if (typeof s.codexPath === "string") settings.codexPath = s.codexPath;
-		if (typeof s.codexModel === "string") settings.codexModel = s.codexModel;
-		if (typeof s.importAsked === "boolean") settings.importAsked = s.importAsked;
-		if (typeof s.aboutMe === "string") settings.aboutMe = s.aboutMe;
-		if (typeof s.opencodePath === "string") settings.opencodePath = s.opencodePath;
-		if (typeof s.opencodeModel === "string") settings.opencodeModel = s.opencodeModel;
-		if (s.agentLevel === "safe" || s.agentLevel === "plan" || s.agentLevel === "auto") settings.agentLevel = s.agentLevel;
-		if (typeof s.mcpServers === "string") settings.mcpServers = s.mcpServers;
-		if (typeof s.useSkills === "boolean") settings.useSkills = s.useSkills;
-		if (typeof s.searchByMeaning === "boolean") settings.searchByMeaning = s.searchByMeaning;
-		if (typeof s.useWeb === "boolean") settings.useWeb = s.useWeb;
-		if (typeof s.ttsLanguage === "string") settings.ttsLanguage = s.ttsLanguage;
-		if (typeof s.ttsVoiceURI === "string") settings.ttsVoiceURI = s.ttsVoiceURI;
-		if (s.naturalVoice === false) settings.naturalVoice = false;
-		if (typeof s.graphInsights === "boolean") settings.graphInsights = s.graphInsights;
-		if (typeof s.localEmbedContext === "boolean" && s.localEmbedModel === localEmbedModel()) {
-			settings.localEmbedContext = s.localEmbedContext;
-			settings.localEmbedModel = s.localEmbedModel;
-		}
-		if (typeof s.conceptsMigrated === "boolean") settings.conceptsMigrated = s.conceptsMigrated;
-		if (typeof s.noteCountsRestored === "boolean") settings.noteCountsRestored = s.noteCountsRestored;
-		if (typeof s.missesFilled === "boolean") settings.missesFilled = s.missesFilled;
-		if (["mastery", "recency", "dueness", "misconceptions"].includes(s.graphColorMode as string)) {
-			settings.graphColorMode = s.graphColorMode as ColorMode;
-		}
-		if (["off", "percent", "letter"].includes(s.graphNumberMode as string)) {
-			settings.graphNumberMode = s.graphNumberMode as NumberMode;
-		}
-		if (typeof s.graphCoverageWeight === "number") settings.graphCoverageWeight = s.graphCoverageWeight;
+		if (typeof s.modelAgreed !== "boolean" && (old.questionSource === "local" || old.gradingMode === "self")) settings.modelAgreed = false;
 		// One-time migration: 60 was the only default this setting ever shipped with,
 		// before the mastery model rewrite (graph.ts) dropped the shipped default to 15
 		// — the old figure was tuned around a lifetime-accuracy score that doesn't exist
@@ -548,35 +148,6 @@ export default class GrillPlugin extends Plugin {
 		// slider; carry untouched installs to the new default instead of leaving them
 		// stuck weighting coverage 4x heavier than intended against the new score.
 		if (s.graphCoverageWeight === 60) settings.graphCoverageWeight = 15;
-		if (typeof s.desiredRetention === "number") settings.desiredRetention = s.desiredRetention;
-		if (
-			s.fsrsPersonalization &&
-			Array.isArray(s.fsrsPersonalization.weights) &&
-			s.fsrsPersonalization.weights.every((w) => typeof w === "number") &&
-			typeof s.fsrsPersonalization.fitAt === "string"
-		) {
-			settings.fsrsPersonalization = s.fsrsPersonalization;
-		}
-		if (typeof s.fsrsLastFitAttemptReviews === "number") settings.fsrsLastFitAttemptReviews = s.fsrsLastFitAttemptReviews;
-		if (Array.isArray(s.easyDays)) {
-			settings.easyDays = s.easyDays.filter((d): d is number => typeof d === "number" && d >= 0 && d <= 6);
-		}
-		if (typeof s.newConceptsPerDay === "number") settings.newConceptsPerDay = s.newConceptsPerDay;
-		if (typeof s.freshContentShare === "number") settings.freshContentShare = s.freshContentShare;
-		if (typeof s.freshContentAlwaysGuarantee === "boolean") settings.freshContentAlwaysGuarantee = s.freshContentAlwaysGuarantee;
-		if (typeof s.legacyDefaultsMigrated === "boolean") settings.legacyDefaultsMigrated = s.legacyDefaultsMigrated;
-		if (typeof s.newConceptsCapMigrated === "boolean") settings.newConceptsCapMigrated = s.newConceptsCapMigrated;
-		if (s.studyIntensity === "relaxed" || s.studyIntensity === "steady" || s.studyIntensity === "intense" || s.studyIntensity === "custom")
-			settings.studyIntensity = s.studyIntensity;
-		if (typeof s.intensityMigrated === "boolean") settings.intensityMigrated = s.intensityMigrated;
-		if (typeof s.modelsMigrated61 === "boolean") settings.modelsMigrated61 = s.modelsMigrated61;
-		if (typeof s.modelsMigrated62 === "boolean") settings.modelsMigrated62 = s.modelsMigrated62;
-		if (Array.isArray(s.lastWarnedDuplicateBasenames)) {
-			settings.lastWarnedDuplicateBasenames = s.lastWarnedDuplicateBasenames.filter((v): v is string => typeof v === "string");
-		}
-		if (typeof s.arcBackfilled === "boolean") settings.arcBackfilled = s.arcBackfilled;
-		if (typeof s.sessionsBaseMade === "boolean") settings.sessionsBaseMade = s.sessionsBaseMade;
-		if (typeof s.sessionsFilled === "boolean") settings.sessionsFilled = s.sessionsFilled;
 		// One-time upgrade for legacy installs. persist() writes the whole settings
 		// object, so an existing user has the old shipped defaults saved to disk —
 		// changing defaultSettings() alone never reaches them. Carry the two changed
@@ -1587,8 +1158,7 @@ export default class GrillPlugin extends Plugin {
 			dupes.length === s.lastWarnedDuplicateBasenames.length &&
 			dupes.every((d, i) => d === s.lastWarnedDuplicateBasenames[i]);
 		if (unchanged) return;
-		s.lastWarnedDuplicateBasenames = dupes;
-		void this.persist();
+		void this.settings.update({ lastWarnedDuplicateBasenames: dupes });
 		if (!dupes.length) return; // the only change worth persisting silently: it just resolved
 		const shown = dupes.slice(0, 5).join(", ");
 		const more = dupes.length > 5 ? ` and ${dupes.length - 5} more` : "";
@@ -2159,8 +1729,7 @@ export default class GrillPlugin extends Plugin {
 		s.modelAgreed = false;
 		if (!usable) {
 			// Nothing saved that could be used: there is nothing to agree to, only to say.
-			s.modelAgreed = true;
-			void this.persist();
+			void this.settings.update({ modelAgreed: true });
 			new Notice("Grill 8 needs a model: the mode without AI was removed. Start free with Grill Cloud or add a key in settings. Your schedule and questions are kept.", 15000);
 			return false;
 		}
@@ -2767,8 +2336,7 @@ ${body}
 			reused = !!usable;
 		}
 		const was = { provider: s.provider };
-		s.provider = "grillcloud";
-		await this.persist();
+		await this.settings.update({ provider: "grillcloud" });
 		// That save reads the file first, and may have found another device's key there.
 		const key = s.apiKeys.grillcloud;
 		await this.linkCloudCheckout(key);
@@ -3088,14 +2656,9 @@ class SavedPromptModal extends FuzzySuggestModal<TFile> {
 	}
 }
 
-/** How many replaced Grill Cloud keys a vault keeps, in case one still has credits. */
-const RETIRED_KEYS_KEPT = 20;
 /** Where the key in use is noted for the other vaults on this device. */
 const DEVICE_CLOUD_KEY = "grill-cloud-device-key";
 const DEVICE_CLOUD_GONE = "grill-cloud-device-gone";
-/** How many deleted keys' ids are remembered. */
-const GONE_KEYS_KEPT = 50;
-const isAccountId = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{64}$/.test(v);
 
 const CUSTOM = "__custom__";
 
@@ -3304,37 +2867,7 @@ export class GrillSettingTab extends PluginSettingTab {
 	 * doc comments on GrillSettings). */
 	private async restoreDefaults(): Promise<void> {
 		const s = this.plugin.data.settings;
-		this.plugin.data.settings = {
-			...defaultSettings(),
-			provider: s.provider,
-			apiKeys: s.apiKeys,
-			models: s.models,
-			ollamaUrl: s.ollamaUrl,
-			customBaseUrl: s.customBaseUrl,
-			folder: s.folder,
-			includedFolders: s.includedFolders,
-			excludedFolders: s.excludedFolders,
-			exams: s.exams,
-			everythingElse: s.everythingElse,
-			onboarded: s.onboarded,
-			modelAgreed: s.modelAgreed,
-			dismissedOffers: s.dismissedOffers,
-			retiredCloudKeys: s.retiredCloudKeys,
-			cloudUsage: s.cloudUsage,
-			cloudRing: s.cloudRing,
-			cloudGone: s.cloudGone,
-			conceptsMigrated: s.conceptsMigrated,
-			legacyDefaultsMigrated: s.legacyDefaultsMigrated,
-			newConceptsCapMigrated: s.newConceptsCapMigrated,
-			intensityMigrated: s.intensityMigrated,
-			modelsMigrated61: s.modelsMigrated61,
-			modelsMigrated62: s.modelsMigrated62,
-			arcBackfilled: s.arcBackfilled,
-			sessionsBaseMade: s.sessionsBaseMade,
-			sessionsFilled: s.sessionsFilled,
-			noteProperties: s.noteProperties,
-			fsrsLastFitAttemptReviews: s.fsrsLastFitAttemptReviews,
-		};
+		this.plugin.data.settings = restoredSettings(s);
 		// defaultSettings() nulls fsrsPersonalization, but the fitted weights are also
 		// held in ts-fsrs' own module-level config — without this they stay live for the
 		// rest of the session and only actually reset on the next Obsidian reload. The
@@ -3371,8 +2904,7 @@ export class GrillSettingTab extends PluginSettingTab {
 						.setValue(source !== null && s.naturalVoice)
 						.setDisabled(source === null)
 						.onChange(async (v) => {
-							s.naturalVoice = v;
-							await this.plugin.persist();
+							await this.plugin.settings.update({ naturalVoice: v });
 						}),
 				),
 		};
@@ -3440,8 +2972,7 @@ export class GrillSettingTab extends PluginSettingTab {
 
 		/** Editing any raw scheduling number means the preset no longer describes them. */
 		const toCustom = async (): Promise<void> => {
-			s.studyIntensity = "custom";
-			await this.plugin.persist();
+			await this.plugin.settings.update({ studyIntensity: "custom" });
 		};
 
 		const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -3505,8 +3036,7 @@ export class GrillSettingTab extends PluginSettingTab {
 								.setTooltip(full)
 								.setValue(s.easyDays.includes(weekday))
 								.onChange(async (v) => {
-									s.easyDays = v ? [...new Set([...s.easyDays, weekday])] : s.easyDays.filter((d) => d !== weekday);
-									await this.plugin.persist();
+									await this.plugin.settings.update({ easyDays: v ? [...new Set([...s.easyDays, weekday])] : s.easyDays.filter((d) => d !== weekday) });
 								}),
 						);
 					});
@@ -3520,8 +3050,7 @@ export class GrillSettingTab extends PluginSettingTab {
 				s.graphCoverageWeight,
 				(v) => `${v}% coverage`,
 				async (v) => {
-					s.graphCoverageWeight = v;
-					await this.plugin.persist();
+					await this.plugin.settings.update({ graphCoverageWeight: v });
 					this.plugin.refreshMapDisplay();
 				},
 			),
@@ -3576,8 +3105,7 @@ export class GrillSettingTab extends PluginSettingTab {
 							.setPlaceholder("Grill")
 							.setValue(s.folder)
 							.onChange(async (v) => {
-								s.folder = v.trim() || "Grill";
-								await this.plugin.persist();
+								await this.plugin.settings.update({ folder: v.trim() || "Grill" });
 							}),
 					),
 			},
@@ -3588,8 +3116,7 @@ export class GrillSettingTab extends PluginSettingTab {
 				build: (setting) =>
 					setting.addToggle((t) =>
 						t.setValue(s.noteProperties).onChange(async (v) => {
-							s.noteProperties = v;
-							await this.plugin.persist();
+							await this.plugin.settings.update({ noteProperties: v });
 							await this.plugin.syncNoteProperties(v);
 						}),
 					),
@@ -3779,8 +3306,7 @@ export class GrillSettingTab extends PluginSettingTab {
 				if (!usingCloud && !empty) {
 					setting.addButton((b) => {
 						b.setButtonText("Use Grill Cloud").onClick(async () => {
-							s.provider = "grillcloud";
-							await this.plugin.persist();
+							await this.plugin.settings.update({ provider: "grillcloud" });
 							this.rerender();
 						});
 						// One lit button in the card: the plan's, when it is on offer.
@@ -4190,8 +3716,7 @@ export class GrillSettingTab extends PluginSettingTab {
 				Math.min(Math.max(s.questionsPerSession, 1), 50),
 				(v) => String(v),
 				async (v) => {
-					s.questionsPerSession = v;
-					await this.plugin.persist();
+					await this.plugin.settings.update({ questionsPerSession: v });
 				},
 			),
 			// One choice standing in for the four FSRS/new-material numbers Grill actually
@@ -4232,8 +3757,7 @@ export class GrillSettingTab extends PluginSettingTab {
 							.addOption("write", "Write only")
 							.setValue(s.questionFormats)
 							.onChange(async (v) => {
-								s.questionFormats = v === "write" ? "write" : v === "mc" ? "mc" : "mixed";
-								await this.plugin.persist();
+								await this.plugin.settings.update({ questionFormats: v === "write" ? "write" : v === "mc" ? "mc" : "mixed" });
 							}),
 					),
 			},
@@ -4244,8 +3768,7 @@ export class GrillSettingTab extends PluginSettingTab {
 				build: (setting) =>
 					setting.addToggle((t) =>
 						t.setValue(s.testHints).onChange(async (v) => {
-							s.testHints = v;
-							await this.plugin.persist();
+							await this.plugin.settings.update({ testHints: v });
 						}),
 					),
 			},
@@ -4262,8 +3785,7 @@ export class GrillSettingTab extends PluginSettingTab {
 							.addOption("opencode", "opencode")
 							.setValue(s.chatEngine)
 							.onChange(async (v) => {
-								s.chatEngine = v === "claudecode" || v === "codex" || v === "opencode" ? v : "model";
-								await this.plugin.persist();
+								await this.plugin.settings.update({ chatEngine: v === "claudecode" || v === "codex" || v === "opencode" ? v : "model" });
 							}),
 					),
 			},
@@ -4277,8 +3799,7 @@ export class GrillSettingTab extends PluginSettingTab {
 							.setPlaceholder("Found automatically")
 							.setValue(s.claudePath)
 							.onChange(async (v) => {
-								s.claudePath = v.trim();
-								await this.plugin.persist();
+								await this.plugin.settings.update({ claudePath: v.trim() });
 							}),
 					),
 			},
@@ -4292,8 +3813,7 @@ export class GrillSettingTab extends PluginSettingTab {
 							.setPlaceholder("Found automatically")
 							.setValue(s.codexPath)
 							.onChange(async (v) => {
-								s.codexPath = v.trim();
-								await this.plugin.persist();
+								await this.plugin.settings.update({ codexPath: v.trim() });
 							}),
 					),
 			},
@@ -4304,8 +3824,7 @@ export class GrillSettingTab extends PluginSettingTab {
 				build: (setting) =>
 					setting.addToggle((t) =>
 						t.setValue(s.sounds).onChange(async (v) => {
-							s.sounds = v;
-							await this.plugin.persist();
+							await this.plugin.settings.update({ sounds: v });
 						}),
 					),
 			},
@@ -4334,8 +3853,7 @@ export class GrillSettingTab extends PluginSettingTab {
 							.setPlaceholder("Whole vault")
 							.setValue(s.includedFolders.join(", "))
 							.onChange(async (v) => {
-								s.includedFolders = folderList(v);
-								await this.plugin.persist();
+								await this.plugin.settings.update({ includedFolders: folderList(v) });
 							}),
 					),
 			},
@@ -4349,8 +3867,7 @@ export class GrillSettingTab extends PluginSettingTab {
 							.setPlaceholder("Templates, Inbox")
 							.setValue(s.excludedFolders.join(", "))
 							.onChange(async (v) => {
-								s.excludedFolders = folderList(v);
-								await this.plugin.persist();
+								await this.plugin.settings.update({ excludedFolders: folderList(v) });
 							}),
 					),
 			},
@@ -4419,8 +3936,7 @@ export class GrillSettingTab extends PluginSettingTab {
 				.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 		const open = (exam: Exam | null): void =>
 			new ExamModal(this.app, folders(), exam, async (saved) => {
-				s.exams = exam ? s.exams.map((x) => (x === exam ? saved : x)) : [...s.exams, saved];
-				await this.plugin.persist();
+				await this.plugin.settings.update({ exams: exam ? s.exams.map((x) => (x === exam ? saved : x)) : [...s.exams, saved] });
 				new Notice(`Grill: ${examName(saved)} now scheduled for your exam ${whenWords(daysLeft(saved, new Date()))}.`, 6000);
 				this.rerender();
 			}).open();
@@ -4434,8 +3950,7 @@ export class GrillSettingTab extends PluginSettingTab {
 						.setIcon("x")
 						.setTooltip("Remove")
 						.onClick(async () => {
-							s.exams = s.exams.filter((x) => x !== e);
-							await this.plugin.persist();
+							await this.plugin.settings.update({ exams: s.exams.filter((x) => x !== e) });
 							this.rerender();
 						}),
 				);
@@ -4458,8 +3973,7 @@ export class GrillSettingTab extends PluginSettingTab {
 						.addOption("keep", "Keep what I read")
 						.setValue(s.everythingElse)
 						.onChange(async (v) => {
-							s.everythingElse = v === "keep" ? "keep" : "study";
-							await this.plugin.persist();
+							await this.plugin.settings.update({ everythingElse: v === "keep" ? "keep" : "study" });
 						}),
 				),
 		});
@@ -4488,8 +4002,7 @@ export class GrillSettingTab extends PluginSettingTab {
 							} catch (e) {
 								new Notice(`Grill: couldn't read them (${e instanceof Error ? e.message : String(e)}).`);
 							}
-							s.importAsked = true;
-							await this.plugin.persist();
+							await this.plugin.settings.update({ importAsked: true });
 							b.setDisabled(false).setButtonText("Import");
 						}),
 					),
@@ -4528,8 +4041,7 @@ export class GrillSettingTab extends PluginSettingTab {
 				setting.addTextArea((t) => {
 					t.inputEl.rows = 5;
 					t.setValue(s.aboutMe).onChange(async (v) => {
-						s.aboutMe = v;
-						await this.plugin.persist();
+						await this.plugin.settings.update({ aboutMe: v });
 					});
 				}),
 		});
@@ -4663,8 +4175,7 @@ export class GrillSettingTab extends PluginSettingTab {
 				build: (setting) =>
 					setting.addToggle((t) =>
 						t.setValue(s.useWeb).onChange(async (v) => {
-							s.useWeb = v;
-							await this.plugin.persist();
+							await this.plugin.settings.update({ useWeb: v });
 						}),
 					),
 			},
@@ -4683,8 +4194,7 @@ export class GrillSettingTab extends PluginSettingTab {
 					show();
 					setting.addToggle((t) =>
 						t.setValue(s.searchByMeaning).onChange(async (v) => {
-							s.searchByMeaning = v;
-							await this.plugin.persist();
+							await this.plugin.settings.update({ searchByMeaning: v });
 							if (v) {
 								st.setText("Indexing...");
 								const tick = window.setInterval(show, 1000);
@@ -4707,8 +4217,7 @@ export class GrillSettingTab extends PluginSettingTab {
 					void this.plugin.findSkills().then((all) => found.setText(s.useSkills ? (all.length ? `${all.length} found: ${all.slice(0, 8).map((k) => k.name).join(", ")}${all.length > 8 ? ", ..." : ""}` : "None found.") : ""));
 					setting.addToggle((t) =>
 						t.setValue(s.useSkills).onChange(async (v) => {
-							s.useSkills = v;
-							await this.plugin.persist();
+							await this.plugin.settings.update({ useSkills: v });
 							this.display();
 						}),
 					);
@@ -4801,8 +4310,7 @@ export class GrillSettingTab extends PluginSettingTab {
 							.setPlaceholder("Found automatically")
 							.setValue(s.opencodePath)
 							.onChange(async (v) => {
-								s.opencodePath = v.trim();
-								await this.plugin.persist();
+								await this.plugin.settings.update({ opencodePath: v.trim() });
 							}),
 					),
 			},
