@@ -86,13 +86,6 @@ interface PluginData {
 	arc: { data: Arc; atActiveDays: number } | null;
 }
 
-/** Makes `target` hold what `from` holds, keeping the object itself: open panes keep a
- * reference to it. */
-function replaceContents<T extends object>(target: T, from: T): void {
-	for (const k of Object.keys(target)) if (!Object.prototype.hasOwnProperty.call(from, k)) delete (target as Record<string, unknown>)[k];
-	Object.assign(target, from);
-}
-
 export default class GrillPlugin extends Plugin {
 	data: PluginData = { settings: defaultSettings(), calibration: [], arcLog: [], arc: null };
 	/** Settings, read and changed together with saving them. */
@@ -1160,8 +1153,9 @@ export default class GrillPlugin extends Plugin {
 	/** Run a disk rewrite of the shared stores with every open Grill pane flushed
 	 * before it and reloaded after it. Without this, a pane mid-session held its own
 	 * pre-rename copies of the question bank/bridges/registry and its next save put
-	 * them straight back, undoing the rename or delete. */
-	private async withViewsSynced(edit: () => Promise<void>, doing = "for that rename/delete"): Promise<void> {
+	 * them straight back, undoing the rename or delete. An edit that has already
+	 * changed the panes' own maps in place (an inbox fold) passes `reload` false. */
+	private async withViewsSynced(edit: () => Promise<void>, doing = "for that rename/delete", reload = true): Promise<void> {
 		const views = this.app.workspace
 			.getLeavesOfType(VIEW_TYPE)
 			.map((l) => l.view)
@@ -1184,7 +1178,7 @@ export default class GrillPlugin extends Plugin {
 		} finally {
 			// Once the edit has started, re-sync even after a partial failure, so no pane
 			// keeps copies that disagree with what's on disk.
-			if (edited) for (const v of views) await v.reloadSharedStores().catch(() => undefined);
+			if (edited && reload) for (const v of views) await v.reloadSharedStores().catch(() => undefined);
 		}
 	}
 
@@ -1216,7 +1210,7 @@ export default class GrillPlugin extends Plugin {
 		try {
 			const inbox = await this.store.readInbox();
 			if (!inbox.length) return;
-			await this.withViewsSynced(async () => {
+			await this.withViewsSynced(async () => this.store.editRecord(async () => {
 				// Applied to copies: nothing in memory changes unless all of it is saved, so a
 				// fold that stops part way can't leave answers counted that will be counted
 				// again when it is tried next.
@@ -1227,19 +1221,22 @@ export default class GrillPlugin extends Plugin {
 					mastery: structuredClone(this.mastery),
 					registry: await this.store.loadRegistry(),
 				};
+				const opts = { allowNew: false, desiredRetention: this.data.settings.desiredRetention / 100 };
 				const { applied, failed } = applyResults(
 					state,
 					inbox.map((i) => i.result),
-					{ allowNew: false, desiredRetention: this.data.settings.desiredRetention / 100, seen },
+					{ ...opts, seen },
 				);
 				if (applied.length) {
 					await this.store.saveConcepts(state.concepts);
 					await this.store.saveMastery(state.mastery);
 					await this.store.saveRegistry(state.registry);
 					await this.store.saveAppliedInbox([...applied0, ...applied.map((r) => r.id)]);
-					// The open panes hold these very objects: changed in place, not replaced.
-					replaceContents(this.concepts, state.concepts);
-					replaceContents(this.mastery, state.mastery);
+					// The same answers, applied to the maps the open panes hold, in place. Not
+					// replaced with the copies: an answer given in a pane while the copies were
+					// being saved is in these maps and not in the copies, and the pane saves
+					// these next. Applying is synchronous, so nothing comes in between.
+					applyResults({ concepts: this.concepts, mastery: this.mastery, registry: this.record.registry }, applied, { ...opts, seen });
 				}
 				// From here on the answers are in the record: a session note that can't be
 				// written is a note missing, never an answer counted twice.
@@ -1274,7 +1271,7 @@ export default class GrillPlugin extends Plugin {
 					const via = [...new Set(applied.map((r) => r.via))].join(", ");
 					new Notice(`Grill: added ${applied.length} answer${applied.length === 1 ? "" : "s"} from ${via}.`, 6000);
 				}
-			}, "with answers from other agents");
+			}), "with answers from other agents", false);
 			this.refreshStatusBar();
 			for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
 				if (leaf.view instanceof SessionView) leaf.view.refreshIfOnStartScreen();
@@ -1478,11 +1475,15 @@ export default class GrillPlugin extends Plugin {
 			const text = await noteStudyText(this.app, file, pdfCache);
 			await this.store.savePdfCache(pdfCache);
 			const extracted = extractConcepts(file.basename, text, this.data.settings.questionFormats);
-			reconcileConcepts(this.concepts, extracted, new Set(["occlusion"]));
-			await this.store.saveConcepts(this.concepts);
+			// One record edit at a time: not in the middle of an inbox fold.
+			await this.store.editRecord(async () => {
+				reconcileConcepts(this.concepts, extracted, new Set(["occlusion"]));
+				await this.store.saveConcepts(this.concepts);
+			});
 			this.refreshStatusBar();
-		} catch {
-			// Best-effort — see doc comment above.
+		} catch (e) {
+			// Best-effort — see doc comment above — but said in the console.
+			console.error(`Grill: couldn't refresh the concepts of ${file.path}`, e);
 		}
 	}
 
@@ -2564,12 +2565,22 @@ ${body}
 		const took = await this.mergeCloudFromDisk();
 		const s = this.data.settings;
 		const apiKeys = this.keys.stash(s.apiKeys);
-		await this.saveData({ ...this.data, settings: { ...s, apiKeys, ...legacyFlags(s.migrated) } });
+		try {
+			await this.saveData({ ...this.data, settings: { ...s, apiKeys, ...legacyFlags(s.migrated) } });
+			this.persistFailed = false;
+		} catch (e) {
+			// Said once, not on every change made while the file can't be written.
+			if (!this.persistFailed) new Notice(`Grill: couldn't save its settings (${(e as Error).message}).`, 10000);
+			this.persistFailed = true;
+			throw e;
+		}
 		this.saveCloudBackup();
 		if (took) {
 			void this.refreshCloud().then(() => this.tellCloud());
 		}
 	}
+
+	private persistFailed = false;
 
 	async activateView(): Promise<void> {
 		const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE);

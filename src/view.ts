@@ -3248,7 +3248,11 @@ export class SessionView extends ItemView {
 					masteryRepaired = true;
 				}
 			}
-			if (masteryRepaired) void this.plugin.store.saveMastery(this.plugin.mastery).catch(() => undefined);
+			if (masteryRepaired) {
+				// Saved with the rest of the session's state, so it can't race a flush.
+				this.dirty = true;
+				void this.flush();
+			}
 			const practiced = new Set<string>();
 			for (const cm of Object.values(concepts)) {
 				if (nameSet.has(cm.note) && cm.correct + cm.partial + cm.incorrect > 0) practiced.add(cm.note);

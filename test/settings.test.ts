@@ -431,3 +431,36 @@ test("someone who used Grill without AI is asked before their saved key is used"
 	const other = { data: { settings: { provider: "anthropic", apiKeys: { anthropic: "sk-ant-live" }, models: { anthropic: "claude-sonnet-5-5" }, questionSource: "ai", gradingMode: "ai" } } as any };
 	assert.equal((await boot(other, keychain())).plugin.llmConfig().apiKey, "sk-ant-live");
 });
+
+test("an answer given while an agent's answers are being folded in is kept", async () => {
+	const { plugin } = await boot({ data: { settings: {} } }, null);
+	const N = "N::a";
+	plugin.concepts = { [N]: { note: "N", label: "a", kind: "term", sourceHash: null, correct: 0, partial: 0, incorrect: 0, streak: 0, stability: null, difficulty: null, lastSeen: null, dueAt: null } };
+	plugin.mastery = {};
+	plugin.recordLoaded = true;
+	plugin.app.workspace.getLeavesOfType = () => [];
+	const result = { v: 1, id: "agent1", at: "2026-10-20T10:00:00.000Z", via: "Codex", session: "s", conceptId: N, note: "N", question: "q", answer: "a", verdict: "correct" };
+	const saved: Record<string, unknown> = {};
+	Object.assign(plugin.store, {
+		readInbox: async () => [{ path: "Grill/Inbox/x.json", result }],
+		loadAppliedInbox: async () => [],
+		loadRegistry: async () => ({}),
+		saveConcepts: async (m: unknown) => {
+			saved.concepts = structuredClone(m);
+			// The student answers in an open pane while the fold is saving.
+			plugin.mastery.Other = { correct: 1, partial: 0, incorrect: 0, streak: 1, stability: null, difficulty: null, lastSeen: null, dueAt: null, misconceptions: {} };
+		},
+		saveMastery: async () => undefined,
+		saveRegistry: async () => undefined,
+		saveAppliedInbox: async () => undefined,
+		writeSessionNote: async () => null,
+		removeInboxFile: async () => undefined,
+		setAsideInboxFile: async () => undefined,
+		removeEmptyInbox: async () => undefined,
+	});
+	await plugin.foldInbox();
+	assert.equal(plugin.mastery.Other?.correct, 1, "the pane's answer is still there");
+	assert.equal(plugin.mastery.N?.correct, 1, "and the agent's");
+	assert.equal(plugin.concepts[N].correct, 1);
+	assert.deepEqual(plugin.concepts[N], (saved.concepts as Record<string, unknown>)[N], "memory matches what was saved");
+});
