@@ -1,6 +1,6 @@
 /**
  * Search by meaning for Chat: each note cut into passages, each passage embedded on
- * this device (embed-local.ts, the same small model Smart Connections uses), kept in a
+ * this device (embed-local.ts, a small multilingual model), kept in a
  * cache and brought up to date as notes change. A question is embedded the same way and
  * the closest passages are the answer. Nothing leaves the device.
  */

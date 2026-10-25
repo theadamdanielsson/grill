@@ -1071,10 +1071,9 @@ export async function selectRelevantTextSemantic(
 	const chunks = splitForRanking(text);
 	if (chunks.length < 2) return null;
 	const chunkTexts = chunks.map((c) => (c.heading ? `${c.heading}\n${c.body}` : c.body));
-	const vectors = await embedLocal([...terms, ...chunkTexts]);
-	if (!vectors) return null;
-	const termVecs = vectors.slice(0, terms.length);
-	const chunkVecs = vectors.slice(terms.length);
+	const termVecs = await embedLocal(terms, "query");
+	const chunkVecs = termVecs && (await embedLocal(chunkTexts, "passage"));
+	if (!termVecs || !chunkVecs) return null;
 	const scored = chunks.map((chunk, i) => {
 		let best = 0;
 		for (const termVec of termVecs) best = Math.max(best, cosineSim(termVec, chunkVecs[i]));

@@ -17,6 +17,7 @@ import {
 	selectRelevantText,
 	selectRelevantTextSemantic,
 } from "./generate-local";
+import { localEmbedModel } from "./embed-local";
 import { BridgeMap, CANDIDATE_CAP, detectBridgeCandidates, detectSemanticBridgeCandidates, pairKey } from "./bridges";
 import { buildGraph, formatGrade, gradeScore, type GraphNode } from "./graph";
 import { GraphAppearance, LearningMap, MapPalette } from "./mapview";
@@ -5704,7 +5705,7 @@ export class SessionView extends ItemView {
 	 * showed they'd have had something to do.
 	 *
 	 * Both used to be toggles in settings, and both were off by default for the same
-	 * reason: the first run downloads a model file (~10MB for the OCR engine, ~25MB for
+	 * reason: the first run downloads a model file (~10MB for the OCR engine, ~130MB for
 	 * the embedding model). That's a fair thing to ask about and a terrible thing to ask
 	 * about in a settings page — the reader has no way to tell whether "image occlusion"
 	 * or "pick prompt context by meaning" is worth a download, because nothing in front of
@@ -5759,10 +5760,11 @@ export class SessionView extends ItemView {
 				"local-embed-context",
 				"Some of what you studied was too long to send whole, so Grill trimmed it by matching your concepts' exact wording. " +
 					"It can pick those sections by meaning instead, which catches the paraphrases exact matching misses. " +
-					"Runs on your device, with no key and no note content sent anywhere, after a one-time 25MB download.",
+					"Runs on your device, with no key and no note content sent anywhere, after a one-time 130MB download.",
 				"Pick context by meaning",
 				() => {
 					s.localEmbedContext = true;
+					s.localEmbedModel = localEmbedModel();
 				},
 			);
 		}
@@ -6718,7 +6720,7 @@ export class SessionView extends ItemView {
 	 * one before it couldn't produce anything (see selectRelevantTextSemantic and
 	 * selectRelevantText's own doc comments for why each can come back null). */
 	private async selectPromptContext(text: string, concepts: Concept[]): Promise<string> {
-		// Never on mobile: the setting syncs from desktop, and it would start a 25MB
+		// Never on mobile: the setting syncs from desktop, and it would start a 130MB
 		// model download mid-scan on a phone. Same rule as occlusion's OCR.
 		if (this.plugin.data.settings.localEmbedContext && !Platform.isMobile) {
 			const semantic = await selectRelevantTextSemantic(text, concepts, NOTE_CHAR_CAP);

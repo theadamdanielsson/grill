@@ -60,7 +60,7 @@ import { McpHub, RETURN_ACTION, type SignedIn, type SignInStore } from "./mcp";
 import { findSkills, runSkillTool, SKILL_TOOL, skillRules, type Skill, type SkillSource } from "./skills";
 import type { ExtraTools } from "./vaulttools";
 import { hitsText, MEANING_TOOL, meaningQuery, search, updateIndex, type SearchIndex } from "./semantic";
-import { embedLocal } from "./embed-local";
+import { embedLocal, localEmbedModel } from "./embed-local";
 import { daysLeft, examDay, examLines, examName, whenWords, type Exam } from "./exams";
 import { ExamModal } from "./exammodal";
 import { FETCH_TOOL, fetchedUrl, fetchPage } from "./web";
@@ -247,12 +247,16 @@ interface GrillSettings {
 	/** Rank a long note's content by on-device embedding similarity to its own concepts
 	 * (see generate-local.ts's selectRelevantTextSemantic) instead of exact-substring
 	 * matching, when deciding what survives into the AI prompt. Off by default: the
-	 * lexical ranker it upgrades already works, and this one fetches a small (~25MB)
+	 * lexical ranker it upgrades already works, and this one fetches a ~130MB
 	 * model file from Hugging Face on first use. That download is worth asking about, so
 	 * it is — at the end of a session that actually had to trim something (see view.ts's
 	 * renderOffers), where the reader can see what it would have bought them. Falls
 	 * straight back to the lexical ranker on any failure either way. */
 	localEmbedContext: boolean;
+	/** The model localEmbedContext was accepted for. An acceptance given for another
+	 * model (the 25MB bge-micro-v2, before the 130MB multilingual one) is dropped on
+	 * load, so the offer asks again with the new size. */
+	localEmbedModel: string;
 	/** One-time flag: the note→concept scheduling reset has run. */
 	conceptsMigrated: boolean;
 	/** One-time flag: note counts lost before 8.0 have been rebuilt (see restoreNoteCounts). */
@@ -427,6 +431,7 @@ function defaultSettings(): GrillSettings {
 		naturalVoice: true,
 		graphInsights: true,
 		localEmbedContext: false,
+		localEmbedModel: "",
 		conceptsMigrated: false,
 		noteCountsRestored: false,
 		missesFilled: false,
@@ -559,7 +564,10 @@ export default class GrillPlugin extends Plugin {
 		if (typeof s.ttsVoiceURI === "string") settings.ttsVoiceURI = s.ttsVoiceURI;
 		if (s.naturalVoice === false) settings.naturalVoice = false;
 		if (typeof s.graphInsights === "boolean") settings.graphInsights = s.graphInsights;
-		if (typeof s.localEmbedContext === "boolean") settings.localEmbedContext = s.localEmbedContext;
+		if (typeof s.localEmbedContext === "boolean" && s.localEmbedModel === localEmbedModel()) {
+			settings.localEmbedContext = s.localEmbedContext;
+			settings.localEmbedModel = s.localEmbedModel;
+		}
 		if (typeof s.conceptsMigrated === "boolean") settings.conceptsMigrated = s.conceptsMigrated;
 		if (typeof s.noteCountsRestored === "boolean") settings.noteCountsRestored = s.noteCountsRestored;
 		if (typeof s.missesFilled === "boolean") settings.missesFilled = s.missesFilled;
@@ -1318,9 +1326,9 @@ export default class GrillPlugin extends Plugin {
 			if (!this.searchIndex) {
 				try {
 					const raw = (await adapter.exists(path)) ? (JSON.parse(await adapter.read(path)) as SearchIndex) : null;
-					this.searchIndex = raw?.model === "bge-micro-v2" && raw.notes ? raw : { model: "bge-micro-v2", notes: {} };
+					this.searchIndex = raw?.model === localEmbedModel() && raw.notes ? raw : { model: localEmbedModel(), notes: {} };
 				} catch {
-					this.searchIndex = { model: "bge-micro-v2", notes: {} };
+					this.searchIndex = { model: localEmbedModel(), notes: {} };
 				}
 			}
 			const index = this.searchIndex;
@@ -1362,7 +1370,7 @@ export default class GrillPlugin extends Plugin {
 			await Promise.race([work, new Promise((ok) => window.setTimeout(ok, 30_000))]);
 		}
 		const index = this.searchIndex;
-		const q = await embedLocal([query]);
+		const q = await embedLocal([query], "query");
 		if (!index || !q) return { content: "Search by meaning isn't available right now: the model could not be loaded. Use search_notes.", failed: true };
 		const total = this.searchableNotes().length;
 		// A folder excluded since it was indexed is not searched.
@@ -4748,7 +4756,7 @@ export class GrillSettingTab extends PluginSettingTab {
 				aliases: ["semantic", "embeddings", "vault search", "vault qa", "meaning"],
 				build: (setting) => {
 					if (!Platform.isDesktopApp) return setting.setDesc("Desktop only.");
-					setting.setDesc("Lets Chat find notes by what they are about, not only by their words. A small model (about 25 MB) is downloaded once and runs on this device; your notes never leave it.");
+					setting.setDesc("Lets Chat find notes by what they are about, not only by their words. A model (about 130 MB) is downloaded once and runs on this device; your notes never leave it.");
 					const st = setting.descEl.createDiv({ cls: "grill-meta" });
 					const show = (): void => {
 						const p = this.plugin.searchProgress;

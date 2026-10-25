@@ -38,7 +38,7 @@ Grill sends your notes to one place: the model you chose to run it on. It has no
 
 **Grill checks once a day whether a newer version is out.** It asks GitHub for the latest Grill release and sends nothing else. When there is a newer one, the home screen says so in one line, with Update and Not now.
 
-**Two features download a model once, if you accept the offer.** At the end of a session where they would have applied, Grill offers to quiz you on diagrams it can read on-device (an OCR engine of about 10 MB) and to pick prompt context by meaning (an embedding model of about 25 MB). Accepting fetches the file once and caches it; both then run on your machine and send nothing. Declining is remembered. Search by meaning, when you turn it on, uses the same embedding model in the same way.
+**Two features download a model once, if you accept the offer.** At the end of a session where they would have applied, Grill offers to quiz you on diagrams it can read on-device (an OCR engine of about 10 MB) and to pick prompt context by meaning (an embedding model of about 130 MB that reads most languages). Accepting fetches the file once and caches it; both then run on your machine and send nothing. Declining is remembered. Search by meaning, when you turn it on, uses the same embedding model in the same way.
 
 ## What Grill stores, and where
 

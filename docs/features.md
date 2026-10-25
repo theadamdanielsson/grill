@@ -50,7 +50,7 @@ Skills are instructions for kinds of work, in the Agent Skills format that Claud
 
 The web is reached in two ways. First, Chat can read the page at an address on any engine with tools, and at Safe it asks before each page, since an address could carry text out of the vault. Second, on Grill Cloud and on an Anthropic key, Chat can search the web through Anthropic's own search, which runs on Anthropic's side and cites the pages it used. On Grill Cloud, each search counts towards the plan's limits in the same way as the text of a reply.
 
-Search by meaning finds notes by what they are about when their words differ from the question's. Once it is turned on, a small embedding model of about 25 MB is downloaded once, every note is divided into passages at its headings, and the passages are indexed on your computer. The index is kept in `Grill/search-index.json` and is brought up to date a minute after you stop editing. Nothing is sent anywhere. It runs on desktop only, and it stays off until you turn it on.
+Search by meaning finds notes by what they are about when their words differ from the question's. Once it is turned on, an embedding model of about 130 MB, which reads most languages, is downloaded once, every note is divided into passages at its headings, and the passages are indexed on your computer. The index is kept in `Grill/search-index.json` and is brought up to date a minute after you stop editing. Nothing is sent anywhere. It runs on desktop only, and it stays off until you turn it on.
 
 ## Your record in other agents
 
