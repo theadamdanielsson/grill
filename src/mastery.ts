@@ -55,11 +55,6 @@ export type MasteryMap = Record<string, NoteMastery>;
 
 export type NoteStatus = "untested" | "struggling" | "known";
 
-/** Anti-luck, kept for `conceptTargetDifficulty`'s difficulty ramp; no longer what
- * gates "known" (see `S_SOLID` below) — a raw consecutive-correct streak resets to
- * zero on any single miss, discarding real prior strength, so status now reads off
- * FSRS stability instead, which degrades on a lapse rather than erasing. */
-export const KNOWN_MIN_STREAK = 2;
 /** FSRS stability (days) a concept must reach to read "known". Calibrated against
  * real data, not just the FSRS formula in the abstract: stability at streak>=2 (the
  * old "known" bar) varies hugely in practice — observed 0.48 to 10+ days across one
@@ -279,7 +274,7 @@ export function toRating(
 	return difficulty === "hard" ? 4 : 3;
 }
 
-export function optimalInterval(stability: number, desiredRetention = DESIRED_RETENTION): number {
+function optimalInterval(stability: number, desiredRetention = DESIRED_RETENTION): number {
 	const interval = Math.round(9 * stability * (1 / desiredRetention - 1));
 	return Math.max(1, Math.min(interval, MAX_INTERVAL_DAYS));
 }

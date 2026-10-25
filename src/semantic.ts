@@ -67,7 +67,7 @@ export function passages(text: string, most = PASSAGE_CHARS): Passage[] {
 	return out;
 }
 
-export function hashText(text: string): string {
+function hashText(text: string): string {
 	let h = 0x811c9dc5;
 	for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193) >>> 0;
 	return `${h.toString(16)}:${text.length}`;

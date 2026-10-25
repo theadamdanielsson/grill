@@ -64,11 +64,6 @@ export function applyProps(fm: Record<string, unknown>, props: NoteProps): boole
 	return changed;
 }
 
-/** Removes every Grill property: for turning the setting off. True if anything changed. */
-export function clearProps(fm: Record<string, unknown>): boolean {
-	return applyProps(fm, {});
-}
-
 /** What an older session note's own text says about it, for the fields newer ones
  * carry in their properties: `correct` and `total` from its `score`, and the notes it
  * tested from its question headings (each `## Note` or `## [[Note]]` before `## Redo`).

@@ -89,7 +89,7 @@ export function confusions(state: RecordState): Confusion[] {
 
 /** How likely it is to be recalled today, in words: the model is given evidence, not
  * a probability to over-read. */
-export function recallWords(r: number | null): string {
+function recallWords(r: number | null): string {
 	if (r === null) return "";
 	return r >= 85 ? "recall strong" : r >= 60 ? "recall fading" : "recall weak";
 }

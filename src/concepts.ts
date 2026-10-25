@@ -625,7 +625,7 @@ const TRUE_RETENTION_MIN_N = 20;
  * vs. outcome (a metacognition check), this is the schedule's own implicit target
  * vs. what actually happened, and needs no opt-in setting since it just reads
  * data already logged. Returns null under `TRUE_RETENTION_MIN_N` reviews. */
-export function trueRetention(concepts: ConceptMap): TrueRetentionSummary | null {
+function trueRetention(concepts: ConceptMap): TrueRetentionSummary | null {
 	let total = 0;
 	let passed = 0;
 	for (const cm of Object.values(concepts)) {

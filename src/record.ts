@@ -58,7 +58,7 @@ const RESERVED: ReadonlySet<string> = new Set(["__proto__", "constructor", "prot
 /** A note name or concept id fit to be a key in the record: no line breaks, a sane
  * length, never a reserved key. Real note names may hold `#`, `[` or `|`; where one is
  * written into a note it is made safe there (see writeSessionNote). */
-export function fitName(s: string, most = 200): boolean {
+function fitName(s: string, most = 200): boolean {
 	return !!s.trim() && s.length <= most && !RESERVED.has(s) && !/[\n\r]/.test(s);
 }
 
@@ -221,7 +221,7 @@ export function recallNow(c: ConceptMastery, now = new Date()): number | null {
 	return Math.round(retrievability(c.stability, days) * 100);
 }
 
-export function viewConcept(id: string, c: ConceptMastery, now = new Date()): ConceptView {
+function viewConcept(id: string, c: ConceptMastery, now = new Date()): ConceptView {
 	return {
 		id,
 		note: c.note,

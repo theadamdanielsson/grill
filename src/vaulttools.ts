@@ -164,7 +164,7 @@ export function toolLine(call: ToolCall): string {
 /** What the permission card shows for a change to Grill's settings: each one as it is,
  * and as it would be. Null when the change can't be made, which is then said to the
  * model without asking. */
-export function settingsAsk(port: SettingsPort | undefined, call: ToolCall): PermissionAsk | null {
+function settingsAsk(port: SettingsPort | undefined, call: ToolCall): PermissionAsk | null {
 	if (!port) return null;
 	const checked = checkChanges(port, call.input);
 	if ("error" in checked || !checked.lines.length) return null;
