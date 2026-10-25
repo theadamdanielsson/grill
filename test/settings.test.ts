@@ -1,13 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Plugin } from "obsidian";
-import { deepFake, fakeEl, fakeSetting, settingNames } from "./obsidian-stub";
+import { deepFake, fakeSetting, settingNames } from "./obsidian-stub";
 import GrillPlugin, { GrillSettingTab } from "../src/main";
 import { KeyStash, type ApiKeys, type SecretStore } from "../src/secrets";
 import { cloud } from "../src/cloud";
+import { sectionDefs } from "./fixtures";
 
-/** The settings definitions under the tab bar: each tab's sections, then Tuning. */
-const sectionDefs = (tab: any): any[] => (tab.getSettingDefinitions() as any[]).filter((d) => d.cls !== "grill-settings-tabs-group");
 
 
 // These tests are about the settings page as it is without Grill Cloud. The source
@@ -161,23 +159,6 @@ test("edits made on Obsidian's Keychain page: a changed key is taken, a deleted 
 });
 
 // ---- the plugin itself, loaded against an in-memory data.json -------------------
-
-const P = Plugin.prototype as unknown as Record<string, unknown>;
-for (const m of [
-	"addCommand",
-	"registerView",
-	"addRibbonIcon",
-	"registerEvent",
-	"registerInterval",
-	"registerDomEvent",
-	"registerMarkdownCodeBlockProcessor",
-	"registerObsidianProtocolHandler",
-	"registerEditorExtension",
-	"registerExtensions",
-	"register",
-])
-	P[m] = () => fakeEl();
-P.addStatusBarItem = () => fakeEl();
 
 async function boot(disk: { data: any }, kc: SecretStore | null, failFirstSave = false) {
 	const adapter = deepFake({ exists: async () => false, read: async () => "{}", write: async () => undefined });

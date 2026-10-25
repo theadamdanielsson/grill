@@ -107,7 +107,8 @@ export function coverageOf(known: number, total: number): number {
 	return known / Math.max(1, Math.min(total, COVERAGE_TARGET));
 }
 
-function emptyConcept(c: Concept): ConceptMastery {
+/** A concept's record before its first answer. */
+export function newConceptMastery(c: Pick<ConceptMastery, "note" | "label" | "kind" | "sourceHash">): ConceptMastery {
 	return {
 		note: c.note,
 		label: c.label,
@@ -226,7 +227,7 @@ export function reconcileConcepts(
 	for (const c of concepts) {
 		const existing = map[c.id];
 		if (!existing) {
-			map[c.id] = emptyConcept(c);
+			map[c.id] = newConceptMastery(c);
 			continue;
 		}
 		existing.label = c.label;

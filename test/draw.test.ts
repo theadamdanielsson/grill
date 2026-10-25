@@ -2,10 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { net } from "./obsidian-stub";
 import { generateDrawQuestion, gradeAnswer, type LLMConfig, type Question } from "../src/llm";
+import { llmCfg } from "./fixtures";
 
-(globalThis as any).window ??= globalThis;
-
-const cfg: LLMConfig = { provider: "anthropic", apiKey: "k", model: "claude-sonnet-5-5" };
+const cfg = llmCfg();
 const note = "IS-LM: IS slopes down, LM is flat at the policy rate. A fiscal expansion shifts IS right.";
 
 /** Answer every model call with `reply`, keeping the last request body. */

@@ -3,10 +3,11 @@ import assert from "node:assert/strict";
 import { net, notices } from "./obsidian-stub";
 import { listModels, providerRetry, testModel } from "../src/llm";
 import { GrillStore } from "../src/store";
+import { llmCfg } from "./fixtures";
 
 // ---------------------------------------------------------------- model calls
 
-const anthropic = { provider: "anthropic" as const, apiKey: "k", model: "claude-sonnet-5-5" };
+const anthropic = llmCfg();
 
 test("a truncated response is retried once with double the token budget", async () => {
 	const budgets: number[] = [];

@@ -1,12 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { net } from "./obsidian-stub";
-import { checkAnswerKeys, generateQuestions, type ConceptTarget, type LLMConfig, type Question } from "../src/llm";
+import { checkAnswerKeys, generateQuestions, type ConceptTarget, type Question } from "../src/llm";
 import { noteShape, recordConceptAnswer, type ConceptMap } from "../src/concepts";
+import { concept, llmCfg } from "./fixtures";
 
-(globalThis as any).window ??= globalThis;
-
-const cfg: LLMConfig = { provider: "anthropic", apiKey: "k", model: "claude-sonnet-5-5" };
+const cfg = llmCfg();
 const note = "Okun's law: unemployment falls when output grows faster than its normal rate of about 3 percent.";
 const target: ConceptTarget = { conceptId: "Okun::term:okuns-law", note: "Okun", label: "Okun's law", context: note, targetDifficulty: "medium" };
 
@@ -96,7 +95,7 @@ test("match, occlusion and missing-link questions are not checked", async () => 
 
 test("an answer's log entry says what difficulty and format it was asked at", () => {
 	const map: ConceptMap = {
-		c: { note: "Okun", label: "Okun's law", kind: "note", sourceHash: null, correct: 0, partial: 0, incorrect: 0, streak: 0, stability: null, difficulty: null, lastSeen: null, dueAt: null },
+		c: concept({ note: "Okun", label: "Okun's law", kind: "note" }),
 	};
 	recordConceptAnswer(map, "c", "correct", "hard", new Date("2026-10-01T10:00:00Z"));
 	noteShape(map.c, { tier: "hard", type: "mc", verdict: "correct" });

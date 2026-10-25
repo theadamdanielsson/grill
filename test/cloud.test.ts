@@ -1,6 +1,5 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Plugin, TFile } from "obsidian";
 import { deepFake, fakeEl, fakeSetting, net, notices } from "./obsidian-stub";
 import GrillPlugin, { GrillSettingTab } from "../src/main";
 import { cloud, cloudAccount, cloudCheckoutUrl, creditsInWords, heardFromCloud, isCloudKey, lowBalance, newCloudKey, packLabel, packPurpose, planInWords, planLabel, planUsage, usageInWords } from "../src/cloud";
@@ -9,9 +8,8 @@ import { KeyStash } from "../src/secrets";
 import { stopSpeaking } from "../src/tts";
 import { CloudError, cloudWait, offeredProviders, testModel } from "../src/llm";
 import { SessionView as GrillView } from "../src/view";
+import { sectionDefs } from "./fixtures";
 
-/** The settings definitions under the tab bar: each tab's sections, then Tuning. */
-const sectionDefs = (tab: any): any[] => (tab.getSettingDefinitions() as any[]).filter((d) => d.cls !== "grill-settings-tabs-group");
 
 
 // Waiting for a purchase sets a timer and a focus listener; the tests drive the checks by hand.
@@ -28,10 +26,6 @@ const device = new Map<string, string>();
 	setItem: (k: string, v: string) => void device.set(k, v),
 	removeItem: (k: string) => void device.delete(k),
 };
-
-const P = Plugin.prototype as unknown as Record<string, unknown>;
-for (const m of ["addCommand", "registerView", "addRibbonIcon", "registerEvent", "registerInterval", "registerDomEvent", "registerMarkdownCodeBlockProcessor", "registerObsidianProtocolHandler", "register", "addStatusBarItem"])
-	P[m] ??= () => deepFake();
 
 const URL = "https://grill.example/cloud";
 // The source ships these empty until the release commit fills them in. Tests must

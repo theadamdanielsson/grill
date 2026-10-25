@@ -3,10 +3,11 @@ import assert from "node:assert/strict";
 import { daysLeft, examCapDays, examFor, examLines, examName, examNewPerDay, examNewQuota, fitDueToExam, folderState, pullInForExams, tickFolder, type Exam } from "../src/exams";
 import { pickConcepts, type ConceptMap } from "../src/concepts";
 import { learnerBrief } from "../src/brief";
+import { concept } from "./fixtures";
 
 const now = new Date(2026, 9, 25, 10, 0); // 25 Oct 2026, 10:00 local
 const exam = (folder: string, date: string): Exam => ({ folders: [folder], date });
-const tested = (note: string, dueAt: string | null) => ({ note, label: "x", kind: "note", sourceHash: null, correct: 1, partial: 0, incorrect: 0, streak: 1, stability: 5, difficulty: 5, lastSeen: now.toISOString(), dueAt }) as any;
+const tested = (note: string, dueAt: string | null) => concept({ note, kind: "note", correct: 1, streak: 1, stability: 5, difficulty: 5, lastSeen: now.toISOString(), dueAt }) as any;
 const untested = (note: string) => ({ ...tested(note, null), correct: 0, streak: 0, stability: null, difficulty: null, lastSeen: null }) as any;
 const day = (d: number) => new Date(2026, 9, 25 + d, 10, 0).toISOString();
 

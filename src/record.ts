@@ -12,7 +12,7 @@
  * the results itself with the same function.
  */
 
-import { ConceptMap, ConceptMastery, conceptTested, lastAnswerMissed, noteAggregate, noteAnswer, noteShape, recordConceptAnswer } from "./concepts";
+import { ConceptMap, ConceptMastery, conceptTested, lastAnswerMissed, newConceptMastery, noteAggregate, noteAnswer, noteShape, recordConceptAnswer } from "./concepts";
 import { MisconceptionRegistry, mergeAssignments } from "./debrief";
 import { MasteryMap, QDifficulty, Verdict, emptyMastery, isLeech, recordNoteStats, retrievability, statusOf } from "./mastery";
 import type { QuestionBank } from "./store";
@@ -161,20 +161,7 @@ export function applyResults(
 }
 
 function newConcept(note: string, label: string): ConceptMastery {
-	return {
-		note,
-		label,
-		kind: "note",
-		sourceHash: null,
-		correct: 0,
-		partial: 0,
-		incorrect: 0,
-		streak: 0,
-		stability: null,
-		difficulty: null,
-		lastSeen: null,
-		dueAt: null,
-	};
+	return newConceptMastery({ note, label, kind: "note", sourceHash: null });
 }
 
 /** The note-level status and due date, worked out again from its live concepts, as

@@ -85,6 +85,19 @@ export class ItemView {
 export class Plugin {
 	app: any;
 	manifest: any = { id: "grill" };
+	// What onload registers: accepted and ignored.
+	addCommand(..._: unknown[]): any { return fakeEl(); }
+	registerView(..._: unknown[]): any { return fakeEl(); }
+	addRibbonIcon(..._: unknown[]): any { return fakeEl(); }
+	addStatusBarItem(): any { return fakeEl(); }
+	registerEvent(..._: unknown[]): any { return fakeEl(); }
+	registerInterval(..._: unknown[]): any { return fakeEl(); }
+	registerDomEvent(..._: unknown[]): any { return fakeEl(); }
+	registerMarkdownCodeBlockProcessor(..._: unknown[]): any { return fakeEl(); }
+	registerObsidianProtocolHandler(..._: unknown[]): any { return fakeEl(); }
+	registerEditorExtension(..._: unknown[]): any { return fakeEl(); }
+	registerExtensions(..._: unknown[]): any { return fakeEl(); }
+	register(..._: unknown[]): any { return fakeEl(); }
 }
 export class PluginSettingTab {
 	app: any;

@@ -1,11 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { net } from "./obsidian-stub";
-import { generateQuestions, type ConceptTarget, type LLMConfig } from "../src/llm";
+import { generateQuestions, type ConceptTarget } from "../src/llm";
+import { llmCfg } from "./fixtures";
 
-(globalThis as any).window ??= globalThis;
-
-const cfg: LLMConfig = { provider: "anthropic", apiKey: "k", model: "claude-sonnet-5-5" };
+const cfg = llmCfg();
 const note = "Okun's law relates the change in unemployment to output growth above its normal rate.";
 const target: ConceptTarget = { conceptId: "Okun::term:okuns-law", note: "Okun", label: "Okun's law", context: note, targetDifficulty: "easy" };
 
