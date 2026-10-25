@@ -1,9 +1,24 @@
 /** Minimal stand-in for the `obsidian` module, which only exists inside the app.
  * Tests bundle src/ with esbuild aliasing `obsidian` to this file (see run.mjs).
- * Elements are Proxies that accept any builder call, so view code that renders can
- * run headless; tests assert on state and on the store calls, not on the DOM. */
+ * Elements are Proxies that accept the calls a real element takes (DOM methods and
+ * Obsidian's additions to them), so view code that renders can run headless; tests
+ * assert on state and on the store calls, not on the DOM. A call no element has fails
+ * here, as it would in Obsidian. */
 
 type Anyish = Record<string | symbol, unknown>;
+
+/** What an element in Obsidian can be asked to do: the DOM's methods and Obsidian's
+ * own (createDiv, setText, empty and the rest). */
+const ELEMENT_METHODS = new Set(
+	(
+		"createDiv createEl createSpan createSvg createFragment empty addClass addClasses removeClass removeClasses toggleClass hasClass " +
+		"setText appendText setAttr setAttrs getAttr setCssStyles setCssProps show hide toggle toggleVisibility isShown onClickEvent " +
+		"detach find findAll findAllSelf querySelector querySelectorAll appendChild append prepend remove replaceWith replaceChildren insertBefore " +
+		"insertAdjacentElement insertAdjacentText setAttribute removeAttribute getAttribute hasAttribute toggleAttribute addEventListener removeEventListener " +
+		"dispatchEvent focus blur click scrollIntoView scrollTo closest contains matches getBoundingClientRect cloneNode setChildrenInPlace instanceOf " +
+		"on off trigger select setSelectionRange animate requestFullscreen"
+	).split(" "),
+);
 
 export function fakeEl(): any {
 	const target: Anyish = { style: {}, children: [] };
@@ -12,6 +27,8 @@ export function fakeEl(): any {
 			if (prop in t) return t[prop];
 			// Never look like a promise, or `await el` would hang.
 			if (prop === "then" || typeof prop === "symbol") return undefined;
+			if (prop === "isConnected") return true;
+			if (!ELEMENT_METHODS.has(prop)) throw new Error(`An element has no ${String(prop)}`);
 			return () => fakeEl();
 		},
 		set(t, prop, value) {
@@ -193,8 +210,11 @@ export const net: { handler: (req: RequestUrlParam) => Promise<RequestUrlRespons
 		throw new Error("no network in tests");
 	},
 };
-export function requestUrl(req: RequestUrlParam): Promise<RequestUrlResponse> {
-	return net.handler(req);
+/** As Obsidian's: a status of 400 or more throws, unless the request said `throw: false`. */
+export async function requestUrl(req: RequestUrlParam): Promise<RequestUrlResponse> {
+	const r = await net.handler(req);
+	if (req.throw !== false && r.status >= 400) throw Object.assign(new Error(`Request failed, status ${r.status}`), { status: r.status });
+	return r;
 }
 
 export async function loadMermaid(): Promise<unknown> {
