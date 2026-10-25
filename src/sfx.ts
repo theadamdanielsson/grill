@@ -20,6 +20,12 @@ function audio(): AudioContext | null {
 	}
 }
 
+/** Closes the audio, when the plugin unloads: browsers allow only a few at once. */
+export function closeAudio(): void {
+	void ctx?.close().catch(() => undefined);
+	ctx = null;
+}
+
 interface Tone {
 	freq: number;
 	/** seconds from now */

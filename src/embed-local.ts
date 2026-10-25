@@ -52,6 +52,15 @@ async function loadEmbedder(): Promise<Embedder | null> {
 	return embedderPromise;
 }
 
+/** Lets the model go, when the plugin unloads: an update in a running Obsidian would
+ * otherwise keep one more ~130 MB runtime alive each time. */
+export async function releaseEmbedder(): Promise<void> {
+	const was = embedderPromise;
+	embedderPromise = null;
+	const e = (await was?.catch(() => null)) as (Embedder & { dispose?: () => Promise<void> }) | null | undefined;
+	await e?.dispose?.().catch(() => undefined);
+}
+
 /** Embed a batch of texts on-device, or null if the local model isn't available right
  * now (never throws — see the module doc comment). Order matches input order. `kind`
  * is "query" for what is being looked for (a question, a concept label) and "passage"

@@ -62,7 +62,8 @@ import { McpHub, RETURN_ACTION, type SignedIn, type SignInStore } from "./mcp";
 import { findSkills, runSkillTool, SKILL_TOOL, skillRules, type Skill, type SkillSource } from "./skills";
 import type { ExtraTools } from "./vaulttools";
 import { hitsText, MEANING_TOOL, meaningQuery, search, updateIndex, type SearchIndex } from "./semantic";
-import { embedLocal, localEmbedModel } from "./embed-local";
+import { embedLocal, localEmbedModel, releaseEmbedder } from "./embed-local";
+import { closeAudio } from "./sfx";
 import { daysLeft, examLines, examName, whenWords, type Exam } from "./exams";
 import { ExamModal } from "./exammodal";
 import { FETCH_TOOL, fetchedUrl, fetchPage } from "./web";
@@ -674,6 +675,9 @@ export default class GrillPlugin extends Plugin {
 		void this.loopback?.close();
 		this.stopCloudWatch();
 		void terminateOcrWorker();
+		void releaseEmbedder();
+		closeAudio();
+		if (this.foldTimer !== null) window.clearTimeout(this.foldTimer);
 	}
 
 	statusBar: HTMLElement | null = null;
@@ -2880,7 +2884,7 @@ export class GrillSettingTab extends PluginSettingTab {
 					setting.setDesc("No voices found yet. Reopen Settings in a moment.");
 					if (!this.voicesListenerAttached) {
 						this.voicesListenerAttached = true;
-						onVoicesChanged(() => this.rerender());
+						this.plugin.register(onVoicesChanged(() => this.rerender()));
 					}
 				}
 				setting.addDropdown((d) => {
@@ -4154,8 +4158,11 @@ export class GrillSettingTab extends PluginSettingTab {
 							if (v) {
 								st.setText("Indexing...");
 								const tick = window.setInterval(show, 1000);
-								await this.plugin.indexForSearch();
-								window.clearInterval(tick);
+								try {
+									await this.plugin.indexForSearch();
+								} finally {
+									window.clearInterval(tick);
+								}
 							}
 							show();
 						}),
