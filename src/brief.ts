@@ -154,6 +154,8 @@ export interface BriefInput {
 	about?: string;
 	/** What their past chats with other AI tools show they knew (see importedLines in imported.ts). */
 	asked?: string[];
+	/** The student's exams still ahead, one line each (see examLines in exams.ts). */
+	exams?: string[];
 	budget?: number;
 	now?: Date;
 }
@@ -167,7 +169,8 @@ export function learnerBrief(i: BriefInput): string {
 	const own = (i.conclusions ?? []).filter((c) => c.text.trim());
 	const about = (i.about ?? "").trim();
 	const asked = i.asked ?? [];
-	if (!tested.length && !own.length && !about && !asked.length) return "";
+	const exams = i.exams ?? [];
+	if (!tested.length && !own.length && !about && !asked.length && !exams.length) return "";
 
 	const sections: Array<{ head: string; lines: string[] }> = [];
 	let used = 0;
@@ -206,6 +209,11 @@ export function learnerBrief(i: BriefInput): string {
 		const head = `${tested.length} of ${all.length} concepts tested, across ${notes} notes: ${known} known, ${tested.length - known} still being learned. ${due} due now, ${soon} more this week.${last ? ` Last studied ${day(last)}.` : ""}`;
 		const s = section(`Grill's record on ${day(now.toISOString())}:`);
 		if (fits(head)) add(s, head);
+	}
+
+	if (exams.length) {
+		const s = section("Exams the student has coming up (Grill schedules those notes to be ready by then):");
+		for (const line of exams) if (!add(s, `- ${line}`)) break;
 	}
 
 	const cs = confusions(i.state);

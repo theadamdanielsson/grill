@@ -180,7 +180,7 @@ P.addStatusBarItem = () => fakeEl();
 
 async function boot(disk: { data: any }, kc: SecretStore | null, failFirstSave = false) {
 	const adapter = deepFake({ exists: async () => false, read: async () => "{}", write: async () => undefined });
-	const vault = deepFake({ adapter, getMarkdownFiles: () => [], getFiles: () => [], getAbstractFileByPath: () => null });
+	const vault = deepFake({ adapter, getMarkdownFiles: () => [], getFiles: () => [], getAllFolders: () => [], getAbstractFileByPath: () => null });
 	const app = deepFake({ vault, appId: VAULT, secretStorage: kc ?? undefined });
 	const plugin = new (GrillPlugin as any)() as any;
 	plugin.app = app;
@@ -299,7 +299,7 @@ test("with Grill Cloud on, it has the first section and the page still has no du
 			const defs = sectionDefs(tab);
 			assert.deepEqual(
 				defs.map((d) => d.heading ?? d.name),
-				["Grill Cloud", "Chat", "Learn more", "Your own key or Ollama", "Programs on this computer", "Other agents", "Tools and skills", "Studying", "Folders", "From other AI chats", "Your profile", "Tuning", "Data"],
+				["Grill Cloud", "Chat", "Learn more", "Your own key or Ollama", "Programs on this computer", "Other agents", "Tools and skills", "Studying", "Exams", "Folders", "From other AI chats", "Your profile", "Tuning", "Data"],
 			);
 			const every = names(defs);
 			assert.equal(new Set(every).size, every.length, `duplicate row names (${provider})`);
@@ -318,11 +318,11 @@ test("the searchable definitions and the classic page list the same rows", async
 		const defs = sectionDefs(tab);
 		assert.deepEqual(
 			defs.map((d) => d.type),
-			["group", "group", "group", "group", "group", "group", "group", "group", "group", "group", "group", "group"],
+			["group", "group", "group", "group", "group", "group", "group", "group", "group", "group", "group", "group", "group"],
 		);
 		assert.deepEqual(
 			defs.map((d) => d.heading ?? d.name),
-			["Chat", "Learn more", "AI", "Programs on this computer", "Other agents", "Tools and skills", "Studying", "Folders", "From other AI chats", "Your profile", "Tuning", "Data"],
+			["Chat", "Learn more", "AI", "Programs on this computer", "Other agents", "Tools and skills", "Studying", "Exams", "Folders", "From other AI chats", "Your profile", "Tuning", "Data"],
 		);
 		const every = names(defs);
 		assert.equal(new Set(every).size, every.length, "duplicate row names");
@@ -339,7 +339,7 @@ test("the searchable definitions and the classic page list the same rows", async
 		assert.deepEqual(settingNames, []);
 
 		// The classic page draws exactly the same rows, in the same order, a tab at a time.
-		const headings = ["Chat", "Learn more", "AI", "Programs on this computer", "Other agents", "Tools and skills", "Studying", "Folders", "From other AI chats", "Your profile", "Tuning", "Data"];
+		const headings = ["Chat", "Learn more", "AI", "Programs on this computer", "Other agents", "Tools and skills", "Studying", "Exams", "Folders", "From other AI chats", "Your profile", "Tuning", "Data"];
 		const drawn: string[] = [];
 		for (const id of ["basic", "key", "agents", "study", "advanced"]) {
 			(tab as any).tab = id;

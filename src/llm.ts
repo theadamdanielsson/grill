@@ -1140,6 +1140,7 @@ export const DEFAULT_PERSONA =
 const tutorRules = (hints: boolean): string => `Targeting rules:
 - You are given a specific list of CONCEPTS to test, one question each, in the given order. Write a question that tests exactly that concept, grounded in the student's notes.
 - Aim for each concept's stated difficulty.
+- When a concept is marked [exam ...], it is on an exam the student has coming up. Ask it the way that exam is likely to: where the notes hold exam or exercise questions on it, follow their shape.
 - When a concept is marked to re-probe a known confusion, deliberately write the question so that confusion would trip a student who still holds it.
 
 Difficulty tiers:
@@ -1257,6 +1258,8 @@ export interface ConceptTarget {
 	targetType?: Question["type"];
 	/** Canonical misconception tag to deliberately re-probe, if any. */
 	activeMisconception?: string;
+	/** Days to the exam this concept is on (exams.ts), when one is ahead. */
+	examDays?: number;
 	/** In a connections session, the linked note to bridge this concept to. */
 	connectTo?: string;
 	/** Set when this target was inserted by reactive prerequisite routing: the note
@@ -1515,6 +1518,7 @@ async function runGenerationPass(
 					? ` [connect to note "${t.connectTo}"]`
 					: "";
 			const format = mixFormats && t.targetType ? ` [format: ${t.targetType}]` : "";
+			const exam = t.examDays === undefined ? "" : ` [exam ${t.examDays === 0 ? "today" : t.examDays === 1 ? "tomorrow" : `in ${t.examDays} days`}]`;
 			const avoid = t.priorQuestions?.length
 				? ` [already asked for this concept, write a genuinely different angle or phrasing — do not restate: ${t.priorQuestions.map((q) => `"${q}"`).join(" / ")}]`
 				: "";
@@ -1533,7 +1537,7 @@ async function runGenerationPass(
 			// with no real reason behind it, and it was cutting multi-part questions
 			// (a, b, c...) off mid-way. A real chat with an LLM doesn't re-truncate
 			// something you already sized on purpose; neither should this.
-			return `${i + 1}. [note "${t.note}"] concept: "${t.label}" (aim: ${t.targetDifficulty})${format}${reprobe}${connect}${avoid}${retry}\n   source: ${t.context}`;
+			return `${i + 1}. [note "${t.note}"] concept: "${t.label}" (aim: ${t.targetDifficulty})${format}${exam}${reprobe}${connect}${avoid}${retry}\n   source: ${t.context}`;
 		})
 		.join("\n");
 	// Split so the notes+links (often identical across several batch calls in a

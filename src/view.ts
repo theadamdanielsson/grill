@@ -21,6 +21,7 @@ import { BridgeMap, CANDIDATE_CAP, detectBridgeCandidates, detectSemanticBridgeC
 import { buildGraph, formatGrade, gradeScore, type GraphNode } from "./graph";
 import { GraphAppearance, LearningMap, MapPalette } from "./mapview";
 import type { CachedQuestion, EmbeddingMap, QuestionBank } from "./store";
+import { daysLeft, EXAM_RETENTION, examFor, examLines, examName, examNewQuota, fitDueToExam, inExam, pullInForExams, whenWords } from "./exams";
 import {
 	ConceptMap,
 	ConceptMastery,
@@ -487,6 +488,9 @@ export class SessionView extends ItemView {
 	plugin: GrillPlugin;
 	private noteText: Record<string, string> = {};
 	private byName = new Map<string, TFile>();
+	/** Days to go to the exam a note is under, or null when it is under none still
+	 * ahead (see exams.ts). Set at the start of each session. */
+	private examLeftFor: (note: string) => number | null = () => null;
 	/** When set, sessions draw only from these files (Grill this note/folder). */
 	sessionScope: TFile[] | null = null;
 	/** Set with `sessionScope` when a session is to ask only these concepts, as "Retry
@@ -2022,13 +2026,14 @@ export class SessionView extends ItemView {
 		const state = { concepts: this.plugin.concepts, mastery: this.plugin.mastery, registry };
 		const imported = await this.plugin.store.loadImported().catch(() => null);
 		const about = this.plugin.data.settings.aboutMe;
-		if (!note) return learnerBrief({ state, about, asked: importedLines(imported) });
+		const exams = examLines(this.plugin.data.settings.exams, new Date());
+		if (!note) return learnerBrief({ state, about, asked: importedLines(imported), exams });
 		const links = this.app.metadataCache.resolvedLinks;
 		const near = new Set<string>();
 		for (const path of Object.keys(links[note.path] ?? {})) near.add(path);
 		for (const [from, to] of Object.entries(links)) if (to[note.path]) near.add(from);
 		const name = (path: string): string => path.split("/").pop()!.replace(/\.md$/, "");
-		return learnerBrief({ state, about, asked: importedLines(imported, note.basename), focus: { note: note.basename, near: [...near].map(name) } });
+		return learnerBrief({ state, about, asked: importedLines(imported, note.basename), exams, focus: { note: note.basename, near: [...near].map(name) } });
 	}
 
 	/** The note a conversation is about and the notes that go with it, as they read now,
@@ -3526,6 +3531,32 @@ export class SessionView extends ItemView {
 		// would otherwise become a permanently-scrolling wall. Cap what's shown to
 		// each section's actual purpose, not a lifetime transcript.
 		const MISC_SHOWN_CAP = 10;
+
+		// Exams still ahead, soonest first, each with how its concepts stand: the plain
+		// sign that the schedule is working toward the date (set in Settings, Study).
+		const now = new Date();
+		const exams = this.plugin.data.settings.exams
+			.map((e) => ({ e, left: daysLeft(e, now) }))
+			.filter((x) => x.left >= 0)
+			.sort((a, b) => a.left - b.left);
+		if (exams.length) {
+			screen.createDiv({ cls: "grill-section-label", text: exams.length === 1 ? "Exam" : "Exams" });
+			const pathOf = new Map(eligible.map((f) => [f.basename, f.path] as const));
+			for (const { e, left } of exams) {
+				let all = 0, known = 0, untested = 0;
+				for (const cm of Object.values(this.plugin.concepts)) {
+					const path = pathOf.get(cm.note);
+					if (!path || !inExam(path, e) || cm.orphanedDueAt) continue;
+					all++;
+					if (!conceptTested(cm)) untested++;
+					else if (statusOf(cm) === "known") known++;
+				}
+				const card = screen.createDiv({ cls: "grill-card" });
+				card.createDiv({ cls: "grill-arc-headline", text: examName(e) });
+				const w = whenWords(left);
+				card.createDiv({ cls: "grill-meta", text: `${e.date}, ${w}.${all ? ` ${known} of ${all} concepts known, ${untested} not tested yet.` : ""}` });
+			}
+		}
 
 		// Your arc: synthesized in the background by maybeSynthesizeArc (main.ts),
 		// gated on active-day history — absent, quietly, until the vault has enough
@@ -6808,6 +6839,9 @@ export class SessionView extends ItemView {
 			// concept data (see priorityNotes) instead of the note-level mastery cache.
 			this.concepts = this.plugin.concepts = await this.plugin.store.loadConcepts();
 			this.liveState = true;
+			this.examLeftFor = this.examDaysByNote();
+			// A concept due after an exam it is part of comes back before it instead.
+			if (pullInForExams(this.concepts, this.examLeftFor, new Date())) this.dirty = true;
 			// Interleave by folder before priority-bucketing: pickCandidates's untested
 			// bucket preserves input order, so a scope spanning multiple folders would
 			// otherwise collapse onto whichever folder sorts first (see interleaveByFolder).
@@ -7010,7 +7044,17 @@ export class SessionView extends ItemView {
 			// all 8" ask four.
 			this.sessionConcepts = only
 				? [...pickable].sort((a, b) => (this.concepts[a.id]?.dueAt ?? "").localeCompare(this.concepts[b.id]?.dueAt ?? ""))
-				: pickConcepts(pickable, this.concepts, want, this.dueOnly, new Date(), s.newConceptsPerDay, freshPolicy, applyDailyCap);
+				: pickConcepts(
+						pickable,
+						this.concepts,
+						want,
+						this.dueOnly,
+						new Date(),
+						s.newConceptsPerDay,
+						freshPolicy,
+						applyDailyCap,
+						examNewQuota(pickable, this.concepts, this.examLeftFor),
+					);
 			if (this.sessionConcepts.length === 0) {
 				const cappedOut =
 					applyDailyCap && blockedByDailyCap(pickable, this.concepts, s.newConceptsPerDay, new Date());
@@ -7051,6 +7095,7 @@ export class SessionView extends ItemView {
 					label: c.label,
 					context: c.context,
 					targetDifficulty: this.seedDifficulty(this.concepts[c.id], c.note, graph),
+					examDays: this.examLeftFor(c.note) ?? undefined,
 					targetType: !mixFormats ? undefined : s.questionFormats === "mc" ? "mc" : this.seedType(c.kind, i),
 					activeMisconception,
 				};
@@ -7373,6 +7418,27 @@ export class SessionView extends ItemView {
 		return shared / expected.size < SessionView.THIN_ANSWER_RATIO;
 	}
 
+	/** The recall to schedule a concept for: the setting, or more with an exam ahead. */
+	private examRetention(left: number | null): number {
+		const base = this.plugin.data.settings.desiredRetention / 100;
+		return left === null ? base : Math.max(base, EXAM_RETENTION);
+	}
+
+	/** Each note's days to its exam, by basename, over the whole vault: a concept's
+	 * schedule follows its exam whatever this session is scoped to. */
+	private examDaysByNote(): (note: string) => number | null {
+		const exams = this.plugin.data.settings.exams;
+		if (!exams.length) return () => null;
+		const now = new Date();
+		const left = new Map<string, number>();
+		for (const f of [...this.app.vault.getMarkdownFiles()].sort((a, b) => a.path.localeCompare(b.path))) {
+			if (left.has(f.basename)) continue;
+			const e = examFor(f.path, exams, now);
+			if (e) left.set(f.basename, daysLeft(e, now));
+		}
+		return (note) => left.get(note) ?? null;
+	}
+
 	/** Record one graded answer: update the concept's schedule, bump the note's
 	 * stats, recompute the note aggregate, and persist. `rating` is set for the
 	 * self-grade path (its Again/Hard/Good/Easy is the signal); null for AI grading
@@ -7398,12 +7464,14 @@ export class SessionView extends ItemView {
 		}
 		const cid = q.conceptId;
 		if (cid && this.concepts[cid]) {
-			const retention = this.plugin.data.settings.desiredRetention / 100;
+			const left = this.examLeftFor(q.node);
+			const retention = this.examRetention(left);
 			if (rating !== null) {
 				// Self-grade: the student's own Again/Hard/Good/Easy already IS the ground
 				// truth (no third-party verdict to second-guess), so no override snapshot.
 				recordConceptRating(this.concepts, cid, rating, new Date(), retention, this.dueDateHistogram, this.easyWeekdays());
 				noteShape(this.concepts[cid], { tier: q.difficulty, type: q.type });
+				if (left !== null) fitDueToExam(this.concepts[cid], left, new Date());
 			} else {
 				// Snapshot the pre-answer state before mutating it — see pendingOverride's
 				// doc comment. structuredClone is safe here: ConceptMastery is plain JSON
@@ -7435,6 +7503,7 @@ export class SessionView extends ItemView {
 				);
 				noteAnswer(this.concepts[cid], verdict, { ...said, tag: misconceptionTag });
 				noteShape(this.concepts[cid], { tier: q.difficulty ?? "medium", type: q.type ?? "write", verdict });
+				if (left !== null) fitDueToExam(this.concepts[cid], left, new Date());
 			}
 		}
 		recordNoteStats(this.plugin.mastery, q.node, verdict, misconceptionTag);
@@ -7462,7 +7531,8 @@ export class SessionView extends ItemView {
 		const cm = this.concepts[o.conceptId];
 		if (cm) {
 			restoreConcept(cm, o.conceptSnapshot);
-			const retention = this.plugin.data.settings.desiredRetention / 100;
+			const left = this.examLeftFor(o.note);
+			const retention = this.examRetention(left);
 			recordConceptAnswer(
 				this.concepts,
 				o.conceptId,
@@ -7476,6 +7546,7 @@ export class SessionView extends ItemView {
 				this.easyWeekdays(),
 			);
 			noteShape(cm, { tier: o.difficulty, type: o.type, verdict: "correct" });
+			if (left !== null) fitDueToExam(cm, left, new Date());
 		}
 		// Correct note-level counters: undo the wrong bucket, credit the right one, and
 		// remove the misconception tally if a tag was recorded off the wrong verdict.

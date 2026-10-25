@@ -360,9 +360,10 @@ function capPerNote(concepts: Concept[], maxPerNote: number): Concept[] {
 /** How many concepts in `map` had their first-ever exposure since `todayStart`: total
  * interactions === 1 (this was their only, and therefore first, answer) and that
  * answer was today. Used to cap new-concept introduction per day — see `pickConcepts`. */
-function newConceptsIntroducedSince(map: ConceptMap, todayStart: Date): number {
+function newConceptsIntroducedSince(map: ConceptMap, todayStart: Date, only?: Set<string>): number {
 	let n = 0;
-	for (const cm of Object.values(map)) {
+	for (const [id, cm] of Object.entries(map)) {
+		if (only && !only.has(id)) continue;
 		if (cm.correct + cm.partial + cm.incorrect !== 1) continue;
 		if (cm.lastSeen && new Date(cm.lastSeen) >= todayStart) n++;
 	}
@@ -384,6 +385,10 @@ export function pickConcepts(
 	// where asking for everything the scope actually contains, due or not, is the
 	// point. Callers pass false for those; true (the default) is "Get grilled".
 	applyDailyCap = true,
+	// Concepts in an exam folder (exams.ts), and how many new ones the exams need today.
+	// Those come in ahead of other new material and past the daily cap if need be, so a
+	// dated exam is covered in time however low the cap is.
+	exam: { inExam: Set<string>; perDay: number } = { inExam: new Set(), perDay: 0 },
 ): Concept[] {
 	if (dueOnly) {
 		const due = concepts.filter((c) => {
@@ -435,7 +440,10 @@ export function pickConcepts(
 	if (applyDailyCap) {
 		const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 		const remaining = Math.max(0, newConceptsPerDay - newConceptsIntroducedSince(map, todayStart));
-		untestedPool = untestedPool.slice(0, remaining);
+		const examRemaining = Math.max(0, exam.perDay - newConceptsIntroducedSince(map, todayStart, exam.inExam));
+		const forExam = untestedPool.filter((c) => exam.inExam.has(c.id)).slice(0, examRemaining);
+		const taken = new Set(forExam.map((c) => c.id));
+		untestedPool = [...forExam, ...untestedPool.filter((c) => !taken.has(c.id)).slice(0, remaining)];
 	}
 	return reserveFreshSlots(interleaveByNote(cappedDue), untestedPool, interleaveByNote(rest), cap, freshPolicy);
 }

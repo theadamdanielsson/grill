@@ -54,3 +54,15 @@ test("with hints off, none are asked for and the question still comes back whole
 	assert.equal(questions.length, 1);
 	assert.deepEqual(questions[0].hints, { tier1: "", tier2: "", tier3: "" });
 });
+
+test("a concept on an exam is marked so in the request, and the rules say what that means", async () => {
+	let body: any = null;
+	net.handler = async (req) => {
+		body = JSON.parse(req.body as string);
+		const json = { stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify({ questions: [reply(true)] }) }] };
+		return { status: 200, json, text: "", headers: {} } as any;
+	};
+	await generateQuestions(cfg, `NOTE 'Okun':\n${note}`, [{ ...target, examDays: 17 }], [], "", "", undefined, "write", {}, true);
+	assert.match(sent(body.messages), /\(aim: easy\) \[exam in 17 days\]/);
+	assert.match(sent(body.system), /marked \[exam \.\.\.\], it is on an exam/);
+});

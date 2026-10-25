@@ -4466,3 +4466,33 @@ textarea.grill-mgmt-field {
 .grill-import-offer-text {
   color: var(--grill-ink-dim, #c9a875);
 }
+
+/* Exams (Settings, Study): the window for one exam. */
+.grill-exam-date {
+  display: flex;
+  align-items: center;
+  gap: 0.8em;
+  margin-bottom: 1em;
+}
+.grill-exam-hint {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  margin-bottom: 0.4em;
+}
+.grill-exam-tree {
+  max-height: 50vh;
+  overflow-y: auto;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: 0.4em 0;
+}
+.grill-exam-folder {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.2em 0.8em 0.2em calc(0.8em + var(--grill-depth, 0) * 1.2em);
+  cursor: pointer;
+}
+.grill-exam-folder:hover {
+  background: var(--background-modifier-hover);
+}

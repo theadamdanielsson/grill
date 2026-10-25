@@ -61,6 +61,8 @@ import { findSkills, runSkillTool, SKILL_TOOL, skillRules, type Skill, type Skil
 import type { ExtraTools } from "./vaulttools";
 import { hitsText, MEANING_TOOL, meaningQuery, search, updateIndex, type SearchIndex } from "./semantic";
 import { embedLocal } from "./embed-local";
+import { daysLeft, examDay, examLines, examName, whenWords, type Exam } from "./exams";
+import { ExamModal } from "./exammodal";
 import { FETCH_TOOL, fetchedUrl, fetchPage } from "./web";
 import type { ColorMode, NumberMode } from "./mapview";
 import { listLanguages, listVoices, listVoicesForLang, onVoicesChanged, speak, speakNatural } from "./tts";
@@ -134,6 +136,9 @@ interface GrillSettings {
 	/** Folders that ARE Grill's study material + graph (relative paths). Empty = the
 	 * whole vault. Chosen on first run; the universe of the learning graph. */
 	includedFolders: string[];
+	/** Folders with an exam date: their notes are scheduled to be ready by then (see
+	 * exams.ts). Set in Settings, Study, Exams; empty means no exams. */
+	exams: Exam[];
 	/** One-time flag: the first-run "what's Grill's" onboarding has been completed. */
 	onboarded: boolean;
 	/** Ids of point-of-use offers the user has turned down (see SessionView's
@@ -385,6 +390,7 @@ function defaultSettings(): GrillSettings {
 		noteProperties: false,
 		excludedFolders: [],
 		includedFolders: [],
+		exams: [],
 		onboarded: false,
 		dismissedOffers: [],
 		retiredCloudKeys: [],
@@ -502,6 +508,11 @@ export default class GrillPlugin extends Plugin {
 			settings.excludedFolders = s.excludedFolders.filter((v): v is string => typeof v === "string");
 		if (Array.isArray(s.includedFolders))
 			settings.includedFolders = s.includedFolders.filter((v): v is string => typeof v === "string");
+		if (Array.isArray(s.exams))
+			settings.exams = s.exams
+				.filter((e): e is Exam => !!e && Array.isArray(e.folders) && typeof e.date === "string" && !!examDay(e.date))
+				.map((e) => ({ folders: e.folders.filter((v): v is string => typeof v === "string"), date: e.date }))
+				.filter((e) => e.folders.length);
 		if (typeof s.onboarded === "boolean") settings.onboarded = s.onboarded;
 		if (Array.isArray(s.cloudGone)) settings.cloudGone = s.cloudGone.filter(isAccountId).slice(-GONE_KEYS_KEPT);
 		if (Array.isArray(s.cloudUsage)) settings.cloudUsage = s.cloudUsage.filter((n) => typeof n === "number" && n > 0 && n < 100_000).slice(-10);
@@ -2322,6 +2333,7 @@ export default class GrillPlugin extends Plugin {
 			state: { concepts: this.concepts, mastery: this.mastery, registry },
 			about: this.data.settings.aboutMe,
 			asked: importedLines(imported, "", 20),
+			exams: examLines(this.data.settings.exams, new Date()),
 			budget: 12000,
 		});
 		return body ? `# My Grill profile
@@ -3366,6 +3378,7 @@ export class GrillSettingTab extends PluginSettingTab {
 			folder: s.folder,
 			includedFolders: s.includedFolders,
 			excludedFolders: s.excludedFolders,
+			exams: s.exams,
 			onboarded: s.onboarded,
 			modelAgreed: s.modelAgreed,
 			dismissedOffers: s.dismissedOffers,
@@ -4252,13 +4265,15 @@ export class GrillSettingTab extends PluginSettingTab {
 			// end up somewhere undefined.
 			{
 				name: "Study intensity",
-				desc: "How often things come back and how much is new each day.",
+				desc: examLines(s.exams, new Date()).length
+					? "How often things come back and how much is new each day. Notes in an exam follow its date instead."
+					: "How often things come back and how much is new each day.",
 				aliases: ["retention", "spaced repetition", "fsrs", "schedule"],
 				build: (setting) =>
 					setting.addDropdown((d) => {
 						d.addOption("relaxed", "Relaxed: fewer reviews, slower intake");
 						d.addOption("steady", "Steady (recommended)");
-						d.addOption("intense", "Intense: exam in a fortnight");
+						d.addOption("intense", "Intense: more reviews, faster intake");
 						if (s.studyIntensity === "custom") d.addOption("custom", "Custom: set in Advanced");
 						d.setValue(s.studyIntensity);
 						d.onChange(async (v) => {
@@ -4447,10 +4462,60 @@ export class GrillSettingTab extends PluginSettingTab {
 			...(all || Platform.isDesktopApp ? [{ tab: "agents" as const, heading: "Other agents", rows: [this.recordForAgentsRow()] }] : []),
 			{ tab: "agents" as const, heading: "Tools and skills", rows: this.toolRows() },
 			{ tab: "study", heading: "Studying", rows: studying },
+			{ tab: "study", heading: "Exams", rows: this.examRows() },
 			{ tab: "study", heading: "Folders", rows: scope },
 			{ tab: "study", heading: "From other AI chats", rows: this.importRows(all) },
 			{ tab: "study", heading: "Your profile", rows: [this.profileRow()] },
 		];
+	}
+
+	/** One row per exam, then a row to add one. Each opens ExamModal: the date, and
+	 * what the exam covers. */
+	private examRows(): Row[] {
+		const s = this.plugin.data.settings;
+		const when = (e: Exam): string => {
+			const left = daysLeft(e, new Date());
+			if (left < 0) return "Over. Scheduled as usual again.";
+			const w = whenWords(left);
+			return `${w[0].toUpperCase()}${w.slice(1)}. Reviews come back more often as it nears, and new material is paced to be covered by then.`;
+		};
+		const folders = (): string[] =>
+			this.app.vault
+				.getAllFolders(false)
+				.map((f) => f.path)
+				.filter((p) => !this.plugin.isExcluded(`${p}/x.md`))
+				.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+		const open = (exam: Exam | null): void =>
+			new ExamModal(this.app, folders(), exam, async (saved) => {
+				s.exams = exam ? s.exams.map((x) => (x === exam ? saved : x)) : [...s.exams, saved];
+				await this.plugin.persist();
+				new Notice(`Grill: ${examName(saved)} now scheduled for your exam ${whenWords(daysLeft(saved, new Date()))}.`, 6000);
+				this.rerender();
+			}).open();
+		const rows: Row[] = s.exams.map((e) => ({
+			name: examName(e),
+			desc: when(e),
+			build: (setting) => {
+				setting.addButton((b) => b.setButtonText("Edit").onClick(() => open(e)));
+				setting.addExtraButton((b) =>
+					b
+						.setIcon("x")
+						.setTooltip("Remove")
+						.onClick(async () => {
+							s.exams = s.exams.filter((x) => x !== e);
+							await this.plugin.persist();
+							this.rerender();
+						}),
+				);
+			},
+		}));
+		rows.push({
+			name: "Add exam",
+			desc: "What it covers and the day of the exam. Those notes are scheduled to be ready by then.",
+			aliases: ["exam", "deadline", "test date", "course"],
+			build: (setting) => setting.addButton((b) => b.setButtonText("Add").onClick(() => open(null))),
+		});
+		return rows;
 	}
 
 	/** Bringing in what the student asked other AI tools, and what they know about them. */
