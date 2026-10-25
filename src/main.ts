@@ -67,6 +67,7 @@ import { FETCH_TOOL, fetchedUrl, fetchPage } from "./web";
 import type { ColorMode, NumberMode } from "./mapview";
 import { listLanguages, listVoices, listVoicesForLang, onVoicesChanged, speak, speakNatural } from "./tts";
 import { DEFAULT_FOLDER } from "./recordpaths";
+import { countAgentChats, readAgentChats } from "./agentrecord";
 
 /** How hard the schedule pushes, as one choice instead of four numbers. Each preset is a
  * complete set of the four FSRS/new-material values Grill actually schedules on; picking
@@ -2225,21 +2226,7 @@ export default class GrillPlugin extends Plugin {
 		const req = (window as unknown as { require?: (m: string) => unknown }).require;
 		if (!Platform.isDesktopApp || !req) return { claudeCode: 0, codex: 0 };
 		try {
-			const fs = req("fs") as { existsSync(p: string): boolean; readdirSync(p: string): string[]; statSync(p: string): { isDirectory(): boolean } };
-			const home = (req("os") as { homedir(): string }).homedir();
-			const count = (dir: string, deep: boolean): number => {
-				if (!fs.existsSync(dir)) return 0;
-				let n = 0;
-				for (const f of fs.readdirSync(dir)) {
-					const p = `${dir}/${f}`;
-					if (f.endsWith(".jsonl")) n++;
-					else if (deep && fs.statSync(p).isDirectory()) n += count(p, true);
-				}
-				return n;
-			};
-			const projects = `${home}/.claude/projects`;
-			const claudeCode = fs.existsSync(projects) ? fs.readdirSync(projects).reduce((n, d) => n + count(`${projects}/${d}`, false), 0) : 0;
-			return { claudeCode, codex: count(`${home}/.codex/sessions`, true) + count(`${home}/.codex/archived_sessions`, true) };
+			return countAgentChats(req);
 		} catch {
 			return { claudeCode: 0, codex: 0 };
 		}
@@ -2283,37 +2270,11 @@ export default class GrillPlugin extends Plugin {
 	async importAgentChats(only?: "claude-code" | "codex"): Promise<{ notes: number; names: string[] }> {
 		const req = (window as unknown as { require?: (m: string) => unknown }).require;
 		if (!Platform.isDesktopApp || !req) return { notes: 0, names: [] };
-		const fs = (req("fs") as { promises: { readdir(p: string, o: { withFileTypes: true }): Promise<Array<{ name: string; isDirectory(): boolean }>>; readFile(p: string, e: string): Promise<string> } }).promises;
-		const home = (req("os") as { homedir(): string }).homedir();
-		const files = async (dir: string, deep: boolean): Promise<string[]> => {
-			try {
-				const out: string[] = [];
-				for (const e of await fs.readdir(dir, { withFileTypes: true })) {
-					const p = `${dir}/${e.name}`;
-					if (e.name.endsWith(".jsonl")) out.push(p);
-					else if (deep && e.isDirectory()) out.push(...(await files(p, true)));
-				}
-				return out;
-			} catch {
-				return [];
-			}
-		};
 		const convs: Conversation[] = [];
 		const read: Partial<Record<AskSource, number>> = {};
-		if (only !== "codex") {
-			const dirs = await fs.readdir(`${home}/.claude/projects`, { withFileTypes: true }).catch(() => [] as Array<{ name: string; isDirectory(): boolean }>);
-			for (const dir of dirs.filter((e) => e.isDirectory())) {
-				for (const f of await files(`${home}/.claude/projects/${dir.name}`, false)) {
-					convs.push(claudeCodeConversation(await fs.readFile(f, "utf8").catch(() => "")));
-					read["claude-code"] = (read["claude-code"] ?? 0) + 1;
-				}
-			}
-		}
-		if (only !== "claude-code") {
-			for (const f of [...(await files(`${home}/.codex/sessions`, true)), ...(await files(`${home}/.codex/archived_sessions`, true))]) {
-				convs.push(codexConversation(await fs.readFile(f, "utf8").catch(() => "")));
-				read.codex = (read.codex ?? 0) + 1;
-			}
+		for (const chat of await readAgentChats(req, only)) {
+			convs.push(chat.source === "codex" ? codexConversation(chat.text) : claudeCodeConversation(chat.text));
+			read[chat.source] = (read[chat.source] ?? 0) + 1;
 		}
 		return this.keepImported(convs, read);
 	}

@@ -96,6 +96,7 @@ import type { VaultPort } from "./vaulttools";
 import type { SettingsPort } from "./settingstools";
 import { RECORD_RULES, RECORD_TOOLS, runRecordQuery, type RecordPort, type StudyOffer } from "./recordtools";
 import { projectSummaries } from "./record";
+import { forgetAgentProject, readAgentConcepts } from "./agentrecord";
 import { GRILL_ICON } from "./icon";
 import { attachPicker, linkedNames, type PickSource } from "./mention";
 import { codexModelName, codexModels, findCodex, runCodex } from "./codex";
@@ -2778,9 +2779,7 @@ export class SessionView extends ItemView {
 		if (!Platform.isDesktopApp || !req) return;
 		let concepts: ConceptMap;
 		try {
-			const fs = req("fs") as { readFileSync(p: string, e: string): string };
-			const home = (req("os") as { homedir(): string }).homedir();
-			concepts = JSON.parse(fs.readFileSync(`${home}/.grill/record/concepts.json`, "utf8"));
+			concepts = readAgentConcepts(req);
 		} catch {
 			return; // no record yet, or not readable: nothing to show
 		}
@@ -8020,39 +8019,4 @@ export class SessionView extends ItemView {
 		this.contagionUsed += 1;
 	}
 
-}
-
-/** Takes one project out of the agent record in ~/.grill/record (see agentRecordSection):
- * its concepts, their schedule, and its share of each misconception. The session notes
- * stay, as history. Written the way grill-mcp writes these files: a temp file, renamed. */
-function forgetAgentProject(req: (m: string) => unknown, project: string): void {
-	const fs = req("fs") as {
-		existsSync(p: string): boolean;
-		readFileSync(p: string, e: string): string;
-		writeFileSync(p: string, d: string): void;
-		renameSync(a: string, b: string): void;
-	};
-	const dir = `${(req("os") as { homedir(): string }).homedir()}/.grill/record`;
-	const inProject = (note: unknown): boolean => typeof note === "string" && (note === project || note.startsWith(`${project}/`));
-	const edit = (name: string, change: (data: Record<string, unknown>) => void): void => {
-		const path = `${dir}/${name}`;
-		if (!fs.existsSync(path)) return;
-		const data = JSON.parse(fs.readFileSync(path, "utf8")) as Record<string, unknown>;
-		change(data);
-		fs.writeFileSync(`${path}.tmp`, JSON.stringify(data, null, 1));
-		fs.renameSync(`${path}.tmp`, path);
-	};
-	edit("concepts.json", (d) => {
-		for (const [id, c] of Object.entries(d)) if (inProject((c as { note?: unknown }).note)) delete d[id];
-	});
-	edit("mastery.json", (d) => {
-		for (const k of Object.keys(d)) if (inProject(k)) delete d[k];
-	});
-	edit("misconceptions.json", (d) => {
-		for (const [tag, m] of Object.entries(d)) {
-			const entry = m as { notes?: unknown[] };
-			entry.notes = (entry.notes ?? []).filter((n) => !inProject(n));
-			if (!entry.notes.length) delete d[tag];
-		}
-	});
 }
