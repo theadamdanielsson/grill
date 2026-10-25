@@ -800,7 +800,7 @@ export class SessionView extends ItemView {
 	}
 
 	async onOpen(): Promise<void> {
-		this.plugin.cloudListeners.add(this.onCloud);
+		this.plugin.account.cloudListeners.add(this.onCloud);
 		this.observePaneWidth();
 		if (!this.plugin.data.settings.onboarded) this.renderOnboarding();
 		else this.renderStart();
@@ -990,15 +990,15 @@ export class SessionView extends ItemView {
 				if (panel.isConnected) this.renderOnboarding(1);
 			};
 			this.cloudRedraw = again;
-			if (s.apiKeys.grillcloud && this.plugin.cloudState === "unknown") {
-				void this.plugin.refreshCloud().then(() => {
-					if (this.plugin.cloudState !== "unknown") again();
+			if (s.apiKeys.grillcloud && this.plugin.account.cloudState === "unknown") {
+				void this.plugin.account.refreshCloud().then(() => {
+					if (this.plugin.account.cloudState !== "unknown") again();
 				});
 			}
 			go.onclick = async () => {
 				// A key whose account is open just carries on. Anything else asks the server
 				// (again): a first try that didn't get through must not cost the free credits.
-				if (s.apiKeys.grillcloud && this.plugin.cloudState === "ok") {
+				if (s.apiKeys.grillcloud && this.plugin.account.cloudState === "ok") {
 					await this.plugin.settings.update({ provider: "grillcloud" });
 					next();
 					return;
@@ -1008,7 +1008,7 @@ export class SessionView extends ItemView {
 				const was = { provider: s.provider };
 				let message = "Something went wrong. Try again.";
 				try {
-					message = await this.plugin.startCloud();
+					message = await this.plugin.account.startCloud();
 				} finally {
 					go.disabled = false;
 				}
@@ -1017,11 +1017,11 @@ export class SessionView extends ItemView {
 				// another way can be picked. Going on would end at a first session that
 				// can't start. With no credits, how Grill studies goes back to what it was,
 				// so Cancel or closing the pane doesn't leave a mode that can't work.
-				if (this.plugin.cloudState === "none") {
+				if (this.plugin.account.cloudState === "none") {
 					Object.assign(s, was);
 					await this.plugin.persist();
 				}
-				if (this.plugin.cloudState === "ok") next();
+				if (this.plugin.account.cloudState === "ok") next();
 				else this.renderOnboarding(1);
 			};
 			// The other way, plainly there, one click.
@@ -1139,7 +1139,7 @@ export class SessionView extends ItemView {
 			new Notice(`Grill: ${message}${tail}`, e instanceof CloudError ? 10000 : 8000);
 			return;
 		}
-		if (this.plugin.offerRefill(e.code, tail.trim())) return;
+		if (this.plugin.account.offerRefill(e.code, tail.trim())) return;
 		// Nothing is on sale right now (or the server can't say): point at settings.
 		const notice = new Notice(
 			createFragment((f) => {
@@ -1168,13 +1168,13 @@ export class SessionView extends ItemView {
 		el.empty();
 		el.addClass("grill-cloud-panel");
 		const has = !!this.plugin.data.settings.apiKeys.grillcloud;
-		const credits = this.plugin.cloudCredits;
-		const state = this.plugin.cloudState;
+		const credits = this.plugin.account.cloudCredits;
+		const state = this.plugin.account.cloudState;
 		const head = el.createDiv({ cls: "grill-cloud-panel-title", text: "Grill Cloud" });
 		if (recommended) head.createSpan({ cls: "grill-mode-tag", text: "Recommended" });
 		el.createDiv({ cls: "grill-cloud-panel-lead", text: CLOUD_LEAD });
 		if (!has) {
-			if (this.plugin.sharesDeviceCloud()) el.createDiv({ cls: "grill-meta", text: "You already use Grill Cloud in another vault on this device. Starting here uses the same balance." });
+			if (this.plugin.account.sharesDeviceCloud()) el.createDiv({ cls: "grill-meta", text: "You already use Grill Cloud in another vault on this device. Starting here uses the same balance." });
 			const facts = el.createDiv({ cls: "grill-cloud-facts" });
 			for (const fact of CLOUD_FACTS) facts.createDiv({ cls: "grill-cloud-fact", text: fact });
 			const more = el.createEl("details", { cls: "grill-cloud-more" });
@@ -1198,12 +1198,12 @@ export class SessionView extends ItemView {
 			text:
 				state === "none"
 					? "On, with no credits yet. Add credits in settings to begin, or pick another way below."
-					: state === "ok" && credits !== null && this.plugin.cloudPlan
-						? `On. ${planInWords(this.plugin.cloudPlan)}${credits > 0 ? ` ${creditsInWords(credits)}.` : ""}`
+					: state === "ok" && credits !== null && this.plugin.account.cloudPlan
+						? `On. ${planInWords(this.plugin.account.cloudPlan)}${credits > 0 ? ` ${creditsInWords(credits)}.` : ""}`
 						: state === "ok" && credits !== null
 							? `On. ${creditsInWords(credits)}. ${usageInWords(this.plugin.data.settings.cloudUsage)}`
 						: state === "refused" || state === "offline"
-							? this.plugin.cloudNote || "Couldn't reach Grill Cloud."
+							? this.plugin.account.cloudNote || "Couldn't reach Grill Cloud."
 							: "Checking your balance...",
 		});
 		return el.createEl("button", { text: state === "ok" ? "Continue with Grill Cloud" : "Start free", cls: "mod-cta grill-cloud-go grill-primary-cta" });
@@ -1358,13 +1358,13 @@ export class SessionView extends ItemView {
 	/** Under a session's summary: what it used and what's left. A receipt. */
 	private cloudReceipt(parent: HTMLElement, used: number): void {
 		const s = this.plugin.data.settings;
-		const credits = this.plugin.cloudCredits;
+		const credits = this.plugin.account.cloudCredits;
 		if (!cloudEnabled() || s.provider !== "grillcloud" || used <= 0 || credits === null) return;
 		const line = parent.createDiv({ cls: "grill-meta grill-cloud-line" });
 		line.createSpan({ text: `That session used ${used} ${used === 1 ? "credit" : "credits"}. ${creditsInWords(credits)}.` });
 		if (credits >= lowBalance(s.cloudUsage)) return;
 		line.createSpan({ text: " " });
-		const more = line.createEl("a", { text: this.plugin.cloudCanSubscribe ? "Get the monthly plan in settings" : "Add more in settings" });
+		const more = line.createEl("a", { text: this.plugin.account.cloudCanSubscribe ? "Get the monthly plan in settings" : "Add more in settings" });
 		more.onclick = () => this.plugin.openSettings();
 	}
 
@@ -3109,8 +3109,8 @@ export class SessionView extends ItemView {
 		dot.replaceWith(host);
 		const fill = (): void => {
 			host.empty();
-			const credits = this.plugin.cloudCredits;
-			const state = this.plugin.cloudState;
+			const credits = this.plugin.account.cloudCredits;
+			const state = this.plugin.account.cloudState;
 			if (state !== "ok" && state !== "none") return;
 			if (state === "ok" && credits === null) return;
 			const now = credits ?? 0;
@@ -3120,7 +3120,7 @@ export class SessionView extends ItemView {
 				void this.plugin.persist();
 			}
 			// A running plan with room left is a full ring, whatever the credits beside it.
-			const plan = this.plugin.cloudPlan;
+			const plan = this.plugin.account.cloudPlan;
 			const covered = plan !== null && !plan.limit;
 			const low = !covered && (state === "none" || now < lowBalance(s.cloudUsage));
 			renderCreditsRing(host, {
@@ -3134,7 +3134,7 @@ export class SessionView extends ItemView {
 			if (host.isConnected) fill();
 		};
 		// Sessions spend credits, so look again each time this is drawn.
-		void this.plugin.refreshCloud().then(() => host.isConnected && fill());
+		void this.plugin.account.refreshCloud().then(() => host.isConnected && fill());
 	}
 
 	private recentSessions(): TFile[] {
@@ -5814,7 +5814,7 @@ export class SessionView extends ItemView {
 		// What the session used is taken now, before anything else can start: a new
 		// session begun while the work below is still running must not have its spending
 		// counted into this one, or this one's into it.
-		const sessionSpend = this.plugin.takeCloudSpend();
+		const sessionSpend = this.plugin.account.takeCloudSpend();
 		const epoch = this.sessionEpoch;
 		void (async () => {
 			// On Grill Cloud the dashboard's arc is worked out here, not at launch, so
@@ -5824,7 +5824,7 @@ export class SessionView extends ItemView {
 			// If nothing new has begun, whatever was spent since is that arc.
 			// A new session has begun meanwhile: its spending is its own, so this one is
 			// recorded as it stood, and the running count is left alone.
-			const used = epoch === this.sessionEpoch ? await this.plugin.noteCloudSession(sessionSpend) : await this.plugin.recordCloudSession(sessionSpend);
+			const used = epoch === this.sessionEpoch ? await this.plugin.account.noteCloudSession(sessionSpend) : await this.plugin.account.recordCloudSession(sessionSpend);
 			if (cloudAt.isConnected) this.cloudReceipt(cloudAt, used);
 		})();
 		const btnRow = card.createDiv({ cls: "grill-btn-row grill-start-btn grill-btn-row-fill" });
@@ -5971,7 +5971,7 @@ export class SessionView extends ItemView {
 			new Notice(`Grill: your last answers haven't saved yet (${this.lastFlushError}), so a redo can't start. They're still kept in memory.`, 10000);
 			return;
 		}
-		await this.plugin.noteCloudSession();
+		await this.plugin.account.noteCloudSession();
 		this.sessionEpoch += 1;
 		this.sessionContext = "";
 		this.contextRewriting = 0;
@@ -6759,7 +6759,7 @@ export class SessionView extends ItemView {
 		this.keptAnswer = null;
 		// A session left without finishing still used what it used: keep that in the
 		// record of what sessions cost, then start counting this one from nothing.
-		await this.plugin.noteCloudSession();
+		await this.plugin.account.noteCloudSession();
 		const s = this.plugin.data.settings;
 		const cfg = this.plugin.llmConfig();
 		if (!cfg) {
@@ -7728,7 +7728,7 @@ export class SessionView extends ItemView {
 	}
 
 	async onClose(): Promise<void> {
-		this.plugin.cloudListeners.delete(this.onCloud);
+		this.plugin.account.cloudListeners.delete(this.onCloud);
 		this.cloudRedraw = null;
 		this.map?.dispose();
 		this.map = null;

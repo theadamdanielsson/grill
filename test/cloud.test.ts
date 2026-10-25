@@ -121,15 +121,15 @@ test("with no server configured, Grill Cloud isn't offered anywhere and nothing 
 	assert.ok(!offeredProviders().some(([id]) => id === "grillcloud"));
 	const { plugin, tab } = await boot();
 	assert.ok(!rows(tab).includes("Grill Cloud") && !rows(tab).includes("Account"));
-	assert.match(await plugin.startCloud(), /isn't available/);
+	assert.match(await plugin.account.startCloud(), /isn't available/);
 	assert.equal(plugin.data.settings.apiKeys.grillcloud, "", "no key is made");
 	// Even a settings file that somehow names it can't make a request.
 	plugin.data.settings.provider = "grillcloud";
 	plugin.data.settings.apiKeys.grillcloud = newCloudKey();
 	assert.equal(plugin.llmConfig(), null);
-	await plugin.refreshCloud();
-	plugin.openCloudCheckout();
-	assert.equal(plugin.cloudWaitingFrom, null);
+	await plugin.account.refreshCloud();
+	plugin.account.openCloudCheckout();
+	assert.equal(plugin.account.cloudWaitingFrom, null);
 	assert.equal(seen.length, 0);
 });
 
@@ -172,19 +172,19 @@ test("Start free makes a key, opens the account, and switches to it", async () =
 	// Offered first on the settings page before it is ever turned on, whatever the provider.
 	assert.equal(rows(tab)[0], "Grill Cloud");
 	assert.ok(rows(tab).includes("Provider") && !rows(tab).includes("Account"));
-	assert.equal(await plugin.startCloud(), "Grill Cloud is on. You have 25 free credits to start.");
+	assert.equal(await plugin.account.startCloud(), "Grill Cloud is on. You have 25 free credits to start.");
 	const key = plugin.data.settings.apiKeys.grillcloud;
 	assert.ok(isCloudKey(key));
 	assert.equal(plugin.data.settings.provider, "grillcloud");
 	assert.equal(disk.data.settings.provider, "grillcloud");
 	assert.deepEqual([seen[0].method, seen[0].url, seen[0].auth], ["POST", `${URL}/start`, `Bearer ${key}`]);
-	assert.deepEqual([plugin.cloudState, plugin.cloudCredits, plugin.cloudPurchases], ["ok", 25, 0]);
+	assert.deepEqual([plugin.account.cloudState, plugin.account.cloudCredits, plugin.account.cloudPurchases], ["ok", 25, 0]);
 	// The settings page now shows the balance row and no model picker.
 	const shown = rows(tab);
 	assert.ok(shown.includes("Grill Cloud") && shown.includes("Account") && !shown.includes("API key"));
 	assert.ok(!shown.includes("Model") && !shown.includes("Base URL") && !shown.includes("Ollama server"));
 	// Starting again keeps the same key.
-	await plugin.startCloud();
+	await plugin.account.startCloud();
 	assert.equal(plugin.data.settings.apiKeys.grillcloud, key);
 });
 
@@ -193,23 +193,23 @@ test("only Start free opens an account: looking at the balance never does", asyn
 	const key = newCloudKey();
 	const { seen } = server();
 	const { plugin } = await boot({ provider: "grillcloud", apiKeys: { grillcloud: key } });
-	await plugin.refreshCloud();
-	await plugin.refreshCloud();
+	await plugin.account.refreshCloud();
+	await plugin.account.refreshCloud();
 	assert.ok(seen.length >= 2 && seen.every((r) => r.method === "GET" && r.path === "/balance"));
-	assert.equal(plugin.cloudState, "none");
+	assert.equal(plugin.account.cloudState, "none");
 });
 
 test("the key is saved before the server is asked, so a lost reply can't strand a starter", async () => {
 	cloud.url = URL;
 	server({ down: true });
 	const { plugin, disk } = await boot({ provider: "openai" });
-	assert.match(await plugin.startCloud(), /Couldn't reach Grill Cloud/);
-	assert.equal(plugin.cloudState, "offline");
+	assert.match(await plugin.account.startCloud(), /Couldn't reach Grill Cloud/);
+	assert.equal(plugin.account.cloudState, "offline");
 	const key = disk.data.settings.apiKeys.grillcloud;
 	assert.ok(isCloudKey(key), "kept on disk");
 	// Trying again asks about the same key, not a new one.
 	const { seen } = server();
-	assert.match(await plugin.startCloud(), /25 free credits/);
+	assert.match(await plugin.account.startCloud(), /25 free credits/);
 	assert.equal(seen[0].auth, `Bearer ${key}`);
 	assert.equal(plugin.data.settings.apiKeys.grillcloud, key);
 });
@@ -218,11 +218,11 @@ test("a server that answers with an error is quoted, not blamed on the connectio
 	cloud.url = URL;
 	server({ refuse: { status: 503, message: "Grill Cloud is paused for maintenance." } });
 	const { plugin, tab } = await boot();
-	assert.equal(await plugin.startCloud(), "Grill Cloud is paused for maintenance.");
-	assert.equal(plugin.cloudState, "refused");
+	assert.equal(await plugin.account.startCloud(), "Grill Cloud is paused for maintenance.");
+	assert.equal(plugin.account.cloudState, "refused");
 	assert.equal(draw(tab, "Grill Cloud").desc(), "Grill Cloud is paused for maintenance.");
 	server({ down: true });
-	await plugin.refreshCloud();
+	await plugin.account.refreshCloud();
 	assert.match(draw(tab, "Grill Cloud").desc(), /Couldn't reach Grill Cloud/);
 });
 
@@ -256,18 +256,18 @@ test("a cloud key that Grill 6.2.0 moved into a keychain is taken back into the 
 test("when there's no free starter the message says which kind of none", async () => {
 	cloud.url = URL;
 	server({ credits: 0, granted: false, starters: true });
-	assert.match(await (await boot()).plugin.startCloud(), /with no free credits this time/);
+	assert.match(await (await boot()).plugin.account.startCloud(), /with no free credits this time/);
 	server({ credits: 0, granted: false, starters: false });
-	assert.match(await (await boot()).plugin.startCloud(), /with no free credits this time/);
+	assert.match(await (await boot()).plugin.account.startCloud(), /with no free credits this time/);
 	server({ credits: 300, granted: false });
-	assert.equal(await (await boot()).plugin.startCloud(), "Grill Cloud is on. 300 credits left.");
+	assert.equal(await (await boot()).plugin.account.startCloud(), "Grill Cloud is on. 300 credits left.");
 });
 
 test("a model call goes to Grill Cloud in the shape its server accepts", async () => {
 	cloud.url = URL + "/";
 	const { seen, state } = server();
 	const { plugin } = await boot();
-	await plugin.startCloud();
+	await plugin.account.startCloud();
 	const cfg = plugin.llmConfig();
 	assert.equal(cfg.provider, "grillcloud");
 	assert.equal(cfg.model, "Grill Cloud");
@@ -282,22 +282,22 @@ test("a model call goes to Grill Cloud in the shape its server accepts", async (
 	assert.equal(sent.body.response_format.type, "json_schema");
 	assert.deepEqual(sent.body.response_format.json_schema.schema.required, ["ok"]);
 	// The reply carried the balance; no second request was needed to know it.
-	assert.equal(plugin.cloudCredits, 9);
+	assert.equal(plugin.account.cloudCredits, 9);
 	heardFromCloud({ "x-grill-credits": "not a number" });
 	heardFromCloud(undefined);
-	assert.equal(plugin.cloudCredits, 9);
+	assert.equal(plugin.account.cloudCredits, 9);
 	heardFromCloud({ "x-grill-credits": "4" });
-	assert.equal(plugin.cloudCredits, 4);
+	assert.equal(plugin.account.cloudCredits, 4);
 	// What a session used is what each reply says it cost, not how far the balance fell:
 	// another request's hold is in the balance while it is in flight.
-	plugin.cloudSessionSpent = 0;
+	plugin.account.cloudSessionSpent = 0;
 	heardFromCloud({ "x-grill-credits": "366", "X-Grill-Cost": "0.5" });
 	heardFromCloud({ "x-grill-credits": "398", "x-grill-cost": "1.75" });
 	heardFromCloud({ "x-grill-cost": "nonsense" });
-	assert.equal(plugin.cloudSessionSpent, 2.25);
-	assert.equal(await plugin.noteCloudSession(), 2);
+	assert.equal(plugin.account.cloudSessionSpent, 2.25);
+	assert.equal(await plugin.account.noteCloudSession(), 2);
 	heardFromCloud({ "x-grill-cost": "0.2" });
-	assert.equal(await plugin.noteCloudSession(), 1, "a session that used something never reads as 0");
+	assert.equal(await plugin.account.noteCloudSession(), 1, "a session that used something never reads as 0");
 	plugin.data.settings.cloudUsage = [];
 
 	// An error comes back in the server's own words, with whether credits would fix it.
@@ -410,9 +410,9 @@ test("settings: Grill Cloud has the first section, says what it is before it sta
 	assert.ok(on.said.some((x) => /How many credits a session uses depends on/.test(x)));
 	assert.ok(!on.said.concat(on.desc()).some((x) => /about \d+ sessions/.test(x)), "no number of sessions is promised");
 	// Once it has, they are said back instead.
-	plugin.cloudSessionSpent = 11;
-	assert.equal(await plugin.noteCloudSession(), 11);
-	assert.equal(await plugin.noteCloudSession(), 0, "counted once");
+	plugin.account.cloudSessionSpent = 11;
+	assert.equal(await plugin.account.noteCloudSession(), 11);
+	assert.equal(await plugin.account.noteCloudSession(), 0, "counted once");
 	assert.ok(draw(tab, "Grill Cloud").said.includes("Your last session used 11 credits."));
 
 	// One button per pack, each opening its own link for this key, ready before the click.
@@ -429,25 +429,25 @@ test("settings: Grill Cloud has the first section, says what it is before it sta
 	assert.match(waiting.desc(), /Checkout is open in your browser/);
 	assert.equal(waiting.button(BIG), undefined);
 	waiting.button("Stop checking").click();
-	assert.equal(plugin.cloudWaitingFrom, null);
+	assert.equal(plugin.account.cloudWaitingFrom, null);
 	// When the server says sales are off there is no button, and no way to open the page.
 	state.sales = false;
-	await plugin.refreshCloud();
+	await plugin.account.refreshCloud();
 	assert.equal(draw(tab, "Grill Cloud").button(BIG), undefined);
-	plugin.openCloudCheckout();
+	plugin.account.openCloudCheckout();
 	assert.equal(opened.length, 1);
 	// With no checkout link configured there is no button either.
 	state.sales = true;
 	cloud.packs = [];
-	plugin.cloudPacks = [];
-	await plugin.refreshCloud();
+	plugin.account.cloudPacks = [];
+	await plugin.account.refreshCloud();
 	assert.equal(draw(tab, "Grill Cloud").button(BIG), undefined);
-	assert.equal(plugin.cloudCanBuy, false);
+	assert.equal(plugin.account.cloudCanBuy, false);
 
 	// With another provider picked, the section stays, says so, and offers the way back.
 	cloud.packs = [{ credits: 1000, price: "$9.99", url: "https://buy.stripe.com/abc" }];
 	plugin.data.settings.provider = "openai";
-	await plugin.refreshCloud();
+	await plugin.account.refreshCloud();
 	assert.equal(sections()[0].heading, "Grill Cloud");
 	const idle = draw(tab, "Grill Cloud");
 	assert.match(idle.desc(), /^Not in use\. 42 credits left/);
@@ -479,10 +479,10 @@ test("a key that got no free starter can still buy, try again, or be let go of",
 		if (req.url.endsWith("/start")) state.account = false;
 		return r;
 	};
-	assert.match(await plugin.startCloud(), /with no free credits this time/);
+	assert.match(await plugin.account.startCloud(), /with no free credits this time/);
 	const key = plugin.data.settings.apiKeys.grillcloud;
-	assert.equal(plugin.cloudState, "none");
-	assert.equal(plugin.cloudCanBuy, true);
+	assert.equal(plugin.account.cloudState, "none");
+	assert.equal(plugin.account.cloudCanBuy, true);
 	assert.match(draw(tab, "Grill Cloud").desc(), /No credits yet/);
 	const row = draw(tab, "Grill Cloud");
 	// Buying is what opens the account: the pack buttons are there, for this key.
@@ -490,18 +490,18 @@ test("a key that got no free starter can still buy, try again, or be let go of",
 	(globalThis as any).open = (u: string) => opened.push(u);
 	row.button("400 credits for $3.99 + tax").click();
 	assert.deepEqual(opened, [await cloudCheckoutUrl(key, "https://buy.stripe.com/small")]);
-	assert.equal(await plugin.checkCloudTopUp(), false);
+	assert.equal(await plugin.account.checkCloudTopUp(), false);
 	state.account = true;
 	state.credits = 400;
 	state.purchases = 1;
 	notices.length = 0;
-	assert.equal(await plugin.checkCloudTopUp(), true);
+	assert.equal(await plugin.account.checkCloudTopUp(), true);
 	assert.ok(notices.some((n) => n.includes("400 credits added. You have 400.")), notices.join(" | "));
-	assert.equal(plugin.cloudState, "ok");
+	assert.equal(plugin.account.cloudState, "ok");
 
 	// Or ask for the starter again another day, on the same key.
 	state.account = false;
-	await plugin.refreshCloud();
+	await plugin.account.refreshCloud();
 	const before = seen.length;
 	await draw(tab, "Grill Cloud").button("Try free credits").click();
 	assert.deepEqual([seen[before].path, seen[before].auth], ["/start", `Bearer ${key}`]);
@@ -510,7 +510,7 @@ test("a key that got no free starter can still buy, try again, or be let go of",
 	// Or let go of it, from the key row: there is nothing on the server to delete.
 	net.handler = real;
 	state.account = false;
-	await plugin.refreshCloud();
+	await plugin.account.refreshCloud();
 	assert.equal(keyRow(tab).button("Delete account"), undefined);
 	await keyRow(tab).button("Forget this key").click();
 	assert.equal(plugin.data.settings.apiKeys.grillcloud, "");
@@ -527,7 +527,7 @@ test("the key can be shown but not typed over; replacing it takes a key the serv
 	const known = new Set<string>();
 	server({ credits: 500, granted: false, known });
 	const { plugin, disk, tab } = await boot();
-	await plugin.startCloud();
+	await plugin.account.startCloud();
 	const mine = plugin.data.settings.apiKeys.grillcloud;
 	assert.equal(draw(tab, "API key").visible, false, "no editable key field for Grill Cloud");
 
@@ -564,7 +564,7 @@ test("the key can be shown but not typed over; replacing it takes a key the serv
 	assert.equal(plugin.data.settings.apiKeys.grillcloud, other);
 	assert.equal(disk.data.settings.apiKeys.grillcloud, other);
 	assert.deepEqual(disk.data.settings.retiredCloudKeys, [mine]);
-	assert.deepEqual(plugin.cloudPacks, [], "no checkout link is configured in this test");
+	assert.deepEqual(plugin.account.cloudPacks, [], "no checkout link is configured in this test");
 
 	// Closing the tab hides the key again and drops a half-made replacement.
 	keyRow(tab).button("Show").click();
@@ -584,19 +584,19 @@ test("the checkout link always belongs to the key in use", async () => {
 	const known = new Set<string>();
 	server({ known });
 	const { plugin } = await boot();
-	await plugin.startCloud();
+	await plugin.account.startCloud();
 	const mine = plugin.data.settings.apiKeys.grillcloud;
-	const links = (): string[] => plugin.cloudPacks.map((p: any) => p.link);
+	const links = (): string[] => plugin.account.cloudPacks.map((p: any) => p.link);
 	assert.deepEqual(links(), [await cloudCheckoutUrl(mine, "https://buy.stripe.com/small"), await cloudCheckoutUrl(mine, "https://buy.stripe.com/abc")]);
 	const other = newCloudKey();
 	known.add(`Bearer ${other}`);
-	assert.equal(await plugin.useCloudKey(other), null);
+	assert.equal(await plugin.account.useCloudKey(other), null);
 	assert.deepEqual(links(), [await cloudCheckoutUrl(other, "https://buy.stripe.com/small"), await cloudCheckoutUrl(other, "https://buy.stripe.com/abc")]);
-	await plugin.forgetCloudKey();
+	await plugin.account.forgetCloudKey();
 	assert.deepEqual(links(), []);
 	const opened: string[] = [];
 	(globalThis as any).open = (u: string) => opened.push(u);
-	plugin.openCloudCheckout();
+	plugin.account.openCloudCheckout();
 	assert.deepEqual(opened, []);
 });
 
@@ -604,7 +604,7 @@ test("deleting the account takes two presses, and the key is only dropped once t
 	cloud.url = URL;
 	const { seen, state } = server({ credits: 120, granted: false });
 	const { plugin, disk, tab } = await boot();
-	await plugin.startCloud();
+	await plugin.account.startCloud();
 	const key = plugin.data.settings.apiKeys.grillcloud;
 
 	await keyRow(tab).button("Delete account").click();
@@ -636,21 +636,21 @@ test("after Top up the balance is watched, and a purchase announces itself when 
 	];
 	const { state } = server({ credits: 316, granted: false });
 	const { plugin, tab } = await boot();
-	await plugin.startCloud();
+	await plugin.account.startCloud();
 	(globalThis as any).open = () => undefined;
 
 	draw(tab, "Grill Cloud").button(BIG).click();
-	assert.equal(plugin.cloudWaitingFrom, 316);
+	assert.equal(plugin.account.cloudWaitingFrom, 316);
 	assert.match(draw(tab, "Grill Cloud").desc(), /Checkout is open in your browser/);
 
 	// Nothing yet.
-	assert.equal(await plugin.checkCloudTopUp(), false);
-	assert.equal(plugin.cloudWaitingFrom, 316);
+	assert.equal(await plugin.account.checkCloudTopUp(), false);
+	assert.equal(plugin.account.cloudWaitingFrom, 316);
 
 	// The balance going up by itself (a held charge handed back) is not a purchase.
 	state.credits = 330;
-	assert.equal(await plugin.checkCloudTopUp(), false);
-	assert.notEqual(plugin.cloudWaitingFrom, null);
+	assert.equal(await plugin.account.checkCloudTopUp(), false);
+	assert.notEqual(plugin.account.cloudWaitingFrom, null);
 	state.credits = 316;
 
 	// The payment lands: the purchase count goes up.
@@ -658,25 +658,25 @@ test("after Top up the balance is watched, and a purchase announces itself when 
 	state.purchases = 1;
 	const heard: number[][] = [];
 	let viewTold = 0;
-	plugin.cloudArrived = (from: number, to: number) => heard.push([from, to]);
-	plugin.cloudListeners.add(() => viewTold++);
+	plugin.account.cloudArrived = (from: number, to: number) => heard.push([from, to]);
+	plugin.account.cloudListeners.add(() => viewTold++);
 	notices.length = 0;
-	assert.equal(await plugin.checkCloudTopUp(), true);
+	assert.equal(await plugin.account.checkCloudTopUp(), true);
 	assert.deepEqual(heard, [[316, 1316]]);
 	assert.equal(viewTold, 1);
 	// It says what arrived, and asks nothing of the user: there is no key to go and save.
 	assert.deepEqual(notices, ["Grill: 1,000 credits added. You have 1,316."]);
 	// A later one just says what arrived.
-	plugin.openCloudCheckout();
+	plugin.account.openCloudCheckout();
 	state.credits = 1716;
 	state.purchases = 2;
 	notices.length = 0;
-	assert.equal(await plugin.checkCloudTopUp(), true);
+	assert.equal(await plugin.account.checkCloudTopUp(), true);
 	assert.deepEqual(notices, ["Grill: 400 credits added. You have 1,716."]);
 	state.credits = 1316;
-	await plugin.refreshCloud();
-	assert.equal(plugin.cloudWaitingFrom, null, "the wait is over");
-	assert.equal(await plugin.checkCloudTopUp(), false);
+	await plugin.account.refreshCloud();
+	assert.equal(plugin.account.cloudWaitingFrom, null, "the wait is over");
+	assert.equal(await plugin.account.checkCloudTopUp(), false);
 	assert.equal(draw(tab, "Grill Cloud").desc(), "In use. 1,316 credits left.");
 });
 
@@ -688,32 +688,32 @@ test("the purchase watcher: one look at a time, spending meanwhile doesn't skew 
 	];
 	const { seen, state } = server({ credits: 316, granted: false });
 	const { plugin, tab } = await boot();
-	await plugin.startCloud();
+	await plugin.account.startCloud();
 	(globalThis as any).open = () => undefined;
-	plugin.openCloudCheckout();
-	assert.equal(plugin.cloudWaitingFrom, 316);
+	plugin.account.openCloudCheckout();
+	assert.equal(plugin.account.cloudWaitingFrom, 316);
 
 	// The timer and a return to the window ask at the same moment: one request, one answer.
 	const before = seen.length;
-	const both = await Promise.all([plugin.checkCloudTopUp(), plugin.checkCloudTopUp()]);
+	const both = await Promise.all([plugin.account.checkCloudTopUp(), plugin.account.checkCloudTopUp()]);
 	assert.deepEqual(both, [false, false]);
 	assert.equal(seen.length - before, 1);
 
 	// A session spends 20 credits while waiting; the purchase is still announced as 1000.
 	heardFromCloud({ "x-grill-credits": "296" });
-	assert.equal(plugin.cloudWaitingFrom, 296);
+	assert.equal(plugin.account.cloudWaitingFrom, 296);
 	// Top up pressed a second time (from a notice, say) restarts the wait, nothing more.
-	plugin.openCloudCheckout();
-	assert.equal(plugin.cloudWaitingFrom, 296);
+	plugin.account.openCloudCheckout();
+	assert.equal(plugin.account.cloudWaitingFrom, 296);
 	state.credits = 1296;
 	state.purchases = 1;
 	notices.length = 0;
-	assert.equal(await plugin.checkCloudTopUp(), true);
-	assert.equal(await plugin.checkCloudTopUp(), false);
+	assert.equal(await plugin.account.checkCloudTopUp(), true);
+	assert.equal(await plugin.account.checkCloudTopUp(), false);
 	assert.equal(notices.filter((n) => n.includes("1,000 credits added. You have 1,296.")).length, 1, notices.join(" | "));
 
 	// While a purchase is on its way the key can't be swapped or the account deleted.
-	plugin.openCloudCheckout();
+	plugin.account.openCloudCheckout();
 	const key = plugin.data.settings.apiKeys.grillcloud;
 	const row = keyRow(tab);
 	row.texts.at(-1).change(newCloudKey());
@@ -724,8 +724,8 @@ test("the purchase watcher: one look at a time, spending meanwhile doesn't skew 
 
 	// Unloading the plugin ends the wait.
 	plugin.onunload();
-	assert.equal(plugin.cloudWaitingFrom, null);
-	assert.equal(await plugin.checkCloudTopUp(), false);
+	assert.equal(plugin.account.cloudWaitingFrom, null);
+	assert.equal(await plugin.account.checkCloudTopUp(), false);
 });
 
 test("a wait begun before the server had answered takes its first answer as the starting point", async () => {
@@ -739,14 +739,14 @@ test("a wait begun before the server had answered takes its first answer as the 
 	const { plugin } = await boot({ provider: "grillcloud", apiKeys: { grillcloud: key } });
 	(globalThis as any).open = () => undefined;
 	// The link is made, but the balance has never been fetched.
-	await plugin.linkCloudCheckout(key);
-	plugin.openCloudCheckout();
+	await plugin.account.linkCloudCheckout(key);
+	plugin.account.openCloudCheckout();
 	notices.length = 0;
-	assert.equal(await plugin.checkCloudTopUp(), false, "two old purchases are not an arrival");
+	assert.equal(await plugin.account.checkCloudTopUp(), false, "two old purchases are not an arrival");
 	assert.equal(notices.length, 0);
 	state.credits = 1500;
 	state.purchases = 3;
-	assert.equal(await plugin.checkCloudTopUp(), true);
+	assert.equal(await plugin.account.checkCloudTopUp(), true);
 	assert.ok(notices.some((n) => n.includes("1,000 credits added. You have 1,500.")), notices.join(" | "));
 });
 
@@ -761,14 +761,14 @@ test("the onboarding panel and the home screen ask for the balance without ever 
 	const { seen } = server({ credits: 4, account: true, granted: false });
 	const { plugin } = await boot({ provider: "grillcloud", apiKeys: { grillcloud: key } });
 	const view = new (GrillView as any)(deepFake({ app: plugin.app }), plugin) as any;
-	plugin.cloudListeners.add(view.onCloud);
+	plugin.account.cloudListeners.add(view.onCloud);
 	// Every step of first run draws without a hitch, and only the cloud step asks.
 	view.renderOnboarding(2);
 	view.renderOnboarding(1, true);
 	assert.equal(seen.length, 0);
 	view.renderOnboarding(1);
 	await settle();
-	assert.equal(plugin.cloudState, "ok");
+	assert.equal(plugin.account.cloudState, "ok");
 	assert.equal(seen.length, 1, "asked once, then drawn from what it heard");
 	view.creditsRing(fakeEl());
 	await settle();
@@ -778,13 +778,13 @@ test("the onboarding panel and the home screen ask for the balance without ever 
 	let redrawn = 0;
 	view.cloudRedraw = () => redrawn++;
 	(globalThis as any).open = () => undefined;
-	plugin.openCloudCheckout();
-	plugin.stopCloudWatch();
+	plugin.account.openCloudCheckout();
+	plugin.account.stopCloudWatch();
 	assert.equal(redrawn, 2);
 
 	// A key that isn't one (a hand-edited settings file) asks nothing and doesn't spin.
 	plugin.data.settings.apiKeys.grillcloud = "junk";
-	plugin.cloudState = "unknown";
+	plugin.account.cloudState = "unknown";
 	view.renderOnboarding(1);
 	view.creditsRing(fakeEl());
 	await settle();
@@ -811,7 +811,7 @@ test("the onboarding panel and the home screen ask for the balance without ever 
 	view.renderOnboarding(1);
 	cloud.url = URL;
 	await view.onClose();
-	assert.equal(plugin.cloudListeners.size, 0);
+	assert.equal(plugin.account.cloudListeners.size, 0);
 });
 
 test("a key the settings file loses is brought back from this device's own copy", async () => {
@@ -819,7 +819,7 @@ test("a key the settings file loses is brought back from this device's own copy"
 	server();
 	const local: Record<string, unknown> = {};
 	const first = await boot({}, local);
-	await first.plugin.startCloud();
+	await first.plugin.account.startCloud();
 	const key = first.plugin.data.settings.apiKeys.grillcloud;
 	assert.deepEqual(local["grill-cloud"], { key, retired: [], gone: [] });
 
@@ -830,7 +830,7 @@ test("a key the settings file loses is brought back from this device's own copy"
 	assert.equal(again.disk.data.settings.apiKeys.grillcloud, key);
 
 	// A key the user let go of stays gone after a restart, but is kept as an earlier key.
-	await again.plugin.forgetCloudKey();
+	await again.plugin.account.forgetCloudKey();
 	assert.deepEqual(local["grill-cloud"], { key: "", retired: [key], gone: [] });
 	const third = await boot({ apiKeys: { grillcloud: "" } }, local);
 	assert.equal(third.plugin.data.settings.apiKeys.grillcloud, "");
@@ -838,9 +838,9 @@ test("a key the settings file loses is brought back from this device's own copy"
 
 	// A deleted key is not kept anywhere.
 	const fourth = await boot({}, {});
-	await fourth.plugin.startCloud();
+	await fourth.plugin.account.startCloud();
 	const doomed = fourth.plugin.data.settings.apiKeys.grillcloud;
-	assert.equal(await fourth.plugin.deleteCloud(), null);
+	assert.equal(await fourth.plugin.account.deleteCloud(), null);
 	assert.deepEqual(fourth.disk.data.settings.retiredCloudKeys, []);
 	// Even if a stale copy of the settings file still has it.
 	fourth.disk.data.settings.apiKeys.grillcloud = doomed;
@@ -864,7 +864,7 @@ test("a save never blanks a key another device just wrote, and never makes a sec
 	// Start free on a device that hasn't seen the other's key uses it, not a new one.
 	const late = await boot({ provider: "openai" });
 	late.disk.data.settings.apiKeys = { ...late.disk.data.settings.apiKeys, grillcloud: theirs };
-	await late.plugin.startCloud();
+	await late.plugin.account.startCloud();
 	assert.equal(late.plugin.data.settings.apiKeys.grillcloud, theirs);
 	assert.ok(seen.every((r) => r.auth === `Bearer ${theirs}`));
 
@@ -875,7 +875,7 @@ test("a save never blanks a key another device just wrote, and never makes a sec
 	late.disk.data.settings.apiKeys.grillcloud = other;
 	late.disk.data.settings.retiredCloudKeys = [mine];
 	let told = 0;
-	late.plugin.cloudListeners.add(() => told++);
+	late.plugin.account.cloudListeners.add(() => told++);
 	await late.plugin.onExternalSettingsChange();
 	assert.equal(late.plugin.data.settings.apiKeys.grillcloud, other);
 	assert.deepEqual(late.plugin.data.settings.retiredCloudKeys, [mine]);
@@ -906,7 +906,7 @@ test("a key Grill 6.2.0 left in the keychain is moved back once, and can't retur
 	assert.equal(up.plugin.data.settings.apiKeys.grillcloud, key);
 	assert.equal(up.disk.data.settings.apiKeys.grillcloud, key, "back in the vault's settings");
 	assert.equal(secrets["grill-abc123-grillcloud"], undefined, "and out of the keychain");
-	await up.plugin.forgetCloudKey();
+	await up.plugin.account.forgetCloudKey();
 	const next = await boot({ provider: "grillcloud", apiKeys: { grillcloud: "" }, retiredCloudKeys: [key] }, local, kc);
 	assert.equal(next.plugin.data.settings.apiKeys.grillcloud, "");
 });
@@ -916,10 +916,10 @@ test("two devices that each made a key before hearing of the other's settle on t
 	server();
 	const a = await boot();
 	const b = await boot();
-	await a.plugin.startCloud();
+	await a.plugin.account.startCloud();
 	// A different device: it has none of the first one's own storage.
 	device.clear();
-	await b.plugin.startCloud();
+	await b.plugin.account.startCloud();
 	const ka = a.plugin.data.settings.apiKeys.grillcloud;
 	const kb = b.plugin.data.settings.apiKeys.grillcloud;
 	const winner = ka < kb ? ka : kb;
@@ -956,12 +956,12 @@ test("a deleted key stays deleted on every device", async () => {
 	const localA: Record<string, unknown> = {};
 	const localB: Record<string, unknown> = {};
 	const a = await boot({}, localA);
-	await a.plugin.startCloud();
+	await a.plugin.account.startCloud();
 	const key = a.plugin.data.settings.apiKeys.grillcloud;
 	// B has the same vault open, with the key in memory and in its own copy.
 	const b = await boot(JSON.parse(JSON.stringify(a.disk.data.settings)), localB);
 	assert.equal(b.plugin.data.settings.apiKeys.grillcloud, key);
-	assert.equal(await a.plugin.deleteCloud(), null);
+	assert.equal(await a.plugin.account.deleteCloud(), null);
 	assert.deepEqual(a.disk.data.settings.cloudGone, [await cloudAccount(key)], "remembered by its id, never the key");
 	assert.equal((localA["grill-cloud"] as any).key, "");
 	// A's file reaches B: B lets go of it instead of writing it back.
@@ -985,12 +985,12 @@ test("a Start free that doesn't get through leaves things as they were, and aski
 	cloud.url = URL;
 	const { state, seen } = server({ down: true });
 	const { plugin } = await boot({ provider: "openai" });
-	assert.match(await plugin.startCloud(), /Couldn't reach Grill Cloud/);
+	assert.match(await plugin.account.startCloud(), /Couldn't reach Grill Cloud/);
 	const s = plugin.data.settings;
 	assert.equal(s.provider, "openai", "not left on a provider that can't work");
 	assert.ok(isCloudKey(s.apiKeys.grillcloud), "the key is kept for the next try");
 	state.down = false;
-	assert.match(await plugin.startCloud(), /25 free credits/);
+	assert.match(await plugin.account.startCloud(), /25 free credits/);
 	assert.equal(s.provider, "grillcloud");
 	assert.equal(seen.filter((r) => r.path === "/start").length, 2);
 });
@@ -1003,7 +1003,7 @@ test("a request told to wait behind another asks again quietly; a stale buy butt
 	];
 	const { state } = server();
 	const { plugin } = await boot();
-	await plugin.startCloud();
+	await plugin.account.startCloud();
 	const real = net.handler;
 	let chats = 0;
 	net.handler = async (req) => {
@@ -1024,9 +1024,9 @@ test("a request told to wait behind another asks again quietly; a stale buy butt
 
 	const opened: string[] = [];
 	(globalThis as any).open = (u: string) => opened.push(u);
-	plugin.openCloudCheckout("https://buy.stripe.com/small?client_reference_id=someone-elses");
+	plugin.account.openCloudCheckout("https://buy.stripe.com/small?client_reference_id=someone-elses");
 	assert.deepEqual(opened, []);
-	assert.equal(plugin.cloudWaitingFrom, null);
+	assert.equal(plugin.account.cloudWaitingFrom, null);
 });
 
 test("a natural voice is asked for only when switched on, fetched once per text, and falls back to the device's voice", async () => {
@@ -1057,7 +1057,7 @@ test("a natural voice is asked for only when switched on, fetched once per text,
 		}
 		return r;
 	};
-	await plugin.refreshCloud();
+	await plugin.account.refreshCloud();
 	assert.equal(plugin.naturalVoiceSource(), "cloud");
 	const speech = (): number => seen.filter((r) => r.path === "/speech").length;
 
@@ -1068,13 +1068,13 @@ test("a natural voice is asked for only when switched on, fetched once per text,
 
 	// It is on unless switched off, and nothing is sent until a speaker is pressed.
 	plugin.data.settings.naturalVoice = true;
-	plugin.cloudSessionSpent = 0;
+	plugin.account.cloudSessionSpent = 0;
 	await plugin.readAloud("What is the natural level of output?");
 	assert.equal(speech(), 1);
 	assert.deepEqual(seen.at(-1)!.body, { text: "What is the natural level of output?" });
 	assert.equal(seen.at(-1)!.auth, `Bearer ${key}`);
 	assert.equal(played, 1);
-	assert.equal(plugin.cloudSessionSpent, 0.63, "counted in the session's receipt");
+	assert.equal(plugin.account.cloudSessionSpent, 0.63, "counted in the session's receipt");
 	// The same button while it is playing is "stop": nothing is fetched, nothing is played over it.
 	await plugin.readAloud("What is the natural level of output?");
 	assert.deepEqual([speech(), played], [1, 1]);
@@ -1107,7 +1107,7 @@ test("the device's own key is never dropped at launch, whatever the settings fil
 	server();
 	const local: Record<string, unknown> = {};
 	const a = await boot({}, local);
-	await a.plugin.startCloud();
+	await a.plugin.account.startCloud();
 	const mine = a.plugin.data.settings.apiKeys.grillcloud;
 	// While this device was closed, another one wrote a different key into the file,
 	// without having retired ours (it never saw it).
@@ -1126,12 +1126,12 @@ test("a deleted key can't be put back into use, and says why", async () => {
 	const known = new Set<string>();
 	server({ known });
 	const { plugin } = await boot();
-	await plugin.startCloud();
+	await plugin.account.startCloud();
 	const key = plugin.data.settings.apiKeys.grillcloud;
-	assert.equal(await plugin.deleteCloud(), null);
+	assert.equal(await plugin.account.deleteCloud(), null);
 	// The server might even still answer for it (a payment landed late): it stays gone.
 	known.add(`Bearer ${key}`);
-	assert.match((await plugin.useCloudKey(key)) ?? "", /was deleted from this vault/);
+	assert.match((await plugin.account.useCloudKey(key)) ?? "", /was deleted from this vault/);
 	assert.equal(plugin.data.settings.apiKeys.grillcloud, "");
 });
 
@@ -1150,38 +1150,38 @@ test("one balance per device: Start free in a second vault uses the key the firs
 	cloud.url = URL;
 	const { seen } = server({ credits: 814, granted: false });
 	const first = await boot();
-	await first.plugin.startCloud();
+	await first.plugin.account.startCloud();
 	const key = first.plugin.data.settings.apiKeys.grillcloud;
 	// Another vault on the same device: its own settings, its own Obsidian storage.
 	const second = await boot({}, {}, undefined, true);
 	assert.equal(second.plugin.data.settings.apiKeys.grillcloud, "", "nothing happens until it is asked for");
-	assert.equal(second.plugin.deviceCloudKey(), key);
-	assert.equal(await second.plugin.startCloud(), "Grill Cloud is on, with this computer's account. 814 credits left.");
+	assert.equal(second.plugin.account.deviceCloudKey(), key);
+	assert.equal(await second.plugin.account.startCloud(), "Grill Cloud is on, with this computer's account. 814 credits left.");
 	assert.equal(second.plugin.data.settings.apiKeys.grillcloud, key);
 	assert.ok(seen.every((r) => r.auth === `Bearer ${key}`), "no second key was ever made");
 	// A vault that deliberately let go of that key makes its own instead.
-	await second.plugin.forgetCloudKey();
-	await second.plugin.startCloud();
+	await second.plugin.account.forgetCloudKey();
+	await second.plugin.account.startCloud();
 	assert.notEqual(second.plugin.data.settings.apiKeys.grillcloud, key);
 	// Deleting the account takes the key off the device too, so no other vault picks it up.
 	const third = await boot({}, {}, undefined, true);
-	const shared = third.plugin.deviceCloudKey();
-	await third.plugin.startCloud();
+	const shared = third.plugin.account.deviceCloudKey();
+	await third.plugin.account.startCloud();
 	assert.equal(third.plugin.data.settings.apiKeys.grillcloud, shared);
-	assert.equal(await third.plugin.deleteCloud(), null);
-	assert.equal(third.plugin.deviceCloudKey(), "");
+	assert.equal(await third.plugin.account.deleteCloud(), null);
+	assert.equal(third.plugin.account.deviceCloudKey(), "");
 	// A vault that still held the deleted key lets go of it when it next saves or loads,
 	// and never hands it back to the device.
 	const stale = await boot({ provider: "grillcloud", apiKeys: { grillcloud: shared } }, {}, undefined, true);
 	assert.equal(stale.plugin.data.settings.apiKeys.grillcloud, "");
-	assert.equal(stale.plugin.deviceCloudKey(), "");
+	assert.equal(stale.plugin.account.deviceCloudKey(), "");
 	const fresh = await boot({}, {}, undefined, true);
-	assert.equal(fresh.plugin.sharesDeviceCloud(), false);
+	assert.equal(fresh.plugin.account.sharesDeviceCloud(), false);
 	// On a device with no shared storage at all, each vault keeps its own key as before.
 	const real = (globalThis as any).localStorage;
 	(globalThis as any).localStorage = { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); }, removeItem: () => undefined };
 	const alone = await boot({}, {}, undefined, true);
-	await alone.plugin.startCloud();
+	await alone.plugin.account.startCloud();
 	assert.ok(isCloudKey(alone.plugin.data.settings.apiKeys.grillcloud));
 	(globalThis as any).localStorage = real;
 });
@@ -1196,44 +1196,44 @@ test("the monthly plan is offered where it is on sale, opens its own checkout, a
 	const opened: string[] = [];
 	(globalThis as any).open = (u: string) => opened.push(u);
 	const { plugin, tab } = await boot({ provider: "grillcloud", apiKeys: { grillcloud: mine } });
-	await plugin.refreshCloud();
-	assert.equal(plugin.cloudCanSubscribe, true);
+	await plugin.account.refreshCloud();
+	assert.equal(plugin.account.cloudCanSubscribe, true);
 	assert.equal(planLabel(), "Get the plan");
 	// With the plan on sale, someone without it is offered the plan first and the packs under it.
-	assert.equal(plugin.cloudShowPacks, true);
+	assert.equal(plugin.account.cloudShowPacks, true);
 	assert.notEqual(draw(tab, "Grill Cloud").button("Get 1,000 credits"), undefined);
-	assert.equal(plugin.offerRefill("out_of_credits"), true);
+	assert.equal(plugin.account.offerRefill("out_of_credits"), true);
 	await draw(tab, "Grill Cloud").button(planLabel()).click();
 	assert.deepEqual(opened, [await cloudCheckoutUrl(mine, "https://buy.stripe.com/plan")]);
-	assert.notEqual(plugin.cloudWaitingFrom, null);
+	assert.notEqual(plugin.account.cloudWaitingFrom, null);
 	// Nothing yet, then the plan is there: no credits moved, and the wait is over.
-	assert.equal(await plugin.checkCloudTopUp(), false);
+	assert.equal(await plugin.account.checkCloudTopUp(), false);
 	const until = Math.floor(Date.now() / 1000) + 30 * 86400;
 	told = { ...told, plan: { until, limit: "", resets: 0 } };
 	const before = notices.length;
-	assert.equal(await plugin.checkCloudTopUp(), true);
-	assert.equal(plugin.cloudWaitingFrom, null);
+	assert.equal(await plugin.account.checkCloudTopUp(), true);
+	assert.equal(plugin.account.cloudWaitingFrom, null);
 	assert.match(String(notices[notices.length - 1]), /monthly plan is on/);
 	assert.ok(notices.length > before);
 	// With a plan running it is no longer offered, and no credits beside it is not "low".
-	assert.equal(plugin.cloudCanSubscribe, false);
+	assert.equal(plugin.account.cloudCanSubscribe, false);
 	assert.equal(draw(tab, "Grill Cloud").button(planLabel()), undefined);
 	assert.equal(draw(tab, "Grill Cloud").button(BIG), undefined, "no packs while the plan has room");
-	assert.match(planInWords(plugin.cloudPlan), /^Your monthly plan is on\. It renews on /);
+	assert.match(planInWords(plugin.account.cloudPlan), /^Your monthly plan is on\. It renews on /);
 
 	// A limit reached is said as one, with when it frees up.
 	told = { ...told, plan: { until, limit: "week", resets: until - 86400 } };
-	await plugin.refreshCloud();
-	assert.equal(planInWords(plugin.cloudPlan), "Your plan's usage limit is reached. It frees up again later this week.");
+	await plugin.account.refreshCloud();
+	assert.equal(planInWords(plugin.account.cloudPlan), "Your plan's usage limit is reached. It frees up again later this week.");
 	// Only now are the packs offered: they are how a subscriber keeps going past a limit.
-	assert.equal(plugin.cloudShowPacks, true);
+	assert.equal(plugin.account.cloudShowPacks, true);
 	assert.ok(draw(tab, "Grill Cloud").button(BIG));
 	assert.equal(refillWords("plan_limit").title, "Plan limit reached");
 
 	// A server that doesn't sell the plan, or a build with no link: never offered.
 	told = { ...told, plan: null, plans: false };
-	await plugin.refreshCloud();
-	assert.equal(plugin.cloudCanSubscribe, false);
+	await plugin.account.refreshCloud();
+	assert.equal(plugin.account.cloudCanSubscribe, false);
 	cloud.plan = { price: "$7.99", url: "" } as typeof cloud.plan;
 });
 

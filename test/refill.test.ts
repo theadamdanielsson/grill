@@ -33,7 +33,7 @@ function fakePlugin() {
 		planOpened: 0,
 		openCloudPlanCheckout: () => {
 			plugin.planOpened++;
-			plugin.cloudWaitingFrom = plugin.cloudCredits;
+			plugin.account.cloudWaitingFrom = plugin.account.cloudCredits;
 			tell();
 		},
 		cloudPacks: [
@@ -44,15 +44,17 @@ function fakePlugin() {
 		openSettings: () => void plugin.settingsOpened++,
 		openCloudCheckout: (link: string) => {
 			opened.push(link);
-			plugin.cloudWaitingFrom = plugin.cloudCredits;
+			plugin.account.cloudWaitingFrom = plugin.account.cloudCredits;
 			tell();
 		},
 		stopCloudWatch: () => {
-			plugin.cloudWaitingFrom = null;
+			plugin.account.cloudWaitingFrom = null;
 			tell();
 		},
 	};
-	const tell = () => [...plugin.cloudListeners].forEach((heard: () => void) => heard());
+	// The account's fields sit on the same stand-in.
+	plugin.account = plugin;
+	const tell = () => [...plugin.account.cloudListeners].forEach((heard: () => void) => heard());
 	return { plugin, opened, tell };
 }
 
@@ -78,7 +80,7 @@ test("each way of running short has its own words, none of them pointing at sett
 test("the pop-up offers every pack, opens checkout, waits, and closes when credits arrive", () => {
 	const { plugin, opened, tell } = fakePlugin();
 	const { modal, card } = show(plugin, "out_of_credits", "Your answer is still in the box.");
-	assert.equal(plugin.cloudListeners.size, 1);
+	assert.equal(plugin.account.cloudListeners.size, 1);
 	assert.ok(texts(card()).includes("Add credits to keep going. Your answer is still in the box."));
 	const packs = buttons(card());
 	assert.deepEqual(packs.map((b) => b.kids.map((k: any) => k.text)), [
@@ -102,11 +104,11 @@ test("the pop-up offers every pack, opens checkout, waits, and closes when credi
 	assert.equal(card(), waitingCard);
 
 	// The purchase lands: the wait ends with more credits than before.
-	plugin.cloudWaitingFrom = null;
-	plugin.cloudCredits = 400;
+	plugin.account.cloudWaitingFrom = null;
+	plugin.account.cloudCredits = 400;
 	tell();
 	assert.equal((RefillModal as any).up, null);
-	assert.equal(plugin.cloudListeners.size, 0);
+	assert.equal(plugin.account.cloudListeners.size, 0);
 });
 
 test("stopping the wait brings the packs back, and the links put it away", () => {
@@ -125,13 +127,13 @@ test("stopping the wait brings the packs back, and the links put it away", () =>
 	const again = show(plugin, "out_of_credits");
 	again.card().all().find((k: any) => k.tag === "a" && k.text === "Not now").onclick();
 	assert.equal((RefillModal as any).up, null);
-	assert.equal(plugin.cloudListeners.size, 0);
+	assert.equal(plugin.account.cloudListeners.size, 0);
 });
 
 test("someone without the plan is offered the plan alone, and the pop-up closes when it starts", () => {
 	const { plugin, tell } = fakePlugin();
-	plugin.cloudShowPacks = false;
-	plugin.cloudCanSubscribe = true;
+	plugin.account.cloudShowPacks = false;
+	plugin.account.cloudCanSubscribe = true;
 	const { modal, card } = show(plugin, "out_of_credits");
 	assert.deepEqual(buttons(card()).map((b: any) => b.text), ["Get the plan"]);
 	assert.ok(["BEST VALUE", "Monthly", "$7.99", "a month", "up to 1,650 credits", "On your phone too, no key needed"].every((x) => texts(card()).includes(x)));
@@ -141,9 +143,9 @@ test("someone without the plan is offered the plan alone, and the pop-up closes 
 	buttons(card())[0].onclick();
 	assert.equal(plugin.planOpened, 1);
 	// The plan is running and the wait is over: nothing more to ask.
-	plugin.cloudPlan = { until: 1, limit: "", resets: 0 };
-	plugin.cloudCanSubscribe = false;
-	plugin.cloudWaitingFrom = null;
+	plugin.account.cloudPlan = { until: 1, limit: "", resets: 0 };
+	plugin.account.cloudCanSubscribe = false;
+	plugin.account.cloudWaitingFrom = null;
 	tell();
 	assert.equal(closed, 1);
 	modal.onClose();
@@ -151,7 +153,7 @@ test("someone without the plan is offered the plan alone, and the pop-up closes 
 
 test("someone without the plan is offered the plan first and the packs under it", () => {
 	const { plugin } = fakePlugin();
-	plugin.cloudCanSubscribe = true;
+	plugin.account.cloudCanSubscribe = true;
 	const { modal, card } = show(plugin, "out_of_credits");
 	const names = buttons(card()).map((b: any) => b.text);
 	// One row of prices: the smallest pack, the plan in the middle, the larger pack.
@@ -163,7 +165,7 @@ test("someone without the plan is offered the plan first and the packs under it"
 
 test("a subscriber at a limit is told when it frees up and offered the packs", () => {
 	const { plugin } = fakePlugin();
-	plugin.cloudPlan = { until: 1, limit: "window", resets: 2 };
+	plugin.account.cloudPlan = { until: 1, limit: "window", resets: 2 };
 	const { modal, card } = show(plugin, "plan_limit");
 	assert.ok(texts(card()).includes("Plan limit reached"));
 	assert.ok(texts(card()).includes("Your plan's usage limit is reached. It frees up again within a few hours. Add credits to keep going now."));

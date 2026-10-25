@@ -4,8 +4,11 @@
  * so and waits, the way the card in settings does.
  */
 
-import { Modal } from "obsidian";
-import type GrillPlugin from "./main";
+import { App, Modal } from "obsidian";
+import type { CloudAccount } from "./cloudaccount";
+
+/** What the pop-up needs of the plugin. */
+export type RefillHost = { app: App; account: CloudAccount; openSettings(): void };
 import { cloud, CloudPlan, PLAN_HEADLINE, PLAN_LEAD, PLAN_LIMITS, PLAN_PERKS, packPurpose, planBack, planLabel, planUsage } from "./cloud";
 
 /** What the pop-up says for each way credits fall short. The server's own sentences
@@ -87,7 +90,7 @@ export class RefillModal extends Modal {
 	/** The one that is up, if any: several refused requests in a row are one pop-up. */
 	private static up: RefillModal | null = null;
 
-	static show(plugin: GrillPlugin, code: string, tail = ""): void {
+	static show(plugin: RefillHost, code: string, tail = ""): void {
 		if (RefillModal.up) return;
 		new RefillModal(plugin, code, tail).open();
 	}
@@ -100,7 +103,7 @@ export class RefillModal extends Modal {
 	private hadPlan = false;
 
 	private constructor(
-		private plugin: GrillPlugin,
+		private plugin: RefillHost,
 		private code: string,
 		private tail: string,
 	) {
@@ -110,20 +113,20 @@ export class RefillModal extends Modal {
 	onOpen(): void {
 		RefillModal.up = this;
 		this.modalEl.addClass("grill-refill-modal");
-		this.plugin.cloudListeners.add(this.heard);
+		this.plugin.account.cloudListeners.add(this.heard);
 		this.draw();
 	}
 
 	onClose(): void {
 		if (RefillModal.up === this) RefillModal.up = null;
-		this.plugin.cloudListeners.delete(this.heard);
+		this.plugin.account.cloudListeners.delete(this.heard);
 		this.contentEl.empty();
 	}
 
 	private heard = (): void => {
-		const waiting = this.plugin.cloudWaitingFrom !== null;
+		const waiting = this.plugin.account.cloudWaitingFrom !== null;
 		// The wait is over and there is more than there was: the purchase arrived.
-		if (this.face === "wait" && !waiting && ((this.plugin.cloudCredits ?? 0) > this.before || (!this.hadPlan && this.plugin.cloudPlan !== null))) {
+		if (this.face === "wait" && !waiting && ((this.plugin.account.cloudCredits ?? 0) > this.before || (!this.hadPlan && this.plugin.account.cloudPlan !== null))) {
 			this.close();
 			return;
 		}
@@ -136,22 +139,22 @@ export class RefillModal extends Modal {
 		const card = el.createDiv({ cls: "grill-cloud-card grill-arcade-screen grill-refill" });
 		card.createDiv({ cls: "grill-arcade-mark", text: "GRILL CLOUD" });
 
-		if (this.plugin.cloudWaitingFrom !== null) {
+		if (this.plugin.account.cloudWaitingFrom !== null) {
 			this.face = "wait";
 			card.createEl("h3", { cls: "grill-refill-title", text: "Checkout is open in your browser" });
 			card.createDiv({ cls: "grill-meta", text: "It shows up here a few seconds after you pay." });
 			const stop = card.createEl("button", { cls: "grill-refill-stop", text: "Stop checking" });
-			stop.onclick = () => this.plugin.stopCloudWatch();
+			stop.onclick = () => this.plugin.account.stopCloudWatch();
 			return;
 		}
 
 		this.face = "buy";
 		const words = refillWords(this.code);
 		card.createEl("h3", { cls: "grill-refill-title", text: words.title });
-		const plan = this.plugin.cloudPlan;
-		const onSale = this.plugin.cloudShowPacks ? this.plugin.cloudPacks : [];
+		const plan = this.plugin.account.cloudPlan;
+		const onSale = this.plugin.account.cloudShowPacks ? this.plugin.account.cloudPacks : [];
 		// Someone without the plan is offered the plan; packs are for a subscriber at a limit.
-		const offerPlan = this.plugin.cloudCanSubscribe;
+		const offerPlan = this.plugin.account.cloudCanSubscribe;
 		const body =
 			this.code === "plan_limit" && plan?.limit
 				? `Your plan's usage limit is reached. It frees up again ${planBack(plan)}. Add credits to keep going now.`
@@ -166,18 +169,18 @@ export class RefillModal extends Modal {
 		const packs = card.createDiv({ cls: "grill-refill-packs" });
 		const buyPack = (b: HTMLElement, pack: (typeof onSale)[number]): void => {
 			b.onclick = () => {
-				this.before = this.plugin.cloudCredits ?? 0;
-				this.hadPlan = this.plugin.cloudPlan !== null;
-				this.plugin.openCloudCheckout(pack.link);
+				this.before = this.plugin.account.cloudCredits ?? 0;
+				this.hadPlan = this.plugin.account.cloudPlan !== null;
+				this.plugin.account.openCloudCheckout(pack.link);
 			};
 		};
 		if (offerPlan) {
 			const slots = drawOffers(packs, onSale, true);
 			const b = slots.plan.createEl("button", { cls: "grill-plan-go mod-cta", text: planLabel() });
 			b.onclick = () => {
-				this.before = this.plugin.cloudCredits ?? 0;
-				this.hadPlan = this.plugin.cloudPlan !== null;
-				this.plugin.openCloudPlanCheckout();
+				this.before = this.plugin.account.cloudCredits ?? 0;
+				this.hadPlan = this.plugin.account.cloudPlan !== null;
+				this.plugin.account.openCloudPlanCheckout();
 			};
 			onSale.forEach((pack, i) => buyPack(slots.packs[i].createEl("button", { cls: "grill-refill-pack", text: packGo(pack) }), pack));
 		} else {
