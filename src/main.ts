@@ -11,7 +11,7 @@ import { applyResults, InboxResult, restoreNoteCounts } from "./record";
 import { learnerBrief, missesFromSessions, type PastSession } from "./brief";
 import { type AskSource, claudeCodeConversation, codexConversation, type Conversation, conversationsFromZip, exportConversations, importedLines, matchConversations, mergeImported, plainPrior, type PriorKnowledge } from "./imported";
 import { parseSessionNote, STAMP_RE } from "./sessionnote";
-import { CATCH_UP, ConceptMap, conceptPrefix, dueConceptCount, migrateResetScheduling, rebalanceDueDates, reconcileConcepts } from "./concepts";
+import { CATCH_UP, ConceptMap, conceptPrefix, healAggregates, dueConceptCount, migrateResetScheduling, rebalanceDueDates, reconcileConcepts } from "./concepts";
 import {
 	ACTIVE_DAYS_BETWEEN_ARCS,
 	activeDayCount,
@@ -521,6 +521,9 @@ export default class GrillPlugin extends Plugin {
 					],
 					() => this.persist(),
 				);
+				// A note whose cached status drifted from its concepts is put right once, here,
+				// not each time the map is drawn.
+				if (healAggregates(this.concepts, this.mastery)) await this.store.saveMastery(this.mastery).catch((e) => console.error("Grill: couldn't save the repaired note statuses", e));
 				this.recordLoaded = true;
 				this.registerInterval(window.setInterval(() => void this.foldInbox(), 120_000));
 				this.refreshStatusBar();

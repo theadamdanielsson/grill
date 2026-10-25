@@ -1744,9 +1744,14 @@ export class SessionView extends ItemView {
 		const actions = card.createDiv({ cls: "grill-import-offer-actions" });
 		const no = actions.createEl("button", { cls: "grill-quiet-btn", text: "No thanks", attr: { type: "button" } });
 		const yes = actions.createEl("button", { cls: "mod-cta", text: "Share context", attr: { type: "button" } });
-		void this.plugin.settings.update({ importAsked: true });
-		no.onclick = () => card.remove();
+		// Asked once it is answered, either way: not by being drawn.
+		const answered = (): void => void this.plugin.settings.update({ importAsked: true });
+		no.onclick = () => {
+			answered();
+			card.remove();
+		};
 		yes.onclick = async () => {
+			answered();
 			yes.disabled = no.disabled = true;
 			yes.setText("Reading…");
 			let said: string;
@@ -3152,11 +3157,7 @@ export class SessionView extends ItemView {
 			if (state !== "ok" && state !== "none") return;
 			if (state === "ok" && credits === null) return;
 			const now = credits ?? 0;
-			if (now > s.cloudRing.last || s.cloudRing.full <= 0) s.cloudRing.full = Math.max(now, 1);
-			if (now !== s.cloudRing.last) {
-				s.cloudRing.last = now;
-				void this.plugin.persist();
-			}
+			this.plugin.account.noteRingBalance(now);
 			// A running plan with room left is a full ring, whatever the credits beside it.
 			const plan = this.plugin.account.cloudPlan;
 			const covered = plan !== null && !plan.limit;
@@ -3249,41 +3250,6 @@ export class SessionView extends ItemView {
 			const eligible = this.allEligible();
 			const nameSet = new Set(eligible.map((f) => f.basename));
 			const concepts = await this.plugin.store.loadConcepts();
-			// Repair a stale note-level aggStatus/dueAt cache: submitAnswer's recomputeAggregate
-			// keeps plugin.mastery in sync with concepts.json going forward, but any note whose
-			// cache drifted before that — an interrupted session, an older version, concepts
-			// touched by some other path — stays wrong indefinitely otherwise, since nothing
-			// else ever re-derives it. Confirmed in the wild: 14 notes in one real vault sat on
-			// a cached aggStatus of "untested" despite having tested (and in some cases
-			// individually graded) concepts, so the "Untested" filter kept including notes the
-			// map itself drew with a real grade badge — the two disagreeing because one trusted
-			// a stale cache and the other read the ground truth. The map is already loading
-			// that ground truth (`concepts`) to draw from, so re-deriving and healing the cache
-			// here is free; only notes that actually disagree get written back.
-			const idsByNote = new Map<string, string[]>();
-			for (const [id, cm] of Object.entries(concepts)) {
-				if (!nameSet.has(cm.note)) continue;
-				(idsByNote.get(cm.note) ?? idsByNote.set(cm.note, []).get(cm.note)!).push(id);
-			}
-			let masteryRepaired = false;
-			// Only a record already loaded is repaired, and only notes it has: drawn before
-			// the load (a pane open as Obsidian starts), the placeholder would be saved over
-			// the real file with every note's counts at zero. Up to 8.0 that is what happened.
-			for (const [note, ids] of this.plugin.recordLoaded ? idsByNote : []) {
-				const agg = noteAggregate(ids, concepts);
-				const m = this.plugin.mastery[note];
-				if (!m) continue;
-				if (m.aggStatus !== agg.aggStatus || m.dueAt !== agg.dueAt) {
-					m.aggStatus = agg.aggStatus;
-					m.dueAt = agg.dueAt;
-					masteryRepaired = true;
-				}
-			}
-			if (masteryRepaired) {
-				// Saved with the rest of the session's state, so it can't race a flush.
-				this.dirty = true;
-				void this.flush();
-			}
 			const practiced = new Set<string>();
 			for (const cm of Object.values(concepts)) {
 				if (nameSet.has(cm.note) && cm.correct + cm.partial + cm.incorrect > 0) practiced.add(cm.note);

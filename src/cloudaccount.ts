@@ -20,6 +20,17 @@ export type CloudHost = Pick<GrillPlugin, "app" | "data" | "keys" | "settings" |
 export class CloudAccount {
 	constructor(private host: CloudHost) {}
 
+	/** What the credits ring measures against: the balance after the last top-up, and the
+	 * balance last seen, by which a top-up is noticed. Saved when the balance moved. */
+	noteRingBalance(now: number): void {
+		const ring = this.host.data.settings.cloudRing;
+		if (now > ring.last || ring.full <= 0) ring.full = Math.max(now, 1);
+		if (now !== ring.last) {
+			ring.last = now;
+			void this.host.persist();
+		}
+	}
+
 	/** Grill Cloud credits left as last heard from the server; null until known. */
 	cloudCredits: number | null = null;
 	/** Whether Grill Cloud can read aloud in a natural voice, as it last said. */

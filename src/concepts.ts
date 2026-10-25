@@ -483,6 +483,29 @@ export function blockedByDailyCap(
 	return newConceptsIntroducedSince(map, todayStart) >= newConceptsPerDay;
 }
 
+/** Re-derives each note's cached status and due date from its concepts, where they
+ * disagree, and says whether any did. The cache is kept in step after every answer (see
+ * recomputeAggregate in view.ts), but one that drifted before that (an interrupted
+ * session, an older version, concepts touched by another path) stayed wrong: one real
+ * vault had 14 notes cached as "untested" with graded concepts, so the Untested filter
+ * included notes the map drew with a grade. Only notes the mastery map has are touched. */
+export function healAggregates(concepts: ConceptMap, mastery: MasteryMap): boolean {
+	const idsByNote = new Map<string, string[]>();
+	for (const [id, cm] of Object.entries(concepts)) (idsByNote.get(cm.note) ?? idsByNote.set(cm.note, []).get(cm.note)!).push(id);
+	let healed = false;
+	for (const [note, ids] of idsByNote) {
+		const m = mastery[note];
+		if (!m) continue;
+		const agg = noteAggregate(ids, concepts);
+		if (m.aggStatus !== agg.aggStatus || m.dueAt !== agg.dueAt) {
+			m.aggStatus = agg.aggStatus;
+			m.dueAt = agg.dueAt;
+			healed = true;
+		}
+	}
+	return healed;
+}
+
 /** Concept-derived note status + soonest due date, over the note's CURRENT concept ids
  * only (orphans excluded). This is what note-level surfaces read. Takes bare ids, not
  * structural `Concept` objects — every one of these is a lookup into `map` anyway, and
