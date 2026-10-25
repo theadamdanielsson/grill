@@ -15,15 +15,14 @@ import {
 	TFolder,
 	WorkspaceLeaf,
 	normalizePath,
-	requestUrl,
 } from "obsidian";
 import { configureFSRSWeights, MasteryMap } from "./mastery";
 import { notesBase } from "./props";
 import { CalPoint, isCalPoint } from "./calibration";
-import { API_BASE, capabilities, LLMConfig, OLLAMA_DEFAULT_URL, offeredProviders, ProviderId, PROVIDERS } from "./providers";
+import { capabilities, LLMConfig, OLLAMA_DEFAULT_URL, offeredProviders, ProviderId, PROVIDERS } from "./providers";
 import { Question } from "./question";
 import { listModels, readPriorKnowledge, synthesizeArc, testModel } from "./llm";
-import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, CloudPack, CloudPlan, planInWords, planLabel, cloudAccount, cloudBalance, cloudSpeech, cloudCheckoutUrl, cloudDelete, cloudEnabled, cloudStart, creditsInWords, isCloudKey, newCloudKey, packLabel, usageInWords } from "./cloud";
+import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, CloudPack, CloudPlan, planInWords, planLabel, cloudAccount, cloudBalance, cloudCheckoutUrl, cloudDelete, cloudEnabled, cloudStart, creditsInWords, isCloudKey, newCloudKey, packLabel, usageInWords } from "./cloud";
 import { drawOffers, drawPlanUsage, packGo, RefillModal } from "./refill";
 import { CHECK_EVERY_MS, isNewer, latestVersion } from "./update";
 import { applyResults, InboxResult, restoreNoteCounts } from "./record";
@@ -62,6 +61,7 @@ import type { ExtraTools } from "./vaulttools";
 import { hitsText, MEANING_TOOL, meaningQuery, search, updateIndex, type SearchIndex } from "./semantic";
 import { embedLocal, localEmbedModel, releaseEmbedder } from "./embed-local";
 import { closeAudio } from "./sfx";
+import { naturalSpeech, type SpeechSource } from "./speech";
 import { daysLeft, examLines, examName, whenWords, type Exam } from "./exams";
 import { ExamModal } from "./exammodal";
 import { FETCH_TOOL, fetchedUrl, fetchPage } from "./web";
@@ -1869,7 +1869,7 @@ ${body}
 	cloudSpeech = false;
 
 	/** Where a natural voice would come from right now, if anywhere. */
-	naturalVoiceSource(): "cloud" | "openai" | null {
+	naturalVoiceSource(): SpeechSource | null {
 		const s = this.data.settings;
 		if (cloudEnabled() && s.provider === "grillcloud" && isCloudKey(s.apiKeys.grillcloud) && this.cloudSpeech) return "cloud";
 		if (s.provider === "openai" && s.apiKeys.openai) return "openai";
@@ -1883,25 +1883,7 @@ ${body}
 		const source = s.naturalVoice ? this.naturalVoiceSource() : null;
 		if (source) {
 			try {
-				await speakNatural(text, async (clean) => {
-					if (source === "cloud") {
-						const r = await cloudSpeech(s.apiKeys.grillcloud, clean);
-						if (!r.ok) throw new Error(r.message);
-						return r.data;
-					}
-					const r = await Promise.race([
-						requestUrl({
-							url: `${API_BASE.openai}/audio/speech`,
-							method: "POST",
-							headers: { authorization: `Bearer ${s.apiKeys.openai}`, "content-type": "application/json" },
-							body: JSON.stringify({ model: "gpt-4o-mini-tts", voice: "sage", input: clean, response_format: "mp3" }),
-							throw: false,
-						}),
-						new Promise<never>((_, no) => window.setTimeout(() => no(new Error("The voice took too long.")), 45_000)),
-					]);
-					if (r.status !== 200) throw new Error(`The voice had a problem (${r.status}).`);
-					return r.arrayBuffer;
-				});
+				await speakNatural(text, (clean) => naturalSpeech(source, source === "cloud" ? s.apiKeys.grillcloud : s.apiKeys.openai, clean));
 				return;
 			} catch (e) {
 				new Notice(`Grill: ${(e as Error).message} Using your device's voice instead.`, 8000);
