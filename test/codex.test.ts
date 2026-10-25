@@ -202,3 +202,11 @@ test("a chat turn sends text only and no shape", async () => {
 	assert.deepEqual(turn.input.map((i: Msg) => i.type), ["text"]);
 	assert.equal("outputSchema" in turn, false);
 });
+
+test("a Codex that never answers is given up on, with a reason, instead of waited on forever", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	const silent: CodexWire = { send: () => undefined, onLine: () => undefined, onClose: () => undefined, close: () => undefined };
+	const run = runCodexTurn({ prompt: "hi", cwd: "/v", level: "safe", onEvent: () => undefined, ask: async () => "deny" } as never, silent);
+	t.mock.timers.tick(60_000);
+	await assert.rejects(run, /Codex said nothing for 1 minute, so Grill stopped waiting/);
+});

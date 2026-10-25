@@ -16,6 +16,7 @@ import type { ToolSpec } from "./stream";
 import type { ToolRunner } from "./loopback";
 import { isRecordTool, recordToolLine } from "./recordtools";
 import { AgentEvent, AgentLevel, AgentResult, PermissionAnswer, PermissionAsk, pathWith } from "./agent";
+import { HANDSHAKE_MS, IDLE_MS, idleWatch, quietError } from "./wire";
 
 type Loose = Record<string, unknown>;
 const obj = (v: unknown): Loose | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Loose) : null);
@@ -141,6 +142,14 @@ export async function runCodexTurn(run: CodexRun, wire: CodexWire): Promise<Agen
 	// Nothing waits on `done` until the turn has started; a failure before then is
 	// reported by the request that was in flight.
 	done.catch(() => undefined);
+	// A program that stops answering (waiting on its own terminal for a first-run
+	// question, say) is given up on, not waited for with the pane locked.
+	const watch = idleWatch(HANDSHAKE_MS, (ms) => {
+		const e = quietError("Codex", ms);
+		for (const p of waiting.values()) p.no(e);
+		waiting.clear();
+		failed?.(e);
+	});
 
 	const request = <T>(method: string, params: unknown): Promise<T> =>
 		new Promise<T>((yes, no) => {
@@ -218,6 +227,7 @@ export async function runCodexTurn(run: CodexRun, wire: CodexWire): Promise<Agen
 	};
 
 	wire.onLine((line) => {
+		watch.heard();
 		let m: Loose | null = null;
 		try {
 			m = obj(JSON.parse(line));
@@ -227,7 +237,7 @@ export async function runCodexTurn(run: CodexRun, wire: CodexWire): Promise<Agen
 		if (!m) return;
 		if (typeof m.method === "string") {
 			const params = obj(m.params) ?? {};
-			if (m.id !== undefined && m.id !== null) void asked(m.id, m.method, params).catch(() => refuse(m?.id, "That request could not be answered."));
+			if (m.id !== undefined && m.id !== null) void watch.hold(asked(m.id, m.method, params)).catch(() => refuse(m?.id, "That request could not be answered."));
 			else told(m.method, params);
 			return;
 		}
@@ -267,8 +277,10 @@ export async function runCodexTurn(run: CodexRun, wire: CodexWire): Promise<Agen
 		const pictures = (run.images ?? []).map((im) => ({ type: "image", url: `data:${im.mediaType};base64,${im.dataBase64}` }));
 		const started = await request<Loose>("turn/start", { threadId, input: [...pictures, { type: "text", text: first }], ...(run.outputSchema ? { outputSchema: run.outputSchema } : {}), approvalPolicy: policy.approvalPolicy, approvalsReviewer: "user", ...(run.model ? { model: run.model } : {}) });
 		turnId = str(obj(started?.turn)?.id) || turnId;
+		watch.limit(IDLE_MS);
 		await done;
 	} finally {
+		watch.stop();
 		run.signal?.removeEventListener("abort", stop);
 	}
 	const reply = text.trim() || lastMessage.trim();

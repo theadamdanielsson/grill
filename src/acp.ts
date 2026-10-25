@@ -12,6 +12,7 @@
 import { RECORD_TOOL_RE, recordToolLine } from "./recordtools";
 import { AgentEvent, AgentLevel, AgentResult, PermissionAnswer, PermissionAsk, pathWith } from "./agent";
 import { diffLines } from "./codex";
+import { HANDSHAKE_MS, IDLE_MS, idleWatch, quietError } from "./wire";
 
 type Loose = Record<string, unknown>;
 const obj = (v: unknown): Loose | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Loose) : null);
@@ -222,6 +223,12 @@ export async function runAcpTurn(run: AcpRun, wire: AcpWire): Promise<AgentResul
 	let declined = false;
 	/** Whether Plan turned a change or a command away, which it does without asking. */
 	let planned = false;
+	// A program that stops answering is given up on, not waited for with the pane locked.
+	const watch = idleWatch(HANDSHAKE_MS, (ms) => {
+		const e = quietError(run.name, ms);
+		for (const p of waiting.values()) p.no(e);
+		waiting.clear();
+	});
 
 	const request = <T>(method: string, params: unknown): Promise<T> =>
 		new Promise<T>((yes, no) => {
@@ -296,6 +303,7 @@ export async function runAcpTurn(run: AcpRun, wire: AcpWire): Promise<AgentResul
 	};
 
 	wire.onLine((line) => {
+		watch.heard();
 		let m: Loose | null = null;
 		try {
 			m = obj(JSON.parse(line));
@@ -305,7 +313,7 @@ export async function runAcpTurn(run: AcpRun, wire: AcpWire): Promise<AgentResul
 		if (!m) return;
 		if (typeof m.method === "string") {
 			const params = obj(m.params) ?? {};
-			if (m.id !== undefined && m.id !== null) void asked(m.id, m.method, params).catch(() => refuse(m?.id, "That request could not be answered."));
+			if (m.id !== undefined && m.id !== null) void watch.hold(asked(m.id, m.method, params)).catch(() => refuse(m?.id, "That request could not be answered."));
 			else if (m.method === "session/update") told(params);
 			return;
 		}
@@ -377,10 +385,12 @@ export async function runAcpTurn(run: AcpRun, wire: AcpWire): Promise<AgentResul
 		if (run.signal?.aborted) throw new DOMException("Stopped.", "AbortError");
 		const first = fresh && run.brief ? `<context>\n${run.brief}\n</context>\n\n${run.prompt}` : run.prompt;
 		live = true;
+		watch.limit(IDLE_MS);
 		const done = await request<Loose>("session/prompt", { sessionId, prompt: [{ type: "text", text: first }] });
 		if (stopped || (str(done?.stopReason) === "cancelled" && !declined)) throw new DOMException("Stopped.", "AbortError");
 		if (str(done?.stopReason) === "refusal") throw new Error(`${run.name} declined to answer that.`);
 	} finally {
+		watch.stop();
 		run.signal?.removeEventListener("abort", stop);
 	}
 	// A turn the agent ended on a declined change has said what it was about to do, or
