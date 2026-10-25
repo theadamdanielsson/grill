@@ -34,7 +34,7 @@ const sdk = async () => {
 		UnauthorizedError: oauth.UnauthorizedError,
 	};
 };
-import { pathWith } from "./agent";
+import { pathWith } from "./wire";
 import type { ToolCall, ToolSpec } from "./stream";
 
 export interface McpServer {

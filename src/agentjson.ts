@@ -9,9 +9,10 @@
  * Grill's own in the user's home (not the shared temporary folder) rather than in the vault. What comes back is read as JSON the same way a
  * model's reply is.
  */
-import type { Options, SDKMessage, SDKUserMessage, SpawnedProcess, SpawnOptions } from "@anthropic-ai/claude-agent-sdk";
+import type { Options, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { ImageInput } from "./images";
-import { acceptPaneSignals, pathWith } from "./agent";
+import { acceptPaneSignals } from "./agent";
+import { need, pathWith, startSdkProgram, SIGNED_OUT } from "./wire";
 import { runAcp } from "./acp";
 import { runCodex } from "./codex";
 import { opencodeProgram } from "./opencode";
@@ -30,8 +31,6 @@ export interface AgentJSONRun {
 	images?: ImageInput[];
 }
 
-type Need = (name: string) => unknown;
-const need = (): Need | null => (window as unknown as { require?: Need }).require ?? null;
 
 /** An empty folder of Grill's own to work in, made when first needed, readable by this
  * user only. */
@@ -63,17 +62,6 @@ export function readJSON(text: string): unknown {
 	}
 }
 
-/** Start Claude Code without handing Node the pane's abort signal (see agent.ts). */
-function startProgram(o: SpawnOptions): SpawnedProcess {
-	const req = need();
-	if (!req) throw new Error("Claude Code can only be run on desktop.");
-	const cp = req("child_process") as { spawn(cmd: string, args: string[], opts: Record<string, unknown>): { kill(sig?: string): boolean; stdin: unknown; stdout: unknown } };
-	const shim = /\.(cmd|bat)$/i.test(o.command);
-	const child = cp.spawn(shim ? `"${o.command}"` : o.command, o.args, { cwd: o.cwd, env: o.env, stdio: ["pipe", "pipe", "ignore"], windowsHide: true, ...(shim ? { shell: true } : {}) });
-	if (o.signal.aborted) child.kill("SIGTERM");
-	else o.signal.addEventListener("abort", () => void child.kill("SIGTERM"), { once: true });
-	return child as unknown as SpawnedProcess;
-}
 
 /** The request as Claude Code takes it: plain text, or one message with the pictures
  * first and the text after, the way the Messages API takes them. */
@@ -111,7 +99,7 @@ export async function claudeJSON(run: AgentJSONRun, cwd = workFolder()): Promise
 		cwd,
 		pathToClaudeCodeExecutable: run.program,
 		env: { ...(proc.env as Record<string, string>), PATH: pathWith(proc.env.PATH ?? "", run.program, home, proc.platform) },
-		spawnClaudeCodeProcess: startProgram,
+		spawnClaudeCodeProcess: (o) => startSdkProgram(o, "Claude Code"),
 		// Nothing to use and nothing to read: Grill's instructions only, the answer in the schema.
 		tools: [],
 		systemPrompt: run.system,
@@ -134,7 +122,7 @@ export async function claudeJSON(run: AgentJSONRun, cwd = workFolder()): Promise
 		}
 	} catch (e) {
 		const why = e instanceof Error ? e.message : String(e);
-		if (/log ?in|auth|credential|401/i.test(why)) throw new Error("Claude Code is not signed in. Open a terminal, run claude, and sign in there.");
+		if (SIGNED_OUT.test(why)) throw new Error("Claude Code is not signed in. Open a terminal, run claude, and sign in there.");
 		throw new Error(`Claude Code stopped: ${why.slice(0, 200)}`);
 	}
 	if (structured !== undefined && structured !== null) return structured;

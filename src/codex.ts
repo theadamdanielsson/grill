@@ -15,8 +15,8 @@
 import type { ToolSpec } from "./stream";
 import type { ToolRunner } from "./loopback";
 import { isRecordTool, recordToolLine } from "./recordtools";
-import { AgentEvent, AgentLevel, AgentResult, PermissionAnswer, PermissionAsk, pathWith } from "./agent";
-import { HANDSHAKE_MS, IDLE_MS, idleWatch, quietError } from "./wire";
+import { AgentEvent, AgentLevel, AgentResult, PermissionAnswer, PermissionAsk } from "./agent";
+import { findInstalled, HANDSHAKE_MS, IDLE_MS, idleWatch, need, NOT_STARTED, openLineWire, quietError, type LineWire, SIGNED_OUT } from "./wire";
 
 type Loose = Record<string, unknown>;
 const obj = (v: unknown): Loose | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Loose) : null);
@@ -34,13 +34,7 @@ export function codexPolicy(level: AgentLevel): { approvalPolicy: string; sandbo
 }
 
 /** A line each way, however they are carried: the program's pipes, or a stand-in. */
-export interface CodexWire {
-	send(line: string): void;
-	onLine(take: (line: string) => void): void;
-	/** Called once if the other end goes away, with what it last said on its error stream. */
-	onClose(gone: (why: string) => void): void;
-	close(): void;
-}
+export type CodexWire = LineWire;
 
 export interface CodexRun {
 	prompt: string;
@@ -118,7 +112,7 @@ export function diffLines(diff: string, most = 12): { removed: string[]; added: 
 	return { removed: cut(removed), added: cut(added) };
 }
 
-const NOT_STARTED = "Codex could not be started. Check where it is installed, in settings.";
+const NOT_STARTED_SAID = "Codex could not be started. Check where it is installed, in settings.";
 const DECISION: Record<PermissionAnswer, string> = { once: "accept", always: "acceptForSession", deny: "decline" };
 
 /** Run one turn over a wire that is already open. Throws with a sentence fit to show. */
@@ -249,7 +243,7 @@ export async function runCodexTurn(run: CodexRun, wire: CodexWire): Promise<Agen
 		else pending.yes(m.result);
 	});
 	wire.onClose((why) => {
-		const e = new Error(why === NOT_STARTED ? NOT_STARTED : /log ?in|auth|401|unauthorized/i.test(why) ? "Codex is not signed in. Open a terminal, run codex, and sign in there." : `Codex stopped${why ? `: ${clip(why.trim(), 200)}` : "."}`);
+		const e = new Error(why === NOT_STARTED ? NOT_STARTED_SAID : SIGNED_OUT.test(why) ? "Codex is not signed in. Open a terminal, run codex, and sign in there." : `Codex stopped${why ? `: ${clip(why.trim(), 200)}` : "."}`);
 		for (const p of waiting.values()) p.no(e);
 		waiting.clear();
 		failed?.(e);
@@ -288,8 +282,6 @@ export async function runCodexTurn(run: CodexRun, wire: CodexWire): Promise<Agen
 	return { text: reply, sessionId: threadId, tools, seconds: (Date.now() - began) / 1000 };
 }
 
-type Need = (name: string) => unknown;
-const need = (): Need | null => (window as unknown as { require?: Need }).require ?? null;
 
 /** Where Codex is usually installed, most likely first: the command-line program, then
  * the copies the desktop apps carry. */
@@ -315,18 +307,7 @@ export function codexPlaces(home: string, platform: string, env: Record<string, 
 /** The installed Codex: the path set in settings if it is there, else the first usual
  * place that has one. Null on a phone, or when it isn't installed. */
 export function findCodex(setPath: string): string | null {
-	try {
-		const req = need();
-		if (!req) return null;
-		const fs = req("fs") as { existsSync(p: string): boolean };
-		const os = req("os") as { homedir(): string };
-		const proc = req("process") as { platform: string; env: Record<string, string | undefined> };
-		const wanted = setPath.trim();
-		if (wanted) return fs.existsSync(wanted) ? wanted : null;
-		return codexPlaces(os.homedir(), proc.platform, proc.env).find((p) => fs.existsSync(p)) ?? null;
-	} catch {
-		return null;
-	}
+	return findInstalled(setPath, codexPlaces);
 }
 
 /** The models the installed Codex offers, as it last fetched them for its own picker
@@ -356,79 +337,10 @@ export function codexModelName(slug: string): string {
 		.join("-");
 }
 
-interface Child {
-	stdin: { write(s: string): void; end(): void } | null;
-	stdout: { on(e: "data", f: (d: unknown) => void): void; setEncoding?(enc: string): void } | null;
-	stderr: { on(e: "data", f: (d: unknown) => void): void } | null;
-	on(e: "exit" | "error", f: (...a: unknown[]) => void): void;
-	kill(sig?: string): boolean;
-}
-
 /** Start the program and run one turn with it. Each turn has its own process, which
  * picks the conversation up again by its id; nothing is left running between messages. */
 export async function runCodex(run: CodexRun & { program: string }): Promise<AgentResult> {
-	const req = need();
-	if (!req) throw new Error("Codex can only be run on desktop.");
-	const proc = req("process") as { platform: string; env: Record<string, string | undefined> };
-	const home = (req("os") as { homedir(): string }).homedir();
-	const cp = req("child_process") as { spawn(cmd: string, args: string[], opts: Record<string, unknown>): Child };
-	const shim = /\.(cmd|bat)$/i.test(run.program);
-	let child: Child;
-	try {
-		// Through a shell the command is read as written: a path with a space in it
-		// (a Windows user name) has to be quoted.
-		child = cp.spawn(shim ? `"${run.program}"` : run.program, ["app-server", "--listen", "stdio://"], {
-			cwd: run.cwd,
-			env: { ...proc.env, PATH: pathWith(proc.env.PATH ?? "", run.program, home, proc.platform) },
-			stdio: ["pipe", "pipe", "pipe"],
-			windowsHide: true,
-			...(shim ? { shell: true } : {}),
-		});
-	} catch {
-		throw new Error("Codex could not be started. Check where it is installed, in settings.");
-	}
-	if (!child.stdin || !child.stdout) throw new Error("Codex could not be started.");
-	let said = "";
-	let pending = "";
-	let closed = false;
-	let take: (line: string) => void = () => undefined;
-	let gone: (why: string) => void = () => undefined;
-	child.stdout.setEncoding?.("utf8");
-	child.stdout.on("data", (d) => {
-		pending += String(d);
-		let at: number;
-		while ((at = pending.indexOf("\n")) >= 0) {
-			const line = pending.slice(0, at).trim();
-			pending = pending.slice(at + 1);
-			if (line) take(line);
-		}
-	});
-	child.stderr?.on("data", (d) => {
-		said = (said + String(d)).slice(-600);
-	});
-	const ended = (why: string): void => {
-		if (closed) return;
-		closed = true;
-		gone(why);
-	};
-	child.on("exit", () => ended(said));
-	child.on("error", () => ended(NOT_STARTED));
-	const wire: CodexWire = {
-		send: (line) => {
-			if (!closed) child.stdin?.write(`${line}\n`);
-		},
-		onLine: (f) => (take = f),
-		onClose: (f) => (gone = f),
-		close: () => {
-			closed = true;
-			try {
-				child.stdin?.end();
-			} catch {
-				/* already gone */
-			}
-			child.kill("SIGTERM");
-		},
-	};
+	const wire = openLineWire({ program: run.program, args: ["app-server", "--listen", "stdio://"] }, run.cwd, "Codex");
 	try {
 		return await runCodexTurn(run, wire);
 	} finally {

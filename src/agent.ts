@@ -13,7 +13,8 @@
  * The approach follows Claudian (github.com/YishenTu/claudian, MIT).
  */
 import { isRecordTool, RECORD_RULES, RECORD_TOOL_NAMES, RECORD_TOOLS, recordToolLine, runRecordQuery, zodShape, type RecordPort } from "./recordtools";
-import type { CanUseTool, Options, PermissionMode, PermissionUpdate, SDKMessage, SpawnedProcess, SpawnOptions } from "@anthropic-ai/claude-agent-sdk";
+import type { CanUseTool, Options, PermissionMode, PermissionUpdate, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { findInstalled, need, pathWith, startSdkProgram, SIGNED_OUT } from "./wire";
 
 /** Claude Code's permission levels, by the names its own interface gives them. */
 export type AgentLevel = "safe" | "plan" | "auto";
@@ -256,8 +257,6 @@ export function agentBrief(about: string, record: string, preferences: string): 
 		.join("\n\n");
 }
 
-type Need = (name: string) => unknown;
-const need = (): Need | null => (window as unknown as { require?: Need }).require ?? null;
 
 /** Obsidian's pane makes its own kind of abort signal, which Node's `events` module does
  * not recognise as one: the SDK's `setMaxListeners(n, signal)` throws on it. That call
@@ -281,35 +280,6 @@ export function acceptPaneSignals(events: { setMaxListeners: ((...args: unknown[
 	events.setMaxListeners = patched;
 }
 
-/** Folders a program started from the dock can't see but a terminal can: where Claude
- * Code, and the Node it may need, usually are. */
-export function pathWith(current: string, program: string, home: string, platform: string): string {
-	const sep = platform === "win32" ? ";" : ":";
-	const slash = platform === "win32" ? "\\" : "/";
-	const dir = program.slice(0, Math.max(program.lastIndexOf("/"), program.lastIndexOf("\\")));
-	const usual = platform === "win32" ? [] : ["/opt/homebrew/bin", "/usr/local/bin", `${home}/.local/bin`, `${home}/.volta/bin`, `${home}/.bun/bin`, "/usr/bin", "/bin"];
-	const seen = new Set<string>();
-	return [dir, ...current.split(sep), ...usual, `${home}${slash}.claude${slash}local`]
-		.filter((p) => p && !seen.has(p) && seen.add(p))
-		.join(sep);
-}
-
-/** Start the program the way the SDK would, but without handing Node the pane's abort
- * signal, which it refuses: stopping is done by hand. After Claudian's custom spawn. */
-function startProgram(o: SpawnOptions): SpawnedProcess {
-	const req = need();
-	if (!req) throw new Error("Claude Code can only be run on desktop.");
-	const cp = req("child_process") as { spawn(cmd: string, args: string[], opts: Record<string, unknown>): { kill(sig?: string): boolean; stdin: unknown; stdout: unknown } };
-	const windowsShim = /\.(cmd|bat)$/i.test(o.command);
-	// Through a shell the command is read as written: a path with a space in it (a
-	// Windows user name) has to be quoted.
-	const child = cp.spawn(windowsShim ? `"${o.command}"` : o.command, o.args, { cwd: o.cwd, env: o.env, stdio: ["pipe", "pipe", "ignore"], windowsHide: true, ...(windowsShim ? { shell: true } : {}) });
-	const kill = (): void => void child.kill("SIGTERM");
-	if (o.signal.aborted) kill();
-	else o.signal.addEventListener("abort", kill, { once: true });
-	if (!child.stdin || !child.stdout) throw new Error("Claude Code could not be started.");
-	return child as unknown as SpawnedProcess;
-}
 
 /** The user's own slash commands and skills, as Claude Code itself lists them (user,
  * project, plugins, MCP prompts; not Claude Code's built-in ones), for Grill's `/` list.
@@ -330,7 +300,7 @@ export async function claudeCommands(program: string, cwd: string): Promise<Arra
 			cwd,
 			pathToClaudeCodeExecutable: program,
 			env: { ...(proc.env as Record<string, string>), PATH: pathWith(proc.env.PATH ?? "", program, home, proc.platform) },
-			spawnClaudeCodeProcess: startProgram,
+			spawnClaudeCodeProcess: (o) => startSdkProgram(o, "Claude Code"),
 			settingSources: ["user", "project", "local"],
 			persistSession: false,
 			abortController: stop,
@@ -396,7 +366,7 @@ export async function runAgent(run: AgentRun): Promise<AgentResult> {
 		cwd: run.cwd,
 		pathToClaudeCodeExecutable: run.program,
 		env: { ...(proc.env as Record<string, string>), PATH: pathWith(proc.env.PATH ?? "", run.program, home, proc.platform) },
-		spawnClaudeCodeProcess: startProgram,
+		spawnClaudeCodeProcess: (o) => startSdkProgram(o, "Claude Code"),
 		permissionMode: levelMode(run.level),
 		includePartialMessages: true,
 		abortController: stop,
@@ -445,7 +415,7 @@ export async function runAgent(run: AgentRun): Promise<AgentResult> {
 		if (run.signal?.aborted) throw e;
 		const why = e instanceof Error ? e.message : String(e);
 		if (/ENOENT|not found|spawn/i.test(why)) throw new Error("Claude Code could not be started. Check where it is installed, in settings.");
-		if (/log ?in|auth|credential|401/i.test(`${why} ${said}`)) throw new Error("Claude Code is not signed in. Open a terminal, run claude, and sign in there.");
+		if (SIGNED_OUT.test(`${why} ${said}`)) throw new Error("Claude Code is not signed in. Open a terminal, run claude, and sign in there.");
 		throw new Error(`Claude Code stopped: ${clip(why, 200)}`);
 	} finally {
 		run.signal?.removeEventListener("abort", left);
@@ -479,16 +449,5 @@ export function programPlaces(home: string, platform: string, env: Record<string
 /** The installed Claude Code: the path set in settings if it is there, else the first
  * usual place that has one. Null on a phone, or when it isn't installed. */
 export function findProgram(setPath: string): string | null {
-	try {
-		const req = need();
-		if (!req) return null;
-		const fs = req("fs") as { existsSync(p: string): boolean };
-		const os = req("os") as { homedir(): string };
-		const proc = req("process") as { platform: string; env: Record<string, string | undefined> };
-		const wanted = setPath.trim();
-		if (wanted) return fs.existsSync(wanted) ? wanted : null;
-		return programPlaces(os.homedir(), proc.platform, proc.env).find((p) => fs.existsSync(p)) ?? null;
-	} catch {
-		return null;
-	}
+	return findInstalled(setPath, programPlaces);
 }

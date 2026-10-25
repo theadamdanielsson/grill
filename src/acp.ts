@@ -10,9 +10,9 @@
  * is the program's own configuration; Grill sets it from the level (see opencode.ts).
  */
 import { RECORD_TOOL_RE, recordToolLine } from "./recordtools";
-import { AgentEvent, AgentLevel, AgentResult, PermissionAnswer, PermissionAsk, pathWith } from "./agent";
+import { AgentEvent, AgentLevel, AgentResult, PermissionAnswer, PermissionAsk } from "./agent";
 import { diffLines } from "./codex";
-import { HANDSHAKE_MS, IDLE_MS, idleWatch, quietError } from "./wire";
+import { HANDSHAKE_MS, IDLE_MS, idleWatch, NOT_STARTED, openLineWire, quietError, type LineWire, SIGNED_OUT } from "./wire";
 
 type Loose = Record<string, unknown>;
 const obj = (v: unknown): Loose | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Loose) : null);
@@ -22,13 +22,7 @@ const leaf = (path: string): string => path.replace(/[\\/]+$/, "").split(/[\\/]/
 const clip = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 /** A line each way, however they are carried: the program's pipes, or a stand-in. */
-export interface AcpWire {
-	send(line: string): void;
-	onLine(take: (line: string) => void): void;
-	/** Called once if the other end goes away, with what it last said on its error stream. */
-	onClose(gone: (why: string) => void): void;
-	close(): void;
-}
+export type AcpWire = LineWire;
 
 /** A model the agent offers, as it names it. */
 export interface AcpModel {
@@ -328,7 +322,7 @@ export async function runAcpTurn(run: AcpRun, wire: AcpWire): Promise<AgentResul
 		const e = new Error(
 			why === NOT_STARTED
 				? `${run.name} could not be started. Check where it is installed, in settings.`
-				: /log ?in|auth|401|unauthorized/i.test(why)
+				: SIGNED_OUT.test(why)
 					? `${run.name} is not signed in to that model. Pick another model, or sign in from Grill's settings.`
 					: `${run.name} stopped${why ? `: ${clip(why.trim(), 200)}` : "."}`,
 		);
@@ -409,18 +403,7 @@ export async function runAcpTurn(run: AcpRun, wire: AcpWire): Promise<AgentResul
 	return { text: reply, sessionId, tools, seconds: (Date.now() - began) / 1000 };
 }
 
-const NOT_STARTED = "not started";
 
-type Need = (name: string) => unknown;
-const need = (): Need | null => (window as unknown as { require?: Need }).require ?? null;
-
-interface Child {
-	stdin: { write(s: string): void; end(): void } | null;
-	stdout: { on(e: "data", f: (d: unknown) => void): void; setEncoding?(enc: string): void } | null;
-	stderr: { on(e: "data", f: (d: unknown) => void): void } | null;
-	on(e: "exit" | "error", f: (...a: unknown[]) => void): void;
-	kill(sig?: string): boolean;
-}
 
 /** How to start a program as an ACP agent. */
 export interface AcpProgram {
@@ -432,75 +415,13 @@ export interface AcpProgram {
 
 /** Start the program on its own pipes. Each turn has its own process, which picks the
  * conversation up again by its id; nothing is left running between messages. */
-export function openAcp(p: AcpProgram, cwd: string): AcpWire {
-	const req = need();
-	if (!req) throw new Error("This engine can only be run on desktop.");
-	const proc = req("process") as { platform: string; env: Record<string, string | undefined> };
-	const home = (req("os") as { homedir(): string }).homedir();
-	const cp = req("child_process") as { spawn(cmd: string, args: string[], opts: Record<string, unknown>): Child };
-	const shim = /\.(cmd|bat)$/i.test(p.program);
-	let child: Child;
-	try {
-		child = cp.spawn(shim ? `"${p.program}"` : p.program, p.args, {
-			cwd,
-			env: { ...proc.env, ...(p.env ?? {}), PATH: pathWith(proc.env.PATH ?? "", p.program, home, proc.platform) },
-			stdio: ["pipe", "pipe", "pipe"],
-			windowsHide: true,
-			...(shim ? { shell: true } : {}),
-		});
-	} catch {
-		throw new Error("The program could not be started. Check where it is installed, in settings.");
-	}
-	if (!child.stdin || !child.stdout) throw new Error("The program could not be started.");
-	let said = "";
-	let pending = "";
-	let closed = false;
-	let take: (line: string) => void = () => undefined;
-	let gone: (why: string) => void = () => undefined;
-	// Writing to a program that has just gone away is not an error worth more than the
-	// one its exit already reports.
-	(child.stdin as unknown as { on?(e: "error", f: () => void): void }).on?.("error", () => undefined);
-	child.stdout.setEncoding?.("utf8");
-	child.stdout.on("data", (d) => {
-		pending += String(d);
-		let at: number;
-		while ((at = pending.indexOf("\n")) >= 0) {
-			const line = pending.slice(0, at).trim();
-			pending = pending.slice(at + 1);
-			if (line) take(line);
-		}
-	});
-	child.stderr?.on("data", (d) => {
-		said = (said + String(d)).slice(-600);
-	});
-	const ended = (why: string): void => {
-		if (closed) return;
-		closed = true;
-		gone(why);
-	};
-	child.on("exit", () => ended(said));
-	child.on("error", () => ended(NOT_STARTED));
-	return {
-		send: (line) => {
-			if (!closed) child.stdin?.write(`${line}\n`);
-		},
-		onLine: (f) => (take = f),
-		onClose: (f) => (gone = f),
-		close: () => {
-			closed = true;
-			try {
-				child.stdin?.end();
-			} catch {
-				/* already gone */
-			}
-			child.kill("SIGTERM");
-		},
-	};
+export function openAcp(p: AcpProgram, cwd: string, name = "The program"): AcpWire {
+	return openLineWire(p, cwd, name);
 }
 
 /** One turn with an ACP program. */
 export async function runAcp(run: AcpRun & AcpProgram): Promise<AgentResult> {
-	const wire = openAcp(run, run.cwd);
+	const wire = openAcp(run, run.cwd, run.name);
 	try {
 		return await runAcpTurn(run, wire);
 	} finally {

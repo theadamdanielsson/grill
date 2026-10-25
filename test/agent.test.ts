@@ -80,7 +80,8 @@ test("a reply kept as a note is named by its first line, in a form a file can ha
 	assert.ok(replyTitle("word ".repeat(40)).length <= 60);
 });
 
-import { acceptPaneSignals, pathWith } from "../src/agent";
+import { acceptPaneSignals } from "../src/agent";
+import { pathWith } from "../src/wire";
 test("an abort signal Node doesn't recognise no longer stops the engine starting", () => {
 	const refuses = Object.assign(
 		(...args: unknown[]) => {

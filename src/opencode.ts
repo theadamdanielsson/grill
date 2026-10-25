@@ -15,6 +15,7 @@
 import { requestUrl } from "obsidian";
 import type { AgentLevel } from "./agent";
 import type { AcpProgram } from "./acp";
+import { findInstalled, need } from "./wire";
 
 /** The build Grill installs and has been tried with. */
 export const OPENCODE_VERSION = "2.0.22";
@@ -70,8 +71,6 @@ export function opencodeProgram(program: string, level: AgentLevel): AcpProgram 
 	return { program, args: ["acp"], env: { OPENCODE_CONFIG_CONTENT: opencodeConfig(level), OPENCODE_DISABLE_PROJECT_CONFIG: "1" } };
 }
 
-type Need = (name: string) => unknown;
-const need = (): Need | null => (window as unknown as { require?: Need }).require ?? null;
 
 /** Where Grill keeps the build it installs. */
 export function installDir(home: string, platform: string): string {
@@ -104,18 +103,7 @@ export function opencodePlaces(home: string, platform: string, env: Record<strin
 /** The installed opencode: the path set in settings if it is there, else the first
  * usual place that has one. Null on a phone, or when it isn't installed. */
 export function findOpencode(setPath: string): string | null {
-	try {
-		const req = need();
-		if (!req) return null;
-		const fs = req("fs") as { existsSync(p: string): boolean };
-		const os = req("os") as { homedir(): string };
-		const proc = req("process") as { platform: string; env: Record<string, string | undefined> };
-		const wanted = setPath.trim();
-		if (wanted) return fs.existsSync(wanted) ? wanted : null;
-		return opencodePlaces(os.homedir(), proc.platform, proc.env).find((p) => fs.existsSync(p)) ?? null;
-	} catch {
-		return null;
-	}
+	return findInstalled(setPath, opencodePlaces);
 }
 
 /** Whether this computer can have opencode installed by Grill. */
