@@ -20,5 +20,10 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
+      # The MCP server is built first so the root tests that start it run, not skip.
+      - run: npm ci
+        working-directory: mcp
+      - run: npm test
+        working-directory: mcp
       - run: npm test
       - run: npm run build

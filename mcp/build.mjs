@@ -15,7 +15,18 @@ await esbuild.build({
 	banner: { js: "#!/usr/bin/env node\nimport { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);" },
 	define: { GRILL_MCP_VERSION: JSON.stringify(version) },
 	// The plugin's own modules are bundled from ../src; none of them may need Obsidian.
-	external: ["obsidian"],
+	// Leaving it external would build fine and fail on the user's machine, so an import
+	// of it fails the build instead.
+	plugins: [
+		{
+			name: "no-obsidian",
+			setup(build) {
+				build.onResolve({ filter: /^obsidian$/ }, (args) => {
+					throw new Error(`grill-mcp can't use Obsidian (imported by ${args.importer})`);
+				});
+			},
+		},
+	],
 	minify: true,
 	logLevel: "warning",
 });
