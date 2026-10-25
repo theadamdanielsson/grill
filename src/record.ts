@@ -14,7 +14,8 @@
 
 import { ConceptMap, ConceptMastery, conceptTested, conceptId, lastAnswerMissed, newConceptMastery, noteAggregate, noteAnswer, noteShape, recordConceptAnswer } from "./concepts";
 import { MisconceptionRegistry, mergeAssignments } from "./debrief";
-import { MasteryMap, QDifficulty, Verdict, emptyMastery, isLeech, recordNoteStats, retrievability, statusOf } from "./mastery";
+import { DueDateHistogram, MasteryMap, QDifficulty, Verdict, emptyMastery, isLeech, recordNoteStats, retrievability, statusOf } from "./mastery";
+import { fitDueToExam } from "./exams";
 import type { QuestionBank } from "./store";
 
 export { INBOX_DIR } from "./recordpaths";
@@ -112,6 +113,34 @@ export function slug(s: string): string {
 	return toTag(s).replace(/_/g, "-");
 }
 
+/** How one answer is scheduled. Test passes all of it: the recall aimed for, what
+ * spreads the next due date (the due-date histogram and the light days), the days left
+ * to the note's exam, how sure the student said they were and the hints used. An
+ * agent's answer gives the recall alone. */
+export interface AnswerPolicy {
+	retention?: number;
+	histogram?: DueDateHistogram;
+	easyDays?: ReadonlySet<number>;
+	examLeft?: number | null;
+	confidence?: number | null;
+	hintsUsed?: number;
+}
+
+/** One graded answer, applied to its concept: the schedule, the log entry's tier,
+ * format and verdict, what was said (when given) and the exam's deadline. */
+export function applyAnswer(
+	concepts: ConceptMap,
+	cid: string,
+	a: { verdict: Verdict; difficulty: QDifficulty; type?: string; said?: { question?: string; answer?: string; feedback?: string }; tag?: string },
+	p: AnswerPolicy,
+	at = new Date(),
+): void {
+	recordConceptAnswer(concepts, cid, a.verdict, a.difficulty, at, p.retention, p.histogram, p.confidence ?? null, p.hintsUsed ?? 0, p.easyDays);
+	if (a.said) noteAnswer(concepts[cid], a.verdict, { ...a.said, tag: a.tag }, at);
+	noteShape(concepts[cid], { tier: a.difficulty, ...(a.type ? { type: a.type } : {}), verdict: a.verdict });
+	if (p.examLeft !== undefined && p.examLeft !== null && concepts[cid]) fitDueToExam(concepts[cid], p.examLeft, at);
+}
+
 /** Folds graded answers into the record, oldest first. `allowNew` lets a result name a
  * concept the record doesn't have yet: right for a code repo, where no plugin extracts
  * concepts, wrong for a vault, where the plugin's extraction owns concept ids and a
@@ -141,9 +170,13 @@ export function applyResults(
 				if (!has(state.concepts, cid)) state.concepts[cid] = newConcept(r.note, r.label || r.question.slice(0, 80));
 			}
 			if (cid) {
-				recordConceptAnswer(state.concepts, cid, r.verdict, r.difficulty ?? "medium", at, opts.desiredRetention);
-				noteAnswer(state.concepts[cid], r.verdict, { question: r.question, answer: r.answer, feedback: r.feedback, tag: r.misconception?.tag }, at);
-				noteShape(state.concepts[cid], { tier: r.difficulty ?? "medium", verdict: r.verdict });
+				applyAnswer(
+					state.concepts,
+					cid,
+					{ verdict: r.verdict, difficulty: r.difficulty ?? "medium", said: { question: r.question, answer: r.answer, feedback: r.feedback }, tag: r.misconception?.tag },
+					{ retention: opts.desiredRetention },
+					at,
+				);
 			}
 			else if (r.conceptId) unknownConcept.push(r);
 			if (!has(state.mastery, r.note)) state.mastery[r.note] = emptyMastery();

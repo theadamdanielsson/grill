@@ -43,11 +43,9 @@ import {
 	priorityNotes,
 	disperseSiblingDueDates,
 	noteShape,
-	recordConceptAnswer,
 	recordConceptRating,
 	reconcileConcepts,
 	trueRetentionLine,
-	noteAnswer,
 } from "./concepts";
 import { asRecordData, learnerBrief } from "./brief";
 import { collectNoteImages, ImageInput, hasEmbeddedImage } from "./images";
@@ -100,7 +98,8 @@ import { activitySummary, AgentEvent, agentBrief, AGENT_LEVELS, claudeCommands, 
 import type { VaultPort } from "./vaulttools";
 import { applyIntensity, type SettingsPort } from "./settingstools";
 import { RECORD_RULES, RECORD_TOOLS, runRecordQuery, type RecordPort, type StudyOffer } from "./recordtools";
-import { projectSummaries } from "./record";
+import { applyAnswer, projectSummaries } from "./record";
+import { gradeStructured } from "./grading";
 import { forgetAgentProject, readAgentConcepts } from "./agentrecord";
 import { GRILL_ICON } from "./icon";
 import { attachPicker, linkedNames, type PickSource } from "./mention";
@@ -7176,69 +7175,15 @@ export class SessionView extends ItemView {
 		let verdict: Verdict;
 		let feedback: string;
 		let misconceptionTag = "";
+		// Formats with one right answer by construction are graded here, with no model.
+		const fixed = gaveUp ? null : gradeStructured(q, answer, multiPicks, matchPicks);
 		if (gaveUp) {
 			// Zero-cost path: the rubric was generated with the question.
 			verdict = "incorrect";
 			feedback = "No penalty for honesty. Read the expected answer, then the note; this comes back next session.";
-		} else if (q.type === "mc" || q.type === "tf") {
-			// Unambiguous, structured formats: grade instantly, no LLM round-trip needed.
-			verdict = answer.trim().toLowerCase() === q.modelAnswer.trim().toLowerCase() ? "correct" : "incorrect";
-			feedback = verdict === "correct" ? "Correct." : `Not quite. The answer is "${q.modelAnswer}".`;
-		} else if (q.type === "multi") {
-			// Name the specific misses/extras instead of just dumping the model answer a
-			// second time — the "Expected answer" block below already shows that string
-			// verbatim, so repeating it here added nothing and read as two systems
-			// disagreeing rather than one giving you the actual diagnosis.
-			const norm = (s: string) => s.trim().toLowerCase();
-			const correctChoices = q.correctChoices ?? [];
-			const chosenChoices = multiPicks ?? [];
-			const correct = new Set(correctChoices.map(norm));
-			const chosen = new Set(chosenChoices.map(norm));
-			if (correct.size < 2) {
-				// Defensive: isMulti's render check (above) already requires
-				// correctChoices.length >= 2 before showing checkboxes at all — this can
-				// only be reached if a 'multi' question ever slips past that with fewer
-				// than 2 correct choices (currently prevented upstream by questionDefect
-				// in llm.ts and the local callout parser, but this branch has no guard of
-				// its own). Without this, `wrong === 0` below is vacuously true when
-				// correct.size is 0, silently grading "Correct" no matter what the student
-				// typed. Fail closed instead of trusting two distant files to stay in sync.
-				verdict = "incorrect";
-				feedback = "This question couldn't be graded as written, so it was marked incorrect rather than automatically correct.";
-			} else {
-				let hits = 0;
-				for (const c of correct) if (chosen.has(c)) hits++;
-				const misses = correct.size - hits;
-				const extraItems = chosenChoices.filter((c) => !correct.has(norm(c)));
-				const missedItems = correctChoices.filter((c) => !chosen.has(norm(c)));
-				const wrong = misses + extraItems.length;
-				if (wrong === 0) verdict = "correct";
-				else if (hits > 0 && wrong <= Math.max(1, Math.ceil(correct.size / 2))) verdict = "partial";
-				else verdict = "incorrect";
-				if (verdict === "correct") {
-					feedback = "Correct, every one.";
-				} else {
-					const lines: string[] = [];
-					if (extraItems.length) {
-						lines.push(`"${extraItems.join('", "')}" ${extraItems.length > 1 ? "don't" : "doesn't"} belong.`);
-					}
-					if (missedItems.length) lines.push(`Missing: ${missedItems.join(", ")}.`);
-					feedback = lines.join(" ");
-				}
-			}
-		} else if (q.type === "match") {
-			const pairs = q.pairs ?? [];
-			const wrongPairs = pairs.filter(
-				(p) => (matchPicks?.[p.left] ?? "").trim().toLowerCase() !== p.right.trim().toLowerCase(),
-			);
-			const hits = pairs.length - wrongPairs.length;
-			verdict = hits === pairs.length ? "correct" : hits > 0 ? "partial" : "incorrect";
-			feedback =
-				verdict === "correct"
-					? "Every pair correct."
-					: wrongPairs
-							.map((p) => `"${p.left}" should match "${p.right}", not "${matchPicks?.[p.left] || "(unmatched)"}".`)
-							.join(" ");
+		} else if (fixed) {
+			verdict = fixed.verdict;
+			feedback = fixed.feedback;
 		} else {
 			const cfg = this.plugin.llmConfig();
 			if (!cfg) return;
@@ -7503,23 +7448,14 @@ export class SessionView extends ItemView {
 					confidence: this.pendingConfidence,
 					hintsUsed,
 				};
-				recordConceptAnswer(
+				applyAnswer(
 					this.concepts,
 					cid,
-					verdict,
-					q.difficulty ?? "medium",
-					new Date(),
-					retention,
-					this.dueDateHistogram,
-					// Read before captureConfidence (called after applyGrade returns) clears it —
-					// a genuinely-guessed correct answer should land as Hard, not Good/Easy.
-					this.pendingConfidence,
-					hintsUsed,
-					this.easyWeekdays(),
+					{ verdict, difficulty: q.difficulty ?? "medium", type: q.type ?? "write", said: said ?? {}, tag: misconceptionTag },
+					// The confidence is read before captureConfidence (called after applyGrade
+					// returns) clears it: a guessed correct answer lands as Hard, not Good/Easy.
+					{ retention, histogram: this.dueDateHistogram, easyDays: this.easyWeekdays(), examLeft: left, confidence: this.pendingConfidence, hintsUsed },
 				);
-				noteAnswer(this.concepts[cid], verdict, { ...said, tag: misconceptionTag });
-				noteShape(this.concepts[cid], { tier: q.difficulty ?? "medium", type: q.type ?? "write", verdict });
-				if (left !== null) fitDueToExam(this.concepts[cid], left, new Date());
 			}
 		}
 		recordNoteStats(this.plugin.mastery, q.node, verdict, misconceptionTag);
@@ -7548,21 +7484,12 @@ export class SessionView extends ItemView {
 		if (cm) {
 			restoreConcept(cm, o.conceptSnapshot);
 			const left = this.examLeftFor(o.note);
-			const retention = this.recallFor(left);
-			recordConceptAnswer(
+			applyAnswer(
 				this.concepts,
 				o.conceptId,
-				"correct",
-				o.difficulty,
-				new Date(),
-				retention,
-				this.dueDateHistogram,
-				o.confidence,
-				o.hintsUsed,
-				this.easyWeekdays(),
+				{ verdict: "correct", difficulty: o.difficulty, type: o.type },
+				{ retention: this.recallFor(left), histogram: this.dueDateHistogram, easyDays: this.easyWeekdays(), examLeft: left, confidence: o.confidence, hintsUsed: o.hintsUsed },
 			);
-			noteShape(cm, { tier: o.difficulty, type: o.type, verdict: "correct" });
-			if (left !== null) fitDueToExam(cm, left, new Date());
 		}
 		// Correct note-level counters: undo the wrong bucket, credit the right one, and
 		// remove the misconception tally if a tag was recorded off the wrong verdict.
