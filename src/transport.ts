@@ -9,7 +9,7 @@
 import { requestUrl, RequestUrlParam, RequestUrlResponse } from "obsidian";
 import type { ImageInput } from "./images";
 import { cloud, heardFromCloud } from "./cloud";
-import { anthropicAuth, anthropicTakesEffort, API_BASE, CUT_OFF, isOpenAIReasoning, ollamaUrl, who, type LLMConfig, type ProviderId } from "./providers";
+import { anthropicAuth, API_BASE, capabilities, CUT_OFF, isOpenAIReasoning, ollamaUrl, who, type LLMConfig, type ProviderId } from "./providers";
 
 /** How long an agent program is given for one answer: it has to start first. */
 const AGENT_TIMEOUT_MS = 240_000;
@@ -209,7 +209,7 @@ function buildCall(
 					// Sonnet 5 / Opus 5 think adaptively by default, and that thinking spends
 					// max_tokens. Passing the call's effort keeps it proportionate instead of
 					// letting a 2000-token grade run out mid-JSON.
-					output_config: anthropicTakesEffort(cfg.model)
+					output_config: capabilities(cfg).effort
 						? { format: { type: "json_schema", schema }, effort }
 						: { format: { type: "json_schema", schema } },
 				},
@@ -551,7 +551,7 @@ export function timedRequest(req: RequestUrlParam, ms = 60_000): Promise<Request
  * custom endpoints, which are often local or a proxy) get far longer: a CPU-bound
  * model can legitimately take minutes. */
 export function requestTimeoutMs(cfg: LLMConfig): number {
-	return cfg.provider === "ollama" || cfg.provider === "custom" ? 300_000 : 180_000;
+	return capabilities(cfg).local ? 300_000 : 180_000;
 }
 
 /** requestUrl has no timeout of its own, so a hung server used to leave the pane on

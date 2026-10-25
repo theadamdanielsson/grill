@@ -2,7 +2,7 @@
  * and the config a call is made with. No requests here (see transport.ts). */
 
 import type { ImageInput } from "./images";
-import { cloudEnabled } from "./cloud";
+import { cloud, cloudEnabled } from "./cloud";
 
 export type ProviderId = "anthropic" | "openai" | "gemini" | "deepseek" | "ollama" | "custom" | "grillcloud";
 
@@ -205,3 +205,40 @@ export function isOpenAIReasoning(model: string): boolean {
 
 /** The stop reason that means a reply was cut off by its token budget, by API shape. */
 export const CUT_OFF = { anthropic: "max_tokens", chat: "length", gemini: "MAX_TOKENS", ollama: "length" } as const;
+
+/** What a model config can do, in one place: everything that differs by provider and
+ * isn't how the request is spelled. */
+export interface Capabilities {
+	/** Chat may give it tools: the vault's and the rest. */
+	tools: boolean;
+	/** Its replies can be streamed. */
+	streams: boolean;
+	/** The provider's own web search: Anthropic, directly or through Grill Cloud. */
+	webSearch: boolean;
+	vision: boolean;
+	embeddings: boolean;
+	/** On the user's own machine or endpoint: given longer, and smaller prompts. */
+	local: boolean;
+	/** Spends Grill Cloud credits, so nothing runs in the background on it. */
+	metered: boolean;
+	/** An Anthropic model that takes an effort setting. */
+	effort: boolean;
+}
+
+export function capabilities(cfg: LLMConfig): Capabilities {
+	const p = cfg.provider;
+	if (cfg.agent) {
+		return { tools: false, streams: false, webSearch: false, vision: !!cfg.agentImages, embeddings: false, local: false, metered: false, effort: false };
+	}
+	const hosted = p === "grillcloud";
+	return {
+		tools: hosted ? cloud.streams && cloud.tools : p === "anthropic" || p === "openai" || p === "deepseek" || p === "custom",
+		streams: hosted ? cloud.streams && !!cloud.url : true,
+		webSearch: p === "anthropic" || (hosted && cloud.search),
+		vision: supportsVision(p, cfg.model),
+		embeddings: supportsEmbeddings(p),
+		local: p === "ollama" || p === "custom",
+		metered: hosted,
+		effort: p === "anthropic" && anthropicTakesEffort(cfg.model),
+	};
+}

@@ -20,7 +20,7 @@ import {
 import { configureFSRSWeights, MasteryMap } from "./mastery";
 import { notesBase } from "./props";
 import { CalPoint, isCalPoint } from "./calibration";
-import { API_BASE, LLMConfig, OLLAMA_DEFAULT_URL, offeredProviders, ProviderId, PROVIDERS } from "./providers";
+import { API_BASE, capabilities, LLMConfig, OLLAMA_DEFAULT_URL, offeredProviders, ProviderId, PROVIDERS } from "./providers";
 import { Question } from "./question";
 import { listModels, readPriorKnowledge, synthesizeArc, testModel } from "./llm";
 import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, CloudPack, CloudPlan, planInWords, planLabel, cloudAccount, cloudBalance, cloudSpeech, cloudCheckoutUrl, cloudDelete, cloudEnabled, cloudStart, creditsInWords, isCloudKey, newCloudKey, packLabel, usageInWords } from "./cloud";
@@ -643,7 +643,8 @@ export default class GrillPlugin extends Plugin {
 				void this.foldInbox();
 				// On Grill Cloud this waits for the end of a session (see the summary screen):
 				// nothing is spent in the background that a receipt doesn't show.
-				if (this.data.settings.provider !== "grillcloud") void this.maybeSynthesizeArc();
+				const cfg = this.modelConfig();
+				if (!cfg || !capabilities(cfg).metered) void this.maybeSynthesizeArc();
 				// A pane already open at this point rendered its start screen from the
 				// empty mastery placeholder (see refreshIfOnStartScreen) — bring it up to
 				// date now that the real data has loaded.

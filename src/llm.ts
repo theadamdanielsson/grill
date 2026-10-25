@@ -11,7 +11,7 @@ import { runToolChat, TOOL_RULES, ToolChat, VAULT_TOOLS } from "./vaulttools";
 import type { Arc, CanonMisconception, SessionDebrief, TagAssignment } from "./debrief";
 import type { BridgeCandidate, RawBridge } from "./bridges";
 import type { Verdict } from "./mastery";
-import { anthropicAuth, anthropicTakesEffort, API_BASE, ollamaUrl, type LLMConfig, type ProviderId } from "./providers";
+import { anthropicAuth, API_BASE, ollamaUrl, type LLMConfig, type ProviderId } from "./providers";
 import { cleanDiagram, cleanText, formatSatisfies, normalizeForMatch, parseGrade, questionDefect, UnreadableReply, type Explanation, type FormatMode, type Grade, type Question } from "./question";
 import { apiError, callJSON, requestTimeoutMs, timedRequest, unreachable } from "./transport";
 import { DEFAULT_PERSONA } from "./persona";
@@ -1378,8 +1378,7 @@ export async function learnWithTools(
 	const extra = work.extra ?? null;
 	const tools = extra ? [...VAULT_TOOLS, ...extra.specs] : VAULT_TOOLS;
 	const prompt = { system: `${p.system}\n\n${TOOL_RULES}${extra?.rules ? `\n\n${extra.rules}` : ""}`, cacheable: p.cacheable, rest: p.rest, maxTokens: 4000 };
-	const webSearch = !!extra?.webSearch && (cfg.provider === "anthropic" || (cfg.provider === "grillcloud" && cloud.search));
-	const o = { takesEffort: cfg.provider === "anthropic" && anthropicTakesEffort(cfg.model), cloudUrl: cloud.streams && cloud.tools ? cloud.url : null, webSearch };
+	const o = { webSearch: !!extra?.webSearch };
 	if (!toolStreamCall(cfg, prompt, [], tools, o)) return null;
 	let begun = false;
 	try {
@@ -1511,11 +1510,7 @@ export async function learnFromNotes(
 	// and whole too when a stream could not be opened, before anything was shown.
 	let streamed: string | null = null;
 	if (live && !cfg.agent) {
-		const call = streamCall(
-			cfg,
-			{ system, cacheable, rest, maxTokens: 4000 },
-			{ takesEffort: cfg.provider === "anthropic" && anthropicTakesEffort(cfg.model), cloudUrl: cloud.streams ? cloud.url : null },
-		);
+		const call = streamCall(cfg, { system, cacheable, rest, maxTokens: 4000 });
 		if (call) {
 			try {
 				const got = await streamText(call, {

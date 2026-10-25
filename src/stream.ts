@@ -11,7 +11,8 @@
  * pane, a provider that is down), it throws `StreamUnavailable` before anything has been
  * written, and the caller asks the old way instead.
  */
-import { anthropicAuth, API_BASE, CUT_OFF, isOpenAIReasoning, ollamaUrl, type LLMConfig } from "./providers";
+import { anthropicAuth, API_BASE, capabilities, CUT_OFF, isOpenAIReasoning, ollamaUrl, type LLMConfig } from "./providers";
+import { cloud } from "./cloud";
 
 export type StreamKind = "anthropic" | "chat" | "gemini" | "ollama";
 
@@ -31,13 +32,8 @@ export interface StreamPrompt {
 }
 
 export interface StreamOptions {
-	/** Whether this Anthropic model takes an effort setting. */
-	takesEffort?: boolean;
-	/** Grill Cloud's address, when its server has said it streams; without it Grill
-	 * Cloud is asked the old way. */
-	cloudUrl?: string | null;
-	/** Let the model search the web with the provider's own search: Anthropic, directly
-	 * or through Grill Cloud. */
+	/** Let the model search the web with the provider's own search, where it has one
+	 * (see capabilities). */
 	webSearch?: boolean;
 }
 
@@ -79,7 +75,7 @@ export function streamCall(cfg: LLMConfig, p: StreamPrompt, o: StreamOptions = {
 					stream: true,
 					system: [{ type: "text", text: p.system, cache_control: { type: "ephemeral" } }],
 					messages: [{ role: "user", content }],
-					...(o.takesEffort ? { output_config: { effort: "medium" } } : {}),
+					...(capabilities(cfg).effort ? { output_config: { effort: "medium" } } : {}),
 				},
 			};
 		}
@@ -104,10 +100,11 @@ export function streamCall(cfg: LLMConfig, p: StreamPrompt, o: StreamOptions = {
 				body: { model: cfg.model, max_tokens: p.maxTokens, stream: true, messages },
 			};
 		case "grillcloud":
-			if (!o.cloudUrl) return null;
+			// Asked this way only once its server has said it streams; the old way until then.
+			if (!capabilities(cfg).streams) return null;
 			return {
 				kind: "chat",
-				url: `${o.cloudUrl.replace(/\/$/, "")}/chat/completions`,
+				url: `${cloud.url.replace(/\/$/, "")}/chat/completions`,
 				headers: { ...json, authorization: `Bearer ${cfg.apiKey}` },
 				body: { model: cfg.model, max_tokens: p.maxTokens, stream: true, messages },
 			};
@@ -164,12 +161,14 @@ export type ToolMsg =
  * `streamCall` sends it, then the steps so far. Null for a provider that isn't asked
  * this way; the caller then answers without tools. */
 export function toolStreamCall(cfg: LLMConfig, p: StreamPrompt, steps: ToolMsg[], tools: ToolSpec[], o: StreamOptions = {}): StreamCall | null {
+	if (!capabilities(cfg).tools) return null;
 	const call = streamCall(cfg, p, o);
 	if (!call || (call.kind !== "anthropic" && call.kind !== "chat")) return null;
+	const webSearch = !!o.webSearch && capabilities(cfg).webSearch;
 	const messages = call.body.messages as unknown[];
 	if (call.kind === "anthropic") {
 		call.body.tools = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.input }));
-		if (o.webSearch) (call.body.tools as unknown[]).push({ type: "web_search_20250305", name: "web_search", max_uses: 3 });
+		if (webSearch) (call.body.tools as unknown[]).push({ type: "web_search_20250305", name: "web_search", max_uses: 3 });
 		for (const step of steps) {
 			if (step.role === "assistant") {
 				messages.push({
@@ -187,7 +186,7 @@ export function toolStreamCall(cfg: LLMConfig, p: StreamPrompt, steps: ToolMsg[]
 	}
 	call.body.tools = tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.input } }));
 	// Grill Cloud runs the search on its side.
-	if (o.webSearch && cfg.provider === "grillcloud") call.body.web_search = true;
+	if (webSearch && cfg.provider === "grillcloud") call.body.web_search = true;
 	for (const step of steps) {
 		if (step.role === "assistant") {
 			messages.push({

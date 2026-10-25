@@ -8,7 +8,7 @@ import { adjudicateBridges, ConceptTarget, debriefSession, discussQuestion, embe
 import { contentWords } from "./text";
 import { cleanDiagram, cleanText, formatSatisfies, Grade, Question } from "./question";
 import { CloudError } from "./transport";
-import { LLMConfig, OLLAMA_DEFAULT_URL, offeredProviders, ProviderId, PROVIDERS, readsImages, supportsEmbeddings, supportsVision } from "./providers";
+import { capabilities, LLMConfig, OLLAMA_DEFAULT_URL, offeredProviders, ProviderId, PROVIDERS, readsImages, supportsEmbeddings, supportsVision } from "./providers";
 import { Verdict } from "./mastery";
 import { detectOcclusionRegions } from "./ocr";
 import { canDraw, captureDrawing, EXCALIDRAW_PLUGIN_ID, newDrawing, showDrawing } from "./draw";
@@ -2371,7 +2371,7 @@ export class SessionView extends ItemView {
 			return;
 		}
 		// A local model reads far less at once than a hosted one.
-		const budget = cfg?.provider === "ollama" || cfg?.provider === "custom" ? VAULT_CHARS_LOCAL : VAULT_CHARS;
+		const budget = cfg && capabilities(cfg).local ? VAULT_CHARS_LOCAL : VAULT_CHARS;
 		const full = vaultNotes(notes, budget);
 		await this.startLearn(anchor, text, [], {
 			text: `${map}\n\n${full.text}`,
@@ -2947,9 +2947,7 @@ export class SessionView extends ItemView {
 	/** Whether the model behind Chat can be given the vault tools. */
 	private modelHasTools(): boolean {
 		const cfg = this.plugin.llmConfig();
-		if (!cfg || cfg.agent) return false;
-		if (cfg.provider === "grillcloud") return cloud.streams && cloud.tools;
-		return cfg.provider === "anthropic" || cfg.provider === "openai" || cfg.provider === "deepseek" || cfg.provider === "custom";
+		return !!cfg && capabilities(cfg).tools;
 	}
 
 	/** A message as it is sent: led by the note open in the editor, when that is not the
@@ -5828,7 +5826,8 @@ export class SessionView extends ItemView {
 		void (async () => {
 			// On Grill Cloud the dashboard's arc is worked out here, not at launch, so
 			// what it costs is part of this session's receipt and nothing is spent unseen.
-			if (this.plugin.data.settings.provider === "grillcloud") await this.plugin.maybeSynthesizeArc().catch(() => undefined);
+			const model = this.plugin.modelConfig();
+			if (model && capabilities(model).metered) await this.plugin.maybeSynthesizeArc().catch(() => undefined);
 			// If nothing new has begun, whatever was spent since is that arc.
 			// A new session has begun meanwhile: its spending is its own, so this one is
 			// recorded as it stood, and the running count is left alone.
