@@ -4,6 +4,8 @@
  * Opt-in: points are only collected when the confidence check setting is on.
  */
 
+import { GUESSING_CONFIDENCE } from "./mastery";
+
 /** One graded answer's calibration point: stated confidence 0..1 and outcome
  * (1 correct, 0.5 partial, 0 incorrect). */
 export interface CalPoint {
@@ -15,7 +17,7 @@ export interface CalPoint {
 export const CONFIDENCE_LEVELS: { label: string; value: number }[] = [
 	{ label: "Sure", value: 0.9 },
 	{ label: "Think so", value: 0.6 },
-	{ label: "Guessing", value: 0.3 },
+	{ label: "Guessing", value: GUESSING_CONFIDENCE },
 ];
 
 /** True when a stored value is a usable calibration point (guards loaded data).

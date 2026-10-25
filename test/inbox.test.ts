@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyResults, parseResult, AgentResult, RecordState, weakSpots } from "../src/record";
+import { applyResults, parseResult, InboxResult, RecordState, weakSpots } from "../src/record";
 
 /** Answers graded by other agents join the record through applyResults. These pin
  * what they may and may not change. */
@@ -23,7 +23,7 @@ function state(): RecordState {
 	};
 }
 
-function result(o: Partial<AgentResult>): AgentResult {
+function result(o: Partial<InboxResult>): InboxResult {
 	return {
 		v: 1, id: Math.random().toString(36).slice(2), at: new Date().toISOString(), via: "Claude Code", session: "s1",
 		note: "GDP", question: "Define a recession.", answer: "One bad quarter", verdict: "incorrect", ...o,

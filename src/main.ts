@@ -24,7 +24,7 @@ import { LLMConfig, offeredProviders, PROVIDERS, ProviderId, Question, listModel
 import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, CloudPack, CloudPlan, planInWords, planLabel, cloudAccount, cloudBalance, cloudSpeech, cloudCheckoutUrl, cloudDelete, cloudEnabled, cloudStart, creditsInWords, isCloudKey, newCloudKey, packLabel, usageInWords } from "./cloud";
 import { drawOffers, drawPlanUsage, packGo, RefillModal } from "./refill";
 import { CHECK_EVERY_MS, isNewer, latestVersion } from "./update";
-import { AgentResult, applyResults, restoreNoteCounts } from "./record";
+import { applyResults, InboxResult, restoreNoteCounts } from "./record";
 import { learnerBrief, missesFromSessions, type PastSession } from "./brief";
 import { type AskSource, claudeCodeConversation, codexConversation, type Conversation, conversationsFromZip, exportConversations, importedLines, importedNames, matchConversations, mergeImported, plainPrior, type PriorKnowledge } from "./imported";
 import { parseSessionNote } from "./learn";
@@ -1761,7 +1761,7 @@ export default class GrillPlugin extends Plugin {
 				}
 				// From here on the answers are in the record: a session note that can't be
 				// written is a note missing, never an answer counted twice.
-				const sessions = new Map<string, AgentResult[]>();
+				const sessions = new Map<string, InboxResult[]>();
 				for (const r of applied) sessions.set(r.session, [...(sessions.get(r.session) ?? []), r]);
 				for (const [id, rs] of sessions) {
 					// Answers arrive one at a time: a session already written to gets its

@@ -21,7 +21,7 @@ import { ConceptExtractionCacheMap } from "./generate-local";
 import { safeDiagram, safeMarkdown } from "./safemd";
 import type { ImportedRecord } from "./imported";
 import { replyTitle } from "./learn";
-import { AgentResult, INBOX_DIR, parseResult } from "./record";
+import { InboxResult, INBOX_DIR, parseResult } from "./record";
 import { applyProps, noteProps, sessionFields, sessionsBase } from "./props";
 
 /** A generated question cached for reuse. `sourceHash` ties it to the concept's
@@ -488,11 +488,11 @@ export class GrillStore {
 	 * already there rather than `createInstructions`'s create-once dance. */
 	/** Graded answers other agents left in `<folder>/Inbox/` (see record.ts), oldest
 	 * first. Files that aren't a result are left where they are and skipped. */
-	async readInbox(): Promise<Array<{ path: string; result: AgentResult }>> {
+	async readInbox(): Promise<Array<{ path: string; result: InboxResult }>> {
 		const dir = normalizePath(`${this.folder()}/${INBOX_DIR}`);
 		const adapter = this.app.vault.adapter;
 		if (!(await adapter.exists(dir))) return [];
-		const out: Array<{ path: string; result: AgentResult }> = [];
+		const out: Array<{ path: string; result: InboxResult }> = [];
 		for (const path of (await adapter.list(dir)).files) {
 			const name = path.slice(path.lastIndexOf("/") + 1);
 			if (name.startsWith(".") || !name.endsWith(".json")) continue;

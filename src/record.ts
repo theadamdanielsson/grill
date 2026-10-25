@@ -21,7 +21,7 @@ export const INBOX_DIR = "Inbox";
 export const RESULT_VERSION = 1;
 
 /** One answer an agent graded, as written to `<folder>/Inbox/<id>.json`. */
-export interface AgentResult {
+export interface InboxResult {
 	v: number;
 	id: string;
 	/** ISO time the answer was graded. */
@@ -67,7 +67,7 @@ export const has = (map: object, key: string): boolean => Object.prototype.hasOw
 const DIFFICULTIES: ReadonlySet<string> = new Set(["easy", "medium", "hard"]);
 
 /** A result file's contents, checked; null when it isn't one. */
-export function parseResult(raw: unknown): AgentResult | null {
+export function parseResult(raw: unknown): InboxResult | null {
 	if (!raw || typeof raw !== "object") return null;
 	const r = raw as Record<string, unknown>;
 	const str = (k: string) => (typeof r[k] === "string" ? (r[k] as string) : "");
@@ -115,12 +115,12 @@ export function slug(s: string): string {
  * counts for its note and is kept in the session note. */
 export function applyResults(
 	state: RecordState,
-	results: AgentResult[],
+	results: InboxResult[],
 	opts: { allowNew: boolean; desiredRetention?: number; seen?: ReadonlySet<string> },
-): { applied: AgentResult[]; unknownConcept: AgentResult[]; failed: AgentResult[] } {
-	const applied: AgentResult[] = [];
-	const unknownConcept: AgentResult[] = [];
-	const failed: AgentResult[] = [];
+): { applied: InboxResult[]; unknownConcept: InboxResult[]; failed: InboxResult[] } {
+	const applied: InboxResult[] = [];
+	const unknownConcept: InboxResult[] = [];
+	const failed: InboxResult[] = [];
 	for (const given of [...results].sort((a, b) => a.at.localeCompare(b.at))) {
 		// Never twice: a fold that stopped part way, a file that could not be deleted, or
 		// a second device folding the same synced file.

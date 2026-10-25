@@ -232,12 +232,10 @@ export function isLeech(m: Schedulable): boolean {
 	return m.incorrect >= LEECH_MIN_INCORRECT && (m.stability === null || m.stability < S_SOLID);
 }
 
-/** A stated confidence at or below this reads as "I was guessing" — matches
- * calibration.ts's CONFIDENCE_LEVELS "Guessing" value (0.3) exactly, not just close to
- * it, so a correct-but-guessed answer reliably lands as Hard below. Not imported from
- * calibration.ts to avoid a scheduling-math module depending on a UI-labels module;
- * this file just needs the number, which is a stable, deliberate constant on both sides. */
-const LOW_CONFIDENCE = 0.3;
+/** A stated confidence at or below this reads as "I was guessing", so a
+ * correct-but-guessed answer lands as Hard below. calibration.ts offers it as the
+ * "Guessing" level. */
+export const GUESSING_CONFIDENCE = 0.3;
 
 /** Verdict → FSRS rating (1=again, 2=hard, 3=good, 4=easy), difficulty-aware on
  * the reward side only: a hard question answered right is stronger evidence, so
@@ -270,7 +268,7 @@ export function toRating(
 ): number {
 	if (verdict === "incorrect") return 1;
 	if (verdict === "partial") return 2;
-	if ((confidence !== null && confidence <= LOW_CONFIDENCE) || hintsUsed > 1) return 2;
+	if ((confidence !== null && confidence <= GUESSING_CONFIDENCE) || hintsUsed > 1) return 2;
 	return difficulty === "hard" ? 4 : 3;
 }
 

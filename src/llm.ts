@@ -14,6 +14,7 @@ import { runToolChat, TOOL_RULES, ToolChat, VAULT_TOOLS } from "./vaulttools";
 import type { Arc, CanonMisconception, SessionDebrief, TagAssignment } from "./debrief";
 import type { BridgeCandidate, RawBridge } from "./bridges";
 import { safeDiagram } from "./safemd";
+import type { Verdict } from "./mastery";
 
 export type ProviderId = "anthropic" | "openai" | "gemini" | "deepseek" | "ollama" | "custom" | "grillcloud";
 
@@ -244,7 +245,7 @@ export function formatSatisfies(type: Question["type"] | undefined, mode: Format
 	return t === "write";
 }
 
-export type Verdict = "correct" | "partial" | "incorrect";
+export type { Verdict };
 
 export interface Grade {
 	verdict: Verdict;

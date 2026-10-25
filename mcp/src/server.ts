@@ -14,7 +14,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { z } from "zod";
 import {
-	AgentResult,
+	InboxResult,
 	INBOX_DIR,
 	RESULT_VERSION,
 	RecordState,
@@ -338,7 +338,7 @@ export function buildServer(where: Where, chatOnly = false): McpServer {
 		},
 		guarded(async (a: Record<string, any>) => {
 			const via = agentName(server.server.getClientVersion()?.name);
-			const raw: AgentResult = {
+			const raw: InboxResult = {
 				v: RESULT_VERSION,
 				id: randomUUID(),
 				at: new Date().toISOString(),
@@ -375,7 +375,7 @@ export function buildServer(where: Where, chatOnly = false): McpServer {
 /** Why a vault won't take this answer, or "" when it will. A vault's concepts come from
  * the plugin, so the answer must be about a note it knows, and about the note its
  * concept belongs to. */
-function notInVault(s: RecordState, r: AgentResult): string {
+function notInVault(s: RecordState, r: InboxResult): string {
 	if (r.conceptId) {
 		if (!has(s.concepts, r.conceptId)) return `"${r.conceptId}" is not a concept in the Grill record. Use a conceptId from another grill tool, or leave it out.`;
 		if (s.concepts[r.conceptId].note !== r.note) return `That concept belongs to the note "${s.concepts[r.conceptId].note}", not "${r.note}".`;
@@ -425,14 +425,14 @@ function withLock<T>(folder: string, run: () => T): T {
 
 /** Outside a vault there is no plugin, so the answer goes straight into the record,
  * and into a day's log the person can read. */
-function recordInRepo(where: Where, r: AgentResult): void {
+function recordInRepo(where: Where, r: InboxResult): void {
 	// In the home record a concept carries its project's name: "cors/lib/index.js".
 	const p = where.project;
 	const named = p && !r.note.startsWith(`${p}/`) ? { ...r, note: `${p}/${r.note}`, ...(r.conceptId && !r.conceptId.startsWith(`${p}/`) ? { conceptId: `${p}/${r.conceptId}` } : {}) } : r;
 	withLock(where.folder, () => writeRepoRecord(where, named));
 }
 
-function writeRepoRecord(where: Where, r: AgentResult): void {
+function writeRepoRecord(where: Where, r: InboxResult): void {
 	const s = load(where);
 	const { failed } = applyResults(s, [r], { allowNew: true });
 	if (failed.length) throw new Error("That answer could not be added to the record as it is. Nothing was changed.");
