@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { deepFake, fakeSetting, settingNames } from "./obsidian-stub";
-import GrillPlugin, { GrillSettingTab } from "../src/main";
+import GrillPlugin from "../src/main";
+import { GrillSettingTab } from "../src/settingstab";
 import { KeyStash, type ApiKeys, type SecretStore } from "../src/secrets";
 import { cloud } from "../src/cloud";
 import { sectionDefs } from "./fixtures";

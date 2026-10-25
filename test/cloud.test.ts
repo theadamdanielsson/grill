@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { deepFake, fakeEl, fakeSetting, net, notices } from "./obsidian-stub";
-import GrillPlugin, { GrillSettingTab } from "../src/main";
+import GrillPlugin from "../src/main";
+import { GrillSettingTab } from "../src/settingstab";
 import { cloud, cloudAccount, cloudCheckoutUrl, creditsInWords, heardFromCloud, isCloudKey, lowBalance, newCloudKey, packLabel, packPurpose, planInWords, planLabel, planUsage, usageInWords } from "../src/cloud";
 import { refillWords } from "../src/refill";
 import { KeyStash } from "../src/secrets";
