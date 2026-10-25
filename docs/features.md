@@ -103,7 +103,15 @@ you've built up enough review history, Grill fits the spaced-repetition weights 
 actually forget, instead of the population average the algorithm ships with. There is no button to
 find, it just happens and tells you.
 
-It's also fussy about its own questions. Before one reaches you it's checked for the usual model slop, yes/no questions, hints that give the game away, questions that aren't actually grounded in your note, and quietly dropped if it fails. No extra model call, so it works the same on a local model as on a paid one.
+It's also fussy about its own questions. Before one reaches you it's checked for the usual model slop, yes/no questions, hints that give the game away, questions that aren't actually grounded in your note, and quietly dropped if it fails. These checks need no model call. A newly written question then passes one more: it is answered separately from its note, without the expected answer, and a question whose expected answer the note contradicts is written again, then dropped if it fails a second time.
+
+## Exams
+
+An exam gives a set of notes a date to be ready by. It is added in Settings → Study → Exams, where a folder tree shows what it covers: the whole vault, or the folders ticked, with any folder inside them left out by unticking it. Several exams can be kept at once, and where two cover the same note, the narrower one applies.
+
+Within an exam, the schedule works backwards from the date. Specifically, a review never waits longer than half the time that remains, so each concept returns more often as the exam approaches, and concepts already scheduled for after the date are brought forward and spread over the final stretch. Recall is held at 95% or above, and new material is introduced at the pace needed to cover all of it a day before the exam, ahead of other new material and past the daily limit if necessary. The limit on waiting stops the day before the exam, so that a concept answered correctly is not brought straight back in the same sitting. Once the date has passed, the notes return to the usual schedule.
+
+The exam is visible where it matters. The Progress screen lists each exam with its date, the days left and how many of its concepts are known or not yet tested. Moreover, the model is told about it: questions on an exam's notes are written in the form that exam is likely to take, following any exam or exercise questions in the notes, and the digest that Chat and connected agents read names each upcoming exam. Study intensity continues to govern every note outside an exam.
 
 ## Links you haven't made yet
 

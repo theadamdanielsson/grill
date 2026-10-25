@@ -42,6 +42,7 @@ The home screen suggests where to go from your record: the questions you last mi
 - **Or your own key:** Claude, GPT, Gemini, DeepSeek, any OpenAI-compatible endpoint (OpenRouter, Groq, LM Studio), or a local model through Ollama.
 - **Questions from your own notes:** recall questions written from what you wrote, in free text, multiple choice, true or false, fill-in and matching.
 - **Fair grading:** answers are marked against a rubric written with the question, with partial credit and the expected answer always shown.
+- **Checked answer keys:** each new question is answered separately from its note before you see it, and one whose expected answer the note contradicts is written again.
 - **Draw it from memory:** optional, with the Excalidraw plugin. Grill asks you to draw a diagram from your notes and marks the drawing: the curves, shifts and labels, and what is missing.
 - **Ask in the middle of a test:** type a question in the answer box and Grill answers it; the record notes that you needed help.
 - **Replies as they are written:** Chat streams its answer, and a reply can be inserted at the cursor or saved as a note.
@@ -54,6 +55,7 @@ The home screen suggests where to go from your record: the questions you last mi
 - **Every question editable:** the Questions screen lists what was last missed and everything Grill has written, for fixing in place.
 - **Reads embedded PDFs:** a `![[worksheet.pdf]]` embed is read and quizzed on like any other note content.
 - **Real spaced repetition:** FSRS scheduling per concept; edit a note and only the changed parts re-open.
+- **Exams:** give the whole vault or chosen folders an exam date, and the schedule works toward it. Reviews come back before the day, new material is paced to be covered in time, and Progress shows how each exam stands.
 - **A theme to match:** [Grill, the theme](https://github.com/theadamdanielsson/grill-theme) puts the rest of Obsidian in the same colours, dark and light.
 
 How each of these works is described in **[docs/features.md](docs/features.md)**.
