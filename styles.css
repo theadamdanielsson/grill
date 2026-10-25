@@ -3994,9 +3994,14 @@ textarea.grill-mgmt-field {
   gap: 0.4em;
   margin-top: 0.6em;
 }
-/* The same buttons under a chat's box. */
+/* The same buttons under a chat's box. The chat card is a column, so the home bar's
+ * flex: 1 would stretch them down to fill the pane. */
 .grill-learn-picks {
   margin-top: 0.5em;
+}
+.grill-home-picks.grill-learn-picks {
+  flex: 0 0 auto;
+  align-items: center;
 }
 .grill-view button.grill-home-level,
 .grill-view button.grill-home-level:hover {
