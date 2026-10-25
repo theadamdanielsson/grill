@@ -299,7 +299,13 @@ function explicitClozeCards(line: string, mixFormats: boolean): LocalItem[] {
 function autoClozeCards(line: string, mixFormats: boolean): LocalItem[] {
 	const { display, marks } = parseInline(line);
 	if (marks.some((k) => k.kind === "anki" || k.kind === "highlight" || k.kind === "curly")) return []; // explicit wins
-	const auto = marks.filter((k) => k.kind === "bold" || k.kind === "wikilink");
+	// A bold label opening the line for a fact about the note ("**Attendees:** ...") is
+	// no term. Only there: a bold "time" in a vocabulary line is a word to learn.
+	const isLabel = (k: Mark): boolean =>
+		/^[\s>*-]*$/.test(display.slice(0, k.start)) &&
+		(k.text.trimEnd().endsWith(":") || display.slice(k.end).trimStart().startsWith(":")) &&
+		METADATA_TERMS.has(k.text.replace(/:\s*$/, "").trim().toLowerCase());
+	const auto = marks.filter((k) => (k.kind === "bold" && !isLabel(k)) || k.kind === "wikilink");
 	if (!auto.length) return [];
 	// A line where wikilinks dominate the word count reads as a reference/hub list
 	// ("- [[A]]", "See also [[X]], [[Y]]"), not a claim worth testing recall of —
@@ -334,7 +340,7 @@ function definitionCard(line: string): LocalItem | null {
 	if (colon && !line.includes("http")) {
 		const term = colon[1].trim();
 		const def = colon[2].trim();
-		if (goodTerm(term) && wordCount(def) >= 3) {
+		if (goodTerm(term) && wordCount(def) >= 3 && !METADATA_TERMS.has(term.toLowerCase())) {
 			return {
 				question: `Define **${term}**.`,
 				answer: `**${term}:** ${def}`,
@@ -355,7 +361,28 @@ function definitionCard(line: string): LocalItem | null {
 	return null;
 }
 
-const MATH_RE = /\$\$[^$]+\$\$|\$[^$]+\$/;
+/** Inline maths the way Obsidian reads it: no space just inside either `$`, and no digit
+ * straight after the closing one. So "wins $150 or loses $100" is two prices, not a
+ * formula. */
+const MATH_RE = /\$\$[^$]+\$\$|\$(?!\s)[^$\n]*?[^$\s]\$(?!\d)/;
+
+/** Labels of "Label: value" lines that record facts about the note itself (who was
+ * there, when, where it came from), not material: "Attendees: Sara, Marco" is not
+ * something to be asked to define. Only words that mean nothing else in study notes:
+ * "Place", "Time" or "Present" can head a grammar rule. */
+const METADATA_TERMS = new Set([
+	"attendees", "attending", "participants", "invited", "date",
+	"author", "authors", "speaker", "speakers", "host", "hosts", "guest", "guests",
+	"source", "sources", "url", "isbn", "publisher", "published",
+	"category", "categories", "tags", "rating", "started", "finished",
+]);
+
+/** Whether a line is one of those "Label: value" facts about the note (METADATA_TERMS),
+ * bold or not. */
+function isMetadataLine(line: string): boolean {
+	const m = /^\s*[-*]?\s*\**([A-Za-z][A-Za-z ]{1,30}?)\**\s*:/.exec(line);
+	return !!m && METADATA_TERMS.has(m[1].trim().toLowerCase());
+}
 
 /** LaTeX becomes a cloze if the line has prose around it, else a recall prompt. */
 function formulaCard(line: string, context: string, mixFormats: boolean): LocalItem | null {
@@ -385,7 +412,13 @@ function headingCard(heading: string, body: string): LocalItem | null {
 	// A section that's mostly a list of links to other notes (a hub/MOC section) has no
 	// content of its own to recall — the notes it points to are where the knowledge is.
 	if (isLinkDominated(body)) return null;
-	const trimmed = dewiki(body).trim();
+	// A section holding only who was there or where it came from has nothing to recall.
+	const trimmed = dewiki(
+		body
+			.split("\n")
+			.filter((l) => !isMetadataLine(l))
+			.join("\n"),
+	).trim();
 	if (trimmed.length < 25) return null;
 	const answer = trimmed.length > 500 ? safeSlice(trimmed, 500).trim() + "…" : trimmed;
 	return { question: `Recall what you know about **${h}**.`, answer, kind: "heading", label: h };
