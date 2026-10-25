@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { net, notices } from "./obsidian-stub";
+import { net } from "./obsidian-stub";
 import { listModels, testModel } from "../src/llm";
 import { providerRetry } from "../src/transport";
-import { GrillStore } from "../src/store";
+import { GrillStore, type LoadProblem } from "../src/store";
 import { llmCfg } from "./fixtures";
 
 // ---------------------------------------------------------------- model calls
@@ -196,11 +196,25 @@ test("an unreadable store is never overwritten with empty data", async () => {
 	a.files.set("Grill/mastery.json", JSON.stringify({ Krebs: { correct: 40 } }));
 	a.fail.read.add("Grill/mastery.json");
 	const store = storeWith(a);
-	notices.length = 0;
+	const problems: LoadProblem[] = [];
+	store.onProblem = (p) => problems.push(p);
 	assert.deepEqual(await store.loadMastery(), {});
 	await assert.rejects(store.saveMastery({} as never), /won't save over it/);
 	assert.deepEqual(JSON.parse(a.files.get("Grill/mastery.json")!), { Krebs: { correct: 40 } });
-	assert.ok(notices.some((n) => /won't save over it/.test(n)));
+	assert.deepEqual(problems.map((p) => [p.kind, p.name]), [["unreadable", "mastery.json"]]);
+});
+
+test("a corrupt store is kept beside itself and reported, and saves to one file land in order", async () => {
+	const a = fakeAdapter();
+	a.files.set("Grill/concepts.json", "{ not json");
+	const store = storeWith(a);
+	const problems: LoadProblem[] = [];
+	store.onProblem = (p) => problems.push(p);
+	assert.deepEqual(await store.loadConcepts(), {});
+	assert.deepEqual(problems.map((p) => [p.kind, p.why]), [["reset", "corrupted JSON"]]);
+	assert.ok([...a.files.keys()].some((k) => k.startsWith("Grill/concepts.json.corrupt-")));
+	await Promise.all([1, 2, 3].map((n) => store.saveConcepts({ n } as never)));
+	assert.deepEqual(JSON.parse(a.files.get("Grill/concepts.json")!), { n: 3 });
 });
 
 test("a save that can't be written anywhere throws, so the caller stays dirty", async () => {

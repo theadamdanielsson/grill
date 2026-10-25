@@ -9,7 +9,7 @@
  *   and the graph.
  */
 
-import { App, Notice, TFile, normalizePath } from "obsidian";
+import { App, TFile, normalizePath } from "obsidian";
 import { MasteryMap, Verdict, normalizeMastery } from "./mastery";
 import { DEFAULT_PERSONA } from "./persona";
 import { Question } from "./question";
@@ -83,6 +83,10 @@ export interface SessionMeta {
 	 * not a regular study session, so the note can say so instead of reading identically. */
 	dueOnly?: boolean;
 }
+
+/** Something wrong with a file Grill read: it couldn't be read (so it isn't saved over),
+ * or it was reset (and a copy of it kept beside it). */
+export type LoadProblem = { kind: "unreadable" | "reset"; name: string; why: string };
 
 export class GrillStore {
 	constructor(
@@ -609,16 +613,17 @@ export class GrillStore {
 	}
 
 	/** Shared JSON load for every store below. A missing file is the first-run
-	 * `fallback`. A file that exists but can't be parsed is backed up alongside itself
-	 * as `.corrupt-<ts>.json` (warned once via Notice) and read as `fallback`. A file
-	 * that exists but can't be READ (iCloud hasn't downloaded it yet, a sync lock) is
-	 * different: its real content is still there, so the path is marked read-only for
-	 * this plugin session and every save to it is refused, until a later read of it
-	 * succeeds. Reading it as empty and
-	 * then saving used to overwrite a user's whole history with near-empty data. */
-	private async loadJSON<T>(path: string, fallback: T): Promise<T> {
+	 * `fallback`. A file that exists but can't be parsed, or isn't the shape `check`
+	 * wants, is backed up alongside itself as `.corrupt-<ts>.json`, reported through
+	 * `onProblem`, and read as `fallback`. A file that exists but can't be READ (iCloud
+	 * hasn't downloaded it yet, a sync lock) is different: its real content is still
+	 * there, so the path is marked read-only for this plugin session and every save to it
+	 * is refused, until a later read of it succeeds. Reading it as empty and then saving
+	 * used to overwrite a user's whole history with near-empty data. */
+	private async loadJSON<T>(path: string, fallback: T, check?: (v: unknown) => string | null): Promise<T> {
 		const adapter = this.app.vault.adapter;
 		if (!(await adapter.exists(path))) return fallback;
+		const name = path.split("/").pop() ?? path;
 		let raw: string;
 		try {
 			raw = await adapter.read(path);
@@ -627,30 +632,40 @@ export class GrillStore {
 			this.readOnlyPaths.delete(path);
 		} catch (e) {
 			this.readOnlyPaths.add(path);
-			const name = path.split("/").pop() ?? path;
-			new Notice(
-				`Grill: couldn't read ${name} (${(e as Error).message}). To protect it, Grill won't save over it until it can read it again.`,
-				12000,
-			);
+			this.onProblem({ kind: "unreadable", name, why: (e as Error).message });
 			return fallback;
 		}
+		let value: unknown;
+		let why: string | null;
 		try {
-			return JSON.parse(raw) as T;
+			value = JSON.parse(raw);
+			why = check ? check(value) : null;
 		} catch {
-			const name = path.split("/").pop() ?? path;
-			try {
-				await adapter.write(`${path}.corrupt-${Date.now()}.json`, raw);
-				new Notice(
-					`Grill: ${name} couldn't be read (corrupted JSON) and has been reset. ` +
-						`The unreadable file was kept alongside it as a .corrupt backup in case it's recoverable.`,
-					12000,
-				);
-			} catch {
-				/* best-effort backup */
-			}
+			why = "corrupted JSON";
+		}
+		if (why === null) return value as T;
+		try {
+			await adapter.write(`${path}.corrupt-${Date.now()}.json`, raw);
+			this.onProblem({ kind: "reset", name, why });
+		} catch {
+			/* best-effort backup */
+		}
+		return fallback;
+	}
+
+	/** A cache that can always be rebuilt: anything wrong with it reads as `fallback`,
+	 * without a backup or a word. */
+	private async loadCacheJSON<T>(path: string, fallback: T): Promise<T> {
+		const adapter = this.app.vault.adapter;
+		try {
+			return (await adapter.exists(path)) ? (JSON.parse(await adapter.read(path)) as T) : fallback;
+		} catch {
 			return fallback;
 		}
 	}
+
+	/** Told when a file couldn't be read, or was reset; the plugin says so. */
+	onProblem: (p: LoadProblem) => void = () => {};
 
 	/** Paths whose read failed this plugin session; see loadJSON. */
 	private readOnlyPaths = new Set<string>();
@@ -666,7 +681,35 @@ export class GrillStore {
 	 * to another device before the new file). Throws if the data couldn't be written,
 	 * or if the path is read-protected (see loadJSON), so callers (the session's
 	 * flush) keep their state dirty and say so instead of believing it was saved. */
-	private async saveJSON(path: string, data: string): Promise<void> {
+	private saveJSON(path: string, data: string): Promise<void> {
+		return this.inTurn(path, () => this.writeJSON(path, data));
+	}
+
+	/** Saves to one file, one at a time, in the order they were asked for: two writes
+	 * racing through the temp file could otherwise land the older one last. */
+	private inTurn<T>(path: string, work: () => Promise<T>): Promise<T> {
+		const turn = (this.turns.get(path) ?? Promise.resolve()).then(work, work);
+		const settled = turn.then(
+			() => undefined,
+			() => undefined,
+		);
+		this.turns.set(path, settled);
+		void settled.then(() => {
+			if (this.turns.get(path) === settled) this.turns.delete(path);
+		});
+		return turn;
+	}
+
+	private turns = new Map<string, Promise<void>>();
+
+	/** Read-modify-write edits of the record (an inbox fold, a rename, a refresh of a
+	 * note's concepts) run one at a time, so one can't save over what another just
+	 * changed. */
+	editRecord<T>(edit: () => Promise<T>): Promise<T> {
+		return this.inTurn("record", edit);
+	}
+
+	private async writeJSON(path: string, data: string): Promise<void> {
 		if (this.readOnlyPaths.has(path)) {
 			// Refuse loudly, not silently: a quiet skip let the session's flush think it
 			// had saved. Throwing keeps it dirty and makes its "couldn't save" Notice fire.
@@ -690,6 +733,15 @@ export class GrillStore {
 	 * cache that couldn't be written never aborts a session. */
 	private async saveCacheJSON(path: string, data: string): Promise<void> {
 		await this.saveJSON(path, data).catch((e) => console.error(`Grill: couldn't write cache ${path}`, e));
+	}
+
+	async loadSearchIndex<T>(fallback: T): Promise<T> {
+		return this.loadCacheJSON(this.inFolder("search-index.json"), fallback);
+	}
+
+	async saveSearchIndex(index: unknown): Promise<void> {
+		await this.ensureFolder(this.folder());
+		await this.saveCacheJSON(this.inFolder("search-index.json"), JSON.stringify(index));
 	}
 
 	async loadMastery(): Promise<MasteryMap> {

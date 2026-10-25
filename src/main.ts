@@ -20,7 +20,7 @@ import {
 import { configureFSRSWeights, MasteryMap } from "./mastery";
 import { notesBase } from "./props";
 import { CalPoint, isCalPoint } from "./calibration";
-import { API_BASE, LLMConfig, migrateLegacyModels, OLLAMA_DEFAULT_URL, offeredProviders, ProviderId, PROVIDERS } from "./providers";
+import { API_BASE, LLMConfig, OLLAMA_DEFAULT_URL, offeredProviders, ProviderId, PROVIDERS } from "./providers";
 import { Question } from "./question";
 import { listModels, readPriorKnowledge, synthesizeArc, testModel } from "./llm";
 import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, CloudPack, CloudPlan, planInWords, planLabel, cloudAccount, cloudBalance, cloudSpeech, cloudCheckoutUrl, cloudDelete, cloudEnabled, cloudStart, creditsInWords, isCloudKey, newCloudKey, packLabel, usageInWords } from "./cloud";
@@ -68,7 +68,7 @@ import { ExamModal } from "./exammodal";
 import { FETCH_TOOL, fetchedUrl, fetchPage } from "./web";
 import { listLanguages, listVoices, listVoicesForLang, onVoicesChanged, speak, speakNatural } from "./tts";
 import { countAgentChats, readAgentChats } from "./agentrecord";
-import { applyIntensity, intensityOf, type StudyIntensity } from "./settingstools";
+import { applyIntensity, type StudyIntensity } from "./settingstools";
 import { isDone, legacyFlags, markDone, migrateRecord, migrateSettings } from "./migrations";
 import { defaultSettings, GONE_KEYS_KEPT, type GrillSettings, type SettingsHandle, isAccountId, readSettings, restoredSettings, RETIRED_KEYS_KEPT } from "./settings";
 
@@ -190,6 +190,13 @@ export default class GrillPlugin extends Plugin {
 
 		this.store = new GrillStore(this.app, () => this.data.settings.folder);
 		this.store.notePropsOn = () => this.data.settings.noteProperties;
+		this.store.onProblem = (p) =>
+			new Notice(
+				p.kind === "unreadable"
+					? `Grill: couldn't read ${p.name} (${p.why}). To protect it, Grill won't save over it until it can read it again.`
+					: `Grill: ${p.name} couldn't be read (${p.why}) and has been reset. The unreadable file was kept alongside it as a .corrupt backup in case it's recoverable.`,
+				12000,
+			);
 
 		this.registerView(VIEW_TYPE, (leaf: WorkspaceLeaf) => new SessionView(leaf, this));
 		// Where a phone's browser comes back to after signing in to an MCP server.
@@ -784,9 +791,6 @@ export default class GrillPlugin extends Plugin {
 	private indexAgain = 0;
 	searchProgress = { indexed: 0, total: 0 };
 
-	private searchIndexPath(): string {
-		return this.store.inFolder("search-index.json");
-	}
 
 	/** The notes Chat may search: those Grill studies. */
 	private searchableNotes(): TFile[] {
@@ -799,24 +803,15 @@ export default class GrillPlugin extends Plugin {
 		if (!this.data.settings.searchByMeaning || Platform.isMobile) return Promise.resolve();
 		if (this.indexing) return this.indexing;
 		this.indexing = (async () => {
-			const adapter = this.app.vault.adapter;
-			const path = this.searchIndexPath();
 			if (!this.searchIndex) {
-				try {
-					const raw = (await adapter.exists(path)) ? (JSON.parse(await adapter.read(path)) as SearchIndex) : null;
-					this.searchIndex = raw?.model === localEmbedModel() && raw.notes ? raw : { model: localEmbedModel(), notes: {} };
-				} catch {
-					this.searchIndex = { model: localEmbedModel(), notes: {} };
-				}
+				const raw = await this.store.loadSearchIndex<SearchIndex | null>(null);
+				this.searchIndex = raw?.model === localEmbedModel() && raw.notes ? raw : { model: localEmbedModel(), notes: {} };
 			}
 			const index = this.searchIndex;
 			const files = this.searchableNotes();
 			const notes = await Promise.all(files.map(async (f) => ({ path: f.path, text: await this.app.vault.cachedRead(f) })));
 			let saved = Date.now();
-			const save = async (): Promise<void> => {
-				if (!(await adapter.exists(this.data.settings.folder))) await this.app.vault.createFolder(this.data.settings.folder).catch(() => undefined);
-				await adapter.write(path, JSON.stringify(index)).catch((e) => console.error("Grill: the search index could not be saved", e));
-			};
+			const save = (): Promise<void> => this.store.saveSearchIndex(index);
 			await updateIndex(index, notes, embedLocal, (done, total) => {
 				this.searchProgress = { indexed: files.length - total + done, total: files.length };
 				// Saved now and then while it works, not after every few notes: on a large
