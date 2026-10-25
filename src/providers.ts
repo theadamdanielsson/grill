@@ -14,6 +14,15 @@ export interface ProviderInfo {
 	needsKey: boolean;
 	/** Shown when the live model list cannot be fetched. */
 	fallbackModels: string[];
+	/** Whether this model reads pictures. */
+	vision: (model: string) => boolean;
+	/** Has an embeddings API: gates the semantic bridge prefilter (bridges.ts) before a
+	 * call is tried. Anthropic and DeepSeek have none. */
+	embeddings: boolean;
+	/** Can be given tools in Chat. Grill Cloud's depends on its server (see capabilities). */
+	tools: boolean;
+	/** On the user's own machine or endpoint: given longer, and smaller prompts. */
+	local: boolean;
 }
 
 export const PROVIDERS: Record<ProviderId, ProviderInfo> = {
@@ -25,6 +34,10 @@ export const PROVIDERS: Record<ProviderId, ProviderInfo> = {
 		keyUrl: "console.anthropic.com",
 		needsKey: true,
 		fallbackModels: ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-4-5"],
+		vision: () => true,
+		embeddings: false,
+		tools: true,
+		local: false,
 	},
 	openai: {
 		label: "OpenAI (ChatGPT)",
@@ -38,6 +51,10 @@ export const PROVIDERS: Record<ProviderId, ProviderInfo> = {
 		keyUrl: "platform.openai.com",
 		needsKey: true,
 		fallbackModels: ["gpt-5.6-terra", "gpt-6.1-sol", "gpt-6-luna"],
+		vision: (m) => /^(gpt-4o|gpt-4\.1|gpt-[5-9]|chatgpt|o[0-9])/i.test(m),
+		embeddings: true,
+		tools: true,
+		local: false,
 	},
 	gemini: {
 		label: "Google (Gemini)",
@@ -48,6 +65,10 @@ export const PROVIDERS: Record<ProviderId, ProviderInfo> = {
 		keyUrl: "aistudio.google.com",
 		needsKey: true,
 		fallbackModels: ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-2.5-pro"],
+		vision: () => true,
+		embeddings: true,
+		tools: false,
+		local: false,
 	},
 	deepseek: {
 		label: "DeepSeek",
@@ -58,6 +79,10 @@ export const PROVIDERS: Record<ProviderId, ProviderInfo> = {
 		keyUrl: "platform.deepseek.com",
 		needsKey: true,
 		fallbackModels: ["deepseek-flash", "deepseek-v4-pro"],
+		vision: () => false,
+		embeddings: false,
+		tools: true,
+		local: false,
 	},
 	ollama: {
 		label: "Ollama (local)",
@@ -66,6 +91,10 @@ export const PROVIDERS: Record<ProviderId, ProviderInfo> = {
 		keyUrl: "ollama.com",
 		needsKey: false,
 		fallbackModels: [],
+		vision: (m) => /(llava|vision|-vl\b|moondream|bakllava|minicpm-v|gemma3|llama3\.2-vision|qwen2(\.5)?-?vl)/i.test(m),
+		embeddings: true,
+		tools: false,
+		local: true,
 	},
 	custom: {
 		label: "Custom (OpenAI-compatible)",
@@ -76,6 +105,10 @@ export const PROVIDERS: Record<ProviderId, ProviderInfo> = {
 		// is allowed so local servers like LM Studio work without one.
 		needsKey: false,
 		fallbackModels: [],
+		vision: () => false,
+		embeddings: true,
+		tools: true,
+		local: true,
 	},
 	grillcloud: {
 		label: "Grill Cloud (no API key)",
@@ -85,6 +118,10 @@ export const PROVIDERS: Record<ProviderId, ProviderInfo> = {
 		keyUrl: "",
 		needsKey: true, // a Grill Cloud key, made on this device, not an API key
 		fallbackModels: ["Grill Cloud"],
+		vision: () => true,
+		embeddings: false,
+		tools: false,
+		local: false,
 	},
 };
 
@@ -154,19 +191,7 @@ export function readsImages(cfg: LLMConfig): boolean {
 }
 
 export function supportsVision(provider: ProviderId, model: string): boolean {
-	switch (provider) {
-		case "anthropic":
-		case "gemini":
-		case "grillcloud": // the hosted model reads images
-			return true;
-		case "openai":
-			return /^(gpt-4o|gpt-4\.1|gpt-[5-9]|chatgpt|o[0-9])/i.test(model);
-		case "ollama":
-			return /(llava|vision|-vl\b|moondream|bakllava|minicpm-v|gemma3|llama3\.2-vision|qwen2(\.5)?-?vl)/i.test(model);
-		case "deepseek":
-		case "custom":
-			return false;
-	}
+	return PROVIDERS[provider].vision(model);
 }
 
 /** Whether this provider has an embeddings endpoint at all — gates the semantic
@@ -176,7 +201,7 @@ export function supportsVision(provider: ProviderId, model: string): boolean {
  * settings UI (main.ts) states this plainly rather than implying it works for
  * every provider. */
 export function supportsEmbeddings(provider: ProviderId): boolean {
-	return provider === "openai" || provider === "gemini" || provider === "ollama" || provider === "custom";
+	return PROVIDERS[provider].embeddings;
 }
 
 /** What to call a provider in a sentence. */
@@ -244,12 +269,12 @@ export function capabilities(cfg: LLMConfig): Capabilities {
 	const p = cfg.provider;
 	const hosted = p === "grillcloud";
 	return {
-		tools: hosted ? cloud.streams && cloud.tools : p === "anthropic" || p === "openai" || p === "deepseek" || p === "custom",
+		tools: hosted ? cloud.streams && cloud.tools : PROVIDERS[p].tools,
 		streams: hosted ? cloud.streams && !!cloud.url : true,
 		webSearch: p === "anthropic" || (hosted && cloud.search),
 		vision: supportsVision(p, cfg.model),
 		embeddings: supportsEmbeddings(p),
-		local: p === "ollama" || p === "custom",
+		local: PROVIDERS[p].local,
 		metered: hosted,
 		effort: p === "anthropic" && anthropicTakesEffort(cfg.model),
 	};
