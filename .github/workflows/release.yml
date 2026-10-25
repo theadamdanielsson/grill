@@ -16,6 +16,17 @@ jobs:
         with:
           node-version: "22"
       - run: npm ci
+      # The tag, package.json, manifest.json and versions.json must name the same version.
+      - run: |
+          node -e '
+            const fs = require("fs");
+            const tag = process.env.GITHUB_REF_NAME;
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8")).version;
+            const man = JSON.parse(fs.readFileSync("manifest.json", "utf8"));
+            const versions = JSON.parse(fs.readFileSync("versions.json", "utf8"));
+            const bad = [pkg !== tag && "package.json", man.version !== tag && "manifest.json", versions[tag] !== man.minAppVersion && "versions.json"].filter(Boolean);
+            if (bad.length) { console.error(`Not at ${tag}: ${bad.join(", ")}`); process.exit(1); }
+          '
       - run: npm test
       - run: npm run build
       # Build provenance is best-effort: don't let a Sigstore/attestation

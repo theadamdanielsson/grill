@@ -1,7 +1,9 @@
 import esbuild from "esbuild";
 import process from "process";
 import { builtinModules } from "node:module";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
+
+const MAX_BYTES = 5_000_000;
 
 const prod = process.argv[2] === "production";
 
@@ -12,10 +14,12 @@ const prod = process.argv[2] === "production";
 const sdkHasAnAddress = {
   name: "sdk-has-an-address",
   setup(build) {
-    build.onLoad({ filter: /claude-agent-sdk[\\/]sdk\.mjs$/ }, async (args) => ({
-      contents: (await readFile(args.path, "utf8")).replaceAll("import.meta.url", "__grillSdkUrl()"),
-      loader: "js",
-    }));
+    build.onLoad({ filter: /claude-agent-sdk[\\/]sdk\.mjs$/ }, async (args) => {
+      const source = await readFile(args.path, "utf8");
+      // A new SDK that asks some other way would build fine and break on first use.
+      if (!source.includes("import.meta.url")) throw new Error("The Agent SDK no longer reads import.meta.url: check sdkHasAnAddress");
+      return { contents: source.replaceAll("import.meta.url", "__grillSdkUrl()"), loader: "js" };
+    });
   },
 };
 const sdkAddress =
@@ -47,6 +51,11 @@ const ctx = await esbuild.context({
 
 if (prod) {
   await ctx.rebuild();
+  const size = (await stat("main.js")).size;
+  if (size >= MAX_BYTES) {
+    console.error(`main.js is ${size} bytes; Obsidian Sync Standard carries files under ${MAX_BYTES}.`);
+    process.exit(1);
+  }
   process.exit(0);
 } else {
   await ctx.watch();
