@@ -6,7 +6,7 @@ import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, cloudEnabled, creditsInWor
 import { CLAUDE_MODELS, selectionMessage, STARTER_PROMPTS } from "./selection";
 import { adjudicateBridges, ConceptTarget, debriefSession, discussQuestion, embedTexts, explainQuestion, generateDrawQuestion, generateQuestions, gradeAnswer, learnFromNotes, learnWithTools, listModels, replyInProgress, type StudyOfferButton, summarizeChat, testModel, ThreadTurn } from "./llm";
 import { contentWords } from "./text";
-import { cleanDiagram, cleanText, formatSatisfies, Grade, Question } from "./question";
+import { cleanDiagram, cleanText, Grade, Question } from "./question";
 import { CloudError } from "./transport";
 import { capabilities, LLMConfig, OLLAMA_DEFAULT_URL, offeredProviders, ProviderId, PROVIDERS, readsImages, supportsEmbeddings, supportsVision } from "./providers";
 import { Verdict } from "./mastery";
@@ -58,6 +58,7 @@ import { applyIntensity, type SettingsPort } from "./settingstools";
 import { RECORD_RULES, RECORD_TOOLS, runRecordQuery, type RecordPort, type StudyOffer } from "./recordtools";
 import { applyAnswer } from "./record";
 import { SessionSaver } from "./sessionsaver";
+import { cacheHit, priorQuestions, rememberGenerated } from "./bank";
 import { QuestionsScreen } from "./screens/questions";
 import { drawChats } from "./screens/chats";
 import { DashboardScreen } from "./screens/dashboard";
@@ -398,17 +399,6 @@ type PendingExtension =
 	| { kind: "prerequisite"; route: PrereqRoute; fromNote: string }
 	| { kind: "contagion"; route: ContagionRoute; fromNote: string };
 
-/** Most cached question variants kept per concept, to bound questions.json growth. */
-const MAX_VARIANTS = 8;
-/** Most prior question texts shown to the model when regenerating a concept, so the
- * "already asked, write something different" hint stays a bounded prompt addition
- * even once a concept's bank is near MAX_VARIANTS deep. */
-const MAX_PRIOR_SHOWN = 3;
-/** Word-overlap (Jaccard) threshold above which a freshly generated question is
- * treated as a near-restatement of an existing bank variant rather than a genuinely
- * new one. Deliberately loose (not exact-match) — models restate with light rewording
- * (swapped synonyms, reordered clauses) far more often than verbatim repeats. */
-const NEAR_DUPLICATE_THRESHOLD = 0.75;
 /** Cap on learning-graph nodes laid out + drawn, so a huge vault stays responsive. */
 const MAP_NODE_CAP = 600;
 
@@ -420,28 +410,6 @@ function formatAgo(ms: number): string {
 	const hours = Math.round(minutes / 60);
 	if (hours < 24) return `${hours}h`;
 	return `${Math.round(hours / 24)}d`;
-}
-
-/** Lightweight, dependency-free duplicate detector: Jaccard similarity over
- * normalized word sets. Deliberately not exact-string matching — a model asked to
- * write "something different" usually still restates the same question with a
- * synonym swapped or a clause reordered, which exact match would let straight
- * through. Symmetric and cheap enough to run on every generated question. */
-function questionSimilarity(a: string, b: string): number {
-	const words = (s: string): Set<string> =>
-		new Set(
-			s
-				.toLowerCase()
-				.replace(/[^a-z0-9\s]/g, " ")
-				.split(/\s+/)
-				.filter(Boolean),
-		);
-	const wa = words(a);
-	const wb = words(b);
-	if (!wa.size || !wb.size) return 0;
-	let shared = 0;
-	for (const w of wa) if (wb.has(w)) shared++;
-	return shared / (wa.size + wb.size - shared);
 }
 
 /** The chat so far, for a program that joins it part way. Cut to its latest turns. */
@@ -2703,7 +2671,6 @@ export class SessionView extends ItemView {
 		};
 	}
 
-
 	/** Buttons offered during the turn being answered. */
 	private pendingOffers: StudyOfferButton[] = [];
 
@@ -3342,7 +3309,6 @@ export class SessionView extends ItemView {
 	private renderManageQuestions(): Promise<void> {
 		return this.questionsScreen.render();
 	}
-
 
 	private renderLoading(title: string, detail: string, onCancel?: () => void): void {
 		const wrap = this.root("loading");
@@ -5332,69 +5298,14 @@ export class SessionView extends ItemView {
 		}
 	}
 
-	/** A cached question for this concept that is safe to reuse now, or null. Requires a
-	 * bank entry whose source hash still matches the concept (note unchanged) AND whose
-	 * format satisfies the current "Question formats" setting (see `formatSatisfies`,
-	 * the same check fresh generation validates against) — a variant banked back when the
-	 * student was on Mixed (or before they switched to MC/Write only) must not get rotated
-	 * back in just because it's the least-shown one; that's how "MC only" quietly kept
-	 * serving old write-in questions forever. Rotates to the least-shown variant among
-	 * whatever's left.
-	 *
-	 * The entry must also be at the difficulty the concept is due for now (`tier`, from
-	 * conceptTargetDifficulty via the target). Without that, the first question written
-	 * for a concept, nearly always an easy one, was the only one it ever got, so the
-	 * easy-medium-hard ramp never reached the student and a right answer could never
-	 * earn a hard question's longer interval. An entry from before questions carried a
-	 * difficulty counts as medium, the same default grading gives it.
-	 *
-	 * The model only ever writes a question once per concept and difficulty (per source
-	 * text — an edit that changes `sourceHash` reopens it): every later review of the
-	 * same concept at that difficulty reuses that same cached text, forever. A newly
-	 * written one has passed checkAnswerKeys (llm.ts) before it is banked. Rewording on
-	 * a schedule used to be the default (a fresh variant once a calendar day had passed
-	 * since it was last shown, to avoid testing sentence-recognition instead of recall)
-	 * but in practice this reliably drifted the *content* of the question, not just its
-	 * phrasing — a real failure mode on precision material like a language drill, where
-	 * a "fresher" variant can quietly test a different grammar point or invent a wrong
-	 * answer.
-	 * This never grows unboundedly regardless: rememberGenerated evicts the oldest
-	 * past MAX_VARIANTS. */
+	/** The banked question to serve for a concept at this difficulty (see bank.ts). */
 	private cacheHit(conceptId: string, tier: QDifficulty): CachedQuestion | null {
-		const c = this.conceptById.get(conceptId);
-		if (!c || c.authored) return null; // authored questions are verbatim, not banked
-		const bank = this.questionBank[conceptId];
-		if (!bank || !bank.length) return null;
-		const wantFormat = this.plugin.data.settings.questionFormats;
-		const fresh = bank.filter(
-			(e) =>
-				e.sourceHash === c.sourceHash &&
-				!e.rejected &&
-				formatSatisfies(e.type, wantFormat) &&
-				(e.difficulty ?? "medium") === tier,
-		);
-		if (!fresh.length) return null;
-		fresh.sort(
-			(a, b) => a.timesShown - b.timesShown || (a.lastShownAt ?? "").localeCompare(b.lastShownAt ?? ""),
-		);
-		return fresh[0];
+		return cacheHit(this.questionBank, this.conceptById.get(conceptId), tier, this.plugin.data.settings.questionFormats);
 	}
 
-	/** Question texts already on record for this exact concept (same source text),
-	 * most-recently-shown first, capped to MAX_PRIOR_SHOWN — passed to the model as
-	 * "already asked, don't restate" context so a regenerated variant is actually new.
-	 * Stale-hash entries (note has since changed) are excluded: they describe content
-	 * the model isn't being asked about anymore. */
+	/** Questions already asked on a concept, to tell the model not to restate (see bank.ts). */
 	private priorQuestionsFor(conceptId: string): string[] {
-		const c = this.conceptById.get(conceptId);
-		if (!c) return [];
-		const bank = this.questionBank[conceptId];
-		if (!bank || !bank.length) return [];
-		return bank
-			.filter((e) => e.sourceHash === c.sourceHash)
-			.sort((a, b) => (b.lastShownAt ?? "").localeCompare(a.lastShownAt ?? ""))
-			.slice(0, MAX_PRIOR_SHOWN)
-			.map((e) => e.question);
+		return priorQuestions(this.questionBank, this.conceptById.get(conceptId));
 	}
 
 	/** Whether a target needs no model call (user-authored, or a cache hit). Must agree
@@ -5443,57 +5354,11 @@ export class SessionView extends ItemView {
 		return { ...q, node: t.note, routedFrom: t.routedFrom, contagionFrom: t.contagionFrom };
 	}
 
-	/** Cache freshly generated questions per concept for reuse on later reviews. Skips
-	 * authored (verbatim) and bridge (novel, un-scheduled) questions, prunes stale-hash
-	 * variants, dedupes near-restatements against what's already banked, and caps the
-	 * number kept per concept. */
+	/** Keep freshly written questions for later reviews (see bank.ts). Not those written
+	 * for this test's "Add context" note: a later test never asked for it. */
 	private rememberGenerated(qs: Question[]): void {
-		// Written for this test's "Add context" note, so they must not come back in a
-		// later test that never asked for it.
 		if (this.sessionContext) return;
-		for (const q of qs) {
-			if (!q.conceptId || q.missingLink) continue;
-			const c = this.conceptById.get(q.conceptId);
-			if (!c || c.authored) continue;
-			const kept = (this.questionBank[q.conceptId] ?? []).filter((e) => e.sourceHash === c.sourceHash);
-			// The model can ignore the "already asked, write something different" prompt
-			// hint (priorQuestionsFor) — if what came back is a near-restatement of a
-			// variant already banked, treat this as another showing of THAT variant rather
-			// than a new one. Keeps rotation genuinely varied and stops MAX_VARIANTS slots
-			// filling up with near-duplicates of each other. Only affects what's persisted
-			// for future reuse; the question actually served this turn is unchanged.
-			// Never folds into a rejected entry — that would silently un-reject a "Bad
-			// question" variant just because the model regenerated something similar to
-			// it; a near-restatement of a rejected question is banked as its own fresh
-			// entry instead, so it can be independently rejected again if still bad.
-			// Only a variant at the same difficulty counts: a harder question that reads
-			// like the easy one is still the one cacheHit needs at its own difficulty, or
-			// it would be written again at every review.
-			const dup = kept.find(
-				(e) =>
-					!e.rejected &&
-					(e.difficulty ?? "medium") === q.difficulty &&
-					questionSimilarity(e.question, q.question) >= NEAR_DUPLICATE_THRESHOLD,
-			);
-			if (dup) {
-				dup.timesShown += 1;
-				dup.lastShownAt = new Date().toISOString();
-			} else {
-				kept.push({ ...q, sourceHash: c.sourceHash, timesShown: 1, lastShownAt: new Date().toISOString() });
-			}
-			// Written unconditionally on both paths: `kept` is already pruned to fresh-hash
-			// entries above, and skipping this on the dup path would silently stop that
-			// pruning from ever landing whenever a batch happens to produce a near-duplicate.
-			// Rejected tombstones are exempt from the MAX_VARIANTS cap: a plain slice(-N) on
-			// the combined array would eventually push a "Bad question" entry out of the kept
-			// window (it never gets touched/re-pushed once rejected, so it only drifts toward
-			// the front as fresh variants keep landing) — at which point nothing stops the
-			// model from regenerating and re-serving the exact question the student rejected.
-			const live = kept.filter((e) => !e.rejected);
-			const tombstones = kept.filter((e) => e.rejected);
-			this.questionBank[q.conceptId] = [...tombstones, ...live.slice(-MAX_VARIANTS)];
-			this.bankDirty = true;
-		}
+		if (rememberGenerated(this.questionBank, qs, (id) => this.conceptById.get(id))) this.bankDirty = true;
 	}
 
 	/** Missing-link finder: propose un-linked note pairs, confirm the real ones with the
@@ -6471,7 +6336,6 @@ export class SessionView extends ItemView {
 		if (left !== null) return Math.max(base, EXAM_RETENTION);
 		return this.plugin.data.settings.everythingElse === "keep" ? Math.min(base, KEEP_RETENTION) : base;
 	}
-
 
 
 	/** Each note's days to its exam, by basename, over the whole vault: a concept's
