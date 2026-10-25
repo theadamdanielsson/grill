@@ -18,7 +18,8 @@
  */
 
 import type { ConceptMap, ConceptMastery } from "./concepts";
-import { conceptMasteryScore, isLeech, statusOf } from "./mastery";
+import { COVERAGE_KNOWN, conceptTested, coverageOf } from "./concepts";
+import { conceptMasteryScore, isLeech, MIN_STABILITY, statusOf } from "./mastery";
 
 export type NodeState = "unpracticed" | "struggling" | "known";
 export type EdgeTier = "structural" | "inherited" | "proven";
@@ -62,25 +63,6 @@ export interface GraphEdge {
 export interface LearningGraph {
 	nodes: GraphNode[];
 	edges: GraphEdge[];
-}
-
-/** Coverage of confirmed-known concepts for a note to read "known" — matches
- * concepts.ts's noteAggregate exactly (same 0.8 bar, same "count individually
- * confirmed-known concepts" definition), since that function is what the dashboard's
- * headline "Known" stat is built from (view.ts's renderStart, via statusOf reading
- * mastery[note].aggStatus). The map's node colour needs to agree with that number,
- * not with a differently-computed one — a graph showing dozens of "known"-coloured
- * notes while the dashboard says 5 is a worse, more confusing mismatch than the
- * per-node number/colour disagreement this constant used to cause (see MIN_STABILITY
- * below for the rest of that history). */
-const COVERAGE_KNOWN = 0.8;
-/** Coverage's denominator caps at this many concepts (matches concepts.ts COVERAGE_TARGET). */
-const COVERAGE_TARGET = 8;
-/** FSRS stability floor (matches mastery.ts MIN_STABILITY). */
-const MIN_STABILITY = 0.1;
-
-function conceptTested(cm: ConceptMastery): boolean {
-	return cm.correct + cm.partial + cm.incorrect > 0;
 }
 
 /** A note's full derived state from its concept mastery records: colour state, proven
@@ -154,7 +136,7 @@ export function noteState(
 		if (c.lastSeen && (!lastSeen || c.lastSeen > lastSeen)) lastSeen = c.lastSeen;
 		if (c.dueAt && (!dueAt || c.dueAt < dueAt)) dueAt = c.dueAt;
 	}
-	const coverage = known / Math.max(1, Math.min(records.length, COVERAGE_TARGET));
+	const coverage = coverageOf(known, records.length);
 	const mastery = masteryCount > 0 ? masterySum / masteryCount : null;
 	const state: NodeState = coverage >= COVERAGE_KNOWN ? "known" : "struggling";
 	const leeches = records.filter(isLeech).length;

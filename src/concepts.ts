@@ -92,7 +92,7 @@ export type ConceptMap = Record<string, ConceptMastery>;
 
 /** A note counts as "known" only once this share of its concepts is tested-known,
  * so a note can't look mastered while most of it was never asked about. */
-const COVERAGE_KNOWN = 0.8;
+export const COVERAGE_KNOWN = 0.8;
 /** Coverage's denominator caps at this many concepts, not the note's raw extracted
  * count — otherwise a content-dense note (a long vocab list, a big glossary) needs
  * proportionally more known concepts just to read "covered" than a short one, purely
@@ -100,6 +100,12 @@ const COVERAGE_KNOWN = 0.8;
  * anything about how well the note is actually known. ~8 known concepts reads as a
  * representative sample of any note, dense or sparse. */
 const COVERAGE_TARGET = 8;
+
+/** A note's coverage: confirmed-known concepts over its concept count, capped at
+ * COVERAGE_TARGET. The dashboard and the map both read a note's status from this. */
+export function coverageOf(known: number, total: number): number {
+	return known / Math.max(1, Math.min(total, COVERAGE_TARGET));
+}
 
 function emptyConcept(c: Concept): ConceptMastery {
 	return {
@@ -486,7 +492,7 @@ export function noteAggregate(ids: string[], map: ConceptMap): { aggStatus: Note
 	// concept. The denominator caps at COVERAGE_TARGET (see its doc comment) rather
 	// than the note's raw concept count.
 	const known = ids.filter((id) => statusOf(map[id]) === "known").length;
-	const coverage = known / Math.max(1, Math.min(ids.length, COVERAGE_TARGET));
+	const coverage = coverageOf(known, ids.length);
 	const aggStatus: NoteStatus = coverage >= COVERAGE_KNOWN ? "known" : "struggling";
 	let dueAt: string | null = null;
 	for (const id of tested) {
