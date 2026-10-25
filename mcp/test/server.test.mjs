@@ -264,3 +264,16 @@ test("the digest names the open confusion and the weakest concept, and is not of
 	assert.ok(!(await chat.listTools()).tools.some((t) => t.name === "grill_digest"));
 	await chat.close();
 });
+
+test("the digest names the exams set in the vault's Grill settings, and leaves out past ones", async () => {
+	const { root } = makeVault();
+	const ahead = new Date(Date.now() + 17 * day);
+	const pad = (n) => String(n).padStart(2, "0");
+	const date = `${ahead.getFullYear()}-${pad(ahead.getMonth() + 1)}-${pad(ahead.getDate())}`;
+	writeFileSync(join(root, ".obsidian", "plugins", "grill", "data.json"), JSON.stringify({ settings: { folder: "Grill", exams: [{ folders: ["Macro/Chapter 2"], date }, { folders: [""], date: "2020-01-01" }] } }));
+	const c = await connect(["--vault", root]);
+	const text = (await c.callTool({ name: "grill_digest", arguments: {} })).content[0].text;
+	assert.match(text, new RegExp(`Exams the student has coming up[^\\n]*\\n- Chapter 2: ${date}, in 17 days`));
+	assert.doesNotMatch(text, /2020-01-01/);
+	await c.close();
+});

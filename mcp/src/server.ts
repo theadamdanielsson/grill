@@ -28,6 +28,7 @@ import {
 	has,
 } from "../../src/record";
 import { learnerBrief } from "../../src/brief";
+import { examDay, examLines, type Exam } from "../../src/exams";
 import { safeMarkdown } from "../../src/safemd";
 import type { QuestionBank } from "../../src/store";
 
@@ -38,6 +39,8 @@ interface Where {
 	folder: string;
 	/** True in an Obsidian vault: the plugin owns the record files there. */
 	vault: boolean;
+	/** The vault's own folder, in a vault. */
+	root?: string;
 	/** In the record in the home folder: the project the agent is working in. Its
 	 * concepts are named with it, and reads keep to it. */
 	project?: string;
@@ -62,7 +65,7 @@ function grillFolderName(vault: string): string {
 
 export function locate(): Where {
 	const vault = argValue("--vault") ?? process.env.GRILL_VAULT;
-	if (vault) return { folder: join(resolve(vault), grillFolderName(resolve(vault))), vault: true };
+	if (vault) return { folder: join(resolve(vault), grillFolderName(resolve(vault))), vault: true, root: resolve(vault) };
 	const dir = argValue("--dir");
 	if (dir) return { folder: resolve(dir), vault: false };
 	// ~/.grill also holds what the plugin installs (opencode): the record has a folder of its own.
@@ -74,12 +77,28 @@ export function locate(): Where {
 		if (!sameFolder(at, homedir()) && existsSync(join(at, ".grill"))) return { folder: join(at, ".grill"), vault: false };
 		// A vault counts only if Grill is in it: in any other vault there is no record of
 		// Grill's to add to, and every answer would be refused.
-		if (existsSync(join(at, ".obsidian")) && hasGrill(at)) return { folder: join(at, grillFolderName(at)), vault: true };
+		if (existsSync(join(at, ".obsidian")) && hasGrill(at)) return { folder: join(at, grillFolderName(at)), vault: true, root: at };
 		if (dirname(at) === at) break;
 	}
 	// Otherwise one record for the person, in their home folder, never in the project:
 	// it is theirs, not the codebase's, and goes with them from project to project.
 	return { folder: home, vault: false, project: projectName(cwd) };
+}
+
+/** The exams set in the vault's Grill settings that are still ahead, one line each, for
+ * the digest. None outside a vault, or when the settings can't be read. */
+function vaultExams(where: Where): string[] {
+	if (!where.root) return [];
+	try {
+		const data = JSON.parse(readFileSync(join(where.root, ".obsidian", "plugins", "grill", "data.json"), "utf8"));
+		const raw: unknown[] = Array.isArray(data?.settings?.exams) ? data.settings.exams : [];
+		const exams = raw.filter(
+			(e): e is Exam => !!e && Array.isArray((e as Exam).folders) && typeof (e as Exam).date === "string" && !!examDay((e as Exam).date),
+		);
+		return examLines(exams, new Date());
+	} catch {
+		return [];
+	}
 }
 
 /** Whether Grill is installed in this vault, or has a record there. */
@@ -264,7 +283,7 @@ export function buildServer(where: Where, chatOnly = false): McpServer {
 		"grill_digest",
 		{
 			title: "Digest of the record",
-			description: "Grill's record in a few hundred words, the same digest Grill's own Chat starts with: how much is tested and due, the confusions that still show in recent answers, the weakest concepts with what they wrote last time, confusions fixed lately, and notes that are fully known. Read it once at the start of a conversation about what they study.",
+			description: "Grill's record in a few hundred words, the same digest Grill's own Chat starts with: how much is tested and due, any exams coming up, the confusions that still show in recent answers, the weakest concepts with what they wrote last time, confusions fixed lately, and notes that are fully known. Read it once at the start of a conversation about what they study.",
 			inputSchema: {
 				note: z.string().optional().describe("A note to rank the weakest concepts toward. Leave out for the whole record."),
 			},
@@ -272,7 +291,7 @@ export function buildServer(where: Where, chatOnly = false): McpServer {
 		guarded(async ({ note }: { note?: string }) => {
 			const s = inView(where, load(where));
 			if (!hasRecord(s)) return empty();
-			const text = learnerBrief({ state: s, ...(note ? { focus: { note, near: [] } } : {}) });
+			const text = learnerBrief({ state: s, exams: vaultExams(where), ...(note ? { focus: { note, near: [] } } : {}) });
 			return { content: [{ type: "text" as const, text: text || "Nothing has been tested yet." }] };
 		}),
 	);
@@ -483,7 +502,7 @@ function runCommand(cmd: string, rest: string[]): number {
 		return 0;
 	}
 	if (cmd === "overview") out(overview(s));
-	else if (cmd === "digest") console.log(learnerBrief({ state: s, ...(topic ? { focus: { note: topic, near: [] } } : {}) }) || "Nothing has been tested yet.");
+	else if (cmd === "digest") console.log(learnerBrief({ state: s, exams: vaultExams(where), ...(topic ? { focus: { note: topic, near: [] } } : {}) }) || "Nothing has been tested yet.");
 	else if (cmd === "weak-spots") out(weakSpots(s, topic, 15));
 	else if (cmd === "know") {
 		if (!topic) {
