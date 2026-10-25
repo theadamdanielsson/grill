@@ -16,10 +16,7 @@ import { runAcp } from "./acp";
 import { runCodex } from "./codex";
 import { opencodeProgram } from "./opencode";
 
-export type AgentEngine = "claudecode" | "codex" | "opencode";
-
 export interface AgentJSONRun {
-	engine: AgentEngine;
 	program: string;
 	/** The model to use, by the program's own id; "" leaves it to the program. */
 	model: string;
@@ -99,7 +96,7 @@ function withImages(run: AgentJSONRun): string | AsyncIterable<SDKUserMessage> {
 	})();
 }
 
-async function claudeJSON(run: AgentJSONRun, cwd: string): Promise<unknown> {
+export async function claudeJSON(run: AgentJSONRun, cwd = workFolder()): Promise<unknown> {
 	const req = need();
 	if (!req) throw new Error("Claude Code can only be run on desktop.");
 	acceptPaneSignals(req("events") as Parameters<typeof acceptPaneSignals>[0]);
@@ -145,15 +142,20 @@ async function claudeJSON(run: AgentJSONRun, cwd: string): Promise<unknown> {
 	throw new Error(failed ? `Claude Code stopped: ${failed.slice(0, 200)}` : "Empty model response");
 }
 
-/** One JSON answer from the program. Throws with a sentence fit to show. */
-export async function agentJSON(run: AgentJSONRun): Promise<unknown> {
-	const cwd = workFolder();
-	if (run.engine === "claudecode") return claudeJSON(run, cwd);
+/** Nothing is asked of the user during a JSON answer: it runs in Plan, and anything it
+ * would ask permission for is declined. */
+const quiet = (run: AgentJSONRun) => ({ onEvent: () => undefined, ask: async () => "deny" as const, signal: run.signal });
+
+/** One JSON answer from Codex. Throws with a sentence fit to show. */
+export async function codexJSON(run: AgentJSONRun): Promise<unknown> {
 	const prompt = jsonPrompt(run.system, run.user, run.schema);
-	const quiet = { onEvent: () => undefined, ask: async () => "deny" as const, signal: run.signal };
-	const result =
-		run.engine === "codex"
-			? await runCodex({ program: run.program, prompt, cwd, level: "plan", model: run.model, images: run.images, outputSchema: run.schema, ...quiet })
-			: await runAcp({ ...opencodeProgram(run.program, "plan"), name: "opencode", prompt, cwd, level: "plan", model: run.model, ...quiet });
+	const result = await runCodex({ program: run.program, prompt, cwd: workFolder(), level: "plan", model: run.model, images: run.images, outputSchema: run.schema, ...quiet(run) });
+	return readJSON(result.text);
+}
+
+/** One JSON answer from opencode, over ACP. Throws with a sentence fit to show. */
+export async function opencodeJSON(run: AgentJSONRun): Promise<unknown> {
+	const prompt = jsonPrompt(run.system, run.user, run.schema);
+	const result = await runAcp({ ...opencodeProgram(run.program, "plan"), name: "opencode", prompt, cwd: workFolder(), level: "plan", model: run.model, ...quiet(run) });
 	return readJSON(result.text);
 }

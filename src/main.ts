@@ -53,9 +53,7 @@ import { NEW_PROMPT, promptMessage, SELECTION_ASKS, SelectionAsk, selectionMessa
 import { GrillStore, type SessionEntry } from "./store";
 import { GRILL_ICON, registerGrillIcon } from "./icon";
 import { LoopbackToolServer } from "./loopback";
-import { agentJSON } from "./agentjson";
-import { findProgram } from "./agent";
-import { findCodex } from "./codex";
+import { engineFor } from "./engines";
 import { canInstall, downloadSize, findOpencode, installOpencode, isGrillInstall, OPENCODE_VERSION, uninstallOpencode } from "./opencode";
 import { SessionView, VIEW_TYPE } from "./view";
 import { McpHub, RETURN_ACTION, type SignedIn, type SignInStore } from "./mcp";
@@ -1808,17 +1806,17 @@ ${body}
 	/** The agent program Chat is set to, standing in for a model: see agentjson.ts. */
 	agentConfig(): LLMConfig | null {
 		const s = this.data.settings;
-		if (!s.modelAgreed || !Platform.isDesktopApp || s.chatEngine === "model") return null;
-		const engine = s.chatEngine;
-		const program = engine === "claudecode" ? findProgram(s.claudePath) : engine === "codex" ? findCodex(s.codexPath) : findOpencode(s.opencodePath);
+		const engine = engineFor(s.chatEngine);
+		if (!s.modelAgreed || !Platform.isDesktopApp || !engine) return null;
+		const program = engine.find(s);
 		if (!program) return null;
-		const model = engine === "claudecode" ? s.claudeModel : engine === "opencode" ? s.opencodeModel : s.codexModel;
+		const model = s[engine.modelSetting];
 		return {
 			provider: "custom",
 			apiKey: "",
-			model: engine === "claudecode" ? "Claude Code" : engine === "codex" ? "Codex" : "opencode",
-			agent: (system, user, schema, signal, images) => agentJSON({ engine, program, model, system, user, schema, signal, images }),
-			agentImages: engine !== "opencode",
+			model: engine.name,
+			agent: (system, user, schema, signal, images) => engine.json({ program, model, system, user, schema, signal, images }),
+			agentImages: engine.readsImages,
 		};
 	}
 

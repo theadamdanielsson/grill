@@ -94,7 +94,7 @@ import { listSome, missesLine, mostLinked, noteLine, shortDate, startingNote } f
 import { drawPicks, renderChatHome, renderCreditsRing, type HomeMode, type HomeSuggestion } from "./home";
 import { aboutTheVault, compactAt, learnContext, learnRecord, namesANote, parseLearnNote, parseLearnThread, parseSessionNote, namesInFull, rankNotes, replyTitle, sessionTitle, vaultMap, vaultNotes, vaultStructure, type PastAnswer, type VaultNote } from "./learn";
 import { safeDiagram, safeMarkdown } from "./safemd";
-import { activitySummary, AgentEvent, agentBrief, AGENT_LEVELS, claudeCommands, findProgram, PermissionAnswer, PermissionAsk, runAgent } from "./agent";
+import { activitySummary, AgentEvent, agentBrief, AGENT_LEVELS, claudeCommands, PermissionAnswer, PermissionAsk, runAgent } from "./agent";
 import type { VaultPort } from "./vaulttools";
 import { applyIntensity, type SettingsPort } from "./settingstools";
 import { RECORD_RULES, RECORD_TOOLS, runRecordQuery, type RecordPort, type StudyOffer } from "./recordtools";
@@ -103,10 +103,11 @@ import { gradeStructured } from "./grading";
 import { forgetAgentProject, readAgentConcepts } from "./agentrecord";
 import { GRILL_ICON } from "./icon";
 import { attachPicker, linkedNames, type PickSource } from "./mention";
-import { codexModelName, codexModels, findCodex, runCodex } from "./codex";
+import { codexModelName, codexModels, runCodex } from "./codex";
 import { importedLines, importedNames } from "./imported";
 import { AcpModel, acpModels, runAcp } from "./acp";
-import { canInstall, findOpencode, opencodeProgram } from "./opencode";
+import { canInstall, opencodeProgram } from "./opencode";
+import { engineFor, ENGINE_IDS, ENGINES } from "./engines";
 
 /** Mermaid's drawing, made fit to be shown as an image: well-formed XML, with a size
  * of its own. Null if it isn't a drawing (Mermaid draws its errors as one too).
@@ -1738,9 +1739,7 @@ export class SessionView extends ItemView {
 		// With Claude Code, Codex or opencode on this computer, the button steps through what there
 		// is: the model, then each program that is installed.
 		const have: Array<"model" | "claudecode" | "codex" | "opencode"> = ["model"];
-		if (Platform.isDesktopApp && findProgram(s.claudePath)) have.push("claudecode");
-		if (Platform.isDesktopApp && findCodex(s.codexPath)) have.push("codex");
-		if (Platform.isDesktopApp && findOpencode(s.opencodePath)) have.push("opencode");
+		if (Platform.isDesktopApp) have.push(...ENGINE_IDS.filter((id) => ENGINES[id].find(s)));
 		let now = have.includes(s.chatEngine) ? s.chatEngine : "model";
 		// Nothing set up but a program that works: Chat runs on that instead of on nothing.
 		// Not for someone still to say whether a model may be used (see askToUseModel).
@@ -1755,9 +1754,8 @@ export class SessionView extends ItemView {
 						after();
 					}
 				: (): void => this.plugin.openSettings();
-		if (now === "claudecode") return { name: "Claude Code", open };
-		if (now === "codex") return { name: "Codex", open };
-		if (now === "opencode") return { name: "opencode", open };
+		const engine = engineFor(now);
+		if (engine) return { name: engine.name, open };
 		if (!this.plugin.modelConfig()) {
 			return { name: "No model", open };
 		}
@@ -1953,10 +1951,8 @@ export class SessionView extends ItemView {
 	private installedAgent(): { id: "claudecode" | "codex" | "opencode"; name: string } | null {
 		if (!Platform.isDesktopApp) return null;
 		const s = this.plugin.data.settings;
-		if (findProgram(s.claudePath)) return { id: "claudecode", name: "Claude Code" };
-		if (findCodex(s.codexPath)) return { id: "codex", name: "Codex" };
-		if (findOpencode(s.opencodePath)) return { id: "opencode", name: "opencode" };
-		return null;
+		const found = ENGINE_IDS.map((id) => ENGINES[id]).find((e) => e.find(s));
+		return found ? { id: found.id, name: found.name } : null;
 	}
 
 	/** The installed program Chat is set to run on (Claude Code, Codex or opencode), when it is
@@ -1964,10 +1960,7 @@ export class SessionView extends ItemView {
 	private agentProgram(): string | null {
 		const s = this.plugin.data.settings;
 		if (!Platform.isDesktopApp) return null;
-		if (s.chatEngine === "claudecode") return findProgram(s.claudePath);
-		if (s.chatEngine === "codex") return findCodex(s.codexPath);
-		if (s.chatEngine === "opencode") return findOpencode(s.opencodePath);
-		return null;
+		return engineFor(s.chatEngine)?.find(s) ?? null;
 	}
 
 	private levelForHome(after = (): void => this.renderStart()): { name: string; says: string; next(): void } {
@@ -2079,7 +2072,7 @@ export class SessionView extends ItemView {
 		try {
 			await this.plugin.store.saveLearnThread(L.whole ? "Your notes" : L.note.basename, L.turns, {
 				provider: ran ?? cfg?.provider ?? "",
-				model: ran === "claudecode" ? s.claudeModel || "default" : ran === "opencode" ? s.opencodeModel || "default" : ran === "codex" ? s.codexModel || "default" : ran ? "default" : cfg?.provider === "grillcloud" ? "hosted" : (cfg?.model ?? ""),
+				model: ran ? (engineFor(ran) ? s[engineFor(ran)!.modelSetting] : "") || "default" : cfg?.provider === "grillcloud" ? "hosted" : (cfg?.model ?? ""),
 				startedAt: L.startedAt,
 				into: L.file,
 				from: L.had,
