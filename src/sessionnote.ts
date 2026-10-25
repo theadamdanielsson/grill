@@ -3,7 +3,10 @@
  * agree on every marker. The frontmatter, the debrief, the explanations and the redo
  * block are the store's own and stay there. No Obsidian here: grill-mcp bundles it. */
 
-import { safeMarkdown } from "./safemd";
+import { safeDiagram, safeMarkdown } from "./safemd";
+import type { SessionDebrief } from "./debrief";
+import type { Verdict } from "./mastery";
+import type { Question } from "./question";
 
 /** The lines that mark each part of an answer. A marker only counts after an empty line. */
 export const MARK = {
@@ -152,4 +155,137 @@ export function parseSessionNote(text: string): PastAnswer[] {
 	}
 	if (cur) out.push(cur);
 	return out.filter((a) => a.question);
+}
+
+export interface SessionEntry {
+	node: string;
+	question: string;
+	answer: string;
+	verdict: Verdict;
+	gaveUp: boolean;
+	feedback: string;
+	modelAnswer: string;
+	/** Follow-ups asked under this question and the tutor's replies, in order. */
+	discussion?: Array<{ role: "student" | "tutor"; text: string; diagram?: string; imagePath?: string }>;
+	/** What "Explain this" wrote, when it was asked for: kept so it is in the session
+	 * note, not paid for and then lost. */
+	explanation?: { whatWentWrong: string; keyConcept: string; example: string; diagram: string; relevantImagePath?: string };
+}
+
+export interface SessionMeta {
+	provider: string;
+	model: string;
+	startedAt: Date;
+	/** True when this session came from "Review N due now" / the due-queue status bar,
+	 * not a regular study session, so the note can say so instead of reading identically. */
+	dueOnly?: boolean;
+}
+
+/** A conversation's turns, as Learn notes and session notes write them: each quoted under
+ * who said it, with any diagram after. Made inert (see safemd.ts). */
+export function renderTurns(turns: Array<{ role: "student" | "tutor"; text: string; diagram?: string; imagePath?: string }>): string[] {
+	const lines: string[] = [];
+	for (const turn of turns) {
+		const quoted = safeMarkdown(turn.text).split("\n").map((l) => `> ${l}`);
+		lines.push(turn.role === "student" ? MARK.asked : MARK.tutor, ...quoted);
+		if (turn.imagePath) lines.push(">", `> ![[${turn.imagePath}]]`);
+		lines.push("");
+		const drawn = safeDiagram(turn.diagram ?? "");
+		if (drawn) lines.push("```mermaid", drawn, "```", "");
+	}
+	return lines;
+}
+
+/** A session's note, whole: its properties, the debrief, every answer with what was
+ * explained and discussed under it, and the questions again for Redo. */
+export function renderSessionNote(entries: SessionEntry[], meta: SessionMeta, link: boolean, debrief?: SessionDebrief, redoQuestions: Question[] = []): string {
+	const d = meta.startedAt;
+	const pad = (n: number) => String(n).padStart(2, "0");
+	const stamp = stampOf(d);
+	const right = entries.filter((e) => e.verdict === "correct").length;
+
+	// `correct` and `total` are numbers so a Bases view can sort and filter on them
+	// (`score` is text, kept for the heatmap and older notes). `notes` lists the
+	// tested notes, so a view can filter sessions by note: as links, or as plain
+	// names when sessions aren't linked to notes.
+	const tested = [...new Set(entries.map((e) => e.node))].filter(linkable);
+	const lines: string[] = [
+		"---",
+		`date: ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+		`score: ${right}/${entries.length}`,
+		`correct: ${right}`,
+		`total: ${entries.length}`,
+		...(tested.length ? ["notes:", ...tested.map((n) => `  - ${JSON.stringify(link ? `[[${n}]]` : n)}`)] : []),
+		`type: ${meta.dueOnly ? "due review" : "study session"}`,
+		`provider: ${meta.provider}`,
+		`model: ${meta.model}`,
+		"---",
+		"",
+		`# Grill ${meta.dueOnly ? "due review" : "session"} ${stamp}`,
+		"",
+	];
+
+	// Everything a model wrote is made inert before it is written here: this note is
+	// rendered by Obsidian on every opening, long after the session. See safemd.ts.
+	/** Model text, safe, with its later lines kept inside the quote it is written in. */
+	const quote = (text: string): string => safeMarkdown(text).split("\n").join("\n> ");
+
+	if (debrief) {
+		lines.push(MARK.debrief, `> ${quote(debrief.headline)}`);
+		if (debrief.pattern) lines.push(">", `> **Recurring pattern:** ${quote(debrief.pattern)}`);
+		if (debrief.gaps.length) {
+			lines.push(">", "> **To review:**");
+			for (const g of debrief.gaps) {
+				const noteRef = link ? `[[${g.note}]]` : g.note;
+				lines.push(`> - **${quote(g.concept)}** (${noteRef}): ${quote(g.why)}`);
+			}
+		}
+		if (debrief.nextFocus.length) {
+			const focus = debrief.nextFocus.map((n) => (link ? `[[${n}]]` : n)).join(", ");
+			lines.push(">", `> **Study next:** ${focus}`);
+		}
+		lines.push("");
+	}
+	for (const e of entries) {
+		lines.push(...renderAnswer(e, link));
+		// What was asked afterwards, and what the tutor said: often the part worth rereading.
+		const x = e.explanation;
+		if (x) {
+			lines.push("> [!info] Explanation");
+			for (const [label, text] of [["What went wrong", x.whatWentWrong], ["Key concept", x.keyConcept], ["Example", x.example]] as const) {
+				if (text) lines.push(`> **${label}.** ${quote(text)}`, ">");
+			}
+			if (x.relevantImagePath) lines.push(`> ![[${x.relevantImagePath}]]`, ">");
+			if (lines[lines.length - 1] === ">") lines.pop();
+			lines.push("");
+			const drawn = safeDiagram(x.diagram ?? "");
+			if (drawn) lines.push("```mermaid", drawn, "```", "");
+		}
+		lines.push(...renderTurns(e.discussion ?? []));
+	}
+
+	// Embed the asked questions (full grading rubric intact) so "Redo this quiz" can
+	// re-serve them with no model call. Rendered as a button by the grill-redo code
+	// block processor; bridge/missing-link questions are one-offs, so they're excluded.
+	const redo = redoQuestions
+		.filter((q) => !q.missingLink)
+		.map((q) => ({
+			node: q.node,
+			conceptId: q.conceptId,
+			question: q.question,
+			difficulty: q.difficulty,
+			modelAnswer: q.modelAnswer,
+			acceptableAnswers: q.acceptableAnswers,
+			commonErrors: q.commonErrors,
+			hints: q.hints,
+			...(q.authored ? { authored: true, rubric: q.rubric } : {}),
+			...(q.targetsMisconception ? { targetsMisconception: q.targetsMisconception } : {}),
+			...(q.type && q.type !== "write"
+				? { type: q.type, choices: q.choices, correctChoices: q.correctChoices, pairs: q.pairs }
+				: {}),
+		}));
+	if (redo.length) {
+		lines.push(`## ${MARK.redo}`, "", MARK.redoFence, JSON.stringify({ v: 1, questions: redo }), "```", "");
+	}
+	return lines.join("\n");
 }

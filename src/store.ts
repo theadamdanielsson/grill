@@ -10,17 +10,16 @@
  */
 
 import { App, TFile, normalizePath } from "obsidian";
-import { MasteryMap, Verdict, normalizeMastery } from "./mastery";
-import { DEFAULT_PERSONA } from "./persona";
+import { MasteryMap, normalizeMastery } from "./mastery";
 import { Question } from "./question";
 import { ArcEntry, MisconceptionRegistry, SessionDebrief } from "./debrief";
 import { ConceptMap } from "./concepts";
-import { safeSlice } from "./text";
 import { BridgeMap } from "./bridges";
 import { PdfCacheMap } from "./pdf";
 import { ConceptExtractionCacheMap } from "./generate-local";
-import { safeDiagram, safeMarkdown } from "./safemd";
-import { MARK, linkable, renderAnswer, stampOf, STAMP_RE } from "./sessionnote";
+import { inlineLinks, INSTRUCTIONS_CONTEXT_CAP, INSTRUCTIONS_TEMPLATE, splitInstructions } from "./instructions";
+import { renderSessionNote, renderTurns, stampOf, STAMP_RE, type SessionEntry, type SessionMeta } from "./sessionnote";
+export type { SessionEntry, SessionMeta } from "./sessionnote";
 import type { ImportedRecord } from "./imported";
 import { replyTitle } from "./learn";
 import { InboxResult, parseResult } from "./record";
@@ -59,30 +58,6 @@ export interface EmbeddingRecord {
 
 /** Cached embeddings, keyed by note basename (same key space as mastery/graph). */
 export type EmbeddingMap = Record<string, EmbeddingRecord>;
-
-export interface SessionEntry {
-	node: string;
-	question: string;
-	answer: string;
-	verdict: Verdict;
-	gaveUp: boolean;
-	feedback: string;
-	modelAnswer: string;
-	/** Follow-ups asked under this question and the tutor's replies, in order. */
-	discussion?: Array<{ role: "student" | "tutor"; text: string; diagram?: string; imagePath?: string }>;
-	/** What "Explain this" wrote, when it was asked for: kept so it is in the session
-	 * note, not paid for and then lost. */
-	explanation?: { whatWentWrong: string; keyConcept: string; example: string; diagram: string; relevantImagePath?: string };
-}
-
-export interface SessionMeta {
-	provider: string;
-	model: string;
-	startedAt: Date;
-	/** True when this session came from "Review N due now" / the due-queue status bar,
-	 * not a regular study session, so the note can say so instead of reading identically. */
-	dueOnly?: boolean;
-}
 
 /** Something wrong with a file Grill read: it couldn't be read (so it isn't saved over),
  * or it was reset (and a copy of it kept beside it). */
@@ -168,13 +143,6 @@ export class GrillStore {
 		return normalizePath(`${this.folder()}/Attachments`);
 	}
 
-	private static readonly INSTRUCTIONS_CAP = 2000;
-
-	/** Total characters of referenced-note text that [[wikilinks]] in persona/
-	 * preferences may inline, shared across the whole file, so a linked style
-	 * guide can't inflate every session's prompt without bound. */
-	private static readonly INSTRUCTIONS_CONTEXT_CAP = 4000;
-
 	/** The fenced code block in Instructions.md that lists attached reference
 	 * documents, rendered as an upload/remove area by the grill-documents
 	 * code-block processor in main.ts. JSON body so add/remove can rewrite it
@@ -200,137 +168,26 @@ export class GrillStore {
 	 * normal comprehensive use. */
 	static readonly MAX_REFERENCE_DOCS = 300;
 
-	private static readonly INSTRUCTIONS_TEMPLATE = [
-		"## Persona",
-		"<!-- This is who Grill is and how it talks to you. Rewrite the line below to change",
-		"     Grill's character: a strict examiner, a gentle Socratic guide, a blunt drill",
-		"     sergeant, whatever suits you. This changes only Grill's voice. How questions are",
-		"     built and how your answers are scored is fixed by the engine, so your grades stay",
-		"     consistent no matter what you write here. Leave it blank to use the default. -->",
-		"",
-		DEFAULT_PERSONA,
-		"",
-		"## Preferences",
-		"<!-- Plain sentences telling Grill how you want to be quizzed and graded: question",
-		"     style, difficulty, strictness. Leave blank for the defaults.",
-		"",
-		"     This is NOT where to pick question FORMAT (multiple-choice, fill-in-the-blank,",
-		"     true/false, write-in, etc.). That is a hard setting the model can't reliably",
-		"     override from prose, so it has its own control: Settings -> Question formats.",
-		"",
-		"     Examples you might write:",
-		'       "Prefer short numeric problems over definitions."',
-		'       "Ask me to explain concepts in my own words."',
-		'       "Be strict on exact terminology."',
-		'       "Accept bullet-point answers, do not mark me down for phrasing."',
-		"",
-		"     You can point at another note with [[links]] and Grill reads it in, so a",
-		"     longer style guide or marking rubric can live in its own note. Referenced",
-		"     notes are capped, and everything here rides along in every session, so keep",
-		"     it short; long text costs more tokens every session. -->",
-		"",
-		"",
-		"## Reference documents",
-		"<!-- Drop worksheets, past exams, or official solutions below and Grill reads",
-		"     their real text into every session: the same idea as attaching a file in",
-		"     an AI chat, not a description of the document, the document itself. PDFs",
-		"     are text-extracted (first 40 pages, cached so re-opening a session doesn't",
-		"     re-parse them); other file types are stored but not read yet. 30 MB per",
-		"     file, 300 documents max. This is a course library, not a single",
-		"     message's attachments, so attach every worksheet you have. Each session",
-		"     splits a shared text budget evenly across whatever's attached, so a",
-		"     bigger library means less depth per document, not documents silently",
-		"     dropped. -->",
-		"",
-		"```grill-documents",
-		'{"v":1,"files":[]}',
-		"```",
-		"",
-	].join("\n");
-
-	/** The user's persona override and question/grading preferences, parsed from the two
-	 * "## Persona" / "## Preferences" sections, with how-to comments stripped and each section
-	 * length-capped. An empty persona means "use the engine default". Files written before this
-	 * format (no headings) are read as all-preferences, preserving old behavior. */
+	/** The user's persona override and question/grading preferences (see instructions.ts),
+	 * with notes they link to read in. */
 	async loadInstructions(): Promise<{ persona: string; preferences: string }> {
 		const empty = { persona: "", preferences: "" };
 		const path = this.instructionsPath();
 		if (!(await this.app.vault.adapter.exists(path))) return empty;
 		try {
-			const raw = await this.app.vault.adapter.read(path);
-			const cap = GrillStore.INSTRUCTIONS_CAP;
-			const strip = (s: string) => s.replace(/<!--[\s\S]*?-->/g, "").trim();
-			const lower = raw.toLowerCase();
-			const pIdx = lower.indexOf("## persona");
-			const fIdx = lower.indexOf("## preferences");
-			// A third heading now sits after Preferences (see REFERENCE_DOCS_FENCE below) —
-			// without accounting for it, Preferences' old "run to end of file" slice would
-			// swallow the reference-documents heading and its raw JSON fence as literal,
-			// ugly prose. (Attached documents' real content doesn't belong in preferences
-			// at all, ugly or not — see listReferenceDocFiles: it flows into the same
-			// concept-extraction pipeline a note's text does, not this advisory channel.)
-			const rIdx = lower.indexOf("## reference documents");
-			const nextBoundary = (start: number): number => {
-				const after = [pIdx, fIdx, rIdx].filter((i) => i > start);
-				return after.length ? Math.min(...after) : raw.length;
+			const { persona, preferences } = splitInstructions(await this.app.vault.adapter.read(path));
+			// Linked notes, read the way Obsidian resolves the link from this note: never
+			// the note itself, and only Markdown.
+			const readNote = async (linkpath: string): Promise<string | null> => {
+				const dest = this.app.metadataCache.getFirstLinkpathDest(linkpath, path);
+				if (!dest || dest.extension !== "md" || dest.path === path) return null;
+				return this.app.vault.cachedRead(dest).catch(() => null);
 			};
-			let persona = "";
-			let preferences = "";
-			// Legacy file with no section headings: treat the whole thing as preferences,
-			// same as before — EXCEPT still stop at the reference-documents fence if one
-			// somehow exists in an otherwise-legacy file (the upload area's "add" flow can
-			// append that section to any file, headings or not), so its raw JSON manifest
-			// never leaks into the prompt as prose.
-			if (pIdx === -1 && fIdx === -1) {
-				preferences = safeSlice(strip(raw.slice(0, rIdx === -1 ? raw.length : rIdx)), cap);
-			} else {
-				if (pIdx !== -1) persona = safeSlice(strip(raw.slice(pIdx + "## persona".length, nextBoundary(pIdx))), cap);
-				if (fIdx !== -1) preferences = safeSlice(strip(raw.slice(fIdx + "## preferences".length, nextBoundary(fIdx))), cap);
-			}
-			// Expand any [[wikilinks]] by inlining the referenced notes, under one shared
-			// budget across the file, so a longer style guide can live in its own note.
-			const budget = { left: GrillStore.INSTRUCTIONS_CONTEXT_CAP };
-			persona = await this.inlineLinks(persona, path, budget);
-			preferences = await this.inlineLinks(preferences, path, budget);
-			return { persona, preferences };
+			const budget = { left: INSTRUCTIONS_CONTEXT_CAP };
+			return { persona: await inlineLinks(persona, readNote, budget), preferences: await inlineLinks(preferences, readNote, budget) };
 		} catch {
 			return empty;
 		}
-	}
-
-	/** Append the body of any [[wikilinks]] a section references (one level only, no
-	 * recursion), under a labelled block. Shares `budget` across the whole file, skips
-	 * non-markdown targets and the instructions note itself, and truncates so
-	 * referenced docs can never blow up the prompt. */
-	private async inlineLinks(text: string, sourcePath: string, budget: { left: number }): Promise<string> {
-		if (!text || budget.left <= 0) return text;
-		const seen = new Set<string>();
-		const re = /\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]/g;
-		let out = text;
-		let m: RegExpExecArray | null;
-		while ((m = re.exec(text)) !== null) {
-			if (budget.left <= 0) break;
-			const linkpath = m[1].trim();
-			if (!linkpath || seen.has(linkpath.toLowerCase())) continue;
-			seen.add(linkpath.toLowerCase());
-			const dest = this.app.metadataCache.getFirstLinkpathDest(linkpath, sourcePath);
-			if (!dest || dest.extension !== "md" || dest.path === sourcePath) continue;
-			let body: string;
-			try {
-				body = await this.app.vault.cachedRead(dest);
-			} catch {
-				continue;
-			}
-			body = body
-				.replace(/^---\n[\s\S]*?\n---\n/, "")
-				.replace(/<!--[\s\S]*?-->/g, "")
-				.trim();
-			if (!body) continue;
-			const slice = safeSlice(body, budget.left);
-			budget.left -= slice.length;
-			out += `\n\nReferenced note "${linkpath}":\n${slice}${slice.length < body.length ? "\n[truncated]" : ""}`;
-		}
-		return out;
 	}
 
 	/** Pull the grill-documents fence's JSON body straight out of raw file text,
@@ -392,7 +249,7 @@ export class GrillStore {
 		};
 		const existing = this.app.vault.getAbstractFileByPath(path);
 		if (existing instanceof TFile) await this.app.vault.process(existing, rewrite);
-		else await this.app.vault.create(path, rewrite(GrillStore.INSTRUCTIONS_TEMPLATE));
+		else await this.app.vault.create(path, rewrite(INSTRUCTIONS_TEMPLATE));
 	}
 
 	/** The attached documents, resolved to real TFiles (silently dropping any
@@ -503,7 +360,7 @@ export class GrillStore {
 		const existing = this.app.vault.getAbstractFileByPath(path);
 		if (existing instanceof TFile) return existing;
 		try {
-			return await this.app.vault.create(path, GrillStore.INSTRUCTIONS_TEMPLATE);
+			return await this.app.vault.create(path, INSTRUCTIONS_TEMPLATE);
 		} catch {
 			const after = this.app.vault.getAbstractFileByPath(path);
 			return after instanceof TFile ? after : null;
@@ -949,102 +806,11 @@ export class GrillStore {
 		if (first) await this.writeBaseIfMissing("Sessions.base", this.sessionsBaseText()).catch(() => undefined);
 		const dir = monthDir;
 		const stamp = stampOf(d);
-		const right = entries.filter((e) => e.verdict === "correct").length;
-
-		// `correct` and `total` are numbers so a Bases view can sort and filter on them
-		// (`score` is text, kept for the heatmap and older notes). `notes` lists the
-		// tested notes, so a view can filter sessions by note: as links, or as plain
-		// names when sessions aren't linked to notes.
-		const tested = [...new Set(entries.map((e) => e.node))].filter(linkable);
-		const lines: string[] = [
-			"---",
-			`date: ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
-			`score: ${right}/${entries.length}`,
-			`correct: ${right}`,
-			`total: ${entries.length}`,
-			...(tested.length ? ["notes:", ...tested.map((n) => `  - ${JSON.stringify(link ? `[[${n}]]` : n)}`)] : []),
-			`type: ${meta.dueOnly ? "due review" : "study session"}`,
-			`provider: ${meta.provider}`,
-			`model: ${meta.model}`,
-			"---",
-			"",
-			`# Grill ${meta.dueOnly ? "due review" : "session"} ${stamp}`,
-			"",
-		];
-
-		// Everything a model wrote is made inert before it is written here: this note is
-		// rendered by Obsidian on every opening, long after the session. See safemd.ts.
-		/** Model text, safe, with its later lines kept inside the quote it is written in. */
-		const quote = (text: string): string => safeMarkdown(text).split("\n").join("\n> ");
-
-		if (debrief) {
-			lines.push(MARK.debrief, `> ${quote(debrief.headline)}`);
-			if (debrief.pattern) lines.push(">", `> **Recurring pattern:** ${quote(debrief.pattern)}`);
-			if (debrief.gaps.length) {
-				lines.push(">", "> **To review:**");
-				for (const g of debrief.gaps) {
-					const noteRef = link ? `[[${g.note}]]` : g.note;
-					lines.push(`> - **${quote(g.concept)}** (${noteRef}): ${quote(g.why)}`);
-				}
-			}
-			if (debrief.nextFocus.length) {
-				const focus = debrief.nextFocus.map((n) => (link ? `[[${n}]]` : n)).join(", ");
-				lines.push(">", `> **Study next:** ${focus}`);
-			}
-			lines.push("");
-		}
-		for (const e of entries) {
-			lines.push(...renderAnswer(e, link));
-			// What was asked afterwards, and what the tutor said: often the part worth rereading.
-			const x = e.explanation;
-			if (x) {
-				lines.push("> [!info] Explanation");
-				for (const [label, text] of [["What went wrong", x.whatWentWrong], ["Key concept", x.keyConcept], ["Example", x.example]] as const) {
-					if (text) lines.push(`> **${label}.** ${quote(text)}`, ">");
-				}
-				if (x.relevantImagePath) lines.push(`> ![[${x.relevantImagePath}]]`, ">");
-				if (lines[lines.length - 1] === ">") lines.pop();
-				lines.push("");
-				const drawn = safeDiagram(x.diagram ?? "");
-				if (drawn) lines.push("```mermaid", drawn, "```", "");
-			}
-			for (const turn of e.discussion ?? []) {
-				const quoted = safeMarkdown(turn.text).split("\n").map((l) => `> ${l}`);
-				lines.push(turn.role === "student" ? MARK.asked : MARK.tutor, ...quoted);
-				if (turn.imagePath) lines.push(">", `> ![[${turn.imagePath}]]`);
-				lines.push("");
-				const drawn = safeDiagram(turn.diagram ?? "");
-				if (drawn) lines.push("```mermaid", drawn, "```", "");
-			}
-		}
-
-		// Embed the asked questions (full grading rubric intact) so "Redo this quiz" can
-		// re-serve them with no model call. Rendered as a button by the grill-redo code
-		// block processor; bridge/missing-link questions are one-offs, so they're excluded.
-		const redo = redoQuestions
-			.filter((q) => !q.missingLink)
-			.map((q) => ({
-				node: q.node,
-				conceptId: q.conceptId,
-				question: q.question,
-				difficulty: q.difficulty,
-				modelAnswer: q.modelAnswer,
-				acceptableAnswers: q.acceptableAnswers,
-				commonErrors: q.commonErrors,
-				hints: q.hints,
-				...(q.authored ? { authored: true, rubric: q.rubric } : {}),
-				...(q.targetsMisconception ? { targetsMisconception: q.targetsMisconception } : {}),
-				...(q.type && q.type !== "write"
-					? { type: q.type, choices: q.choices, correctChoices: q.correctChoices, pairs: q.pairs }
-					: {}),
-			}));
-		if (redo.length) {
-			lines.push(`## ${MARK.redo}`, "", MARK.redoFence, JSON.stringify({ v: 1, questions: redo }), "```", "");
-		}
+		const text = renderSessionNote(entries, meta, link, debrief, redoQuestions);
 
 		if (replace && this.app.vault.getAbstractFileByPath(replace.path) === replace) {
 			try {
-				await this.app.vault.modify(replace, lines.join("\n"));
+				await this.app.vault.modify(replace, text);
 				return replace;
 			} catch {
 				return null;
@@ -1055,7 +821,7 @@ export class GrillStore {
 			path = normalizePath(`${dir}/${stamp}.${pad(d.getSeconds())}.md`);
 		}
 		try {
-			return await this.app.vault.create(path, lines.join("\n"));
+			return await this.app.vault.create(path, text);
 		} catch {
 			return null;
 		}
@@ -1094,23 +860,12 @@ export class GrillStore {
 			note === "Your notes" ? "About your notes." : `About [[${note}]].`,
 			"",
 		];
-		for (const turn of turns) {
-			const quoted = safeMarkdown(turn.text).split("\n").map((l) => `> ${l}`);
-			lines.push(turn.role === "student" ? "> [!question] You asked" : "> [!note] Grill", ...quoted, "");
-			const drawn = safeDiagram(turn.diagram ?? "");
-			if (drawn) lines.push("```mermaid", drawn, "```", "");
-		}
+		lines.push(...renderTurns(turns));
 		// A conversation carried on is kept in the note it was saved in: what was said since
 		// is added at its end, and the rest of the note, with anything added to it by
 		// hand, is left as it is.
 		if (meta.into && this.app.vault.getAbstractFileByPath(meta.into.path)) {
-			const more: string[] = [];
-			for (const turn of turns.slice(meta.from ?? 0)) {
-				const quoted = safeMarkdown(turn.text).split("\n").map((l) => `> ${l}`);
-				more.push(turn.role === "student" ? "> [!question] You asked" : "> [!note] Grill", ...quoted, "");
-				const drawn = safeDiagram(turn.diagram ?? "");
-				if (drawn) more.push("```mermaid", drawn, "```", "");
-			}
+			const more = renderTurns(turns.slice(meta.from ?? 0));
 			if (more.length) await this.app.vault.process(meta.into, (text) => `${text.replace(/\s+$/, "")}\n\n${more.join("\n")}`);
 			return meta.into;
 		}
