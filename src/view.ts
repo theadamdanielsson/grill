@@ -1445,12 +1445,12 @@ export class SessionView extends ItemView {
 					void this.askVault(text, eligible, withOpenNote ? openNote : null);
 					return;
 				}
-				if (!text) return begin(null, false);
-				const found = matchScope(text, eligible);
-				if (found) return begin(found.files, false);
-				// Not a name but an instruction ("give me a fresh test"): a test on the note
-				// the chip shows, or with no chip, the test Grill would pick anyway.
-				begin(withOpenNote && openNote ? [openNote] : null, false);
+				// The chip is what the test is on; taken off, Grill picks.
+				const chip = withOpenNote && openNote ? [openNote] : null;
+				const found = text ? matchScope(text, eligible) : null;
+				// A name tests that note or folder. Anything else, or nothing, is an
+				// instruction ("give me a fresh test"), so the chip decides.
+				begin(found ? found.files : chip, false);
 			},
 			showProgress: () => this.showDashboard(),
 			showQuestions: () => void this.questionsScreen.open(),
