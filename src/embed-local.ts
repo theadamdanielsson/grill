@@ -20,7 +20,8 @@
  * bug — is caught here and turned into `null`, never a throw: this is an optional
  * quality upgrade, and the lexical ranking it's layered over must keep working exactly
  * as it did before whenever this can't. */
-type Embedder = (texts: string[], opts: { pooling: string; normalize: boolean }) => Promise<{ data: Float32Array }[]>;
+/** The pipeline, called on texts; it can be let go of with `dispose`. */
+type Embedder = ((texts: string[], opts: { pooling: string; normalize: boolean }) => Promise<{ data: Float32Array }[]>) & { dispose?: () => Promise<void> };
 
 const EMBED_MODEL = "Xenova/multilingual-e5-small";
 const PREFIX = { query: "query: ", passage: "passage: " };
@@ -57,7 +58,7 @@ async function loadEmbedder(): Promise<Embedder | null> {
 export async function releaseEmbedder(): Promise<void> {
 	const was = embedderPromise;
 	embedderPromise = null;
-	const e = (await was?.catch(() => null)) as (Embedder & { dispose?: () => Promise<void> }) | null | undefined;
+	const e = await was?.catch(() => null);
 	await e?.dispose?.().catch(() => undefined);
 }
 

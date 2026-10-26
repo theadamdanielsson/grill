@@ -137,7 +137,7 @@ const looseFetch = async (url: string | URL, init?: RequestInit): Promise<Respon
 	}
 	const form = init?.body instanceof URLSearchParams;
 	if (form && !headers["content-type"]) headers["content-type"] = "application/x-www-form-urlencoded";
-	const body = typeof init?.body === "string" ? init.body : form ? String(init?.body) : undefined;
+	const body = typeof init?.body === "string" ? init.body : init?.body instanceof URLSearchParams ? init.body.toString() : undefined;
 	const r = await requestUrl({ url: String(url), method, headers, body, throw: false });
 	const empty = [204, 205, 304].includes(r.status);
 	return new Response(empty ? null : r.arrayBuffer, { status: r.status, headers: r.headers });
@@ -186,7 +186,7 @@ class ProgramTransport implements Transport {
 		child.stderr.setEncoding("utf8");
 		await new Promise<void>((ok, fail) => {
 			child.once("spawn", () => ok());
-			child.once("error", (e) => fail(e as Error));
+			child.once("error", (e) => fail(e instanceof Error ? e : new Error(String(e))));
 		});
 		child.on("error", (e) => this.onerror?.(e as Error));
 		child.on("close", () => this.onclose?.());
@@ -464,7 +464,7 @@ export class McpHub {
 		const was = this.linked;
 		this.linked = [];
 		this.linking = (async () => {
-			await Promise.all(was.map((l) => l.client?.close().catch(() => undefined)));
+			await Promise.all(was.map(async (l) => l.client?.close().catch(() => undefined)));
 			const parsed = parseServers(json);
 			if ("error" in parsed) {
 				this.linked = [{ name: "MCP servers", client: null, tools: [], error: parsed.error }];
@@ -523,7 +523,7 @@ export class McpHub {
 						// Read-only and closed to the outside world: a tool that reads the web can
 						// still carry the notes out in what it is asked for.
 						readOnly: t.annotations?.readOnlyHint === true && t.annotations?.openWorldHint === false,
-						spec: { name: t.name, description: d.length > DESCRIBED ? `${d.slice(0, DESCRIBED)}…` : d, input: t.inputSchema as Record<string, unknown> },
+						spec: { name: t.name, description: d.length > DESCRIBED ? `${d.slice(0, DESCRIBED)}…` : d, input: t.inputSchema },
 					});
 				}
 				cursor = page.nextCursor;
@@ -602,6 +602,6 @@ export class McpHub {
 		this.linked = [];
 		this.set = "";
 		this.linking = null;
-		await Promise.all(was.map((l) => l.client?.close().catch(() => undefined)));
+		await Promise.all(was.map(async (l) => l.client?.close().catch(() => undefined)));
 	}
 }

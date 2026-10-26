@@ -127,7 +127,7 @@ export function exportConversations(json: string): Conversation[] {
 		if (Array.isArray(conv.chat_messages)) {
 			const msgs = conv.chat_messages as Array<Record<string, unknown>>;
 			const turns = msgs.flatMap((m): Turn[] => (typeof m.text === "string" && m.text.trim() ? [{ role: m.sender === "human" ? "user" : "ai", text: m.text.trim() }] : []));
-			out.push({ source: "claude", turns, at: typeof msgs[0]?.created_at === "string" ? (msgs[0].created_at as string) : "" });
+			out.push({ source: "claude", turns, at: typeof msgs[0]?.created_at === "string" ? msgs[0].created_at : "" });
 			continue;
 		}
 		// ChatGPT: a mapping of message nodes, each with its author, time and parts.

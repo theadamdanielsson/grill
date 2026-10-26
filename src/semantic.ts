@@ -109,7 +109,7 @@ export async function updateIndex(
 			if (!vecs) return false;
 			batch.forEach((p, j) => indexed.passages.push({ heading: p.heading, snippet: p.text.slice(0, SNIPPET_CHARS), vec: packVec(vecs[j]) }));
 			// Let the pane breathe between batches.
-			await new Promise((ok) => setTimeout(ok, 0));
+			await new Promise((ok) => window.setTimeout(ok, 0));
 		}
 		index.notes[n.path] = indexed;
 		onProgress?.(++done, todo.length);

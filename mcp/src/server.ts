@@ -33,7 +33,7 @@ import { examLines } from "../../src/exams";
 import { safeMarkdown } from "../../src/safemd";
 import { renderAnswer } from "../../src/sessionnote";
 import { recordTool, zodShape } from "../../src/recordtools";
-import { HOME_RECORD_SEGMENTS, inboxFileName, PLUGIN_DATA_SEGMENTS, readPluginSettings, RECORD_FILES, SESSIONS_DIR } from "../../src/recordpaths";
+import { HOME_RECORD_SEGMENTS, inboxFileName, readPluginSettings, RECORD_FILES, SESSIONS_DIR } from "../../src/recordpaths";
 import type { QuestionBank } from "../../src/store";
 
 declare const GRILL_MCP_VERSION: string;
@@ -54,6 +54,10 @@ function argValue(name: string): string | undefined {
 	const i = process.argv.indexOf(name);
 	return i > 0 ? process.argv[i + 1] : undefined;
 }
+
+/** The plugin's settings file, from the vault's root. grill-mcp runs outside Obsidian, so
+ * it can't ask for the vault's configuration folder and reads the default one. */
+const PLUGIN_DATA_SEGMENTS = [".obsidian", "plugins", "grill", "data.json"] as const;
 
 /** The plugin's settings in this vault, as grill-mcp reads them; the defaults when there
  * are none or they can't be read. */
@@ -329,7 +333,18 @@ export function buildServer(where: Where, chatOnly = false): McpServer {
 					.describe("Only when the answer showed a specific, nameable confusion. If the record already names it (see the misconceptions other grill tools return), use that tag."),
 			},
 		},
-		guarded(async (a: Record<string, any>) => {
+		guarded(async (a: {
+			note: string;
+			conceptId?: string;
+			label?: string;
+			question: string;
+			answer: string;
+			verdict: "correct" | "partial" | "incorrect";
+			difficulty?: "easy" | "medium" | "hard";
+			feedback?: string;
+			modelAnswer?: string;
+			misconception?: { tag: string; label: string };
+		}) => {
 			const via = agentName(server.server.getClientVersion()?.name);
 			const raw: InboxResult = {
 				v: RESULT_VERSION,
@@ -465,14 +480,14 @@ function runCommand(cmd: string, rest: string[]): number {
 			// From the argument, or else from stdin: a heredoc keeps quotes and apostrophes
 			// in an answer from breaking the shell command.
 			const arg = rest.find((a) => a.trim().startsWith("{"));
-			raw = JSON.parse(arg ?? (process.stdin.isTTY ? "" : readFileSync(0, "utf8")));
+			raw = JSON.parse(arg ?? (process.stdin.isTTY ? "" : readFileSync(0, "utf8"))) as Record<string, unknown>;
 		} catch {
 			console.error('record takes the answer as JSON, as an argument or on stdin: {"note":..., "question":..., "answer":..., "verdict":"correct|partial|incorrect", ...}');
 			return 1;
 		}
 		// The answer's own fields only: when it was given, and its id, are set here.
 		const { id: _i, at: _a, v: _v, session: _s, via: _w, ...given } = raw;
-		const r = parseResult({ ...given, v: RESULT_VERSION, id: randomUUID(), at: new Date().toISOString(), session: process.env.GRILL_SESSION ?? `cli-${new Date().toISOString().slice(0, 10)}`, via: "Agent", ...(typeof raw.misconception === "object" && raw.misconception ? { misconception: { ...(raw.misconception as object), tag: toTag(String((raw.misconception as { tag?: unknown }).tag ?? "")) } } : {}) });
+		const r = parseResult({ ...given, v: RESULT_VERSION, id: randomUUID(), at: new Date().toISOString(), session: process.env.GRILL_SESSION ?? `cli-${new Date().toISOString().slice(0, 10)}`, via: "Agent", ...(typeof raw.misconception === "object" && raw.misconception ? { misconception: { ...raw.misconception, tag: toTag(typeof (raw.misconception as { tag?: unknown }).tag === "string" ? (raw.misconception as { tag: string }).tag : "") } } : {}) });
 		if (!r) {
 			console.error("That answer could not be recorded: it needs note, question, answer and verdict.");
 			return 1;

@@ -258,7 +258,7 @@ export function rpcPeer(
 		request: <T>(method: string, params: unknown) =>
 			new Promise<T>((yes, no) => {
 				const id = nextId++;
-				waiting.set(id, { yes: yes as (v: unknown) => void, no });
+				waiting.set(id, { yes, no });
 				send({ id, method, params });
 			}),
 		notify: (method, params) => send(params === undefined ? { method } : { method, params }),

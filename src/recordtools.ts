@@ -77,15 +77,17 @@ export const RECORD_RULES =
 
 export const isRecordTool = (name: string): boolean => RECORD_TOOLS.some((t) => t.name === name);
 
-/** What zodShape uses of zod. Passed in, so zod loads only where a tool is offered over MCP. */
-type Zod = { string(): any; number(): any; array(item: any): any; enum(values: [string, ...string[]]): any };
+/** zod, passed in so it loads only where a tool is offered over MCP; only its types are
+ * imported here. */
+type Zod = typeof import("zod").z;
+type ZodField = import("zod").ZodType;
 type Prop = { type?: string; description?: string; enum?: [string, ...string[]]; minLength?: number; minimum?: number; maximum?: number; items?: Prop };
 
 /** A tool's input as a zod shape, built from its JSON Schema above, for MCP servers that
  * take zod. Covers the schema features these tools use. */
-export function zodShape(z: Zod, spec: ToolSpec): Record<string, any> {
-	const field = (p: Prop): any => {
-		let s = p.enum
+export function zodShape(z: Zod, spec: ToolSpec): Record<string, ZodField> {
+	const field = (p: Prop): ZodField => {
+		let s: ZodField = p.enum
 			? z.enum(p.enum)
 			: p.type === "integer"
 				? z.number().int().min(p.minimum ?? -Infinity).max(p.maximum ?? Infinity)

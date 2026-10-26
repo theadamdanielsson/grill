@@ -285,9 +285,12 @@ const SETTINGS: { [K in keyof GrillSettings]: Field<GrillSettings[K]> } = {
 		default: () => [],
 		read: (v) =>
 			Array.isArray(v)
-				? v
-						.filter((e): e is Exam => !!e && Array.isArray(e.folders) && typeof e.date === "string" && !!examDay(e.date))
-						.map((e) => ({ folders: e.folders.filter((x): x is string => typeof x === "string"), date: e.date }))
+				? (v as unknown[])
+						.filter((e): e is { folders: unknown[]; date: string } => {
+							const x = e as { folders?: unknown; date?: unknown } | null;
+							return !!x && Array.isArray(x.folders) && typeof x.date === "string" && !!examDay(x.date);
+						})
+						.map((e): Exam => ({ folders: e.folders.filter((x): x is string => typeof x === "string"), date: e.date }))
 						.filter((e) => e.folders.length)
 				: undefined,
 		keep: true,

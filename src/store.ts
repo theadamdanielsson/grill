@@ -68,7 +68,7 @@ function isMap(v: unknown): string | null {
 
 /** Drops the entries that aren't what the file keeps, so one broken entry costs that entry,
  * not the file. Each dropped one is logged by its key. */
-function keepEntries<T extends Record<string, unknown>>(map: T, file: string, ok: (v: any) => boolean): T {
+function keepEntries<T extends Record<string, unknown>>(map: T, file: string, ok: (v: unknown) => boolean): T {
 	for (const [k, v] of Object.entries(map)) {
 		if (ok(v)) continue;
 		console.warn(`Grill: dropped entry "${k}" from ${file}: it isn't one`);

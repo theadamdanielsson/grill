@@ -342,7 +342,7 @@ export async function runAgent(run: AgentRun): Promise<AgentResult> {
 				name: RECORD_SERVER,
 				tools: RECORD_TOOLS.map((t) =>
 					tool(t.name, t.description, zodShape(z, t), async (args) => {
-						const r = await runRecordQuery(record, t.name, args as Record<string, unknown>);
+						const r = await runRecordQuery(record, t.name, args);
 						return { content: [{ type: "text" as const, text: r.content }], ...(r.failed ? { isError: true } : {}) };
 					}),
 				),

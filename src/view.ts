@@ -32,7 +32,7 @@ import { ConceptMap, ConceptMastery, blockedByDailyCap, conceptTargetDifficulty,
 import { asRecordData, learnerBrief } from "./brief";
 import { collectNoteImages, ImageInput } from "./images";
 import { noteStudyText } from "./pdf";
-import { hashStr, mapWithConcurrency, safeSlice } from "./text";
+import { hashStr, safeSlice } from "./text";
 import { buildDueDateHistogram, DueDateHistogram, FreshContentPolicy, interleaveByFolder, NoteMastery, pickCandidates, QDifficulty, Rating, STATUS_WORDS, statusOf } from "./mastery";
 import {
 	buildSessionGraph,

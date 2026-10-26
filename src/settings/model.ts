@@ -4,7 +4,7 @@
 import { Notice, Setting } from "obsidian";
 import { OLLAMA_DEFAULT_URL, offeredProviders, type ProviderId, PROVIDERS } from "../providers";
 import { testModel } from "../llm";
-import { cloud, cloudEnabled } from "../cloud";
+import { cloudEnabled } from "../cloud";
 import { CUSTOM, type Row, type SettingsCtx } from "./ctx";
 
 export function modelRows(ctx: SettingsCtx, all: boolean): Row[] {

@@ -109,7 +109,7 @@ export default class GrillPlugin extends Plugin {
 	async onload(): Promise<void> {
 		const stored = (await this.loadData()) as Partial<PluginData> | null;
 		const s: Partial<GrillSettings> = stored?.settings ?? {};
-		const settings = readSettings(s as Record<string, unknown>);
+		const settings = readSettings(s);
 		// Keys still sitting in data.json (every install from before 6.2) move to
 		// Obsidian's keychain on the persist() further down; from then on they're
 		// read back from there. See secrets.ts.
@@ -769,7 +769,7 @@ export default class GrillPlugin extends Plugin {
 			reachesOut: (name) => name === FETCH_TOOL.name || hub.reachesOut(name),
 			label: (call) =>
 				call.name === SKILL_TOOL.name
-					? `Skill: ${String(call.input.name ?? "")}${call.input.file ? ` (${String(call.input.file)})` : ""}`
+					? `Skill: ${typeof call.input.name === "string" ? call.input.name : ""}${typeof call.input.file === "string" && call.input.file ? ` (${call.input.file})` : ""}`
 					: call.name === MEANING_TOOL.name
 						? `Search by meaning: ${meaningQuery(call)}`
 						: call.name === FETCH_TOOL.name
@@ -1495,7 +1495,7 @@ export default class GrillPlugin extends Plugin {
 			const text = cfg ? read_[name] : plainPrior(excerpts[name]);
 			if (!text) continue;
 			const latest = excerpts[name][0];
-			prior[name] = { text, at: latest.at, source: latest.source as AskSource };
+			prior[name] = { text, at: latest.at, source: latest.source };
 		}
 		await this.store.saveImported(mergeImported(await this.store.loadImported(), read, prior));
 		const kept = Object.keys(prior);

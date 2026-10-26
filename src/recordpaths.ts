@@ -25,9 +25,6 @@ export const INBOX_DIR = "Inbox";
 /** The record kept outside any vault, under the home folder: ~/.grill/record. */
 export const HOME_RECORD_SEGMENTS = [".grill", "record"] as const;
 
-/** The plugin's settings file, from the vault's root. */
-export const PLUGIN_DATA_SEGMENTS = [".obsidian", "plugins", "grill", "data.json"] as const;
-
 /** What grill-mcp needs from the plugin's settings file: the Grill folder's name and the
  * exams set. Anything missing or malformed reads as the default. */
 export function readPluginSettings(data: unknown): { folder: string; exams: Exam[] } {

@@ -4,7 +4,7 @@
 
 import { Notice, Platform, TFile } from "obsidian";
 import { PROVIDERS } from "../providers";
-import { cloud, cloudEnabled } from "../cloud";
+import { cloudEnabled } from "../cloud";
 import { importedNames } from "../imported";
 import { daysLeft, examLines, examName, whenWords, type Exam } from "../exams";
 import { ExamModal } from "../exammodal";
@@ -288,10 +288,11 @@ export function examRows(ctx: SettingsCtx): Row[] {
 			.filter((p) => !ctx.plugin.isExcluded(`${p}/x.md`))
 			.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 	const open = (exam: Exam | null): void =>
-		new ExamModal(ctx.app, folders(), exam, async (saved) => {
-			await ctx.plugin.settings.update({ exams: exam ? s.exams.map((x) => (x === exam ? saved : x)) : [...s.exams, saved] });
-			new Notice(`Grill: ${examName(saved)} now scheduled for your exam ${whenWords(daysLeft(saved, new Date()))}.`, 6000);
-			ctx.rerender();
+		new ExamModal(ctx.app, folders(), exam, (saved) => {
+			void ctx.plugin.settings.update({ exams: exam ? s.exams.map((x) => (x === exam ? saved : x)) : [...s.exams, saved] }).then(() => {
+				new Notice(`Grill: ${examName(saved)} now scheduled for your exam ${whenWords(daysLeft(saved, new Date()))}.`, 6000);
+				ctx.rerender();
+			});
 		}).open();
 	const rows: Row[] = s.exams.map((e) => ({
 		name: examName(e),
@@ -368,9 +369,7 @@ export function importRows(ctx: SettingsCtx, all: boolean): Row[] {
 		build: (setting) =>
 			setting.addButton((b) =>
 				b.setButtonText("Choose file").onClick(() => {
-					const input = document.createElement("input");
-					input.type = "file";
-					input.accept = ".zip,.json";
+					const input = createEl("input", { attr: { type: "file", accept: ".zip,.json" } });
 					input.onchange = async () => {
 						const file = input.files?.[0];
 						if (!file) return;
@@ -402,15 +401,17 @@ export function importRows(ctx: SettingsCtx, all: boolean): Row[] {
 		name: "Forget what was brought in",
 		desc: "Removes what Grill learned from your past chats. Your tests and the text above stay.",
 		build: (setting) =>
-			setting.addButton((b) =>
-				b
-					.setButtonText("Forget")
-					.setWarning()
-					.onClick(async () => {
-						await ctx.plugin.store.saveImported(null);
-						new Notice("Grill: removed what was learned from your past chats.");
-					}),
-			),
+			setting.addButton((b) => {
+				b.setButtonText("Forget").onClick(async () => {
+					await ctx.plugin.store.saveImported(null);
+					new Notice("Grill: removed what was learned from your past chats.");
+				});
+				// setDestructive is Obsidian 1.13+; setWarning is its older spelling.
+				const styled = b as unknown as { setDestructive?: () => unknown; setWarning?: () => unknown };
+				if (typeof styled.setDestructive === "function") styled.setDestructive();
+				else styled.setWarning?.();
+				return b;
+			}),
 	});
 	return rows;
 }
@@ -443,7 +444,8 @@ export function profileRow(ctx: SettingsCtx): Row {
 					const at = ctx.app.vault.getAbstractFileByPath(path);
 					if (at instanceof TFile) await ctx.app.vault.modify(at, text);
 					else await ctx.app.vault.create(path, text);
-					await ctx.app.workspace.getLeaf(true).openFile(ctx.app.vault.getAbstractFileByPath(path) as TFile);
+					const saved = ctx.app.vault.getAbstractFileByPath(path);
+					if (saved instanceof TFile) await ctx.app.workspace.getLeaf(true).openFile(saved);
 				}),
 			);
 		},

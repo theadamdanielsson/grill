@@ -78,7 +78,7 @@ function withImages(run: AgentJSONRun): string | AsyncIterable<SDKUserMessage> {
 			],
 		},
 		parent_tool_use_id: null,
-	} as SDKUserMessage;
+	};
 	return (async function* () {
 		yield message;
 	})();
