@@ -16,7 +16,6 @@ import {
 	Concept,
 	ConceptKind,
 	extractConcepts,
-	extractConceptsCached,
 	localQuestionForConcept,
 	selectRelevantText,
 	selectRelevantTextSemantic,
@@ -29,8 +28,8 @@ import type { CachedQuestion, EmbeddingMap, QuestionBank } from "./store";
 import { daysLeft, EXAM_RETENTION, KEEP_NEW_PER_DAY, KEEP_RETENTION, examFor, examLines, examNewQuota, pullInForExams } from "./exams";
 import { ConceptMap, ConceptMastery, blockedByDailyCap, conceptTargetDifficulty, conceptTested, CATCH_UP, dueConceptCount, missedConceptIds, spreadBacklog, noteAggregate, pickConcepts, priorityNotes, disperseSiblingDueDates, reconcileConcepts, trueRetentionLine } from "./concepts";
 import { asRecordData, learnerBrief } from "./brief";
-import { collectNoteImages, ImageInput, hasEmbeddedImage } from "./images";
-import { extractPdfTextCached, noteStudyText } from "./pdf";
+import { collectNoteImages, ImageInput } from "./images";
+import { noteStudyText } from "./pdf";
 import { hashStr, mapWithConcurrency, safeSlice } from "./text";
 import { buildDueDateHistogram, DueDateHistogram, FreshContentPolicy, interleaveByFolder, NoteMastery, pickCandidates, QDifficulty, Rating, STATUS_WORDS, statusOf } from "./mastery";
 import {
@@ -48,6 +47,7 @@ import { celebrate, playSfx } from "./sfx";
 import { stopSpeaking, toSpeechText, ttsAvailable } from "./tts";
 import { hearButton, turnFrame, waitingTurn } from "./turn";
 import { drawFeedback } from "./screens/feedback";
+import { scanNotes } from "./scan";
 import { SessionRouting, type ContagionRoute, type PendingExtension, type PrereqRoute, type RouteLookup } from "./routing";
 import { drawChat, type LearnState } from "./screens/chat";
 import { drawAnswer, drawPrompt } from "./screens/answers";
@@ -187,12 +187,6 @@ function renderOnboardMap(container: HTMLElement): void {
 }
 
 const NOTE_CHAR_CAP = 4000;
-/** How many reference documents / notes startSession scans at once (see
- * mapWithConcurrency in text.ts). These reads/parses are independent of each other,
- * so serializing them one at a time (the old `for...await` loop) paid N round-trips
- * of latency for nothing; this just bounds how many are in flight so a huge reference
- * library doesn't try to open hundreds of files simultaneously. */
-const SESSION_SCAN_CONCURRENCY = 8;
 /** Sanity ceiling, not a meaningful UX cap, used wherever a session must not be capped
  * by the normal per-sitting settings: a due-only session's question count (due sessions
  * must not be capped by `questionsPerSession` — that setting is for how much a study
@@ -5259,84 +5253,25 @@ export class SessionView extends ItemView {
 			// result away. Loaded/saved once per scan, same convention as pdfCache above.
 			const conceptCache = await this.plugin.store.loadConceptExtractionCache();
 			const formatMode = this.plugin.data.settings.questionFormats;
-			// Reference documents (Instructions.md's upload area), BEFORE the notes loop
-			// below — order matters here, not just correctness: pickConcepts' fresh-content
-			// reserve interleaves untested concepts round-robin by note in FIRST-APPEARANCE
-			// order (see interleaveByNote in concepts.ts), and that reserve is typically only
-			// ~30% of a session. In an established vault with dozens of never-tested notes,
-			// inserting these after the loop meant they were always last into that interleave
-			// and the reserve was spent entirely on other notes before ever reaching them —
-			// extraction worked, but a reference document could never actually win a slot.
-			// Going first here means they're first into the round-robin instead. Each document
-			// goes through the exact same extractConcepts() a note's text does, not a side-
-			// channel — this is what actually makes "Grill asks questions from the real
-			// worksheet" true, rather than just true-looking. Keyed by the file's full name
-			// WITH extension (e.g. "DA worksheets.pdf"), which can never collide with a real
-			// note's basename (a markdown note's basename never ends in .pdf) and, as a bonus,
-			// is exactly what openNote()/openLinkText needs to open the actual PDF when the
-			// student taps through from a question to its source. Always included regardless
-			// of session scope — a course's reference library isn't folder-bound the way a
-			// note is, so there's no "which folder is this relevant to" scoping decision to
-			// make here (see the doc comment on MAX_REFERENCE_DOCS in store.ts for why the
-			// library can be large rather than a curated handful).
-			// Both loops below are parallelized (mapWithConcurrency, text.ts) rather than a
-			// sequential for...await: each iteration only touches its own key in
-			// conceptsByNote/noteText/noteImages, so there's no shared state to race on
-			// except pdfCache — and the worst case there is two notes that embed the exact
-			// same not-yet-cached PDF both missing the cache at once and parsing it twice,
-			// a one-time, self-correcting cost on first sight of that file, not a
-			// correctness bug (see pdf.ts's extractPdfTextCached: last write wins, and both
-			// writes are the same value).
-			const refDocScanStart = Date.now();
-			const refDocFiles = await this.plugin.store.listReferenceDocFiles();
-			await mapWithConcurrency(refDocFiles, SESSION_SCAN_CONCURRENCY, async (file) => {
-				const text = await extractPdfTextCached(this.app, file, pdfCache);
-				if (!text) return;
-				const docConcepts = extractConceptsCached(file.name, text, formatMode, conceptCache);
-				this.conceptsByNote.set(file.name, docConcepts);
-				this.noteText[file.name] =
-					text.length > NOTE_CHAR_CAP ? await this.selectPromptContext(text, docConcepts) : text;
+			// Reference documents first, then the picked notes: see scan.ts.
+			const scan = await scanNotes(this.app, {
+				names,
+				byName,
+				refDocs: await this.plugin.store.listReferenceDocFiles(),
+				pdfCache,
+				conceptCache,
+				formatMode,
+				selectContext: (text, concepts) => this.selectPromptContext(text, concepts),
+				charCap: NOTE_CHAR_CAP,
+				vision,
+				occlusion: occlusionEnabled,
+				imagesPerNote: IMAGES_PER_NOTE_CAP,
 			});
-			console.debug(
-				`Grill: scanned ${refDocFiles.length} reference doc(s) in ${Date.now() - refDocScanStart}ms`,
-			);
-			const notesScanStart = Date.now();
-			await mapWithConcurrency(names, SESSION_SCAN_CONCURRENCY, async (n) => {
-				const file = byName.get(n);
-				if (!file) return;
-				// A note that only embeds a PDF (`![[worksheet.pdf]]`) has real content, just
-				// none of it in the note's own markdown text — pull the PDF's text in as if
-				// it were typed there, so it's not invisible to both the structural parser and
-				// the AI prompt below (see pdf.ts; a no-op for notes with no PDF embeds).
-				const text = await noteStudyText(this.app, file, pdfCache);
-				// Extract concepts from the FULL note; only the prompt context is truncated.
-				const noteConcepts = extractConceptsCached(n, text, formatMode, conceptCache);
-				this.conceptsByNote.set(n, noteConcepts);
-				// Rank by relevance to this note's own concepts (see selectPromptContext
-				// and selectRelevantText's doc comments) instead of a flat character
-				// cutoff, so a long note or a big PDF import keeps the sections that
-				// actually contain quizzable material rather than whatever happens to
-				// fall in the first NOTE_CHAR_CAP characters. Falls back to the old flat
-				// truncation when there's nothing to rank against or rank with — never
-				// worse than today, sometimes much better.
-				this.noteText[n] = text.length > NOTE_CHAR_CAP ? await this.selectPromptContext(text, noteConcepts) : text;
-				// Independent of `vision` and of whether a model is involved at all —
-				// occlusion is local OCR. Recorded, not acted on: see renderOffers.
-				if (!occlusionEnabled && !Platform.isMobile && hasEmbeddedImage(this.app, file)) this.occlusionMissed.add(n);
-				if (vision) {
-					const imgs = await collectNoteImages(this.app, file, IMAGES_PER_NOTE_CAP);
-					if (imgs.length) this.noteImages[n] = imgs;
-				} else if (this.app.metadataCache.getFileCache(file)?.embeds?.length) {
-					this.notesWithUnsentImages.add(n);
-					// Local OCR occlusion needs the same decoded images the vision path uses,
-					// even when nothing's being sent to a model at all.
-					if (occlusionEnabled) {
-						const imgs = await collectNoteImages(this.app, file, IMAGES_PER_NOTE_CAP);
-						if (imgs.length) this.noteImages[n] = imgs;
-					}
-				}
-			});
-			console.debug(`Grill: scanned ${names.length} note(s) in ${Date.now() - notesScanStart}ms`);
+			this.conceptsByNote = scan.conceptsByNote;
+			this.noteText = scan.noteText;
+			this.noteImages = scan.noteImages;
+			this.notesWithUnsentImages = scan.notesWithUnsentImages;
+			this.occlusionMissed = scan.occlusionMissed;
 			await this.plugin.store.savePdfCache(pdfCache);
 			await this.plugin.store.saveConceptExtractionCache(conceptCache);
 			// "Send images" is on, but the chosen model can't actually read them: the
