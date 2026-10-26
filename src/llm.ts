@@ -5,7 +5,6 @@
 import type { RequestUrlParam, RequestUrlResponse } from "obsidian";
 import type { ImageInput } from "./images";
 import { safeSlice } from "./text";
-import { cloud } from "./cloud";
 import { streamCall, StreamCall, streamText, StreamUnavailable, toolStreamCall } from "./stream";
 import { runToolChat, TOOL_RULES, ToolChat, VAULT_TOOLS } from "./vaulttools";
 import type { Arc, CanonMisconception, SessionDebrief, TagAssignment } from "./debrief";
@@ -1405,10 +1404,7 @@ export async function learnWithTools(
 					onText,
 					idleMs: requestTimeoutMs(cfg),
 					signal: live.signal,
-					onCloud: (credits, cost) => {
-						if (credits !== undefined) cloud.onCredits?.(credits);
-						if (cost !== undefined) cloud.onCost?.(cost);
-					},
+					onCloud: (credits, cost) => cfg.cloud?.heard({ credits, cost }),
 				});
 				begun = true;
 				return got;
@@ -1530,10 +1526,7 @@ export async function learnFromNotes(
 					onText: (soFar) => live.onText(replyInProgress(soFar)),
 					idleMs: requestTimeoutMs(cfg),
 					signal: live.signal,
-					onCloud: (credits, cost) => {
-						if (credits !== undefined) cloud.onCredits?.(credits);
-						if (cost !== undefined) cloud.onCost?.(cost);
-					},
+					onCloud: (credits, cost) => cfg.cloud?.heard({ credits, cost }),
 				});
 				streamed = got.text;
 			} catch (e) {

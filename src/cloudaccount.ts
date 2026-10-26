@@ -6,6 +6,7 @@ import { Notice } from "obsidian";
 import type GrillPlugin from "./main";
 import type { PluginData } from "./main";
 import { cloud, CloudPack, CloudPlan, cloudAccount, cloudBalance, cloudCheckoutUrl, cloudDelete, cloudEnabled, cloudStart, creditsInWords, isCloudKey, newCloudKey } from "./cloud";
+import type { CloudLink } from "./providers";
 import { RefillModal } from "./refill";
 import { GONE_KEYS_KEPT, isAccountId, RETIRED_KEYS_KEPT, type GrillSettings } from "./settings";
 
@@ -38,6 +39,28 @@ export class CloudAccount {
 
 	/** Credits the session under way has used. The view zeroes it when one starts. */
 	cloudSessionSpent = 0;
+
+	/** What the server last said it can do: stream a Chat reply, let the model ask for
+	 * tools, and search the web in Chat. */
+	private features = { streams: false, tools: false, search: false };
+
+	/** The account as a model config carries it (see CloudLink). */
+	link(): CloudLink {
+		return { ...this.features, heard: (said) => this.heard(said) };
+	}
+
+	/** A reply said the balance it left, or what it cost. */
+	heard(said: { credits?: number; cost?: number }): void {
+		if (said.credits !== undefined) {
+			this.cloudCredits = said.credits;
+			// Credits spent while a purchase is being waited for lower the number the
+			// purchase is measured from, so "1000 added" stays 1000.
+			if (this.cloudWaitingFrom !== null && said.credits < this.cloudWaitingFrom) this.cloudWaitingFrom = said.credits;
+		}
+		// What the session under way has used: the server says what each reply cost. (The
+		// balance can't tell: other requests in flight are held against it.)
+		if (said.cost !== undefined) this.cloudSessionSpent += said.cost;
+	}
 
 	/** What has been spent since this was last asked, and start counting again. */
 	takeCloudSpend(): number {
@@ -346,9 +369,7 @@ export class CloudAccount {
 		this.cloudPlan = r.data.plan ?? null;
 		this.cloudPlans = r.data.plans === true;
 		this.cloudSpeech = r.data.speech === true;
-		cloud.streams = r.data.streams === true;
-		cloud.tools = r.data.tools === true;
-		cloud.search = r.data.search === true;
+		this.features = { streams: r.data.streams === true, tools: r.data.tools === true, search: r.data.search === true };
 		this.cloudState = r.data.account ? "ok" : "none";
 		this.cloudNote = "";
 	}
@@ -440,9 +461,7 @@ export class CloudAccount {
 		this.cloudPlan = r.data.plan ?? null;
 		this.cloudPlans = r.data.plans === true;
 		this.cloudSpeech = r.data.speech === true;
-		cloud.streams = r.data.streams === true;
-		cloud.tools = r.data.tools === true;
-		cloud.search = r.data.search === true;
+		this.features = { streams: r.data.streams === true, tools: r.data.tools === true, search: r.data.search === true };
 		this.cloudState = "ok";
 		await this.linkCloudCheckout(key);
 		this.tellCloud();

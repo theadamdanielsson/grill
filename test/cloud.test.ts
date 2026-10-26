@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { deepFake, fakeEl, fakeSetting, net, notices } from "./obsidian-stub";
 import GrillPlugin from "../src/main";
 import { GrillSettingTab } from "../src/settingstab";
-import { cloud, cloudAccount, cloudCheckoutUrl, creditsInWords, heardFromCloud, isCloudKey, lowBalance, newCloudKey, packLabel, packPurpose, planInWords, planLabel, planUsage, usageInWords } from "../src/cloud";
+import { cloud, cloudAccount, cloudCheckoutUrl, cloudHeaders, creditsInWords, isCloudKey, lowBalance, newCloudKey, packLabel, packPurpose, planInWords, planLabel, planUsage, usageInWords } from "../src/cloud";
 import { refillWords } from "../src/refill";
 import { KeyStash } from "../src/secrets";
 import { stopSpeaking } from "../src/tts";
@@ -284,20 +284,20 @@ test("a model call goes to Grill Cloud in the shape its server accepts", async (
 	assert.deepEqual(sent.body.response_format.json_schema.schema.required, ["ok"]);
 	// The reply carried the balance; no second request was needed to know it.
 	assert.equal(plugin.account.cloudCredits, 9);
-	heardFromCloud({ "x-grill-credits": "not a number" });
-	heardFromCloud(undefined);
+	plugin.account.heard(cloudHeaders({ "x-grill-credits": "not a number" }));
+	plugin.account.heard(cloudHeaders(undefined));
 	assert.equal(plugin.account.cloudCredits, 9);
-	heardFromCloud({ "x-grill-credits": "4" });
+	plugin.account.heard(cloudHeaders({ "x-grill-credits": "4" }));
 	assert.equal(plugin.account.cloudCredits, 4);
 	// What a session used is what each reply says it cost, not how far the balance fell:
 	// another request's hold is in the balance while it is in flight.
 	plugin.account.cloudSessionSpent = 0;
-	heardFromCloud({ "x-grill-credits": "366", "X-Grill-Cost": "0.5" });
-	heardFromCloud({ "x-grill-credits": "398", "x-grill-cost": "1.75" });
-	heardFromCloud({ "x-grill-cost": "nonsense" });
+	plugin.account.heard(cloudHeaders({ "x-grill-credits": "366", "X-Grill-Cost": "0.5" }));
+	plugin.account.heard(cloudHeaders({ "x-grill-credits": "398", "x-grill-cost": "1.75" }));
+	plugin.account.heard(cloudHeaders({ "x-grill-cost": "nonsense" }));
 	assert.equal(plugin.account.cloudSessionSpent, 2.25);
 	assert.equal(await plugin.account.noteCloudSession(), 2);
-	heardFromCloud({ "x-grill-cost": "0.2" });
+	plugin.account.heard(cloudHeaders({ "x-grill-cost": "0.2" }));
 	assert.equal(await plugin.account.noteCloudSession(), 1, "a session that used something never reads as 0");
 	plugin.data.settings.cloudUsage = [];
 
@@ -701,7 +701,7 @@ test("the purchase watcher: one look at a time, spending meanwhile doesn't skew 
 	assert.equal(seen.length - before, 1);
 
 	// A session spends 20 credits while waiting; the purchase is still announced as 1000.
-	heardFromCloud({ "x-grill-credits": "296" });
+	plugin.account.heard(cloudHeaders({ "x-grill-credits": "296" }));
 	assert.equal(plugin.account.cloudWaitingFrom, 296);
 	// Top up pressed a second time (from a notice, say) restarts the wait, nothing more.
 	plugin.account.openCloudCheckout();

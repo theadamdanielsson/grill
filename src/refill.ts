@@ -9,7 +9,8 @@ import type { CloudAccount } from "./cloudaccount";
 
 /** What the pop-up needs of the plugin. */
 export type RefillHost = { app: App; account: CloudAccount; openSettings(): void };
-import { cloud, CloudPlan, PLAN_HEADLINE, PLAN_LEAD, PLAN_LIMITS, PLAN_PERKS, packPurpose, planBack, planLabel, planUsage } from "./cloud";
+import { cloud, CloudPlan, packPurpose, planBack, planLabel, planUsage } from "./cloud";
+import { PLAN_HEADLINE, PLAN_LEAD, PLAN_LIMITS, PLAN_PERKS } from "./cloudcopy";
 
 /** What the pop-up says for each way credits fall short. The server's own sentences
  * point at settings, which is no longer where this is fixed, so these are said here. */

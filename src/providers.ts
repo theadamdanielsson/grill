@@ -2,7 +2,7 @@
  * and the config a call is made with. No requests here (see transport.ts). */
 
 import type { ImageInput } from "./images";
-import { cloud, cloudEnabled } from "./cloud";
+import { cloud, cloudEnabled, type CloudHeard } from "./cloud";
 
 export type ProviderId = "anthropic" | "openai" | "gemini" | "deepseek" | "ollama" | "custom" | "grillcloud";
 
@@ -158,6 +158,18 @@ export function migrateLegacyModels(models: Partial<Record<ProviderId, string>>)
 	return changed;
 }
 
+/** What Grill Cloud's server has said it can do, and where to report what its replies
+ * say about the account. Held by the plugin's CloudAccount. */
+export interface CloudLink {
+	/** It can write a Chat reply as a stream. */
+	streams: boolean;
+	/** The model may ask for tools. */
+	tools: boolean;
+	/** Chat with tools may search the web. */
+	search: boolean;
+	heard: CloudHeard;
+}
+
 /** A model reached over HTTP: a provider, its key and the model. */
 export interface ModelConfig {
 	provider: ProviderId;
@@ -165,6 +177,8 @@ export interface ModelConfig {
 	model: string;
 	/** Ollama server URL, e.g. http://localhost:11434 */
 	baseUrl?: string;
+	/** Set on a Grill Cloud config: see CloudLink. */
+	cloud?: CloudLink;
 	agent?: undefined;
 }
 
@@ -269,9 +283,9 @@ export function capabilities(cfg: LLMConfig): Capabilities {
 	const p = cfg.provider;
 	const hosted = p === "grillcloud";
 	return {
-		tools: hosted ? cloud.streams && cloud.tools : PROVIDERS[p].tools,
-		streams: hosted ? cloud.streams && !!cloud.url : true,
-		webSearch: p === "anthropic" || (hosted && cloud.search),
+		tools: hosted ? !!cfg.cloud?.streams && !!cfg.cloud.tools : PROVIDERS[p].tools,
+		streams: hosted ? !!cfg.cloud?.streams && !!cloud.url : true,
+		webSearch: p === "anthropic" || (hosted && !!cfg.cloud?.search),
 		vision: supportsVision(p, cfg.model),
 		embeddings: supportsEmbeddings(p),
 		local: PROVIDERS[p].local,

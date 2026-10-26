@@ -5,7 +5,7 @@ import { CalPoint, isCalPoint } from "./calibration";
 import { capabilities, LLMConfig, ProviderId, PROVIDERS } from "./providers";
 import { Question } from "./question";
 import { readPriorKnowledge, synthesizeArc } from "./llm";
-import { cloud, cloudEnabled, isCloudKey } from "./cloud";
+import { cloudEnabled, isCloudKey } from "./cloud";
 import { CHECK_EVERY_MS, isNewer, latestVersion } from "./update";
 import { applyResults, InboxResult, restoreNoteCounts } from "./record";
 import { learnerBrief, missesFromSessions, type PastSession } from "./brief";
@@ -113,17 +113,6 @@ export default class GrillPlugin extends Plugin {
 		// Obsidian's keychain on the persist() further down; from then on they're
 		// read back from there. See secrets.ts.
 		const keysInData = (Object.keys(settings.apiKeys) as ProviderId[]).some((p) => p !== "grillcloud" && settings.apiKeys[p]);
-		cloud.onCredits = (credits) => {
-			this.account.cloudCredits = credits;
-			// Credits spent while a purchase is being waited for lower the number the
-			// purchase is measured from, so "1000 added" stays 1000.
-			if (this.account.cloudWaitingFrom !== null && credits < this.account.cloudWaitingFrom) this.account.cloudWaitingFrom = credits;
-		};
-		// What the session under way has used: the server says what each reply cost. (The
-		// balance can't tell: other requests in flight are held against it.)
-		cloud.onCost = (cost) => {
-			this.account.cloudSessionSpent += cost;
-		};
 		this.keys = new KeyStash(secretStore(this.app), vaultId(this.app));
 		settings.apiKeys = this.keys.load(settings.apiKeys);
 		// 7.x had modes that used no model for questions, for grading, or for either.
@@ -1650,6 +1639,7 @@ ${body}
 			// it, whatever an earlier build may have saved.
 			model: s.provider === "grillcloud" ? info.defaultModel : s.models[s.provider] || info.defaultModel,
 			baseUrl: s.provider === "ollama" ? s.ollamaUrl : s.provider === "custom" ? s.customBaseUrl : undefined,
+			cloud: s.provider === "grillcloud" ? this.account.link() : undefined,
 		};
 	}
 
@@ -1692,7 +1682,7 @@ ${body}
 		const source = s.naturalVoice ? this.naturalVoiceSource() : null;
 		if (source) {
 			try {
-				await speakNatural(text, (clean) => naturalSpeech(source, source === "cloud" ? s.apiKeys.grillcloud : s.apiKeys.openai, clean));
+				await speakNatural(text, (clean) => naturalSpeech(source, source === "cloud" ? s.apiKeys.grillcloud : s.apiKeys.openai, clean, (said) => this.account.heard(said)));
 				return;
 			} catch (e) {
 				new Notice(`Grill: ${(e as Error).message} Using your device's voice instead.`, 8000);

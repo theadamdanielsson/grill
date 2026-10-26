@@ -124,11 +124,11 @@ test("the request asks for a stream of plain text, with the note marked for the 
 	assert.equal(content[1].cache_control, undefined);
 	// Grill Cloud is asked this way only once its server has said it can answer this way.
 	assert.equal(streamCall({ provider: "grillcloud", apiKey: "k", model: "m" }, p), null);
-	Object.assign(cloud, { streams: true, url: "https://c.test/cloud/" });
+	Object.assign(cloud, { url: "https://c.test/cloud/" });
 	try {
-		assert.equal(streamCall({ provider: "grillcloud", apiKey: "k", model: "m" }, p)?.url, "https://c.test/cloud/chat/completions");
+		assert.equal(streamCall({ provider: "grillcloud", apiKey: "k", model: "m", cloud: { streams: true, tools: false, search: false, heard: () => undefined } }, p)?.url, "https://c.test/cloud/chat/completions");
 	} finally {
-		Object.assign(cloud, { streams: false, url: "" });
+		Object.assign(cloud, { url: "" });
 	}
 });
 
@@ -156,12 +156,12 @@ test("web search is asked for in each provider's way, and only where asked", asy
 	assert.ok((a.body.tools as Array<{ type?: string }>).some((t) => t.type === "web_search_20250305"));
 	const plain = toolStreamCall({ provider: "anthropic", apiKey: "k", model: "claude-sonnet-5" }, p, [], [tool])!;
 	assert.equal((plain.body.tools as unknown[]).length, 1);
-	Object.assign(cloud, { streams: true, tools: true, search: true, url: "https://c.test/cloud" });
+	Object.assign(cloud, { url: "https://c.test/cloud" });
 	let c: StreamCall;
 	try {
-		c = toolStreamCall({ provider: "grillcloud", apiKey: "k", model: "m" }, p, [], [tool], { webSearch: true })!;
+		c = toolStreamCall({ provider: "grillcloud", apiKey: "k", model: "m", cloud: { streams: true, tools: true, search: true, heard: () => undefined } }, p, [], [tool], { webSearch: true })!;
 	} finally {
-		Object.assign(cloud, { streams: false, tools: false, search: false, url: "" });
+		Object.assign(cloud, { url: "" });
 	}
 	assert.equal(c.body.web_search, true);
 	assert.ok(!(c.body.tools as Array<{ type?: string }>).some((t) => t.type === "web_search_20250305"), "Grill Cloud adds the search itself");

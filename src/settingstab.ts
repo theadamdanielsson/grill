@@ -5,7 +5,9 @@ import { App, Notice, Platform, PluginSettingTab, Setting, SettingDefinition, Se
 import { configureFSRSWeights } from "./mastery";
 import { OLLAMA_DEFAULT_URL, offeredProviders, ProviderId, PROVIDERS } from "./providers";
 import { listModels, testModel } from "./llm";
-import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, planInWords, planLabel, cloudEnabled, creditsInWords, isCloudKey, packLabel, usageInWords } from "./cloud";
+import { drawCloudAgreement, drawCloudPitch } from "./cloudcard";
+import { CLOUD_LEAD } from "./cloudcopy";
+import { cloud, planInWords, planLabel, cloudEnabled, creditsInWords, isCloudKey, packLabel, usageInWords } from "./cloud";
 import { drawOffers, drawPlanUsage, packGo } from "./refill";
 import { importedNames } from "./imported";
 import { countTrainableReviews, MIN_REVIEWS_FOR_OPTIMIZATION } from "./optimizer";
@@ -608,20 +610,8 @@ export class GrillSettingTab extends PluginSettingTab {
 				if (!cloudKey) {
 					// Said before anything is sent: what it costs, what it needs, where notes go.
 					body.createDiv({ cls: "grill-cloud-panel-lead", text: CLOUD_LEAD });
-					if (this.plugin.account.sharesDeviceCloud()) body.createDiv({ cls: "grill-meta", text: "You already use Grill Cloud in another vault on this device. Starting here uses the same balance." });
-					const facts = body.createDiv({ cls: "grill-cloud-facts" });
-					for (const fact of CLOUD_FACTS) facts.createDiv({ cls: "grill-cloud-fact", text: fact });
-					const more = body.createEl("details", { cls: "grill-cloud-more" });
-					more.createEl("summary", { text: "What exactly is sent?" });
-					more.createEl("p", { text: CLOUD_PITCH });
-					if (cloud.privacyUrl || cloud.termsUrl) {
-						const legal = card.createDiv({ cls: "grill-cloud-agree grill-meta" });
-						legal.appendText("For ages 18 and over. By starting you agree to the ");
-						if (cloud.termsUrl) legal.createEl("a", { text: "terms", href: cloud.termsUrl });
-						if (cloud.privacyUrl && cloud.termsUrl) legal.appendText(" and the ");
-						if (cloud.privacyUrl) legal.createEl("a", { text: "privacy policy", href: cloud.privacyUrl });
-						legal.appendText(".");
-					}
+					drawCloudPitch(body, this.plugin.account.sharesDeviceCloud());
+					drawCloudAgreement(card);
 					start(setting, "Start free", true);
 					return;
 				}

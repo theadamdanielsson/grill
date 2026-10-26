@@ -2,15 +2,15 @@
  * key. Each gives the audio of some text, or throws with a sentence fit to show. */
 
 import { requestUrl } from "obsidian";
-import { cloudSpeech } from "./cloud";
+import { cloudSpeech, type CloudHeard } from "./cloud";
 import { API_BASE } from "./providers";
 
 export type SpeechSource = "cloud" | "openai";
 
 /** The audio of `text`, as MP3. */
-export async function naturalSpeech(source: SpeechSource, key: string, text: string): Promise<ArrayBuffer> {
+export async function naturalSpeech(source: SpeechSource, key: string, text: string, heard?: CloudHeard): Promise<ArrayBuffer> {
 	if (source === "cloud") {
-		const r = await cloudSpeech(key, text);
+		const r = await cloudSpeech(key, text, heard);
 		if (!r.ok) throw new Error(r.message);
 		return r.data;
 	}

@@ -2,7 +2,9 @@
 
 import { getAllTags, ItemView, loadMermaid, MarkdownRenderer, Menu, Modal, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
-import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, cloudEnabled, creditsInWords, lowBalance, planInWords, usageInWords } from "./cloud";
+import { cloud, cloudEnabled, creditsInWords, lowBalance, planInWords, usageInWords } from "./cloud";
+import { drawCloudAgreement, drawCloudPitch } from "./cloudcard";
+import { CLOUD_LEAD } from "./cloudcopy";
 import { CLAUDE_MODELS, STARTER_PROMPTS } from "./selection";
 import { adjudicateBridges, ConceptTarget, debriefSession, discussQuestion, embedTexts, explainQuestion, generateDrawQuestion, generateQuestions, gradeAnswer, learnFromNotes, learnWithTools, listModels, replyInProgress, type StudyOfferButton, summarizeChat, testModel, ThreadTurn } from "./llm";
 import { contentWords } from "./text";
@@ -957,22 +959,10 @@ export class SessionView extends ItemView {
 		if (recommended) head.createSpan({ cls: "grill-mode-tag", text: "Recommended" });
 		el.createDiv({ cls: "grill-cloud-panel-lead", text: CLOUD_LEAD });
 		if (!has) {
-			if (this.plugin.account.sharesDeviceCloud()) el.createDiv({ cls: "grill-meta", text: "You already use Grill Cloud in another vault on this device. Starting here uses the same balance." });
-			const facts = el.createDiv({ cls: "grill-cloud-facts" });
-			for (const fact of CLOUD_FACTS) facts.createDiv({ cls: "grill-cloud-fact", text: fact });
-			const more = el.createEl("details", { cls: "grill-cloud-more" });
-			more.createEl("summary", { text: "What exactly is sent?" });
-			more.createEl("p", { text: CLOUD_PITCH });
+			drawCloudPitch(el, this.plugin.account.sharesDeviceCloud());
 			const go = el.createEl("button", { text: "Start free", cls: "mod-cta grill-cloud-go grill-primary-cta" });
 			// What pressing it agrees to, in plain sight beside it, not folded away.
-			if (cloud.privacyUrl || cloud.termsUrl) {
-				const legal = el.createDiv({ cls: "grill-cloud-agree grill-meta" });
-				legal.appendText("For ages 18 and over. By starting you agree to the ");
-				if (cloud.termsUrl) legal.createEl("a", { text: "terms", href: cloud.termsUrl });
-				if (cloud.privacyUrl && cloud.termsUrl) legal.appendText(" and the ");
-				if (cloud.privacyUrl) legal.createEl("a", { text: "privacy policy", href: cloud.privacyUrl });
-				legal.appendText(".");
-			}
+			drawCloudAgreement(el);
 			return go;
 		}
 		// A redraw of this panel loses the caller's button, so the caller redraws itself.

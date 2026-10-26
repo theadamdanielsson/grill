@@ -8,7 +8,7 @@
 
 import { requestUrl, RequestUrlParam, RequestUrlResponse } from "obsidian";
 import type { ImageInput } from "./images";
-import { cloud, heardFromCloud } from "./cloud";
+import { cloud, cloudHeaders } from "./cloud";
 import { anthropicAuth, API_BASE, capabilities, CUT_OFF, isOpenAIReasoning, ollamaUrl, who, type LLMConfig, type ProviderId } from "./providers";
 
 /** How long an agent program is given for one answer: it has to start first. */
@@ -418,7 +418,7 @@ async function callJSONOnce(
 		/* non-JSON error body */
 	}
 	if (cfg.provider === "grillcloud") {
-		heardFromCloud(resp.headers);
+		cfg.cloud?.heard(cloudHeaders(resp.headers));
 		// Grill Cloud's errors are already plain sentences written for the student.
 		if (resp.status >= 400) throw new CloudError(resp.status, json);
 	}

@@ -60,13 +60,6 @@ export interface CloudPlan {
 	period?: number;
 }
 
-/** The plan's offer: a headline over the price, what it gets you under it, and the
- * terms in small print under the button. */
-export const PLAN_HEADLINE = "All of Grill. No setup.";
-export const PLAN_LEAD = "No Claude or ChatGPT subscription needed. Less than half the price of one.";
-export const PLAN_PERKS = ["Tests written from your own notes", "A chat that knows what you got wrong", "On your phone too, no key needed"];
-export const PLAN_LIMITS = "Usage limits reset every five hours and every week. At a limit, wait or add credits, which don't expire.";
-
 /** A running plan's three limits, as the share of each that is used. */
 export function planUsage(plan: CloudPlan): Array<{ name: string; used: number }> {
 	const rows: Array<{ name: string; used: number | undefined }> = [
@@ -131,35 +124,7 @@ export const cloud = {
 	/** Where the privacy policy and the terms live. */
 	privacyUrl: "https://grill.onbridger.com/privacy",
 	termsUrl: "https://grill.onbridger.com/terms",
-	/** Whether the server has said it can write a Chat reply as a stream. */
-	streams: false,
-	/** Whether the server has said the model may ask for tools. */
-	tools: false,
-	/** Whether the server has said Chat with tools may search the web. */
-	search: false,
-	/** Called with the balance whenever the server mentions it. */
-	onCredits: null as ((credits: number) => void) | null,
-	/** Called with what a reply cost, in credits (fractions included). */
-	onCost: null as ((credits: number) => void) | null,
 };
-
-/** Why pick it, in one line under its name: nothing to get, nothing to fill in. */
-export const CLOUD_LEAD = "No API key, no sign-up, no AI subscription. One click and you're studying.";
-
-/** The three things to know before starting, said wherever Grill Cloud is offered. */
-export const CLOUD_FACTS = [
-	"AI writes your questions and grades your answers.",
-	cloud.plan.url ? `Free credits to start, while each day's last. Then ${cloud.plan.price} + tax a month, cancel anytime.` : "Free credits to start, while each day's last. Then credit packs from $3.99 + tax.",
-	"Your notes go through Grill's server to Claude. Grill's server doesn't store them.",
-];
-
-/** The whole of it, shown before anything is sent to anyone who asks what is. */
-export const CLOUD_PITCH =
-	"The notes in a session, the images in them, your answers and your custom instructions go through Grill's server to Anthropic's Claude, which writes the questions and grades. " +
-	"So do short excerpts of notes it checks for missing links, and a summary of what you keep getting wrong, which it uses to adapt. " +
-	"Grill's server doesn't store them. Anthropic keeps them for up to 30 days to watch for abuse and doesn't train on them. " +
-	"Text you have read aloud goes through Grill's server to OpenAI, which makes the voice, unless you switch to your device's voice in settings. " +
-	"Don't study notes this way that you wouldn't send to an online service. For ages 18 and over.";
 
 export function cloudEnabled(): boolean {
 	return cloud.url !== "";
@@ -260,7 +225,7 @@ export function cloudDelete(key: string): Promise<CloudReply<{ deleted: boolean 
 
 /** Read text aloud in a natural voice: the audio (MP3), or why not. The text goes
  * through Grill's server to the speech provider; neither keeps it. */
-export async function cloudSpeech(key: string, text: string): Promise<CloudReply<ArrayBuffer>> {
+export async function cloudSpeech(key: string, text: string, heard?: CloudHeard): Promise<CloudReply<ArrayBuffer>> {
 	try {
 		const r = await Promise.race([
 			requestUrl({
@@ -272,7 +237,7 @@ export async function cloudSpeech(key: string, text: string): Promise<CloudReply
 			}),
 			new Promise<never>((_, no) => window.setTimeout(() => no(new Error("timeout")), 45_000)),
 		]);
-		heardFromCloud(r.headers);
+		heard?.(cloudHeaders(r.headers));
 		if (r.status === 200 && r.arrayBuffer && r.arrayBuffer.byteLength > 0) return { ok: true, data: r.arrayBuffer };
 		let said: unknown;
 		try {
@@ -286,11 +251,19 @@ export async function cloudSpeech(key: string, text: string): Promise<CloudReply
 	}
 }
 
-/** Every model reply carries the balance it left; pick it up, so the number shown
- * never needs its own request. */
-export function heardFromCloud(headers: Record<string, string> | undefined): void {
+/** What a reply from Grill Cloud said about the account: the balance it left and what it
+ * cost, in credits (fractions included). Either may be missing. */
+export interface CloudHeard {
+	(said: { credits?: number; cost?: number }): void;
+}
+
+/** Every model reply carries the balance it left and what it cost; read them, so the
+ * number shown never needs its own request. */
+export function cloudHeaders(headers: Record<string, string> | undefined): { credits?: number; cost?: number } {
+	const out: { credits?: number; cost?: number } = {};
 	for (const [name, value] of Object.entries(headers ?? {})) {
-		if (name.toLowerCase() === "x-grill-credits" && /^\d+$/.test(value)) cloud.onCredits?.(Number(value));
-		if (name.toLowerCase() === "x-grill-cost" && /^\d+(\.\d+)?$/.test(value)) cloud.onCost?.(Number(value));
+		if (name.toLowerCase() === "x-grill-credits" && /^\d+$/.test(value)) out.credits = Number(value);
+		if (name.toLowerCase() === "x-grill-cost" && /^\d+(\.\d+)?$/.test(value)) out.cost = Number(value);
 	}
+	return out;
 }
