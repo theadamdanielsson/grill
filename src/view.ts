@@ -3,7 +3,7 @@
 import { getAllTags, ItemView, loadMermaid, MarkdownRenderer, Menu, Modal, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
 import { cloud, CLOUD_FACTS, CLOUD_LEAD, CLOUD_PITCH, cloudEnabled, creditsInWords, lowBalance, planInWords, usageInWords } from "./cloud";
-import { CLAUDE_MODELS, selectionMessage, STARTER_PROMPTS } from "./selection";
+import { CLAUDE_MODELS, STARTER_PROMPTS } from "./selection";
 import { adjudicateBridges, ConceptTarget, debriefSession, discussQuestion, embedTexts, explainQuestion, generateDrawQuestion, generateQuestions, gradeAnswer, learnFromNotes, learnWithTools, listModels, replyInProgress, type StudyOfferButton, summarizeChat, testModel, ThreadTurn } from "./llm";
 import { contentWords } from "./text";
 import { cleanDiagram, cleanText, Grade, Question } from "./question";
@@ -48,12 +48,13 @@ import { celebrate, playSfx } from "./sfx";
 import { stopSpeaking, toSpeechText, ttsAvailable } from "./tts";
 import { hearButton, turnFrame, waitingTurn } from "./turn";
 import { drawFeedback } from "./screens/feedback";
+import { drawChat, type LearnState } from "./screens/chat";
 import { drawAnswer, drawPrompt } from "./screens/answers";
 import { SessionEntry } from "./store";
 import { renderThreadHistory } from "./thread";
 import { listSome, missesLine, mostLinked, noteLine, shortDate, startingNote } from "./suggest";
 import { drawPicks, renderChatHome, renderCreditsRing, type HomeMode, type HomeSuggestion } from "./home";
-import { aboutTheVault, compactAt, learnContext, learnRecord, namesANote, parseLearnNote, parseLearnThread, parseSessionNote, namesInFull, rankNotes, replyTitle, sessionTitle, vaultMap, vaultNotes, vaultStructure, type PastAnswer, type VaultNote } from "./learn";
+import { aboutTheVault, compactAt, learnContext, learnRecord, namesANote, parseLearnNote, parseLearnThread, parseSessionNote, namesInFull, rankNotes, sessionTitle, vaultMap, vaultNotes, vaultStructure, type PastAnswer, type VaultNote } from "./learn";
 import { safeDiagram, safeMarkdown } from "./safemd";
 import { activitySummary, AgentEvent, agentBrief, AGENT_LEVELS, claudeCommands, PermissionAnswer, PermissionAsk, runAgent } from "./agent";
 import type { VaultPort } from "./vaulttools";
@@ -67,7 +68,7 @@ import { drawChats } from "./screens/chats";
 import { DashboardScreen } from "./screens/dashboard";
 import { gradeStructured } from "./grading";
 import { GRILL_ICON } from "./icon";
-import { attachPicker, linkedNames, type PickSource } from "./mention";
+import { linkedNames, type PickSource } from "./mention";
 import { codexModelName, codexModels, runCodex } from "./codex";
 import { importedLines, importedNames } from "./imported";
 import { AcpModel, acpModels, runAcp } from "./acp";
@@ -365,47 +366,7 @@ export class SessionView extends ItemView {
 	 * model is given to read, and what has been said. */
 	/** Stops a Chat reply that is still being written when the conversation is left. */
 	private learnStop: AbortController | null = null;
-	private learn: {
-		note: TFile;
-		/** The other notes the answer may draw on, when the question was asked of the
-		 * whole vault: shown as where it comes from, and tested with the note. */
-		also: TFile[];
-		/** Said under the strip when the whole vault, or as much as fits, is being read. */
-		reading: string;
-		/** Sent ahead of the note: the map of the vault, and for a question about the
-		 * vault as a whole, its notes in full. */
-		vault: string;
-		/** True when the question is about the notes as a whole, not one of them. */
-		whole: boolean;
-		noteText: string;
-		linkedText: string;
-		/** What Grill has on record about this note: see `learnRecord`. */
-		record: string;
-		/** False when the note is too short to be tested on: see `enoughToTest`. */
-		testable: boolean;
-		/** A passage selected in the note that the next message is about: shown above
-		 * the box, and sent with what is typed. */
-		quote?: string;
-		turns: ThreadTurn[];
-		startedAt: Date;
-		/** A past conversation carried on: the note it is kept in, and how many of the
-		 * turns were already there, so leaving without a new one changes nothing. */
-		file?: TFile;
-		had?: number;
-		/** A long conversation's start, summed up so it can go on (see `compactAt`): the
-		 * summary, and how many turns it covers. The saved note keeps every turn. */
-		summary?: string;
-		summarized?: number;
-		summaryFailures?: number;
-		persona: string;
-		instructions: string;
-		/** The kinds of change the student has said to always allow in this chat. */
-		allowed: Set<string>;
-		/** Claude Code's own conversation, to go on with on the next message. */
-		agentSession?: string;
-		/** The engine that has been answering, to see when it is changed mid-chat. */
-		engine?: "model" | "claudecode" | "codex" | "opencode";
-	} | null = null;
+	private learn: LearnState | null = null;
 	/** Due-queue sessions (status bar, "Review N due"): only due/struggling
 	 * concepts, never padded with untested/known ones to fill a full session. */
 	private dueOnly = false;
@@ -2183,179 +2144,42 @@ export class SessionView extends ItemView {
 	private renderLearn(): void {
 		const L = this.learn;
 		if (!L) return this.renderStart();
-		const wrap = this.root("learn");
-		const strip = wrap.createDiv({ cls: "grill-thread-strip" });
-		strip.createSpan({ cls: "grill-thread-kind", text: "Chat" });
-		if (L.whole) strip.createSpan({ cls: "grill-thread-count", text: "Your notes" });
-		else {
-			const name = strip.createSpan({ cls: "grill-thread-count grill-chip-link", text: L.note.basename });
-			name.onclick = () => this.openNote(L.note.basename);
-		}
-		const end = strip.createEl("button", { cls: "grill-thread-end", text: "End" });
-		end.onclick = () => void this.endLearn(false);
-		if (L.reading) wrap.createDiv({ cls: "grill-learn-from grill-meta", text: L.reading });
-		else if (L.also.length) {
-			// Where the answers come from, each a way into that note.
-			const from = wrap.createDiv({ cls: "grill-learn-from grill-meta" });
-			from.createSpan({ text: "Also reading: " });
-			L.also.forEach((f, i) => {
-				if (i) from.createSpan({ text: ", " });
-				const link = from.createSpan({ cls: "grill-chip-link", text: f.basename });
-				link.onclick = () => this.openNote(f.basename);
-			});
-		}
-
-		const card = wrap.createDiv({ cls: "grill-body grill-learn" });
-		const turns = card.createDiv({ cls: "grill-thread-turns grill-learn-turns" });
-		if (!L.turns.length) turns.createDiv({ cls: "grill-meta", text: "Ask anything about this note. Nothing here is graded." });
-		for (const turn of L.turns) void this.learnTurn(turns, turn);
-
-		if (L.quote) {
-			const quote = card.createDiv({ cls: "grill-learn-quote" });
-			quote.createDiv({ cls: "grill-learn-quote-text", text: L.quote.trim() });
-			const off = quote.createEl("button", { cls: "grill-home-chip-off", text: "x", attr: { type: "button", "aria-label": "Leave the selected text out" } });
-			off.onclick = () => {
-				L.quote = undefined;
-				quote.remove();
-				input.focus();
-			};
-		}
-		const box = card.createDiv({ cls: "grill-thread-ask grill-learn-box" });
-		const input = box.createEl("textarea", {
-			cls: "grill-thread-input",
-			attr: { rows: "2", placeholder: L.quote ? "Ask about the selected text... (Enter to send)" : "Ask about this note... (Enter to send)", "aria-label": "Ask about this note" },
-		});
-		attachPicker(input, this.pickSource());
-		const send = box.createEl("button", { text: "Send", cls: "mod-cta grill-submit-btn" });
-		const go = (): void => {
-			const text = input.value.trim();
-			if (!text || send.disabled) return;
-			const about = L.quote ? selectionMessage("ask", L.quote) : "";
-			L.quote = undefined;
-			void this.askLearn(about + text);
-		};
-		send.onclick = go;
-		input.addEventListener("keydown", (e) => {
-			if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
-				e.preventDefault();
-				go();
-			}
-		});
-		// The same buttons as under the home box, so a chat can change what answers it,
-		// how much it may do, and with which model, without leaving it.
-		const picks = card.createDiv({ cls: "grill-home-picks grill-learn-picks" });
-		const drawn = (): void => {
-			picks.empty();
-			const engine = this.engineForHome(() => {
-				// Another program can't pick up the last one's conversation: it is given
-				// the chat so far with its first message instead (see askAgent).
-				if (this.plugin.data.settings.chatEngine !== L.engine) L.agentSession = undefined;
-				L.engine = this.plugin.data.settings.chatEngine;
+		drawChat(this.root("learn"), L, {
+			app: this.app,
+			md: (markdown, el, sourcePath) => this.md(markdown, el, sourcePath),
+			read: this.reader(),
+			diagram: (parent, diagram) => this.renderDiagramBlock(parent, diagram),
+			openNote: (name) => this.openNote(name),
+			end: (test) => void this.endLearn(test),
+			ask: (text) => void this.askLearn(text),
+			pickSource: () => this.pickSource(),
+			picks: (picks, input) => {
+				const drawn = (): void => {
+					picks.empty();
+					const engine = this.engineForHome(() => {
+						// Another program can't pick up the last one's conversation: it is given
+						// the chat so far with its first message instead (see askAgent).
+						if (this.plugin.data.settings.chatEngine !== L.engine) L.agentSession = undefined;
+						L.engine = this.plugin.data.settings.chatEngine;
+						drawn();
+					});
+					drawPicks(
+						picks,
+						{
+							engine,
+							level: this.agentProgram() || this.modelHasTools() ? this.levelForHome(drawn) : null,
+							model: this.modelForHome(drawn),
+							prompts: { open: (at, use) => this.promptsMenu(at, use) },
+						},
+						input,
+					);
+				};
+				L.engine ??= this.plugin.data.settings.chatEngine;
 				drawn();
-			});
-			drawPicks(
-				picks,
-				{
-					engine,
-					level: this.agentProgram() || this.modelHasTools() ? this.levelForHome(drawn) : null,
-					model: this.modelForHome(drawn),
-					prompts: { open: (at, use) => this.promptsMenu(at, use) },
-				},
-				input,
-			);
-		};
-		L.engine ??= this.plugin.data.settings.chatEngine;
-		drawn();
-		const foot = card.createDiv({ cls: "grill-thread-help" });
-		// A note too short to test is only worth a word when it is the one open: a chat
-		// begun with no note open is anchored on a note the student never picked, and
-		// "too short to test" about it reads as nonsense.
-		const open = this.app.workspace.getActiveFile() === L.note;
-		if (!L.whole && (L.testable || open)) {
-			const test = foot.createEl("button", { cls: "grill-hint-btn", text: "Test me on this" });
-			test.disabled = !L.turns.length || !L.testable;
-			test.onclick = () => void this.endLearn(true);
-			if (!L.testable) foot.createSpan({ cls: "grill-meta", text: `${L.note.basename} is too short to test.` });
-		}
-		input.focus();
-	}
-
-	/** One turn of a Learn conversation, drawn the way follow-ups under a question are. */
-	private async learnTurn(turns: HTMLElement, turn: ThreadTurn): Promise<void> {
-		const L = this.learn;
-		if (!L) return;
-		const { el, body } = turnFrame(turns, turn.role, "Grill", turn.text, this.reader());
-		if (turn.activity) el.insertBefore(el.createDiv({ cls: "grill-meta grill-agent-summary", text: turn.activity }), body);
-		this.md(turn.text, body, L.note.path);
-		if (turn.diagram) await this.renderDiagramBlock(body, turn.diagram);
-		if (turn.role !== "tutor" || !turn.text) return;
-		// What can be done with a reply: put it in the note, or keep it as one.
-		const acts = el.createDiv({ cls: "grill-reply-acts" });
-		const act = (label: string, run: () => void | Promise<void>): void => {
-			const b = acts.createEl("button", { cls: "grill-home-link", text: label, attr: { type: "button" } });
-			b.onclick = () => void run();
-		};
-		// What the turn changed, each a way into the file, and one Undo for all of it.
-		if (turn.changes?.length) {
-			const card = el.createDiv({ cls: "grill-reply-changes" });
-			card.createDiv({ cls: "grill-meta", text: turn.undone ? "Changes undone" : turn.changes.length === 1 ? "File changed" : `${turn.changes.length} files changed` });
-			for (const c of turn.changes) {
-				const name = c.path.split("/").pop() ?? c.path;
-				const row = card.createDiv({ cls: "grill-reply-change" });
-				const link = row.createSpan({ cls: "grill-chip-link", text: name.replace(/\.md$/, "") });
-				link.onclick = () => void this.app.workspace.openLinkText(c.path, "", false);
-				if (c.before === null) row.createSpan({ cls: "grill-meta", text: " (new)" });
-				else if (c.after === null) row.createSpan({ cls: "grill-meta", text: " (removed)" });
-			}
-			if (!turn.undone) {
-				const undo = card.createEl("button", { cls: "grill-hint-btn", text: "Undo", attr: { type: "button" } });
-				undo.onclick = () => void this.undoTurn(turn);
-			}
-			acts.before(card);
-		}
-		// Studying the reply recommends, ready to start.
-		if (turn.offers?.length) {
-			const go = el.createDiv({ cls: "grill-reply-offers" });
-			for (const b of turn.offers) {
-				const btn = go.createEl("button", { cls: "grill-hint-btn", text: b.label, attr: { type: "button" } });
-				btn.onclick = () => void this.startOffer(b);
-			}
-			acts.before(go);
-		}
-		act("Insert at cursor", () => this.insertInNote(turn.text));
-		act("Save as note", () => this.saveReplyAsNote(turn.text, L.note));
-	}
-
-	/** Put a reply into the note being written: at the cursor of the Markdown note last
-	 * worked in, which is the one beside this pane. */
-	private insertInNote(text: string): void {
-		const leaf = this.app.workspace
-			.getLeavesOfType("markdown")
-			.map((l) => l as WorkspaceLeaf & { activeTime?: number })
-			.sort((a, b) => (b.activeTime ?? 0) - (a.activeTime ?? 0))[0];
-		const editor = (leaf?.view as { editor?: { replaceSelection(text: string): void } } | undefined)?.editor;
-		if (!editor) {
-			new Notice("Grill: open the note you want it in, in editing view, and try again.", 6000);
-			return;
-		}
-		// A model wrote it: made inert before it is part of a note (see safemd.ts).
-		editor.replaceSelection(safeMarkdown(text));
-		new Notice("Grill: inserted.", 2500);
-	}
-
-	/** Keep a reply as a note of its own, beside the note it was about, and open it. */
-	private async saveReplyAsNote(text: string, beside: TFile): Promise<void> {
-		const first = text.split("\n").find((l) => l.trim()) ?? "";
-		const title = replyTitle(first) || `About ${beside.basename}`;
-		const folder = beside.parent && beside.parent.path !== "/" ? `${beside.parent.path}/` : "";
-		let path = `${folder}${title}.md`;
-		for (let n = 2; this.app.vault.getAbstractFileByPath(path); n++) path = `${folder}${title} ${n}.md`;
-		try {
-			const file = await this.app.vault.create(path, `${safeMarkdown(text)}\n\nFrom a chat about [[${beside.basename}]].\n`);
-			await this.app.workspace.getLeaf("tab").openFile(file);
-		} catch (e) {
-			new Notice(`Grill: couldn't save that as a note (${(e as Error).message}).`, 6000);
-		}
+			},
+			undo: (turn) => void this.undoTurn(turn),
+			startOffer: (b) => void this.startOffer(b),
+		});
 	}
 
 	/** Send one message in the Learn conversation. Nothing is kept if the reply fails:
