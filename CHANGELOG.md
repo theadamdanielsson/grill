@@ -1,5 +1,11 @@
 # Changelog
 
+## 8.7.10
+
+- **Code-quality fixes** from the Obsidian plugin review: tighter types, no unused code,
+  and the exam, import and profile settings built the way Obsidian recommends. Nothing
+  changes in how Grill works.
+
 ## 8.7.9
 
 - **Safer answers.** Grill now checks its record files before it uses them, and an
