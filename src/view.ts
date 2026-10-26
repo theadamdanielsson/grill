@@ -48,6 +48,7 @@ import { celebrate, playSfx } from "./sfx";
 import { stopSpeaking, toSpeechText, ttsAvailable } from "./tts";
 import { hearButton, turnFrame, waitingTurn } from "./turn";
 import { drawFeedback } from "./screens/feedback";
+import { drawAnswer, drawPrompt } from "./screens/answers";
 import { SessionEntry } from "./store";
 import { renderThreadHistory } from "./thread";
 import { listSome, missesLine, mostLinked, noteLine, shortDate, startingNote } from "./suggest";
@@ -118,22 +119,6 @@ export const VIEW_TYPE = "grill-session";
 const THREAD_LIMIT = 12;
 /** The id under which the one-time "New in 7.0" box is remembered as seen. */
 const NEW_IN_7 = "new-7.0";
-
-/** Uniform (Fisher-Yates) shuffle for MC/multi choice order and match-pair pool order.
- * `.sort(() => Math.random() - 0.5)` is a well-known anti-pattern here: a sort
- * comparator has to be consistent across calls to produce a fair result, and a random
- * one isn't — V8's TimSort-derived sort is non-uniform on it, systematically favoring
- * some positions over others (and differently on different engines, so desktop and
- * mobile Obsidian wouldn't even be biased the same way). Doesn't mutate the input. */
-function shuffled<T>(arr: readonly T[]): T[] {
-	const out = arr.slice();
-	for (let i = out.length - 1; i > 0; i--) {
-		const j = Math.floor(Math.random() * (i + 1));
-		[out[i], out[j]] = [out[j], out[i]];
-	}
-	return out;
-}
-
 
 /** First run's picture of the map: notes as dots in a 400 x 220 field, [x, y, size],
  * and the links between them by index. Drawn grey; each dot then turns amber, then
@@ -671,9 +656,6 @@ export class SessionView extends ItemView {
 		easyDays: () => this.easyWeekdays(),
 		recompute: (note) => this.recomputeAggregate(note),
 	});
-	/** The choice clicked on a multiple-choice question, captured for `doAction` to
-	 * read as its "answer" — mc has no textarea to read from. */
-	private mcPicked = "";
 
 	constructor(leaf: WorkspaceLeaf, plugin: GrillPlugin) {
 		super(leaf);
@@ -3521,36 +3503,8 @@ export class SessionView extends ItemView {
 		const qEl = card.createDiv({ cls: "grill-question" });
 		// So the feedback can keep this very element in place: see renderFeedback.
 		if (thread) qEl.dataset.grillQ = String(this.idx);
-		// Loose match (3+ underscores): the same tolerance questionDefect already
-		// validates against, in case a model writes ___ or _____ instead of ____.
-		// Up to three per question (questionDefect caps it); each gets its own input.
-		const blankMatches = q.type === "blank" ? [...q.question.matchAll(/_{3,}/g)] : [];
-		const isBlank = blankMatches.length > 0;
-		const isMc = q.type === "mc" && !!q.choices && q.choices.length >= 2;
-		const isTf = q.type === "tf";
-		const isMulti = q.type === "multi" && !!q.choices && q.choices.length >= 2 && !!q.correctChoices?.length;
-		const isMatch = q.type === "match" && !!q.pairs && q.pairs.length >= 2;
-		const isDraw = q.type === "draw" && !!q.drawing;
-		const blankInputs: HTMLInputElement[] = [];
-		if (isBlank) {
-			// Each blank splits the text around a live input. A stretch with a formula or
-			// other markup in it is rendered, kept inline (see .grill-blank-text); a plain
-			// stretch stays plain text, which keeps its spacing against the input exactly.
-			const stretch = (text: string): void => {
-				if (!text) return;
-				if (/[$*`[]/.test(text)) this.md(text, qEl.createSpan({ cls: "grill-blank-text" }), q.node);
-				else qEl.createSpan({ text });
-			};
-			let cursor = 0;
-			for (const m of blankMatches) {
-				stretch(q.question.slice(cursor, m.index));
-				blankInputs.push(qEl.createEl("input", { cls: "grill-blank-input", attr: { type: "text" } }));
-				cursor = (m.index ?? 0) + m[0].length;
-			}
-			stretch(q.question.slice(cursor));
-		} else {
-			this.md(q.question, qEl, q.node);
-		}
+		const md = (markdown: string, el: HTMLElement, sourcePath: string): void => this.md(markdown, el, sourcePath);
+		const blankInputs = drawPrompt(qEl, q, md);
 		if (q.type === "occlusion") this.renderOcclusionImage(card, q, false);
 
 		if (this.reader()) {
@@ -3577,121 +3531,8 @@ export class SessionView extends ItemView {
 		// is just the visible feedback.
 		let actionTaken = false;
 
-		let ta: HTMLTextAreaElement | null = null;
-		const multiSelected = new Set<string>();
-		const matchPicks: Record<string, string> = {};
-		if (isMc || isTf) {
-			const mcRow = card.createDiv({ cls: isTf ? "grill-mc-row grill-mc-row-tf" : "grill-mc-row" });
-			const options = isTf ? ["True", "False"] : shuffled(q.choices as string[]);
-			for (const choice of options) {
-				const b = mcRow.createEl("button", { cls: isTf ? "grill-mc-btn grill-tf-btn" : "grill-mc-btn" });
-				// Rendered, not plain text: a choice can carry the same inline LaTeX/markdown
-				// the question stem does (a formula among the options, not just in the prompt),
-				// and createEl's `text:` option would show it as raw, unrendered `$...$` source.
-				this.md(choice, b, q.node);
-				b.onclick = () => {
-					mcRow.querySelectorAll("button").forEach((other) => (other.disabled = true));
-					this.mcPicked = choice;
-					doAction(false);
-				};
-			}
-		} else if (isMulti) {
-			// Select all that apply: togglable options, an explicit Submit gathers them
-			// (unlike mc/tf, a single click can't be "the answer" here).
-			const multiRow = card.createDiv({ cls: "grill-multi-row" });
-			const options = shuffled(q.choices as string[]);
-			for (const choice of options) {
-				const b = multiRow.createEl("button", { cls: "grill-multi-btn" });
-				this.md(choice, b, q.node); // see the mc/tf branch above for why this isn't `text:`
-				b.onclick = () => {
-					if (multiSelected.has(choice)) {
-						multiSelected.delete(choice);
-						b.removeClass("is-selected");
-					} else {
-						multiSelected.add(choice);
-						b.addClass("is-selected");
-					}
-				};
-			}
-		} else if (isMatch) {
-			// Matching: fixed-order left column of prompts, shuffled right-column pool.
-			// Tap a left row to arm it, then tap a right option to assign the pair;
-			// tapping an already-assigned left row lets you reassign it before Submit.
-			// The ✕ on a filled slot clears it back to unmatched without picking a
-			// replacement — needed on its own (not just reassignment) for working a
-			// match by elimination: undo a guess and leave it open while you fill in
-			// the ones you're sure of first.
-			const pairs = q.pairs as { left: string; right: string }[];
-			const matchWrap = card.createDiv({ cls: "grill-match-wrap" });
-			const leftCol = matchWrap.createDiv({ cls: "grill-match-col" });
-			const rightCol = matchWrap.createDiv({ cls: "grill-match-col grill-match-pool" });
-			const slots = new Map<string, { text: HTMLElement; clear: HTMLButtonElement }>();
-			const leftRows = new Map<string, HTMLElement>();
-			const rightBtns = new Map<string, HTMLButtonElement>();
-			let armed: string | null = null;
-			const setArmed = (left: string | null) => {
-				armed = left;
-				for (const [l, lrow] of leftRows) lrow.toggleClass("is-armed", l === left);
-			};
-			const clearAssignment = (leftKey: string) => {
-				const prev = matchPicks[leftKey];
-				if (!prev) return;
-				rightBtns.get(prev)?.removeClass("is-used");
-				delete matchPicks[leftKey];
-				const slot = slots.get(leftKey)!;
-				slot.text.setText("Tap a match →");
-				slot.clear.hide();
-			};
-			for (const p of pairs) {
-				const lrow = leftCol.createDiv({ cls: "grill-match-row" });
-				// createDiv, not createSpan: MarkdownRenderer wraps its output in a block-level
-				// <p>, which browsers won't nest cleanly inside an inline <span> — a flex child
-				// (this row is `display: flex`) behaves the same either way, so div is the safe
-				// choice here regardless.
-				this.md(p.left, lrow.createDiv({ cls: "grill-match-label" }), q.node);
-				const slot = lrow.createDiv({ cls: "grill-match-slot" });
-				const slotText = slot.createSpan({ cls: "grill-match-slot-text", text: "Tap a match →" });
-				const clearBtn = slot.createEl("button", {
-					cls: "grill-match-clear clickable-icon",
-					attr: { "aria-label": "Clear this match" },
-				});
-				clearBtn.setText("✕");
-				clearBtn.hide();
-				clearBtn.onclick = (e) => {
-					e.stopPropagation(); // don't also arm/disarm the row underneath
-					clearAssignment(p.left);
-				};
-				slots.set(p.left, { text: slotText, clear: clearBtn });
-				leftRows.set(p.left, lrow);
-				lrow.onclick = () => setArmed(armed === p.left ? null : p.left);
-			}
-			const assignTo = (leftKey: string, right: string, btn: HTMLButtonElement) => {
-				const prev = matchPicks[leftKey];
-				if (prev) rightBtns.get(prev)?.removeClass("is-used");
-				matchPicks[leftKey] = right;
-				btn.addClass("is-used");
-				const slot = slots.get(leftKey)!;
-				slot.text.setText(right);
-				slot.clear.show();
-				setArmed(null);
-			};
-			const shuffledRight = shuffled(pairs.map((p) => p.right));
-			for (const right of shuffledRight) {
-				const b = rightCol.createEl("button", { cls: "grill-match-btn" });
-				this.md(right, b, q.node); // see the mc/tf branch above for why this isn't `text:`
-				b.onclick = () => {
-					if (b.hasClass("is-used") || !armed) return;
-					assignTo(armed, right, b);
-				};
-				rightBtns.set(right, b);
-			}
-		} else if (isDraw) {
-			const box = card.createDiv({ cls: "grill-draw-box" });
-			box.createDiv({ cls: "grill-draw-text", text: "Draw it in the Excalidraw tab, then press Submit." });
-			const open = box.createEl("button", { text: "Show my drawing", cls: "grill-quiet-btn", attr: { type: "button" } });
-			open.onclick = () => void showDrawing(this.app, q.drawing as string);
-		} else if (!isBlank) {
-			ta = card.createEl("textarea", {
+		const answer = drawAnswer(card, q, blankInputs, { md, picked: () => doAction(false), showDrawing: (path) => void showDrawing(this.app, path) }, () => {
+			const ta = card.createEl("textarea", {
 				cls: "grill-answer",
 				attr: {
 					rows: thread ? "3" : "5",
@@ -3703,14 +3544,17 @@ export class SessionView extends ItemView {
 			// An answer whose marking failed (a dropped connection, no credits) is still here.
 			if (this.keptAnswer && this.keptAnswer.idx === this.idx) ta.value = this.keptAnswer.text;
 			this.keptAnswer = null;
-		}
+			return ta;
+		});
+		const ta = answer.box;
+		const picks = answer.kind === "mc" || answer.kind === "tf";
 		// One bar, read left to right as what to do: answer (and say how sure you are),
 		// or, if stuck, take a hint or say so. Flagging a bad question is rare, so it is a
 		// small icon at the far end. Everything is inside `row`, which is what gets
 		// disabled as a whole once an answer is on its way.
 		const row = card.createDiv({ cls: "grill-btn-row grill-answer-bar" });
 		const main = row.createDiv({ cls: "grill-answer-main" });
-		if (!isMc && !isTf) {
+		if (!picks) {
 			const submit = main.createEl("button", { text: thread ? "Send" : "Submit", cls: "mod-cta grill-submit-btn" });
 			submit.onclick = () => doAction(false);
 		}
@@ -3818,26 +3662,19 @@ export class SessionView extends ItemView {
 			if (actionTaken) return;
 			actionTaken = true;
 			card.querySelectorAll("button").forEach((b) => (b.disabled = true));
-			let answer = "";
-			if (!giveUp) {
-				if (isMc || isTf) answer = this.mcPicked;
-				else if (isMulti) answer = [...multiSelected].join(", ");
-				else if (isMatch)
-					answer = (q.pairs ?? []).map((p) => `${p.left} → ${matchPicks[p.left] ?? "(unmatched)"}`).join("; ");
-				else if (isBlank) answer = blankInputs.map((el) => el.value.trim()).join(" / ");
-				else if (isDraw) {
-					void this.submitDrawing(q, hintsUsed);
-					return;
-				} else answer = ta?.value.trim() ?? "";
+			if (!giveUp && answer.kind === "draw") {
+				void this.submitDrawing(q, hintsUsed);
+				return;
 			}
-			void this.submitAnswer(answer, giveUp, hintsUsed, isMulti ? [...multiSelected] : undefined, isMatch ? matchPicks : undefined);
+			const multi = answer.multi ? [...answer.multi] : undefined;
+			void this.submitAnswer(giveUp ? "" : answer.read(), giveUp, hintsUsed, multi, answer.match);
 		};
 		skip.onclick = () => doAction(true);
 		// A question answered by picking has no box to ask in, so the thread view gives it
 		// one. Whatever is typed here can only be a question: it goes straight to an
 		// answer, with no call to decide what it was. Fill-in questions get none: a second
 		// text box under the blanks is where people type the answer, and it is lost there.
-		const askCfg = thread && !ta && !isBlank && !this.replayMode && !q.missingLink ? this.plugin.llmConfig() : null;
+		const askCfg = thread && !ta && answer.kind !== "blank" && !this.replayMode && !q.missingLink ? this.plugin.llmConfig() : null;
 		if (askCfg) {
 			const ask = card.createDiv({ cls: "grill-thread-ask" });
 			const input = ask.createEl("textarea", {
