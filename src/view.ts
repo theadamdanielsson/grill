@@ -2,7 +2,7 @@
 
 import { getAllTags, ItemView, loadMermaid, MarkdownRenderer, Menu, Modal, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
-import { cloud, cloudEnabled, creditsInWords, lowBalance, planInWords, usageInWords } from "./cloud";
+import { cloudEnabled, creditsInWords, lowBalance, planInWords, usageInWords } from "./cloud";
 import { drawCloudAgreement, drawCloudPitch } from "./cloudcard";
 import { CLOUD_LEAD } from "./cloudcopy";
 import { CLAUDE_MODELS, STARTER_PROMPTS } from "./selection";
