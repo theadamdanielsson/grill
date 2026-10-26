@@ -1,5 +1,21 @@
 # Changelog
 
+## 8.7.9
+
+- **Safer answers.** Grill now checks its record files before it uses them, and an
+  answer from Claude Code or another agent can no longer erase one you just gave.
+- **The chip decides what you're tested on.** With a note on the chip in the Test box,
+  Get grilled tests that note, even with an instruction typed in. Take the chip off and
+  Grill picks.
+- **Add context works.** "Make them shorter" now makes the questions shorter, and a
+  rewrite says "Rewriting this question".
+- **Answer choices light up** when you point at them.
+- **No blank replies.** When a model sends back an empty explanation or summary, Grill
+  asks again instead of showing a blank.
+
+Under the hood, the code is reorganised into smaller parts, so future changes are easier
+to make and to test. Thanks to Magnus for the review behind it.
+
 ## 8.7.8
 
 - **Notes in any language.** Search by meaning and picking context by meaning now use a

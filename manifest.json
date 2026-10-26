@@ -1,7 +1,7 @@
 {
 	"id": "grill",
 	"name": "Grill",
-	"version": "8.7.8",
+	"version": "8.7.9",
 	"minAppVersion": "1.8.0",
 	"description": "An agentic learning system. Grill keeps state on what you know, note by note. Chat, tests and your other agents all work from it.",
 	"author": "Adam Danielsson",
