@@ -46,6 +46,7 @@ import { PLUGIN_PAGE } from "./update";
 import { CONFIDENCE_LEVELS, calibrationLine, pushCalibration } from "./calibration";
 import { celebrate, playSfx } from "./sfx";
 import { stopSpeaking, toSpeechText, ttsAvailable } from "./tts";
+import { hearButton, turnFrame, waitingTurn } from "./turn";
 import { SessionEntry } from "./store";
 import { renderThreadHistory } from "./thread";
 import { listSome, missesLine, mostLinked, noteLine, shortDate, startingNote } from "./suggest";
@@ -2357,13 +2358,8 @@ export class SessionView extends ItemView {
 	private async learnTurn(turns: HTMLElement, turn: ThreadTurn): Promise<void> {
 		const L = this.learn;
 		if (!L) return;
-		const el = turns.createDiv({ cls: `grill-thread-turn is-${turn.role}` });
-		const head = el.createDiv({ cls: "grill-thread-who" });
-		head.createSpan({ text: turn.role === "student" ? "You" : "Grill" });
-		const spoken = toSpeechText(turn.text);
-		if (turn.role === "tutor" && spoken && (ttsAvailable() || this.plugin.naturalVoiceSource())) this.hearButton(head, spoken, "Read this aloud");
-		if (turn.activity) el.createDiv({ cls: "grill-meta grill-agent-summary", text: turn.activity });
-		const body = el.createDiv({ cls: "grill-thread-text" });
+		const { el, body } = turnFrame(turns, turn.role, "Grill", turn.text, this.reader());
+		if (turn.activity) el.insertBefore(el.createDiv({ cls: "grill-meta grill-agent-summary", text: turn.activity }), body);
 		this.md(turn.text, body, L.note.path);
 		if (turn.diagram) await this.renderDiagramBlock(body, turn.diagram);
 		if (turn.role !== "tutor" || !turn.text) return;
@@ -2472,9 +2468,7 @@ export class SessionView extends ItemView {
 		L.turns.push(asked);
 		this.renderLearn();
 		const turnsEl = this.contentEl.querySelector<HTMLElement>(".grill-learn-turns");
-		const waiting = turnsEl?.createDiv({ cls: "grill-thread-turn is-tutor is-waiting" });
-		waiting?.createDiv({ cls: "grill-thread-who", text: "Grill" });
-		waiting?.createDiv({ cls: "grill-thread-text grill-meta", text: this.agentProgram() || this.modelHasTools() ? "Working..." : "Reading your note..." });
+		const waiting = turnsEl ? waitingTurn(turnsEl, "Grill", this.agentProgram() || this.modelHasTools() ? "Working..." : "Reading your note...").el : undefined;
 		waiting?.scrollIntoView({ block: "nearest" });
 		this.contentEl.querySelectorAll<HTMLButtonElement | HTMLTextAreaElement>(".grill-learn button, .grill-learn textarea").forEach((b) => (b.disabled = true));
 		try {
@@ -3615,7 +3609,7 @@ export class SessionView extends ItemView {
 		}
 		if (q.type === "occlusion") this.renderOcclusionImage(card, q, false);
 
-		if (ttsAvailable() || this.plugin.naturalVoiceSource()) {
+		if (this.reader()) {
 			// Derived from the raw markdown, not qEl's rendered text: MarkdownRenderer.render
 			// (see `md` above) resolves asynchronously, so qEl's textContent isn't reliably
 			// populated yet at this point in the render. Placed after qEl, not inside it, so
@@ -4068,7 +4062,7 @@ export class SessionView extends ItemView {
 				.filter(Boolean)
 				.join("\n\n"),
 		);
-		if (ttsAvailable() || this.plugin.naturalVoiceSource()) this.hearButton(badgeRow, spoken, "Read this aloud", "grill-tts-feedback");
+		if (this.reader()) this.hearButton(badgeRow, spoken, "Read this aloud", "grill-tts-feedback");
 		// Not for a question that was asked about instead of answered: there is no answer
 		// to call correct.
 		const canMark = r.verdict !== "correct" && !r.askedForHelp && this.grades.last;
@@ -4110,7 +4104,7 @@ export class SessionView extends ItemView {
 			// Its own button: the one on the verdict reads everything, and after asking
 			// for help the expected answer is the one thing left to hear.
 			const expected = toSpeechText(r.modelAnswer);
-			if (expected && (ttsAvailable() || this.plugin.naturalVoiceSource())) {
+			if (expected && this.reader()) {
 				this.hearButton(reviewHead, expected, "Read the expected answer aloud");
 			}
 			this.md(r.modelAnswer, reviewCard.createDiv({ cls: "grill-model-answer" }), r.node);
@@ -4178,21 +4172,14 @@ export class SessionView extends ItemView {
 		btn.focus();
 	}
 
-	/** A speaker button that reads `text` aloud. A natural voice has to be fetched
-	 * first, which takes a few seconds for a long passage, so the button shows it is
-	 * working from the moment it is pressed until the voice starts. */
+	/** A speaker button that reads `text` aloud (see turn.ts). */
 	private hearButton(parent: HTMLElement, text: string, label: string, cls = ""): HTMLButtonElement {
-		const hear = parent.createEl("button", { cls: `clickable-icon grill-tts-btn ${cls}`.trim(), attr: { "aria-label": label, type: "button" } });
-		setIcon(hear, "volume-2");
-		hear.onclick = async () => {
-			hear.addClass("is-loading");
-			try {
-				await this.plugin.readAloud(text);
-			} finally {
-				hear.removeClass("is-loading");
-			}
-		};
-		return hear;
+		return hearButton(parent, text, label, (t) => this.plugin.readAloud(t), cls);
+	}
+
+	/** How a turn is read aloud, or null when no voice is available. */
+	private reader(): ((text: string) => Promise<void>) | null {
+		return ttsAvailable() || this.plugin.naturalVoiceSource() ? (t) => this.plugin.readAloud(t) : null;
 	}
 
 	/** "Explain this", and whatever is asked after it: one conversation that flows down
@@ -4211,16 +4198,7 @@ export class SessionView extends ItemView {
 		let turns: HTMLElement;
 
 		/** One turn's frame: who is speaking, a button to hear it, and its body. */
-		const frame = (role: "student" | "tutor", spoken: string): HTMLElement => {
-			const el = turns.createDiv({ cls: `grill-thread-turn is-${role}` });
-			const head = el.createDiv({ cls: "grill-thread-who" });
-			head.createSpan({ text: role === "student" ? "You" : who });
-			const text = toSpeechText(spoken);
-			if (role === "tutor" && text && (ttsAvailable() || this.plugin.naturalVoiceSource())) {
-				this.hearButton(head, text, "Read this aloud");
-			}
-			return el.createDiv({ cls: "grill-thread-text" });
-		};
+		const frame = (role: "student" | "tutor", spoken: string): HTMLElement => turnFrame(turns, role, who, spoken, this.reader()).body;
 		const say = async (turn: ThreadTurn): Promise<void> => {
 			const body = frame(turn.role, turn.text);
 			this.md(turn.text, body, r.node);
@@ -4262,9 +4240,7 @@ export class SessionView extends ItemView {
 				input.disabled = true;
 				await say({ role: "student", text });
 				const asked = turns.lastElementChild;
-				const waiting = turns.createDiv({ cls: "grill-thread-turn is-tutor is-waiting" });
-				waiting.createDiv({ cls: "grill-thread-who", text: who });
-				waiting.createDiv({ cls: "grill-thread-text grill-meta", text: "Reading your note..." });
+				const waiting = waitingTurn(turns, who, "Reading your note...").el;
 				waiting.scrollIntoView({ block: "nearest" });
 				const epoch = this.sessionEpoch;
 				try {
@@ -4336,12 +4312,10 @@ export class SessionView extends ItemView {
 			btn.remove();
 			this.explaining.add(r);
 			open();
-			const waiting = turns.createDiv({ cls: "grill-thread-turn is-tutor is-waiting" });
-			waiting.createDiv({ cls: "grill-thread-who", text: who });
 			// Named stages, not a frozen "Explaining...": there's no real token stream to
 			// show (requestUrl is a buffered, non-streaming call), so this is honest staged
 			// status text, not a fake typing animation.
-			const status = waiting.createDiv({ cls: "grill-thread-text grill-meta", text: "Reading your answer and the note..." });
+			const { el: waiting, status } = waitingTurn(turns, who, "Reading your answer and the note...");
 			const stageTimer = window.setTimeout(() => status.setText("Writing an explanation..."), 1200);
 			const epoch = this.sessionEpoch;
 			try {
