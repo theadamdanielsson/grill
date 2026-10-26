@@ -148,7 +148,7 @@ test("a message graded by mistake is taken back, and the question stays to be an
 		assert.equal(view.results.length, 0);
 		assert.equal(view.questions.length, 1);
 		assert.equal(view.questionBank[ID][0].rejected, undefined);
-		assert.equal(view.pendingOverride, null);
+		assert.equal(view.grades.last, null);
 	}));
 
 test("what was typed goes back in the box when it is taken back", () =>
@@ -212,7 +212,7 @@ test("taking an answer back takes its confidence point and its resolved misconce
 		await view.applyGrade(q, "correct", null, undefined, 0);
 		view.pendingConfidence = 1;
 		view.captureConfidence("correct");
-		view.pendingOverride.resolved = { tag: "tag", status: "active", lastSeen: "b" };
+		view.grades.last.resolved = { tag: "tag", status: "active", lastSeen: "b" };
 		view.registry.tag.status = "resolved";
 		assert.equal(plugin.data.calibration.length, 2);
 

@@ -26,13 +26,13 @@ import { BridgeMap, CANDIDATE_CAP, detectBridgeCandidates, detectSemanticBridgeC
 import { buildGraph, formatGrade, gradeScore, type GraphNode } from "./graph";
 import { GraphAppearance, LearningMap, MapPalette } from "./mapview";
 import type { CachedQuestion, EmbeddingMap, QuestionBank } from "./store";
-import { daysLeft, EXAM_RETENTION, KEEP_NEW_PER_DAY, KEEP_RETENTION, examFor, examLines, examNewQuota, fitDueToExam, pullInForExams } from "./exams";
-import { ConceptMap, ConceptMastery, blockedByDailyCap, conceptTargetDifficulty, conceptTested, CATCH_UP, dueConceptCount, missedConceptIds, spreadBacklog, noteAggregate, pickConcepts, priorityNotes, disperseSiblingDueDates, noteShape, recordConceptRating, reconcileConcepts, trueRetentionLine } from "./concepts";
+import { daysLeft, EXAM_RETENTION, KEEP_NEW_PER_DAY, KEEP_RETENTION, examFor, examLines, examNewQuota, pullInForExams } from "./exams";
+import { ConceptMap, ConceptMastery, blockedByDailyCap, conceptTargetDifficulty, conceptTested, CATCH_UP, dueConceptCount, missedConceptIds, spreadBacklog, noteAggregate, pickConcepts, priorityNotes, disperseSiblingDueDates, reconcileConcepts, trueRetentionLine } from "./concepts";
 import { asRecordData, learnerBrief } from "./brief";
 import { collectNoteImages, ImageInput, hasEmbeddedImage } from "./images";
 import { extractPdfTextCached, noteStudyText } from "./pdf";
 import { hashStr, mapWithConcurrency, safeSlice } from "./text";
-import { buildDueDateHistogram, DueDateHistogram, FreshContentPolicy, interleaveByFolder, NoteMastery, pickCandidates, QDifficulty, Rating, recordNoteStats, STATUS_WORDS, statusOf } from "./mastery";
+import { buildDueDateHistogram, DueDateHistogram, FreshContentPolicy, interleaveByFolder, NoteMastery, pickCandidates, QDifficulty, Rating, STATUS_WORDS, statusOf } from "./mastery";
 import {
 	buildSessionGraph,
 	expandSelectionWithLinks,
@@ -56,7 +56,7 @@ import { activitySummary, AgentEvent, agentBrief, AGENT_LEVELS, claudeCommands, 
 import type { VaultPort } from "./vaulttools";
 import { applyIntensity, type SettingsPort } from "./settingstools";
 import { RECORD_RULES, RECORD_TOOLS, runRecordQuery, type RecordPort, type StudyOffer } from "./recordtools";
-import { applyAnswer } from "./record";
+import { SessionGrades } from "./sessiongrades";
 import { SessionSaver } from "./sessionsaver";
 import { cacheHit, priorQuestions, rememberGenerated } from "./bank";
 import { QuestionsScreen } from "./screens/questions";
@@ -123,14 +123,6 @@ const NEW_IN_7 = "new-7.0";
  * one isn't — V8's TimSort-derived sort is non-uniform on it, systematically favoring
  * some positions over others (and differently on different engines, so desktop and
  * mobile Obsidian wouldn't even be biased the same way). Doesn't mutate the input. */
-/** Put a concept back to a snapshot exactly. Object.assign alone restores what the
- * snapshot has but leaves behind what the answer added (a concept's first review-log
- * entry, its leech count), so those are cleared first. */
-function restoreConcept(cm: ConceptMastery, snapshot: ConceptMastery): void {
-	for (const key of Object.keys(cm)) delete (cm as unknown as Record<string, unknown>)[key];
-	Object.assign(cm, structuredClone(snapshot));
-}
-
 function shuffled<T>(arr: readonly T[]): T[] {
 	const out = arr.slice();
 	for (let i = out.length - 1; i > 0; i--) {
@@ -720,28 +712,20 @@ export class SessionView extends ItemView {
 	 * the taps. Asking on every answer was the reason this had to be opt-in; asking
 	 * occasionally means it can just be on. */
 	private static readonly CONFIDENCE_EVERY = 4;
-	/** Snapshot of the just-graded concept's pre-answer FSRS state, taken right before
-	 * `applyGrade` mutates it, so a wrong verdict can be corrected via "Mark correct"
-	 * without hand-rolling an FSRS "undo": restore this, then replay the exact same
-	 * scheduling call with verdict forced to "correct". Single-use and overwritten each
-	 * answer (null for self-grade, where the student's own rating IS the ground truth,
-	 * and for missing-link questions, which have no concept schedule to correct). */
-	private pendingOverride: {
-		conceptId: string;
-		conceptSnapshot: ConceptMastery;
-		note: string;
-		originalVerdict: Verdict;
-		originalMisconceptionTag: string | undefined;
-		difficulty: QDifficulty;
-		type: string;
-		confidence: number | null;
-		hintsUsed: number;
-		/** Set when this answer also added a calibration point, so taking the answer
-		 * back takes that with it. */
-		calibrated?: boolean;
-		/** Set when this answer marked a misconception resolved: what it was before. */
-		resolved?: { tag: string; status: "active" | "resolved" | "dismissed"; lastSeen: string };
-	} | null = null;
+	/** The record side of grading, and the last grade while it can be taken back (see
+	 * sessiongrades.ts). */
+	private grades = new SessionGrades({
+		concepts: () => this.concepts,
+		mastery: () => this.plugin.mastery,
+		registry: () => this.registry,
+		calibration: () => this.plugin.data.calibration,
+		persist: () => void this.plugin.persist(),
+		examLeft: (note) => this.examLeftFor(note),
+		recall: (left) => this.recallFor(left),
+		histogram: () => this.dueDateHistogram,
+		easyDays: () => this.easyWeekdays(),
+		recompute: (note) => this.recomputeAggregate(note),
+	});
 	/** The choice clicked on a multiple-choice question, captured for `doAction` to
 	 * read as its "answer" — mc has no textarea to read from. */
 	private mcPicked = "";
@@ -4068,7 +4052,7 @@ export class SessionView extends ItemView {
 		renderFlameIcon(badge.createSpan({ cls: "grill-verdict-icon" }));
 		badge.createSpan({ text: v.text });
 		// The grader/deterministic path got this one wrong: single-use, so it's only
-		// offered right after the answer that produced it (see pendingOverride's doc
+		// offered right after the answer that produced it (see SessionGrades's doc
 		// comment) — not on an older question, and never for self-grade (your own
 		// rating already is the ground truth there).
 		// Hear what the card says: the verdict, your answer, the feedback, and the expected
@@ -4087,12 +4071,12 @@ export class SessionView extends ItemView {
 		if (ttsAvailable() || this.plugin.naturalVoiceSource()) this.hearButton(badgeRow, spoken, "Read this aloud", "grill-tts-feedback");
 		// Not for a question that was asked about instead of answered: there is no answer
 		// to call correct.
-		const canMark = r.verdict !== "correct" && !r.askedForHelp && this.pendingOverride;
-		// Same single-use restriction as "Mark correct" (pendingOverride), same
+		const canMark = r.verdict !== "correct" && !r.askedForHelp && this.grades.last;
+		// Same single-use restriction as "Mark correct" (SessionGrades.last), same
 		// authored/bridge exclusion as the pre-answer version, and skipped on the
 		// route-consent screen — discarding the question there would pull the rug out
 		// from under the yes/no choice being offered below.
-		const canDiscard = !pendingExtension && !this.questions[this.idx].authored && this.pendingOverride;
+		const canDiscard = !pendingExtension && !this.questions[this.idx].authored && this.grades.last;
 		// Overruling a grade saves before it redraws. Until it has, nothing else on this
 		// screen may be pressed: Next in that gap would redraw this result on the next
 		// question.
@@ -4169,7 +4153,7 @@ export class SessionView extends ItemView {
 		// What was sent was graded as an answer but wasn't meant as one. Only where the
 		// answer was typed: a picked choice is never anything but an answer.
 		// The other way round too: what was meant as an answer was read as a question.
-		if (this.pendingOverride && (!r.gaveUp || r.askedForHelp) && this.typedAnswer(this.questions[this.idx])) {
+		if (this.grades.last && (!r.gaveUp || r.askedForHelp) && this.typedAnswer(this.questions[this.idx])) {
 			const back = quiet.createEl("button", { text: r.askedForHelp ? "That was my answer" : "That wasn't my answer", cls: "grill-quiet-btn" });
 			back.onclick = () => {
 				lock();
@@ -6192,7 +6176,7 @@ export class SessionView extends ItemView {
 		// Re-probed a known confusion and got it right: mark it resolved.
 		if (q.targetsMisconception && verdict === "correct" && this.registry[q.targetsMisconception]) {
 			const was = this.registry[q.targetsMisconception];
-			if (this.pendingOverride) this.pendingOverride.resolved = { tag: was.tag, status: was.status, lastSeen: was.lastSeen };
+			if (this.grades.last) this.grades.last.resolved = { tag: was.tag, status: was.status, lastSeen: was.lastSeen };
 			resolveMisconception(this.registry, q.targetsMisconception);
 			this.dirty = true;
 		}
@@ -6365,9 +6349,7 @@ export class SessionView extends ItemView {
 		hintsUsed = 0,
 		said?: { question?: string; answer: string; feedback?: string },
 	): Promise<void> {
-		// Cleared by default; only the AI/deterministic-verdict path below (re)populates
-		// it. Never carries over from a previous question.
-		this.pendingOverride = null;
+		this.grades.last = null;
 		// Replay is practice-only: never touch the schedule or stats.
 		if (this.replayMode) return;
 		// A missing-link bridge question is outside FSRS scheduling: it isn't a note
@@ -6376,49 +6358,15 @@ export class SessionView extends ItemView {
 			if (q.connectTo) this.recordBridgeResult(q.node, q.connectTo, "answered", q.question);
 			return;
 		}
-		const cid = q.conceptId;
-		if (cid && this.concepts[cid]) {
-			const left = this.examLeftFor(q.node);
-			const retention = this.recallFor(left);
-			if (rating !== null) {
-				// Self-grade: the student's own Again/Hard/Good/Easy already IS the ground
-				// truth (no third-party verdict to second-guess), so no override snapshot.
-				recordConceptRating(this.concepts, cid, rating, new Date(), retention, this.dueDateHistogram, this.easyWeekdays());
-				noteShape(this.concepts[cid], { tier: q.difficulty, type: q.type });
-				if (left !== null) fitDueToExam(this.concepts[cid], left, new Date());
-			} else {
-				// Snapshot the pre-answer state before mutating it — see pendingOverride's
-				// doc comment. structuredClone is safe here: ConceptMastery is plain JSON
-				// data (numbers/strings/a flat array), nothing that doesn't survive a clone.
-				this.pendingOverride = {
-					conceptId: cid,
-					conceptSnapshot: structuredClone(this.concepts[cid]),
-					note: q.node,
-					originalVerdict: verdict,
-					originalMisconceptionTag: misconceptionTag,
-					difficulty: q.difficulty ?? "medium",
-					type: q.type ?? "write",
-					confidence: this.pendingConfidence,
-					hintsUsed,
-				};
-				applyAnswer(
-					this.concepts,
-					cid,
-					{ verdict, difficulty: q.difficulty ?? "medium", type: q.type ?? "write", said: said ?? {}, tag: misconceptionTag },
-					// The confidence is read before captureConfidence (called after applyGrade
-					// returns) clears it: a guessed correct answer lands as Hard, not Good/Easy.
-					{ retention, histogram: this.dueDateHistogram, easyDays: this.easyWeekdays(), examLeft: left, confidence: this.pendingConfidence, hintsUsed },
-				);
-			}
-		}
-		recordNoteStats(this.plugin.mastery, q.node, verdict, misconceptionTag);
-		this.recomputeAggregate(q.node);
+		// The confidence is read before captureConfidence (called after applyGrade
+		// returns) clears it.
+		this.grades.grade(q, verdict, rating, misconceptionTag, hintsUsed, said, this.pendingConfidence);
 		this.dirty = true;
 		this.scheduleCheckpoint();
 	}
 
 	/** "Mark correct": the deterministic/AI grader got this one wrong. Restores the
-	 * concept to its pre-answer snapshot (see pendingOverride) and replays the exact
+	 * concept to its pre-answer snapshot (see SessionGrades) and replays the exact
 	 * same scheduling call with verdict forced to "correct" — no hand-rolled FSRS
 	 * "undo" math, just the normal correct-path logic run from the real prior state.
 	 * Also corrects the note-level counters/misconception tally, then re-renders the
@@ -6431,39 +6379,12 @@ export class SessionView extends ItemView {
 	 * out to have been unnecessary is harmless; unwinding it mid-flight risks
 	 * desyncing planCursor against the questions array. Not chasing that edge case. */
 	private async markCorrect(r: QuestionResult): Promise<void> {
-		const o = this.pendingOverride;
-		if (!o || r.verdict === "correct") return;
-		const cm = this.concepts[o.conceptId];
-		if (cm) {
-			restoreConcept(cm, o.conceptSnapshot);
-			const left = this.examLeftFor(o.note);
-			applyAnswer(
-				this.concepts,
-				o.conceptId,
-				{ verdict: "correct", difficulty: o.difficulty, type: o.type },
-				{ retention: this.recallFor(left), histogram: this.dueDateHistogram, easyDays: this.easyWeekdays(), examLeft: left, confidence: o.confidence, hintsUsed: o.hintsUsed },
-			);
-		}
-		// Correct note-level counters: undo the wrong bucket, credit the right one, and
-		// remove the misconception tally if a tag was recorded off the wrong verdict.
-		const m = this.plugin.mastery[o.note];
-		if (m) {
-			if (o.originalVerdict === "partial") m.partial = Math.max(0, m.partial - 1);
-			else if (o.originalVerdict === "incorrect") m.incorrect = Math.max(0, m.incorrect - 1);
-			m.correct += 1;
-			if (o.originalMisconceptionTag) {
-				const remaining = (m.misconceptions[o.originalMisconceptionTag] ?? 0) - 1;
-				if (remaining <= 0) delete m.misconceptions[o.originalMisconceptionTag];
-				else m.misconceptions[o.originalMisconceptionTag] = remaining;
-			}
-		}
-		this.recomputeAggregate(o.note);
+		if (r.verdict === "correct" || !this.grades.markCorrect()) return;
 		// Same object reference already sitting in this.results, so the session summary
 		// and end-of-session debrief transcript see the correction for free.
 		r.verdict = "correct";
 		r.feedback = "Marked correct by you.";
 		r.misconceptionTag = undefined;
-		this.pendingOverride = null;
 		this.dirty = true;
 		await this.flush();
 		this.renderFeedback(r, null);
@@ -6472,7 +6393,7 @@ export class SessionView extends ItemView {
 	/** "Bad question", after the fact: the pre-answer version (`reportBadQuestion`)
 	 * only covers a question deleted before it's scored — but a wrong, broken, or
 	 * nonsensical question is just as often obvious only once you've read the
-	 * feedback. Restores the concept to its pre-answer snapshot (see pendingOverride,
+	 * feedback. Restores the concept to its pre-answer snapshot (see SessionGrades,
 	 * the same mechanism "Mark correct" uses) instead of re-scoring it, undoes the
 	 * note-level counters/misconception tally, purges the cached variant so it's
 	 * never served again, and drops it from the session and its results/debrief
@@ -6480,9 +6401,8 @@ export class SessionView extends ItemView {
 	 * restriction as "Mark correct": only available right after the answer that
 	 * produced it. */
 	private async discardAnsweredQuestion(r: QuestionResult): Promise<void> {
-		const o = this.pendingOverride;
+		const o = this.grades.undo();
 		if (!o) return;
-		this.undoGrade(o);
 		const entry = this.questionBank[o.conceptId]?.find((e) => e.question === r.question);
 		if (entry && !entry.rejected) {
 			entry.rejected = true;
@@ -6492,42 +6412,10 @@ export class SessionView extends ItemView {
 		if (ri !== -1) this.results.splice(ri, 1);
 		this.questions.splice(this.idx, 1);
 		this.targetCount = Math.max(this.questions.length, this.targetCount - 1);
-		this.pendingOverride = null;
 		this.dirty = true;
 		new Notice("Grill: question deleted. Won't come back, and it doesn't count against you.");
 		await this.flush();
 		await this.goToQuestion(this.idx);
-	}
-
-	/** Take the last graded answer out of the record: the concept goes back to its
-	 * pre-answer snapshot and the note's counters and misconception tally lose the
-	 * verdict. What the two ways of withdrawing an answer have in common. */
-	private undoGrade(o: NonNullable<SessionView["pendingOverride"]>): void {
-		const cm = this.concepts[o.conceptId];
-		if (cm) restoreConcept(cm, o.conceptSnapshot);
-		const m = this.plugin.mastery[o.note];
-		if (m) {
-			if (o.originalVerdict === "correct") m.correct = Math.max(0, m.correct - 1);
-			else if (o.originalVerdict === "partial") m.partial = Math.max(0, m.partial - 1);
-			else m.incorrect = Math.max(0, m.incorrect - 1);
-			if (o.originalMisconceptionTag) {
-				const remaining = (m.misconceptions[o.originalMisconceptionTag] ?? 0) - 1;
-				if (remaining <= 0) delete m.misconceptions[o.originalMisconceptionTag];
-				else m.misconceptions[o.originalMisconceptionTag] = remaining;
-			}
-		}
-		this.recomputeAggregate(o.note);
-		// What else the answer wrote: its point in the confidence record, and a
-		// misconception it marked resolved.
-		if (o.calibrated) {
-			this.plugin.data.calibration.pop();
-			void this.plugin.persist();
-		}
-		const was = o.resolved;
-		if (was && this.registry[was.tag]) {
-			this.registry[was.tag].status = was.status;
-			this.registry[was.tag].lastSeen = was.lastSeen;
-		}
 	}
 
 	/** True for the question types answered by typing, where a message could be
@@ -6544,12 +6432,9 @@ export class SessionView extends ItemView {
 	 * single-use restriction as "Mark correct": only right after the answer that
 	 * produced it. Without a model to read it again, the question is asked afresh. */
 	private async takeBackAnswer(r: QuestionResult): Promise<void> {
-		const o = this.pendingOverride;
-		if (!o) return;
-		this.undoGrade(o);
+		if (!this.grades.undo()) return;
 		const ri = this.results.lastIndexOf(r);
 		if (ri !== -1) this.results.splice(ri, 1);
-		this.pendingOverride = null;
 		this.dirty = true;
 		await this.flush();
 		const q = this.questions[this.idx];
@@ -6693,7 +6578,7 @@ export class SessionView extends ItemView {
 		if (this.pendingConfidence === null) return;
 		const ok = verdict === "correct" ? 1 : verdict === "partial" ? 0.5 : 0;
 		pushCalibration(this.plugin.data.calibration, this.pendingConfidence, ok);
-		if (this.pendingOverride) this.pendingOverride.calibrated = true;
+		if (this.grades.last) this.grades.last.calibrated = true;
 		this.pendingConfidence = null;
 		void this.plugin.persist();
 	}
