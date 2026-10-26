@@ -48,6 +48,7 @@ import { celebrate, playSfx } from "./sfx";
 import { stopSpeaking, toSpeechText, ttsAvailable } from "./tts";
 import { hearButton, turnFrame, waitingTurn } from "./turn";
 import { drawFeedback } from "./screens/feedback";
+import { SessionRouting, type ContagionRoute, type PendingExtension, type PrereqRoute, type RouteLookup } from "./routing";
 import { drawChat, type LearnState } from "./screens/chat";
 import { drawAnswer, drawPrompt } from "./screens/answers";
 import { SessionEntry } from "./store";
@@ -276,14 +277,6 @@ const BROAD_CONCEPT_KINDS = new Set<ConceptKind>(["heading", "note"]);
  * so a screenshot-heavy vault doesn't run up a huge image-token bill. */
 const IMAGES_PER_NOTE_CAP = 4;
 const CONTEXT_IMAGE_CAP = 12;
-/** Reactive prerequisite routing: most detours inserted per session, so a run of
- * wrong answers can't balloon the session or chain endlessly down the link graph. */
-const MAX_ROUTES = 3;
-/** Most misconception-contagion probes inserted per session — deliberately smaller
- * than MAX_ROUTES since this is a more speculative mechanic (re-probing a raw,
- * not-yet-canonicalized tag on a note it may or may not actually apply to). */
-const MAX_CONTAGION = 2;
-
 export interface QuestionResult extends SessionEntry {
 	hintsUsed: number;
 	/** What was sent was a question about the question, not an answer to it (thread
@@ -296,31 +289,6 @@ export interface QuestionResult extends SessionEntry {
 	missingLink?: boolean;
 	connectTo?: string;
 }
-
-/** A prerequisite reactive-routing candidate, found but not yet committed — used to
- * gate the last-question-of-the-session case behind a consent prompt. */
-interface PrereqRoute {
-	concept: Concept;
-	prereqNote: string;
-}
-
-/** A misconception-contagion candidate: the same confusion the student just showed on
- * `fromNote`, tested on a linked, not-yet-known neighbor before they naturally hit it
- * there. Found but not yet committed. AI mode only — there's no deterministic way to
- * judge whether a raw grader tag plausibly applies elsewhere without a model in the
- * loop, so this never fires in no-key mode. */
-interface ContagionRoute {
-	concept: Concept;
-	neighborNote: string;
-	tag: string;
-}
-
-/** A reactive session extension offered but not yet accepted/declined by the student:
- * either a prerequisite route or a misconception-contagion probe. Only one kind can be
- * pending at a time (see submitAnswer/recordSelfGrade — prerequisite takes priority). */
-type PendingExtension =
-	| { kind: "prerequisite"; route: PrereqRoute; fromNote: string }
-	| { kind: "contagion"; route: ContagionRoute; fromNote: string };
 
 /** Cap on learning-graph nodes laid out + drawn, so a huge vault stays responsive. */
 const MAP_NODE_CAP = 600;
@@ -563,22 +531,8 @@ export class SessionView extends ItemView {
 	private openContext: (() => void) | null = null;
 	/** In-flight batch generation, if any. */
 	private pending: Promise<void> | null = null;
-	/** Reactive routing budget: detours spent, and prerequisites already routed to
-	 * (so the same foundation isn't inserted twice in one session). */
-	private routesUsed = 0;
-	private routedNotes = new Set<string>();
-	/** Each session note's rank in the session graph's foundationalOrder (lower = more
-	 * heavily depended-upon by other session notes), captured once at session setup so
-	 * reactive routing — which runs later, per answer — can prefer shoring up the most
-	 * globally-connected weak prerequisite over just the first one found. */
-	private noteFoundationalRank = new Map<string, number>();
-	/** Each session note's undirected neighbors (outgoing + incoming links, deduped),
-	 * captured once at session setup for misconception contagion to walk later. */
-	private sessionNeighbors = new Map<string, string[]>();
-	/** Misconception-contagion budget: probes spent, and neighbors already probed (so
-	 * the same neighbor isn't targeted twice in one session). */
-	private contagionUsed = 0;
-	private contagionNotes = new Set<string>();
+	/** Where the session routes after a wrong answer, and how much of that it has left. */
+	private routing = new SessionRouting();
 	/** How many of `targets` have been handed to generation so far. Tracked separately
 	 * from `questions.length` because the quality validator can drop a generated
 	 * question, so one target need not yield exactly one question — keying the next
@@ -4501,12 +4455,7 @@ export class SessionView extends ItemView {
 		this.targetCount = this.questions.length;
 		this.progressTotal = this.targetCount;
 		this.planCursor = 0;
-		this.routesUsed = 0;
-		this.routedNotes.clear();
-		this.noteFoundationalRank = new Map();
-		this.sessionNeighbors = new Map();
-		this.contagionUsed = 0;
-		this.contagionNotes.clear();
+		this.routing.reset();
 		this.dirty = false;
 		this.bankDirty = false;
 		this.bridgesDirty = false;
@@ -5414,10 +5363,7 @@ export class SessionView extends ItemView {
 			const selectedFiles = names.map((n) => byName.get(n)).filter((f): f is TFile => !!f);
 			const graph = buildSessionGraph(this.app, selectedFiles);
 			this.linksBlock = formatLinksBlock(graph, this.plugin.mastery);
-			this.noteFoundationalRank = new Map(graph.foundationalOrder.map((n, i) => [n, i]));
-			this.sessionNeighbors = new Map(
-				Object.entries(graph.adjacency).map(([n, adj]) => [n, [...new Set([...adj.linksTo, ...adj.linkedFrom])]]),
-			);
+			this.routing.setGraph(graph.foundationalOrder, graph.adjacency);
 			console.debug(`Grill: session graph build took ${Date.now() - graphStart}ms`);
 
 			// Concept layer: reconcile the extracted concepts (create new ones,
@@ -5442,10 +5388,7 @@ export class SessionView extends ItemView {
 			this.results = [];
 			this.idx = 0;
 			this.pending = null;
-			this.routesUsed = 0;
-			this.routedNotes.clear();
-			this.contagionUsed = 0;
-			this.contagionNotes.clear();
+			this.routing.resetBudget();
 			this.planCursor = 0;
 			// A session given its concepts asks all of them, whatever the usual length.
 			const want = only ? Math.max(1, only.size) : this.dueOnly ? NO_MEANINGFUL_CAP : Math.max(1, s.questionsPerSession);
@@ -6060,14 +6003,6 @@ export class SessionView extends ItemView {
 		return st === "struggling" ? 0 : st === "untested" ? 1 : 2;
 	}
 
-	/** A note's position in the session graph's foundationalOrder — lower is more
-	 * heavily depended-upon by other session notes. Notes outside the session graph
-	 * (shouldn't normally happen for a routing candidate, but not guaranteed) sort last,
-	 * so the tie-break only ever activates between two notes it actually has data for. */
-	private foundationalRank(note: string): number {
-		return this.noteFoundationalRank.get(note) ?? Number.MAX_SAFE_INTEGER;
-	}
-
 	/** Reactive DOWN-on-failure routing: after a wrong answer mid-session, if the missed
 	 * note builds on a prerequisite the student is weak on, insert a question about that
 	 * prerequisite next so they shore up the foundation before moving on — no confirmation,
@@ -6082,41 +6017,35 @@ export class SessionView extends ItemView {
 		if (route) this.commitRoutedTarget(route, fromNote);
 	}
 
-	/** Pure lookup for reactive routing: is there a weak, not-yet-planned,
-	 * not-already-routed prerequisite the missed note builds on? Does not mutate any
-	 * session state, so it's safe to call just to see what WOULD be offered. */
+	/** What routing reads of the session and the record (see routing.ts). */
+	private routeLookup(): RouteLookup {
+		const file = (note: string) => this.byName.get(note);
+		return {
+			prereqsOf: (note) => {
+				const f = file(note);
+				return f ? outgoingBasenames(this.app, f) : [];
+			},
+			inSession: (note) => this.byName.has(note),
+			weakness: (note) => this.noteWeakness(note),
+			conceptsOf: (note) => this.conceptsByNote.get(note) ?? [],
+			known: (id) => statusOf(this.concepts[id]) === "known",
+			planned: new Set(this.targets.map((t) => t.conceptId)),
+		};
+	}
+
+	/** A weak prerequisite the missed note builds on, to route to. Changes nothing. */
 	private findPrerequisiteRoute(fromNote: string): PrereqRoute | null {
 		if (this.replayMode) return null; // no generation or plan mutation during a replay
-		if (this.routesUsed >= MAX_ROUTES) return null;
-		const file = this.byName.get(fromNote);
-		if (!file) return null;
-		const planned = new Set(this.targets.map((t) => t.conceptId));
-		// Weakest-first, same as before; among equally-weak candidates, prefer the one
-		// more heavily depended-upon by other session notes (shoring it up pays off
-		// across the whole session, not just this one edge). In a sparse vault every
-		// candidate ranks equally (or is unranked), so this tie-break is a no-op and
-		// behavior is identical to before.
-		const prereqs = outgoingBasenames(this.app, file)
-			.filter((p) => p !== fromNote && this.byName.has(p) && !this.routedNotes.has(p))
-			.sort((a, b) => this.noteWeakness(a) - this.noteWeakness(b) || this.foundationalRank(a) - this.foundationalRank(b));
-		for (const p of prereqs) {
-			if (this.noteWeakness(p) === 2) break; // sorted weakest-first: the rest are known
-			const concept = (this.conceptsByNote.get(p) ?? []).find(
-				(c) => !planned.has(c.id) && statusOf(this.concepts[c.id]) !== "known",
-			);
-			if (concept) return { concept, prereqNote: p };
-		}
-		return null;
+		if (!this.byName.get(fromNote)) return null;
+		return this.routing.findPrerequisite(fromNote, this.routeLookup());
 	}
 
 	/** Commit a route found by `findPrerequisiteRoute`: splice it in as the next question
-	 * and account for it (never offer the same prerequisite twice, bound to MAX_ROUTES).
-	 * Returns false if a question couldn't actually be built for it, in which case nothing
-	 * was committed. */
+	 * and account for it. Returns false if a question couldn't actually be built for it,
+	 * in which case nothing was committed. */
 	private commitRoutedTarget(route: PrereqRoute, fromNote: string): boolean {
 		if (!this.insertRoutedTarget(route.concept, fromNote)) return false;
-		this.routedNotes.add(route.prereqNote);
-		this.routesUsed += 1;
+		this.routing.tookPrerequisite(route);
 		return true;
 	}
 
@@ -6148,30 +6077,16 @@ export class SessionView extends ItemView {
 		if (route) this.commitContagionTarget(route, fromNote);
 	}
 
-	/** Pure lookup for misconception contagion: is there an untested/struggling,
-	 * in-session, not-yet-planned, not-yet-probed neighbor of `fromNote` worth checking
-	 * for the same confusion? AI mode only — no deterministic way to judge relevance
-	 * without a model in the loop. Does not mutate any session state. */
+	/** A linked neighbour that may share the confusion, to probe. AI mode only — no
+	 * deterministic way to judge relevance without a model in the loop. Changes nothing. */
 	private findContagionRoute(fromNote: string, tag: string): ContagionRoute | null {
 		if (this.replayMode) return null;
-		if (this.contagionUsed >= MAX_CONTAGION) return null;
-		const planned = new Set(this.targets.map((t) => t.conceptId));
-		const neighbors = (this.sessionNeighbors.get(fromNote) ?? [])
-			.filter((n) => n !== fromNote && this.byName.has(n) && !this.contagionNotes.has(n))
-			.sort((a, b) => this.noteWeakness(a) - this.noteWeakness(b) || this.foundationalRank(a) - this.foundationalRank(b));
-		for (const n of neighbors) {
-			if (this.noteWeakness(n) === 2) break; // known: no point re-probing there
-			const concept = (this.conceptsByNote.get(n) ?? []).find(
-				(c) => !planned.has(c.id) && statusOf(this.concepts[c.id]) !== "known",
-			);
-			if (concept) return { concept, neighborNote: n, tag };
-		}
-		return null;
+		return this.routing.findContagion(fromNote, tag, this.routeLookup());
 	}
 
 	/** Commit a contagion candidate found by `findContagionRoute`: splice it into the
 	 * not-yet-generated plan (AI mode only, so always via `targets`) and account for it
-	 * (never probe the same neighbor twice, bounded to MAX_CONTAGION). */
+	 * (see SessionRouting.tookContagion). */
 	private commitContagionTarget(route: ContagionRoute, fromNote: string): void {
 		this.targets.splice(this.planCursor, 0, {
 			conceptId: route.concept.id,
@@ -6183,8 +6098,7 @@ export class SessionView extends ItemView {
 			contagionFrom: fromNote,
 		});
 		this.targetCount += 1;
-		this.contagionNotes.add(route.neighborNote);
-		this.contagionUsed += 1;
+		this.routing.tookContagion(route);
 	}
 
 }
