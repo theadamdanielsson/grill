@@ -1447,11 +1447,10 @@ export class SessionView extends ItemView {
 				}
 				if (!text) return begin(null, false);
 				const found = matchScope(text, eligible);
-				if (!found) {
-					new Notice(`Grill: no note or folder matches "${text}". Try its name, or press Get grilled with the box empty.`, 8000);
-					return;
-				}
-				begin(found.files, false);
+				if (found) return begin(found.files, false);
+				// Not a name but an instruction ("give me a fresh test"): a test on the note
+				// the chip shows, or with no chip, the test Grill would pick anyway.
+				begin(withOpenNote && openNote ? [openNote] : null, false);
 			},
 			showProgress: () => this.showDashboard(),
 			showQuestions: () => void this.questionsScreen.open(),
