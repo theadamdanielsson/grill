@@ -7,7 +7,7 @@ import { Question } from "./question";
 import { readPriorKnowledge, synthesizeArc } from "./llm";
 import { cloudEnabled, isCloudKey } from "./cloud";
 import { CHECK_EVERY_MS, isNewer, latestVersion } from "./update";
-import { applyResults, InboxResult, restoreNoteCounts } from "./record";
+import { restoreNoteCounts } from "./record";
 import { learnerBrief, missesFromSessions, type PastSession } from "./brief";
 import { type AskSource, claudeCodeConversation, codexConversation, type Conversation, conversationsFromZip, exportConversations, importedLines, matchConversations, mergeImported, plainPrior, type PriorKnowledge } from "./imported";
 import { parseSessionNote, STAMP_RE } from "./sessionnote";
@@ -30,7 +30,7 @@ import { countTrainableReviews, MIN_REVIEWS_FOR_OPTIMIZATION, optimizeFSRSWeight
 import { dueFiles, duplicateBasenames } from "./scope";
 import { KeyStash, secretStore, vaultId } from "./secrets";
 import { NEW_PROMPT, promptMessage, SELECTION_ASKS, SelectionAsk, selectionMessage } from "./selection";
-import { GrillStore, type SessionEntry } from "./store";
+import { GrillStore } from "./store";
 import { GRILL_ICON, registerGrillIcon } from "./icon";
 import { LoopbackToolServer } from "./loopback";
 import { engineFor } from "./engines";
@@ -44,6 +44,7 @@ import { embedLocal, localEmbedModel, releaseEmbedder } from "./embed-local";
 import { closeAudio } from "./sfx";
 import { naturalSpeech, type SpeechSource } from "./speech";
 import { CloudAccount } from "./cloudaccount";
+import { foldAnswers, type AgentSessionNote } from "./inbox";
 import { GrillSettingTab } from "./settingstab";
 import { ModelAgreeModal, SavedPromptModal } from "./modals";
 import { renameInRecord } from "./renames";
@@ -1066,7 +1067,7 @@ export default class GrillPlugin extends Plugin {
 
 	private folding = false;
 	/** Each agent session's note so far, by session, while Obsidian is open. */
-	private agentSessionNotes = new Map<string, { file: TFile; entries: SessionEntry[]; startedAt: Date }>();
+	private agentSessionNotes = new Map<string, AgentSessionNote>();
 	/** False until the record is loaded: anything saved from the empty placeholders
 	 * would replace the real files. */
 	recordLoaded = false;
@@ -1093,63 +1094,12 @@ export default class GrillPlugin extends Plugin {
 			const inbox = await this.store.readInbox();
 			if (!inbox.length) return;
 			await this.withViewsSynced(async () => this.store.editRecord(async () => {
-				// Applied to copies: nothing in memory changes unless all of it is saved, so a
-				// fold that stops part way can't leave answers counted that will be counted
-				// again when it is tried next.
-				const applied0 = await this.store.loadAppliedInbox();
-				const seen = new Set(applied0);
-				const state = {
-					concepts: structuredClone(this.concepts),
-					mastery: structuredClone(this.mastery),
-					registry: await this.store.loadRegistry(),
-				};
-				const opts = { allowNew: false, desiredRetention: this.data.settings.desiredRetention / 100 };
-				const { applied, failed } = applyResults(
-					state,
-					inbox.map((i) => i.result),
-					{ ...opts, seen },
-				);
-				if (applied.length) {
-					await this.store.saveConcepts(state.concepts);
-					await this.store.saveMastery(state.mastery);
-					await this.store.saveRegistry(state.registry);
-					await this.store.saveAppliedInbox([...applied0, ...applied.map((r) => r.id)]);
-					// The same answers, applied to the maps the open panes hold, in place. Not
-					// replaced with the copies: an answer given in a pane while the copies were
-					// being saved is in these maps and not in the copies, and the pane saves
-					// these next. Applying is synchronous, so nothing comes in between.
-					applyResults({ concepts: this.concepts, mastery: this.mastery, registry: this.record.registry }, applied, { ...opts, seen });
-				}
-				// From here on the answers are in the record: a session note that can't be
-				// written is a note missing, never an answer counted twice.
-				const sessions = new Map<string, InboxResult[]>();
-				for (const r of applied) sessions.set(r.session, [...(sessions.get(r.session) ?? []), r]);
-				for (const [id, rs] of sessions) {
-					// Answers arrive one at a time: a session already written to gets its
-					// note rewritten with every answer so far, not a note per answer.
-					const was = this.agentSessionNotes.get(id);
-					const entries = [
-						...(was?.entries ?? []),
-						...rs.map((r) => ({
-							node: r.note,
-							question: r.question,
-							answer: r.answer,
-							verdict: r.verdict,
-							gaveUp: false,
-							feedback: r.feedback ?? "",
-							modelAnswer: r.modelAnswer ?? "",
-						})),
-					];
-					const startedAt = was?.startedAt ?? new Date(rs[0].at);
-					const file = await this.store
-						.writeSessionNote(entries, { provider: rs[0].via, model: "grill-mcp", startedAt }, this.data.settings.linkSessions, undefined, [], was?.file)
-						.catch(() => null);
-					if (file) this.agentSessionNotes.set(id, { file, entries, startedAt });
-				}
-				for (const r of failed) console.warn(`Grill: set aside an answer from ${r.via} on ${r.note}: ${r.why}`);
-				const bad = new Set(failed.map((r) => r.id));
-				for (const i of inbox) await (bad.has(i.result.id) ? this.store.setAsideInboxFile(i.path) : this.store.removeInboxFile(i.path));
-				await this.store.removeEmptyInbox();
+				const applied = await foldAnswers(inbox, {
+					store: this.store,
+					record: () => ({ concepts: this.concepts, mastery: this.mastery, registry: this.record.registry }),
+					settings: this.data.settings,
+					sessionNotes: this.agentSessionNotes,
+				});
 				if (applied.length) {
 					const via = [...new Set(applied.map((r) => r.via))].join(", ");
 					new Notice(`Grill: added ${applied.length} answer${applied.length === 1 ? "" : "s"} from ${via}.`, 6000);
