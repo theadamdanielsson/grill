@@ -834,6 +834,13 @@ body,
 .grill-mc-btn:disabled {
   opacity: 0.6;
 }
+/* A choice lights up under the pointer, so it reads as pressable before it is pressed. */
+.grill-view button.grill-mc-btn:hover:not(:disabled),
+.grill-view button.grill-multi-btn:hover:not(.is-selected),
+.grill-view button.grill-match-btn:hover:not(.is-used) {
+  background: color-mix(in srgb, var(--grill-accent, var(--interactive-accent)) 22%, var(--interactive-normal));
+  box-shadow: inset 0 0 0 1px var(--grill-accent, var(--interactive-accent));
+}
 /* mc/multi/match choices render through the same markdown/LaTeX path as the question
    stem (see view.ts's mc/tf branch comment) — that wraps a single-line choice in its
    own <p>, which carries the theme's normal paragraph margin. A choice is always one
