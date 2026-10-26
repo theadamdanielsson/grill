@@ -47,6 +47,8 @@ import { celebrate, playSfx } from "./sfx";
 import { stopSpeaking, toSpeechText, ttsAvailable } from "./tts";
 import { hearButton, turnFrame, waitingTurn } from "./turn";
 import { drawFeedback } from "./screens/feedback";
+import { drawContextSlot, openContextPanel } from "./screens/context";
+import { requeueForContext } from "./sessionplan";
 import { scanNotes } from "./scan";
 import { SessionRouting, type ContagionRoute, type PendingExtension, type PrereqRoute, type RouteLookup } from "./routing";
 import { drawChat, type LearnState } from "./screens/chat";
@@ -3368,43 +3370,16 @@ export class SessionView extends ItemView {
 			this.contextSlot = stuck.createDiv({ cls: "grill-context-slot" });
 			this.openContext = () => {
 				if (actionTaken || this.contextRewriting || card.querySelector(".grill-context-panel")) return;
-				const panel = card.createDiv({ cls: "grill-context-panel" });
-				panel.createEl("label", { cls: "grill-home-label", text: "Add context", attr: { for: "grill-context-input" } });
-				const input = panel.createEl("textarea", {
-					cls: "grill-context-input",
-					attr: { id: "grill-context-input", rows: "4", placeholder: "For example: change the formatting, ask a different type of question, make them shorter or harder, focus on one part of the note" },
+				openContextPanel(card, {
+					current: this.sessionContext,
+					canRewrite: !q.authored,
+					done: () => actionTaken,
+					apply: (text, again) => {
+						// Rewriting the question on screen counts as the action on it, like "Bad question".
+						if (again) actionTaken = true;
+						void this.applySessionContext(text, again);
+					},
 				});
-				input.value = this.sessionContext;
-				// An authored question is the user's own, verbatim: there is nothing to rewrite.
-				let rewrite: HTMLInputElement | null = null;
-				if (!q.authored) {
-					const check = panel.createEl("label", { cls: "grill-context-check" });
-					rewrite = check.createEl("input", { attr: { type: "checkbox" } });
-					rewrite.checked = true;
-					check.appendText("Rewrite this question too");
-				}
-				panel.createDiv({ cls: "grill-meta", text: "Applies to the rest of this test. Instructions.md stays as it is." });
-				const actions = panel.createDiv({ cls: "grill-context-actions" });
-				const cancel = actions.createEl("button", { text: "Cancel", attr: { type: "button" } });
-				const apply = actions.createEl("button", { text: "Apply", cls: "mod-cta", attr: { type: "button" } });
-				cancel.onclick = () => panel.remove();
-				apply.onclick = () => {
-					const text = input.value.trim();
-					const again = !!rewrite?.checked;
-					if (actionTaken || (text === this.sessionContext && !again)) {
-						panel.remove();
-						return;
-					}
-					if (again) {
-						// Counts as the action on this question, like "Bad question".
-						actionTaken = true;
-						card.querySelectorAll<HTMLButtonElement | HTMLTextAreaElement | HTMLInputElement>("button, textarea, input").forEach((b) => (b.disabled = true));
-					} else {
-						panel.remove();
-					}
-					void this.applySessionContext(text, again);
-				};
-				input.focus();
 			};
 			this.drawContextSlot();
 		}
@@ -4637,32 +4612,9 @@ export class SessionView extends ItemView {
 			if (epoch !== this.sessionEpoch) return;
 		}
 		this.sessionContext = text;
-		// Questions aren't positionally tied to targets (see planCursor), so match each
-		// dropped question back to a consumed target of the same concept. One with no
-		// match stays as it is rather than being lost.
-		const dropped = this.questions.splice(rewriteCurrent ? this.idx : this.idx + 1);
-		const used = new Set<number>();
-		const again: ConceptTarget[] = [];
-		for (const q of dropped) {
-			let at = -1;
-			for (let i = this.planCursor - 1; i >= 0; i--) {
-				const t = this.targets[i];
-				if (!used.has(i) && t.conceptId === q.conceptId && t.note === q.node) {
-					at = i;
-					break;
-				}
-			}
-			if (at < 0) {
-				this.questions.push(q);
-				continue;
-			}
-			used.add(at);
-			const { lastDefectReason: _d, ...t } = this.targets[at];
-			again.push(t);
-		}
-		this.targets.splice(this.planCursor, 0, ...again);
+		const again = requeueForContext(this.questions, this.targets, this.idx, this.planCursor, rewriteCurrent);
 		const rewritingNow = rewriteCurrent && this.questions.length <= this.idx;
-		this.contextRewriting = again.length - (rewritingNow ? 1 : 0);
+		this.contextRewriting = again - (rewritingNow ? 1 : 0);
 		if (rewritingNow) await this.goToQuestion(this.idx);
 		else this.drawContextSlot();
 		if (epoch !== this.sessionEpoch) return;
@@ -4673,18 +4625,11 @@ export class SessionView extends ItemView {
 	}
 
 	/** The faint "Add context" button beside "I don't know", or, while queued questions
-	 * are being rewritten for it, a line saying so. */
+	 * are being rewritten for it, a line saying so (see screens/context.ts). */
 	private drawContextSlot(): void {
 		const slot = this.contextSlot;
 		if (!slot?.isConnected) return;
-		slot.empty();
-		const n = this.contextRewriting;
-		if (n > 0) {
-			slot.createSpan({ cls: "grill-context-status", text: `Rewriting next ${n === 1 ? "question" : `${n} questions`}…`, attr: { role: "status" } });
-			return;
-		}
-		const b = slot.createEl("button", { cls: "grill-quiet-btn grill-context-btn", text: "Add context", attr: { type: "button" } });
-		b.onclick = () => this.openContext?.();
+		drawContextSlot(slot, this.contextRewriting, () => this.openContext?.());
 	}
 
 	private async prefetchAhead(): Promise<void> {
