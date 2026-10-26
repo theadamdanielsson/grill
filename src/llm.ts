@@ -1615,30 +1615,33 @@ export async function explainQuestion(
 				`<preferences>\n${instructions}\n</preferences>\n\n`
 			: "") +
 		"Explain it more fully.";
-	const data = (await callJSON(
-		cfg,
-		explainSystem(persona, images.length),
-		{ cacheable, rest },
-		explainSchema(images.length),
-		2000,
-		images,
-	)) as {
-		whatWentWrong: string;
-		keyConcept: string;
-		example: string;
-		diagram: string;
-		relevantImageIndex?: number;
-	};
+	const ask = () => callJSON(cfg, explainSystem(persona, images.length), { cacheable, rest }, explainSchema(images.length), 2000, images);
+	const data = await readOrAskAgain(ask, readExplanation);
 	const idx = data.relevantImageIndex;
 	return {
-		whatWentWrong: stripGradingLeaks(cleanText(data.whatWentWrong ?? "")),
-		keyConcept: stripGradingLeaks(cleanText(data.keyConcept ?? "")),
-		example: stripGradingLeaks(cleanText(data.example ?? "")),
+		whatWentWrong: stripGradingLeaks(cleanText(data.whatWentWrong)),
+		keyConcept: stripGradingLeaks(cleanText(data.keyConcept)),
+		example: stripGradingLeaks(cleanText(data.example)),
 		// Not stripGradingLeaks: that filter drops any bare single-token line, which a
 		// valid Mermaid body can legitimately contain (a lone node id continuation) —
 		// the grading-leak risk it guards against doesn't apply to a diagram-only field.
-		diagram: cleanDiagram(data.diagram ?? ""),
+		diagram: cleanDiagram(data.diagram),
 		relevantImagePath: typeof idx === "number" && idx >= 0 ? (images[idx]?.path ?? "") : "",
+	};
+}
+
+/** An explanation's reply, read strictly: one with nothing in what went wrong and the key
+ * concept is not shown as an empty explanation, it is asked for again. */
+function readExplanation(raw: unknown): { whatWentWrong: string; keyConcept: string; example: string; diagram: string; relevantImageIndex?: number } {
+	const d = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+	const text = (v: unknown): string => (typeof v === "string" ? v : "");
+	if (!text(d.whatWentWrong).trim() && !text(d.keyConcept).trim()) throw new UnreadableReply("The explanation came back empty. Try again.");
+	return {
+		whatWentWrong: text(d.whatWentWrong),
+		keyConcept: text(d.keyConcept),
+		example: text(d.example),
+		diagram: text(d.diagram),
+		relevantImageIndex: typeof d.relevantImageIndex === "number" ? d.relevantImageIndex : undefined,
 	};
 }
 
@@ -1693,9 +1696,16 @@ export async function adjudicateBridges(
 	const user =
 		`Here are ${candidates.length} candidate pairs. For each, set 'n' to its number and decide whether the two notes ` +
 		`are genuinely related.\n\nPAIRS:\n${list}`;
-	const data = (await callJSON(cfg, bridgeSystem(persona), user, bridgeSchema(), 2000)) as {
-		pairs: { n?: number; related?: boolean; bridgeConcept?: string; relationship?: string }[];
-	};
+	// Read strictly: a reply without its list of pairs is not taken as "none of them are
+	// related", which would read the same as a real no.
+	const data = await readOrAskAgain(
+		() => callJSON(cfg, bridgeSystem(persona), user, bridgeSchema(), 2000),
+		(raw) => {
+			const pairs = (raw as { pairs?: unknown } | null)?.pairs;
+			if (!Array.isArray(pairs)) throw new UnreadableReply("The link check's reply couldn't be read.");
+			return { pairs: pairs.filter((p): p is { n?: number; related?: boolean; bridgeConcept?: string; relationship?: string } => !!p && typeof p === "object") };
+		},
+	);
 	const out: BridgeCandidate[] = [];
 	const used = new Set<number>();
 	for (let i = 0; i < (data.pairs ?? []).length; i++) {
@@ -1808,20 +1818,45 @@ export async function debriefSession(
 			? "\n\nThe student wrote these study preferences; honor anything relevant here too, especially " +
 				`what language to write in.\n<preferences>\n${instructions}\n</preferences>`
 			: "");
-	const data = (await callJSON(cfg, debriefSystem(persona), user, debriefSchema(noteNames), 2000)) as {
-		debrief: SessionDebrief;
-		assignments: TagAssignment[];
-	};
+	const data = await readOrAskAgain(() => callJSON(cfg, debriefSystem(persona), user, debriefSchema(noteNames), 2000), readDebrief);
 	const d = data.debrief;
 	return {
 		debrief: {
-			headline: cleanText(d?.headline ?? ""),
-			strengths: d?.strengths ?? [],
-			gaps: (d?.gaps ?? []).map((g) => ({ concept: g.concept, note: g.note, why: cleanText(g.why ?? "") })),
-			pattern: cleanText(d?.pattern ?? ""),
-			nextFocus: d?.nextFocus ?? [],
+			headline: cleanText(d.headline),
+			strengths: d.strengths,
+			gaps: d.gaps.map((g) => ({ concept: g.concept, note: g.note, why: cleanText(g.why) })),
+			pattern: cleanText(d.pattern),
+			nextFocus: d.nextFocus,
 		},
-		assignments: data?.assignments ?? [],
+		assignments: data.assignments,
+	};
+}
+
+/** A debrief's reply, read strictly. The misconception assignments are written into the
+ * registry, so one with a field missing is never taken: the reply is asked for again, and
+ * failing that the session ends with the plain summary. */
+export function readDebrief(raw: unknown): { debrief: SessionDebrief; assignments: TagAssignment[] } {
+	const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+	const isStr = (v: unknown): v is string => typeof v === "string";
+	const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter(isStr) : []);
+	const r = isObj(raw) ? raw : {};
+	const d = r.debrief;
+	if (!isObj(d) || !isStr(d.headline) || !d.headline.trim()) throw new UnreadableReply("The debrief couldn't be read.");
+	const gaps = Array.isArray(d.gaps) ? d.gaps : [];
+	if (!gaps.every((g) => isObj(g) && isStr(g.concept) && isStr(g.note))) throw new UnreadableReply("The debrief's gaps couldn't be read.");
+	const assignments = r.assignments === undefined ? [] : r.assignments;
+	if (!Array.isArray(assignments) || !assignments.every((a) => isObj(a) && isStr(a.rawTag) && isStr(a.canonTag) && a.canonTag.trim() && isStr(a.canonLabel) && isStr(a.note))) {
+		throw new UnreadableReply("The debrief's misconception labels couldn't be read.");
+	}
+	return {
+		debrief: {
+			headline: d.headline,
+			strengths: strings(d.strengths),
+			gaps: (gaps as Array<Record<string, unknown>>).map((g) => ({ concept: g.concept as string, note: g.note as string, why: isStr(g.why) ? g.why : "" })),
+			pattern: isStr(d.pattern) ? d.pattern : "",
+			nextFocus: strings(d.nextFocus),
+		},
+		assignments: assignments as TagAssignment[],
 	};
 }
 
