@@ -47,6 +47,7 @@ import { CONFIDENCE_LEVELS, calibrationLine, pushCalibration } from "./calibrati
 import { celebrate, playSfx } from "./sfx";
 import { stopSpeaking, toSpeechText, ttsAvailable } from "./tts";
 import { hearButton, turnFrame, waitingTurn } from "./turn";
+import { drawFeedback } from "./screens/feedback";
 import { SessionEntry } from "./store";
 import { renderThreadHistory } from "./thread";
 import { listSome, missesLine, mostLinked, noteLine, shortDate, startingNote } from "./suggest";
@@ -133,63 +134,6 @@ function shuffled<T>(arr: readonly T[]): T[] {
 	return out;
 }
 
-/** Grill's own flame silhouette for the verdict badge (7x10, crisp pixel blocks — the
- * same shape-rendering technique used in the plugin's hero art) instead of a generic
- * Lucide circle-check/circle-x, which every other app also uses. One shape for every
- * verdict; only the badge's own text color (.grill-v-correct/partial/incorrect/skipped)
- * differentiates it, via currentColor, so a Style Settings retint still works. */
-const FLAME_ICON_CELLS: [number, number][] = [
-	[3, 0],
-	[3, 1],
-	[4, 1],
-	[2, 2],
-	[3, 2],
-	[4, 2],
-	[2, 3],
-	[3, 3],
-	[4, 3],
-	[5, 3],
-	[1, 4],
-	[2, 4],
-	[3, 4],
-	[4, 4],
-	[5, 4],
-	[1, 5],
-	[2, 5],
-	[3, 5],
-	[4, 5],
-	[5, 5],
-	[1, 6],
-	[2, 6],
-	[3, 6],
-	[4, 6],
-	[5, 6],
-	[6, 6],
-	[1, 7],
-	[2, 7],
-	[3, 7],
-	[4, 7],
-	[5, 7],
-	[2, 8],
-	[3, 8],
-	[4, 8],
-	[5, 8],
-	[2, 9],
-	[3, 9],
-	[4, 9],
-];
-/** Builds the flame icon as real SVG DOM nodes, not an innerHTML string — Obsidian's
- * plugin review flags raw innerHTML assignment as unsafe even for fully static,
- * hardcoded content like this, so every cell is its own createSvg'd <rect> (Obsidian's
- * own namespace-aware DOM helper, not document.createElementNS). */
-function renderFlameIcon(container: HTMLElement): void {
-	const svg = container.createSvg("svg", {
-		attr: { viewBox: "0 0 7 10", "shape-rendering": "crispEdges", fill: "currentColor" },
-	});
-	for (const [x, y] of FLAME_ICON_CELLS) {
-		svg.createSvg("rect", { attr: { x, y, width: 1, height: 1 } });
-	}
-}
 
 /** First run's picture of the map: notes as dots in a 400 x 220 field, [x, y, size],
  * and the links between them by index. Drawn grey; each dot then turns amber, then
@@ -354,7 +298,7 @@ const MAX_ROUTES = 3;
  * not-yet-canonicalized tag on a note it may or may not actually apply to). */
 const MAX_CONTAGION = 2;
 
-interface QuestionResult extends SessionEntry {
+export interface QuestionResult extends SessionEntry {
 	hintsUsed: number;
 	/** What was sent was a question about the question, not an answer to it (thread
 	 * view). Recorded as needing help, and `discussion` opens with what was asked. */
@@ -4017,159 +3961,51 @@ export class SessionView extends ItemView {
 		const thread = this.threadStrip(wrap, !pendingExtension);
 		this.progressBar(wrap);
 		this.threadHistory(wrap, this.results.filter((x) => x !== r));
-		const card = wrap.createDiv({ cls: "grill-body" });
-		const meta = card.createDiv({ cls: "grill-meta-row" });
-		meta.createSpan({ cls: "grill-meta", text: thread ? `${this.idx + 1}.` : `Question ${this.idx + 1} of ${this.targetCount}` });
-		const chip = meta.createSpan({ cls: "grill-chip grill-chip-link", text: r.node });
-		chip.onclick = () => this.openNote(r.node);
-		chip.setAttr("aria-label", "Open note");
-		// Not on the route-consent screen (the last question only): its own "No" already
-		// ends the session the same way.
-		if (!pendingExtension && !thread) this.renderEndSessionLink(card);
-
-		if (kept) {
-			card.appendChild(kept);
-			kept.querySelectorAll("input").forEach((el) => (el.disabled = true));
-			this.contentEl.scrollTop = scrolled;
-		} else {
-			const qEl = card.createDiv({ cls: thread ? "grill-question" : "grill-question grill-question-small" });
-			if (thread) qEl.dataset.grillQ = String(this.idx);
-			this.md(r.question, qEl, r.node);
-		}
-
-		// The verdict card: badge + your answer + grader feedback — "what happened".
-		const verdictCard = card.createDiv({ cls: "grill-flow-card grill-verdict-card" });
-		if (kept) window.setTimeout(() => verdictCard.isConnected && verdictCard.scrollIntoView({ block: "nearest" }), 0);
-		const v = this.verdictLabel(r);
-		const badgeRow = verdictCard.createDiv({ cls: "grill-verdict-row" });
-		const badge = badgeRow.createDiv({ cls: `grill-verdict-badge ${v.cls}` });
-		renderFlameIcon(badge.createSpan({ cls: "grill-verdict-icon" }));
-		badge.createSpan({ text: v.text });
-		// The grader/deterministic path got this one wrong: single-use, so it's only
-		// offered right after the answer that produced it (see SessionGrades's doc
-		// comment) — not on an older question, and never for self-grade (your own
-		// rating already is the ground truth there).
-		// Hear what the card says: the verdict, your answer, the feedback, and the expected
-		// answer when there is one. (A verdict the feedback only repeats is said once.)
-		const sameAsVerdict = r.feedback.trim().replace(/[.!]+$/, "").toLowerCase() === v.text.toLowerCase();
-		const spoken = toSpeechText(
-			[
-				`${v.text}.`,
-				!r.gaveUp && r.answer ? `Your answer: ${r.answer}` : "",
-				sameAsVerdict ? "" : r.feedback,
-				r.verdict !== "correct" && r.modelAnswer ? `The expected answer: ${r.modelAnswer}` : "",
-			]
-				.filter(Boolean)
-				.join("\n\n"),
+		const q = this.questions[this.idx];
+		drawFeedback(
+			wrap,
+			{
+				r,
+				idx: this.idx,
+				of: this.targetCount,
+				thread,
+				kept,
+				label: this.verdictLabel(r),
+				drawing: this.drawSession && this.drawingImage ? this.drawingImage.dataBase64 : null,
+				occlusion: q.type === "occlusion",
+				extension: !!pendingExtension,
+				// The grader got this one wrong: single-use, so only right after the answer
+				// that produced it (see SessionGrades), never for a self-grade, and not for a
+				// question that was asked about instead of answered.
+				canMark: r.verdict !== "correct" && !r.askedForHelp && !!this.grades.last,
+				// The same, and not for an authored question or on the route-consent screen,
+				// where discarding it would pull the rug out from under the choice offered.
+				canDiscard: !pendingExtension && !q.authored && !!this.grades.last,
+				// What was sent was read the wrong way. Only where the answer was typed: a
+				// picked choice is never anything but an answer.
+				canTakeBack: !!this.grades.last && (!r.gaveUp || !!r.askedForHelp) && this.typedAnswer(q),
+				showHelp: !pendingExtension && (this.canExplain(r) || !!r.explanation || !!r.discussion?.length),
+			},
+			{
+				md: (markdown, el, sourcePath) => this.md(markdown, el, sourcePath),
+				openNote: (name) => this.openNote(name),
+				hear: (parent, text, label, cls) => {
+					if (this.reader()) this.hearButton(parent, text, label, cls);
+				},
+				endSessionLink: (card) => this.renderEndSessionLink(card),
+				occlusionImage: (parent) => this.renderOcclusionImage(parent, q, true),
+				offerLink: (card) => this.offerLink(card, r.node, r.connectTo ?? ""),
+				offerHelp: (host, actions) => this.offerHelp(host, actions, r),
+				routeConsent: (card) => {
+					if (pendingExtension) this.renderRouteConsentInto(card, pendingExtension);
+				},
+				next: () => void this.goToQuestion(this.idx + 1),
+				markCorrect: () => void this.markCorrect(r),
+				takeBack: () => void this.takeBackAnswer(r),
+				discard: () => void this.discardAnsweredQuestion(r),
+			},
 		);
-		if (this.reader()) this.hearButton(badgeRow, spoken, "Read this aloud", "grill-tts-feedback");
-		// Not for a question that was asked about instead of answered: there is no answer
-		// to call correct.
-		const canMark = r.verdict !== "correct" && !r.askedForHelp && this.grades.last;
-		// Same single-use restriction as "Mark correct" (SessionGrades.last), same
-		// authored/bridge exclusion as the pre-answer version, and skipped on the
-		// route-consent screen — discarding the question there would pull the rug out
-		// from under the yes/no choice being offered below.
-		const canDiscard = !pendingExtension && !this.questions[this.idx].authored && this.grades.last;
-		// Overruling a grade saves before it redraws. Until it has, nothing else on this
-		// screen may be pressed: Next in that gap would redraw this result on the next
-		// question.
-		const lock = (): void => this.contentEl.querySelectorAll<HTMLButtonElement>(".grill-body button").forEach((b) => (b.disabled = true));
-		if (!r.gaveUp && this.drawSession && this.drawingImage) {
-			verdictCard.createDiv({ cls: "grill-block-label", text: "Your drawing" });
-			verdictCard.createEl("img", { cls: "grill-draw-answer", attr: { src: `data:image/png;base64,${this.drawingImage.dataBase64}`, alt: "Your drawing" } });
-		} else if (!r.gaveUp && r.answer) {
-			verdictCard.createDiv({ cls: "grill-block-label", text: "Your answer" });
-			const ans = verdictCard.createDiv({ cls: "grill-your-answer" });
-			this.md(`> ${r.answer.split("\n").join("\n> ")}`, ans, r.node);
-		}
-		if (r.feedback) {
-			const fb = verdictCard.createDiv({ cls: "grill-feedback" });
-			// Display-only split on the grader's own "line 1 / line 2" convention (see
-			// GRADER_RULES) — no schema change, just rendering each line as its own block
-			// when the model included the break, one block otherwise.
-			for (const line of r.feedback.split("\n").map((l) => l.trim()).filter(Boolean)) {
-				this.md(line, fb.createDiv({ cls: "grill-feedback-line" }), r.node);
-			}
-		}
-
-		// The review card: expected answer + on-demand explanation — "what to study".
-		// Only rendered when it would actually have something in it.
-		const showExpectedAnswer = r.verdict !== "correct" && !!r.modelAnswer;
-		const showHelp = !pendingExtension && (this.canExplain(r) || !!r.explanation || !!r.discussion?.length);
-		if (showExpectedAnswer) {
-			const reviewCard = card.createDiv({ cls: "grill-flow-card grill-review-card" });
-			const reviewHead = reviewCard.createDiv({ cls: "grill-review-head" });
-			reviewHead.createDiv({ cls: "grill-block-label", text: "Expected answer" });
-			// Its own button: the one on the verdict reads everything, and after asking
-			// for help the expected answer is the one thing left to hear.
-			const expected = toSpeechText(r.modelAnswer);
-			if (expected && this.reader()) {
-				this.hearButton(reviewHead, expected, "Read the expected answer aloud");
-			}
-			this.md(r.modelAnswer, reviewCard.createDiv({ cls: "grill-model-answer" }), r.node);
-			if (this.questions[this.idx].type === "occlusion") {
-				this.renderOcclusionImage(reviewCard, this.questions[this.idx], true);
-			}
-		}
-		// The explanation and whatever is asked after it flow down from here.
-		const helpAt = showHelp ? card.createDiv({ cls: "grill-thread-host" }) : null;
-
-		if (r.missingLink && r.connectTo) this.offerLink(card, r.node, r.connectTo);
-
-		if (pendingExtension) {
-			// The last question, with an offer of one more below: the grade can still be
-			// overruled here, which is when it matters most.
-			if (canMark) {
-				const mark = card.createEl("button", { text: "Mark correct", cls: "grill-quiet-btn grill-mark-alone" });
-				mark.onclick = () => {
-					lock();
-					void this.markCorrect(r);
-				};
-			}
-			this.renderRouteConsentInto(card, pendingExtension);
-			return;
-		}
-		// What next, on one line: move on, or understand it better first. Overruling the
-		// grade and throwing the question out are rare, so they sit quietly at the end,
-		// the flag being the same one the question itself carries.
-		const actions = card.createDiv({ cls: "grill-btn-row grill-next-bar" });
-		const btn = actions.createEl("button", {
-			text: this.idx + 1 < this.targetCount ? "Next question" : "Finish session",
-			cls: "mod-cta grill-submit-btn",
-		});
-		btn.onclick = () => {
-			btn.disabled = true; // instant ack, independent of whether a wait follows; also blocks a double-click
-			void this.goToQuestion(this.idx + 1);
-		};
-		if (helpAt) this.offerHelp(helpAt, actions, r);
-		const quiet = actions.createDiv({ cls: "grill-next-quiet" });
-		// What was sent was graded as an answer but wasn't meant as one. Only where the
-		// answer was typed: a picked choice is never anything but an answer.
-		// The other way round too: what was meant as an answer was read as a question.
-		if (this.grades.last && (!r.gaveUp || r.askedForHelp) && this.typedAnswer(this.questions[this.idx])) {
-			const back = quiet.createEl("button", { text: r.askedForHelp ? "That was my answer" : "That wasn't my answer", cls: "grill-quiet-btn" });
-			back.onclick = () => {
-				lock();
-				void this.takeBackAnswer(r);
-			};
-		}
-		if (canMark) {
-			const mark = quiet.createEl("button", { text: "Mark correct", cls: "grill-quiet-btn" });
-			mark.onclick = () => {
-				lock();
-				void this.markCorrect(r);
-			};
-		}
-		if (canDiscard) {
-			const bad = quiet.createEl("button", { cls: "clickable-icon grill-bad-question-btn", attr: { "aria-label": "Bad question: wrong, broken or nonsensical. Deletes it and moves on, no penalty.", type: "button" } });
-			setIcon(bad, "flag");
-			bad.onclick = () => {
-				lock();
-				void this.discardAnsweredQuestion(r);
-			};
-		}
-		btn.focus();
+		if (kept) this.contentEl.scrollTop = scrolled;
 	}
 
 	/** A speaker button that reads `text` aloud (see turn.ts). */
