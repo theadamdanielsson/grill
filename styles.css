@@ -4,7 +4,7 @@
 .grill-wrap {
   max-width: 40em;
   margin: 0 auto;
-  padding: 0.5em 0.75em 1.5em;
+  padding: var(--grill-space-sm) 0.75em 1.5em;
 }
 /* The cabinet reads better filling the pane's actual edges than sitting inset inside
    padding — there were actually two layers of it: .grill-wrap's own, AND Obsidian's
@@ -118,15 +118,13 @@
  * explicit theme-token colour of their own and so don't just inherit it. */
 .grill-arcade-screen {
   color: var(--grill-ink-dim);
-}
-.grill-arcade-screen .grill-meta {
-  color: var(--grill-ink-dim);
+  /* The theme's muted text, once for the whole screen: every class that is muted by
+     the theme's token (.grill-meta, .grill-chip, a debrief's pattern line) reads in the
+     screen's dim ink without a pin of its own. */
+  --text-muted: var(--grill-ink-dim);
 }
 .grill-arcade-screen .grill-chip-link {
   color: var(--grill-ink-gold);
-}
-.grill-arcade-screen .grill-chip {
-  color: var(--grill-ink-dim);
 }
 .grill-arcade-screen .grill-onboard-row label {
   color: var(--grill-ink-dim);
@@ -145,18 +143,12 @@
   background: var(--grill-screen-deep);
   border: 1px solid var(--grill-ember-dark);
 }
-.grill-arcade-screen .grill-summary-row {
-  color: var(--grill-ink-dim);
-}
 .grill-arcade-screen .grill-route-consent,
 .grill-arcade-screen .grill-debrief {
   background: var(--grill-screen-deep);
 }
 .grill-arcade-screen .grill-debrief-headline p {
   color: var(--grill-ink);
-}
-.grill-arcade-screen .grill-debrief-pattern p {
-  color: var(--grill-ink-dim);
 }
 .grill-arcade-screen .grill-debrief-gap {
   background: var(--grill-screen);
@@ -213,7 +205,7 @@ body,
   border: 1px solid var(--grill-ember-dark);
   border-radius: var(--grill-radius-m);
   background: var(--grill-screen-deep);
-  padding: 0.85em 0.95em;
+  padding: var(--grill-space-md) 0.95em;
 }
 /* Plain-flow card: same bordered-box shape as .grill-card, but built from theme tokens
  * instead of the fixed arcade palette, so it's usable on the question/feedback/
@@ -269,7 +261,7 @@ body,
 .grill-view .grill-section-label {
   display: flex;
   align-items: center;
-  gap: 0.5em;
+  gap: var(--grill-space-sm);
   font-family: "Grill Pixel", var(--font-monospace);
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -285,7 +277,7 @@ body,
   background: linear-gradient(90deg, var(--grill-grid), transparent);
 }
 .grill-body {
-  margin-top: 0.5em;
+  margin-top: var(--grill-space-sm);
 }
 .grill-meta {
   color: var(--text-muted);
@@ -295,8 +287,8 @@ body,
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 0.5em;
-  margin: 0.75em 0 0.5em;
+  gap: var(--grill-space-sm);
+  margin: 0.75em 0 var(--grill-space-sm);
 }
 /* Why this question, right now — new/review/missed/overdue. Text only, colored by the
  * same severity vocabulary as the verdict labels (.grill-v-correct/partial/incorrect
@@ -309,12 +301,12 @@ body,
 .grill-end-session-row {
   display: flex;
   justify-content: flex-end;
-  margin: -0.35em 0 0.5em;
+  margin: -0.35em 0 var(--grill-space-sm);
   font-size: var(--font-ui-smaller, 0.85em);
 }
 .grill-section-label {
   margin-top: 1.5em;
-  margin-bottom: 0.25em;
+  margin-bottom: var(--grill-space-xs);
   font-size: var(--font-ui-small);
   font-weight: var(--font-semibold, 600);
   color: var(--text-muted);
@@ -342,7 +334,7 @@ body,
 /* Secondary CTA: the connections mode, offered beside the primary start button. */
 .grill-connections-btn {
   width: 100%;
-  margin-top: 0.5em;
+  margin-top: var(--grill-space-sm);
   background: transparent;
   border: 1px solid var(--grill-accent, var(--interactive-accent));
   color: var(--grill-ink-accent, var(--interactive-accent));
@@ -439,7 +431,7 @@ body,
 }
 .grill-graph-toolbar {
   flex: 0 0 auto;
-  padding: 0.4em 0.5em 0.2em;
+  padding: 0.4em var(--grill-space-sm) 0.2em;
   border-bottom: 1px solid var(--grill-grid);
   background-color: var(--grill-screen-deep);
   background-image: radial-gradient(circle, rgba(255, 178, 50, 0.11) 1px, transparent 1.4px);
@@ -532,7 +524,7 @@ body,
 .grill-onboard-row {
   display: flex;
   align-items: center;
-  gap: 0.5em;
+  gap: var(--grill-space-sm);
 }
 .grill-onboard-row label {
   cursor: pointer;
@@ -543,7 +535,7 @@ body,
 .grill-onboard-setup {
   display: flex;
   flex-direction: column;
-  gap: 0.5em;
+  gap: var(--grill-space-sm);
   margin: -0.4em 0 1.2em;
   padding: 0.7em 0.8em;
   border: 1px solid var(--background-modifier-border);
@@ -650,8 +642,8 @@ body,
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 0.5em 0.8em;
-  margin: 0.5em 0;
+  gap: var(--grill-space-sm) 0.8em;
+  margin: var(--grill-space-sm) 0;
 }
 .grill-redo-note {
   font-size: 0.85em;
@@ -661,7 +653,7 @@ body,
    (grill-documents code block) — a Claude-style attach area, not a settings
    modal, since it lives right where the rest of the instructions do. */
 .grill-doc-area {
-  margin: 0.5em 0;
+  margin: var(--grill-space-sm) 0;
 }
 .grill-doc-dropzone {
   position: relative;
@@ -754,7 +746,7 @@ body,
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 0.5em;
+  gap: var(--grill-space-sm);
   margin: 0.8em 0;
   padding: 0.6em 0.7em;
   border: 1px solid var(--background-modifier-border);
@@ -765,7 +757,7 @@ body,
 .grill-progress {
   display: flex;
   gap: 2px;
-  margin-top: 0.5em;
+  margin-top: var(--grill-space-sm);
 }
 .grill-seg {
   flex: 1;
@@ -786,11 +778,11 @@ body,
 /* ---------------------------------------------------------------- question */
 .grill-question {
   line-height: var(--line-height-normal, 1.5);
-  margin-bottom: 0.25em;
+  margin-bottom: var(--grill-space-xs);
 }
 .grill-tts-btn {
   display: flex;
-  margin: 0 0 0.5em;
+  margin: 0 0 var(--grill-space-sm);
 }
 .grill-question-small {
   color: var(--text-muted);
@@ -802,7 +794,7 @@ body,
   width: 100%;
   font-family: inherit;
   resize: vertical;
-  margin-bottom: 0.5em;
+  margin-bottom: var(--grill-space-sm);
 }
 .grill-blank-input {
   font-family: inherit;
@@ -818,7 +810,7 @@ body,
   display: flex;
   flex-direction: column;
   gap: 0.4em;
-  margin-bottom: 0.5em;
+  margin-bottom: var(--grill-space-sm);
 }
 .grill-mc-btn {
   /* Explicit width, not just the row's flex stretch: a short choice's button
@@ -829,7 +821,7 @@ body,
   text-align: left;
   white-space: normal;
   height: auto;
-  padding: 0.5em 0.75em;
+  padding: var(--grill-space-sm) 0.75em;
 }
 .grill-mc-btn:disabled {
   opacity: 0.6;
@@ -854,7 +846,7 @@ body,
 }
 .grill-btn-row {
   display: flex;
-  gap: 0.5em;
+  gap: var(--grill-space-sm);
   align-items: center;
 }
 .grill-quiet-btn {
@@ -876,8 +868,8 @@ body,
 }
 .grill-view button.grill-context-btn {
   margin-left: 0;
-  padding-left: 0.5em;
-  padding-right: 0.5em;
+  padding-left: var(--grill-space-sm);
+  padding-right: var(--grill-space-sm);
   color: var(--text-faint);
   font-size: var(--font-ui-small);
 }
@@ -885,7 +877,7 @@ body,
   color: var(--text-muted);
 }
 .grill-context-status {
-  padding: 0 0.5em;
+  padding: 0 var(--grill-space-sm);
   color: var(--text-faint);
   font-size: var(--font-ui-small);
   white-space: nowrap;
@@ -919,7 +911,7 @@ body,
 .grill-context-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 0.5em;
+  gap: var(--grill-space-sm);
 }
 .grill-context-line {
   display: flex;
@@ -1002,14 +994,14 @@ body,
   display: flex;
   flex-direction: column;
   gap: 0.4em;
-  margin-bottom: 0.5em;
+  margin-bottom: var(--grill-space-sm);
 }
 .grill-multi-btn {
   width: 100%;
   text-align: left;
   white-space: normal;
   height: auto;
-  padding: 0.5em 0.75em;
+  padding: var(--grill-space-sm) 0.75em;
 }
 .grill-multi-btn.is-selected {
   background: var(--grill-accent, var(--interactive-accent));
@@ -1021,7 +1013,7 @@ body,
 .grill-match-wrap {
   display: flex;
   gap: 1em;
-  margin-bottom: 0.5em;
+  margin-bottom: var(--grill-space-sm);
 }
 .grill-match-col {
   flex: 1;
@@ -1034,8 +1026,8 @@ body,
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5em;
-  padding: 0.5em 0.75em;
+  gap: var(--grill-space-sm);
+  padding: var(--grill-space-sm) 0.75em;
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-s, 4px);
   cursor: pointer;
@@ -1081,7 +1073,7 @@ body,
   text-align: left;
   white-space: normal;
   height: auto;
-  padding: 0.5em 0.75em;
+  padding: var(--grill-space-sm) 0.75em;
 }
 .grill-match-btn.is-used {
   opacity: 0.4;
@@ -1148,7 +1140,7 @@ body,
   margin-top: var(--grill-space-sm);
 }
 .grill-your-answer blockquote {
-  margin: 0.25em 0;
+  margin: var(--grill-space-xs) 0;
   padding-left: 0.75em;
   border-left: 2px solid var(--background-modifier-border);
   color: var(--text-muted);
@@ -1287,7 +1279,7 @@ body,
 .grill-score {
   font-weight: var(--font-semibold, 600);
   font-size: var(--font-ui-large, 1.2em);
-  margin: 0.75em 0 0.5em;
+  margin: 0.75em 0 var(--grill-space-sm);
 }
 .grill-divider {
   border-top: 1px solid var(--background-modifier-border);
@@ -1297,8 +1289,8 @@ body,
   display: flex;
   flex-direction: column;
   gap: 0.4em;
-  margin: 0.5em 0 1em;
-  padding: 0.7em 0.85em;
+  margin: var(--grill-space-sm) 0 1em;
+  padding: 0.7em var(--grill-space-md);
   background: var(--background-secondary);
   border-radius: var(--grill-radius-s);
 }
@@ -1323,7 +1315,7 @@ body,
 }
 .grill-route-consent {
   margin: 0.75em 0 1em;
-  padding: 0.6em 0.85em;
+  padding: 0.6em var(--grill-space-md);
   border-left: 2px solid var(--grill-accent, var(--interactive-accent));
   background: var(--background-secondary);
   border-radius: var(--grill-radius-s);
@@ -1392,7 +1384,7 @@ body,
   background-image: radial-gradient(circle, rgba(255, 178, 50, 0.11) 1px, transparent 1.4px);
   background-size: 15px 15px;
   box-shadow: inset 0 0 0 1px rgba(255, 210, 63, 0.15);
-  margin: 0.5em 0;
+  margin: var(--grill-space-sm) 0;
 }
 .grill-loading-title {
   font-family: "Grill Pixel", var(--font-monospace);
@@ -1464,11 +1456,11 @@ body.grill-compact .grill-wrap,
 body.grill-compact .grill-wrap .grill-question,
 .grill-wrap.grill-compact .grill-question {
   font-size: var(--font-ui-medium);
-  margin-bottom: 0.5em;
+  margin-bottom: var(--grill-space-sm);
 }
 body.grill-compact .grill-wrap .grill-body,
 .grill-wrap.grill-compact .grill-body {
-  margin-top: 0.25em;
+  margin-top: var(--grill-space-xs);
 }
 body.grill-compact .grill-wrap .grill-answer,
 .grill-wrap.grill-compact .grill-answer {
@@ -1557,7 +1549,7 @@ settings:
 .grill-debrief-gap {
   display: flex;
   align-items: baseline;
-  gap: 0.5em;
+  gap: var(--grill-space-sm);
   padding: 0.4em 0.55em;
   margin-bottom: 0.35em;
   background: var(--background-primary);
@@ -1617,7 +1609,7 @@ settings:
   line-height: 1.6;
   letter-spacing: 0.02em;
   color: var(--grill-ink-dim);
-  margin-top: 0.5em;
+  margin-top: var(--grill-space-sm);
 }
 .grill-stat-correct .grill-stat-value { color: var(--grill-ink); text-shadow: 0 0 12px rgba(255, 233, 138, 0.6); }
 .grill-stat-incorrect .grill-stat-value { color: var(--grill-ink-hot); text-shadow: 0 0 12px rgba(255, 90, 31, 0.65); }
@@ -1628,7 +1620,7 @@ settings:
  * step of the fill's own colour (not an unrelated neutral grey), so state reads even
  * before you register the fill length — same-ramp track/fill, not two different scales. */
 .grill-meter-list {
-  margin-top: 0.5em;
+  margin-top: var(--grill-space-sm);
 }
 .grill-meter-row {
   display: flex;
@@ -1674,7 +1666,7 @@ settings:
 .grill-misc-list {
   display: flex;
   flex-direction: column;
-  gap: 0.5em;
+  gap: var(--grill-space-sm);
   margin: 0.4em 0 0.75em;
 }
 .grill-misc-row {
@@ -1685,7 +1677,7 @@ settings:
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 0.5em;
+  gap: var(--grill-space-sm);
 }
 .grill-misc-label {
   font-weight: var(--font-semibold, 600);
@@ -1773,7 +1765,7 @@ settings:
   display: flex;
   align-items: center;
   gap: 0.3em;
-  margin-top: 0.5em;
+  margin-top: var(--grill-space-sm);
   font-size: var(--font-ui-smaller, 0.75em);
   color: var(--grill-ink-dim);
 }
@@ -1792,7 +1784,7 @@ settings:
 }
 .grill-mgmt-search {
   width: 100%;
-  margin-bottom: 0.85em;
+  margin-bottom: var(--grill-space-md);
 }
 .grill-mgmt-list {
   display: flex;
@@ -1804,7 +1796,7 @@ settings:
   border-radius: var(--grill-radius-s);
 }
 .grill-mgmt-group-header {
-  padding: 0.5em 0.75em;
+  padding: var(--grill-space-sm) 0.75em;
   font-weight: var(--font-semibold, 600);
   cursor: pointer;
   user-select: none;
@@ -1832,7 +1824,7 @@ settings:
   display: flex;
   align-items: center;
   gap: 0.6em;
-  padding: 0.5em 0.75em;
+  padding: var(--grill-space-sm) 0.75em;
   cursor: pointer;
 }
 .grill-mgmt-card-summary:hover {
@@ -1849,7 +1841,7 @@ settings:
 }
 .grill-mgmt-type-chip {
   flex-shrink: 0;
-  padding: 0.1em 0.5em;
+  padding: 0.1em var(--grill-space-sm);
   border-radius: var(--grill-radius-s);
   background: var(--background-modifier-border);
   font-size: var(--font-ui-smaller, 0.8em);
@@ -1888,7 +1880,7 @@ settings:
   display: none;
 }
 .grill-mgmt-card-meta {
-  margin-bottom: 0.5em;
+  margin-bottom: var(--grill-space-sm);
 }
 .grill-mgmt-field {
   width: 100%;
@@ -1906,14 +1898,14 @@ textarea.grill-mgmt-field {
 .grill-mgmt-choice-row {
   display: flex;
   align-items: center;
-  gap: 0.5em;
+  gap: var(--grill-space-sm);
 }
 .grill-mgmt-choice-text {
   flex: 1;
 }
 .grill-mgmt-choice-remove {
   flex-shrink: 0;
-  padding: 0.1em 0.5em;
+  padding: 0.1em var(--grill-space-sm);
 }
 .grill-mgmt-card .grill-mc-btn.is-selected {
   background: var(--interactive-accent);
@@ -1929,7 +1921,7 @@ textarea.grill-mgmt-field {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.5em;
+  gap: var(--grill-space-sm);
   text-align: center;
   padding: 2.5em 1.5em;
   border: 1px dashed var(--background-modifier-border);
@@ -2070,7 +2062,7 @@ textarea.grill-mgmt-field {
   color: var(--text-normal);
 }
 .grill-cloud-panel-lead {
-  margin: 0.25em 0 0.6em;
+  margin: var(--grill-space-xs) 0 0.6em;
   color: var(--text-normal);
 }
 .grill-mode-tag {
@@ -2086,7 +2078,7 @@ textarea.grill-mgmt-field {
 }
 /* Plain blocks with a drawn tick, not a list: themes restyle list items and markers. */
 .grill-cloud-facts {
-  margin: 0.5em 0;
+  margin: var(--grill-space-sm) 0;
   color: var(--text-muted);
   line-height: 1.5;
 }
@@ -2125,8 +2117,8 @@ textarea.grill-mgmt-field {
 .grill-cloud-buy {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5em;
-  margin-top: 0.5em;
+  gap: var(--grill-space-sm);
+  margin-top: var(--grill-space-sm);
 }
 .grill-cloud-buy:empty {
   display: none;
@@ -2174,7 +2166,7 @@ textarea.grill-mgmt-field {
 .grill-cloud-balance {
   display: flex;
   align-items: baseline;
-  gap: 0.5em;
+  gap: var(--grill-space-sm);
   margin: 0.1em 0 0.3em;
 }
 .grill-cloud-balance-number {
@@ -2197,7 +2189,7 @@ textarea.grill-mgmt-field {
   display: flex;
   flex-wrap: wrap;
   flex: 1;
-  gap: 0.5em;
+  gap: var(--grill-space-sm);
   justify-content: flex-start;
   align-items: center;
   margin: 0;
@@ -2334,7 +2326,7 @@ textarea.grill-mgmt-field {
   color: var(--grill-ink-gold);
 }
 .grill-tier-name {
-  margin-top: 0.25em;
+  margin-top: var(--grill-space-xs);
   color: var(--grill-ink-dim);
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -2511,20 +2503,20 @@ textarea.grill-mgmt-field {
 }
 .grill-answer-main .grill-confidence {
   margin: 0 0 0 0.3em;
-  gap: 0.25em;
+  gap: var(--grill-space-xs);
   flex-wrap: nowrap;
   white-space: nowrap;
 }
 .grill-answer-main .grill-conf-btn {
-  padding: 0.2em 0.5em;
+  padding: 0.2em var(--grill-space-sm);
 }
 .grill-answer-stuck {
   margin-left: auto;
 }
 .grill-answer-stuck .grill-quiet-btn {
   margin-left: 0;
-  padding-left: 0.5em;
-  padding-right: 0.5em;
+  padding-left: var(--grill-space-sm);
+  padding-right: var(--grill-space-sm);
 }
 .grill-bad-question-btn.clickable-icon {
   color: var(--text-faint);
@@ -2536,7 +2528,7 @@ textarea.grill-mgmt-field {
 /* After the answer: what next, on one line, with the rare overrides at its end. */
 .grill-next-bar {
   flex-wrap: wrap;
-  margin-top: var(--grill-space-md, 1em);
+  margin-top: var(--grill-space-md);
 }
 .grill-next-quiet {
   display: flex;
@@ -2550,7 +2542,7 @@ textarea.grill-mgmt-field {
 
 /* Ask about this: the conversation that flows down from the question. */
 .grill-thread {
-  margin: var(--grill-space-md, 1em) 0 0;
+  margin: var(--grill-space-md) 0 0;
   padding-left: 0.9em;
   border-left: 2px solid var(--interactive-accent);
 }
@@ -2583,7 +2575,7 @@ textarea.grill-mgmt-field {
 .grill-thread-form {
   display: flex;
   align-items: flex-end;
-  gap: 0.5em;
+  gap: var(--grill-space-sm);
 }
 .grill-thread-input {
   flex: 1;
@@ -2608,7 +2600,7 @@ textarea.grill-mgmt-field {
 /* The speaker on a tutor's turn sits at the far right, in line with the one on the
    verdict card above it. */
 .grill-thread {
-  padding-right: var(--grill-space-md, 1em);
+  padding-right: var(--grill-space-md);
 }
 .grill-thread-who .grill-tts-btn {
   margin: 0 0 0 auto;
@@ -2678,7 +2670,7 @@ textarea.grill-mgmt-field {
 .grill-refill-packs {
   display: flex;
   flex-direction: column;
-  gap: 0.5em;
+  gap: var(--grill-space-sm);
   margin-top: 1em;
 }
 .grill-refill-packs:empty {
@@ -2877,8 +2869,8 @@ textarea.grill-mgmt-field {
 }
 /* The question in hand, set apart from what was asked before it. */
 .grill-thread-frame .grill-body > .grill-question:not(.grill-question-small) {
-  margin-top: 0.5em;
-  padding: 0.85em 1em;
+  margin-top: var(--grill-space-sm);
+  padding: var(--grill-space-md) 1em;
   border: 1px solid var(--grill-ember-dark);
   border-radius: var(--grill-radius-m);
   background: var(--grill-screen-deep);
@@ -2917,7 +2909,7 @@ textarea.grill-mgmt-field {
 .grill-thread-ask {
   display: flex;
   align-items: flex-end;
-  gap: 0.5em;
+  gap: var(--grill-space-sm);
   margin-top: auto;
   padding-top: 1.2em;
 }
@@ -2973,7 +2965,7 @@ textarea.grill-mgmt-field {
   width: 100%;
   height: auto;
   min-height: 2.9em;
-  padding: 0.5em 0.9em;
+  padding: var(--grill-space-sm) 0.9em;
   border: 1px solid var(--grill-ember-dark);
   border-radius: var(--grill-radius-s);
   background: var(--grill-screen-deep);
@@ -3023,7 +3015,7 @@ textarea.grill-mgmt-field {
   justify-content: space-between;
   align-items: center;
   gap: 0.8em;
-  margin-top: 0.5em;
+  margin-top: var(--grill-space-sm);
   padding-bottom: 4px;
 }
 .grill-view .grill-home-bar .grill-home-send {
@@ -3109,7 +3101,7 @@ textarea.grill-mgmt-field {
   display: flex;
   align-items: center;
   gap: 0.8em;
-  margin-top: 0.5em;
+  margin-top: var(--grill-space-sm);
 }
 /* The box to ask in: a proper box, as wide as the pane, not a strip at its foot. */
 .grill-thread-ask {
@@ -3200,7 +3192,7 @@ textarea.grill-mgmt-field {
 /* The older questions of a long session, folded into one line, and the list it opens. */
 .grill-thread-earlier-list {
   margin: 0;
-  padding: 0 0.5em 0.5em;
+  padding: 0 var(--grill-space-sm) var(--grill-space-sm);
 }
 
 /* ---------------------------------------------------------------- questions */
@@ -3365,7 +3357,7 @@ textarea.grill-mgmt-field {
   justify-content: center;
   align-items: baseline;
   gap: 0 0.55em;
-  padding: 0.5em 0.4em 0.4em;
+  padding: var(--grill-space-sm) 0.4em 0.4em;
 }
 .grill-home .grill-start-stats .grill-stat-value {
   font-size: 0.95em;
@@ -3499,7 +3491,7 @@ textarea.grill-mgmt-field {
 .grill-home-chip {
   display: inline-flex;
   align-items: center;
-  gap: 0.5em;
+  gap: var(--grill-space-sm);
   max-width: 100%;
   padding: 0.2em 0.3em 0.2em 0.65em;
   border: 1px solid var(--grill-ember-dark);
@@ -3571,7 +3563,7 @@ textarea.grill-mgmt-field {
 /* What a chat turn changed, with one Undo. */
 .grill-reply-changes {
   margin-top: 0.6em;
-  padding: 0.5em 0.7em;
+  padding: var(--grill-space-sm) 0.7em;
   border-left: 2px solid var(--background-modifier-border);
 }
 .grill-reply-change {
@@ -3590,7 +3582,7 @@ textarea.grill-mgmt-field {
 /* The same buttons under a chat's box. The chat card is a column, so the home bar's
  * flex: 1 would stretch them down to fill the pane. */
 .grill-learn-picks {
-  margin-top: 0.5em;
+  margin-top: var(--grill-space-sm);
 }
 .grill-home-picks.grill-learn-picks {
   flex: 0 0 auto;
@@ -3605,8 +3597,8 @@ textarea.grill-mgmt-field {
   display: flex;
   align-items: flex-start;
   gap: 0.6em;
-  margin-bottom: 0.5em;
-  padding: 0.5em 0.7em;
+  margin-bottom: var(--grill-space-sm);
+  padding: var(--grill-space-sm) 0.7em;
   border-left: 3px solid var(--grill-accent);
   background: var(--background-secondary);
 }
@@ -3630,7 +3622,7 @@ textarea.grill-mgmt-field {
 .grill-agent-activity {
   display: flex;
   flex-direction: column;
-  gap: 0.25em;
+  gap: var(--grill-space-xs);
   margin-bottom: 0.6em;
 }
 .grill-agent-activity:empty {
@@ -3641,7 +3633,7 @@ textarea.grill-mgmt-field {
   font-size: var(--font-ui-small);
 }
 .grill-agent-summary {
-  margin-bottom: 0.5em;
+  margin-bottom: var(--grill-space-sm);
 }
 .grill-view button.grill-agent-stop {
   margin-top: 0.6em;
@@ -3684,7 +3676,7 @@ textarea.grill-mgmt-field {
 .grill-agent-removed,
 .grill-agent-added,
 .grill-agent-detail {
-  padding: 0.3em 0.5em;
+  padding: 0.3em var(--grill-space-sm);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
@@ -3698,7 +3690,7 @@ textarea.grill-mgmt-field {
 .grill-agent-ask-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5em;
+  gap: var(--grill-space-sm);
 }
 .grill-view .grill-agent-ask-row button {
   min-height: 2.5em;
@@ -3707,7 +3699,7 @@ textarea.grill-mgmt-field {
   display: flex;
   flex-wrap: wrap;
   gap: 1.2em;
-  margin-top: 0.5em;
+  margin-top: var(--grill-space-sm);
 }
 
 /* Progress and Questions: two buttons across the foot of the home screen, drawn like
@@ -3719,7 +3711,7 @@ textarea.grill-mgmt-field {
 .grill-view button.grill-home-nav:hover {
   flex: 1 1 0;
   height: auto;
-  padding: 0.85em 0;
+  padding: var(--grill-space-md) 0;
   border: 2px solid var(--grill-flame);
   background: var(--grill-screen-deep);
   box-shadow: none;
@@ -3950,7 +3942,7 @@ textarea.grill-mgmt-field {
 }
 .grill-home .grill-start-stats .grill-stat {
   gap: 0.45em;
-  padding: 0.85em 0.3em 0.75em;
+  padding: var(--grill-space-md) 0.3em 0.75em;
 }
 .grill-home .grill-start-stats .grill-stat-value {
   font-size: 1.4em;
@@ -4051,7 +4043,7 @@ textarea.grill-mgmt-field {
 .grill-import-offer-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 0.5em;
+  gap: var(--grill-space-sm);
 }
 .grill-import-offer-actions .grill-quiet-btn {
   margin-left: 0;
@@ -4087,7 +4079,7 @@ textarea.grill-mgmt-field {
 .grill-exam-folder {
   display: flex;
   align-items: center;
-  gap: 0.5em;
+  gap: var(--grill-space-sm);
   padding: 0.2em 0.8em 0.2em calc(0.8em + var(--grill-depth, 0) * 1.2em);
   cursor: pointer;
 }
