@@ -12,7 +12,7 @@
 import { RECORD_TOOL_RE, recordToolLine } from "./recordtools";
 import { AgentEvent, AgentLevel, AgentResult, PermissionAnswer, PermissionAsk } from "./agent";
 import { diffLines } from "./codex";
-import { HANDSHAKE_MS, IDLE_MS, idleWatch, NOT_STARTED, openLineWire, quietError, type LineWire, SIGNED_OUT } from "./wire";
+import { HANDSHAKE_MS, IDLE_MS, idleWatch, NOT_STARTED, openLineWire, quietError, rpcPeer, type LineWire, SIGNED_OUT } from "./wire";
 
 type Loose = Record<string, unknown>;
 const obj = (v: unknown): Loose | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Loose) : null);
@@ -199,8 +199,6 @@ export function modeOption(session: Loose): { configId: string; plan: string; ot
 /** Run one turn over a wire that is already open. Throws with a sentence fit to show. */
 export async function runAcpTurn(run: AcpRun, wire: AcpWire): Promise<AgentResult> {
 	const began = Date.now();
-	let nextId = 1;
-	const waiting = new Map<number, { yes(v: unknown): void; no(e: Error): void }>();
 	const tools: string[] = [];
 	const counted = new Set<string>();
 	/** Calls that read Grill's record, so the summary says they read it. */
@@ -219,38 +217,28 @@ export async function runAcpTurn(run: AcpRun, wire: AcpWire): Promise<AgentResul
 	let planned = false;
 	// A program that stops answering is given up on, not waited for with the pane locked.
 	const watch = idleWatch(HANDSHAKE_MS, (ms) => {
-		const e = quietError(run.name, ms);
-		for (const p of waiting.values()) p.no(e);
-		waiting.clear();
+		peer.failAll(quietError(run.name, ms));
 	});
 
-	const request = <T>(method: string, params: unknown): Promise<T> =>
-		new Promise<T>((yes, no) => {
-			const id = nextId++;
-			waiting.set(id, { yes: yes as (v: unknown) => void, no });
-			wire.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
-		});
-	const answer = (id: unknown, result: unknown): void => wire.send(JSON.stringify({ jsonrpc: "2.0", id, result }));
-	const refuse = (id: unknown, message: string): void => wire.send(JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32601, message } }));
 
 	const asked = async (id: unknown, method: string, params: Loose): Promise<void> => {
 		if (method === "session/request_permission") {
-			if (stopped) return answer(id, { outcome: { outcome: "cancelled" } });
+			if (stopped) return peer.answer(id, { outcome: { outcome: "cancelled" } });
 			const call = { ...(calls.get(str(obj(params.toolCall)?.toolCallId)) ?? {}), ...(obj(params.toolCall) ?? {}) };
 			// Plan changes nothing and runs nothing, whatever the agent's own rules let through.
 			if (run.level === "plan" && ["edit", "delete", "move", "execute"].includes(str(call.kind))) {
 				planned = declined = true;
 				const optionId = pickOption(list(params.options), "deny");
-				return answer(id, optionId ? { outcome: { outcome: "selected", optionId } } : { outcome: { outcome: "cancelled" } });
+				return peer.answer(id, optionId ? { outcome: { outcome: "selected", optionId } } : { outcome: { outcome: "cancelled" } });
 			}
 			const a = await run.ask(acpAsk(call));
 			if (a === "deny") declined = true;
-			if (stopped) return answer(id, { outcome: { outcome: "cancelled" } });
+			if (stopped) return peer.answer(id, { outcome: { outcome: "cancelled" } });
 			const optionId = pickOption(list(params.options), a);
-			return answer(id, optionId ? { outcome: { outcome: "selected", optionId } } : { outcome: { outcome: "cancelled" } });
+			return peer.answer(id, optionId ? { outcome: { outcome: "selected", optionId } } : { outcome: { outcome: "cancelled" } });
 		}
 		// Grill does not offer files or a terminal of its own: the agent uses its own.
-		refuse(id, `Grill does not handle ${method}.`);
+		peer.refuse(id, `Grill does not handle ${method}.`);
 	};
 
 	const told = (params: Loose): void => {
@@ -296,27 +284,13 @@ export async function runAcpTurn(run: AcpRun, wire: AcpWire): Promise<AgentResul
 		}
 	};
 
-	wire.onLine((line) => {
-		watch.heard();
-		let m: Loose | null = null;
-		try {
-			m = obj(JSON.parse(line));
-		} catch {
-			return; // not a message: a stray line of log
-		}
-		if (!m) return;
-		if (typeof m.method === "string") {
-			const params = obj(m.params) ?? {};
-			if (m.id !== undefined && m.id !== null) void watch.hold(asked(m.id, m.method, params)).catch(() => refuse(m?.id, "That request could not be answered."));
-			else if (m.method === "session/update") told(params);
-			return;
-		}
-		const pending = typeof m.id === "number" ? waiting.get(m.id) : undefined;
-		if (!pending) return;
-		waiting.delete(m.id as number);
-		const err = obj(m.error);
-		if (err) pending.no(new Error(str(err.message) || `${run.name} refused the request.`));
-		else pending.yes(m.result);
+	const peer = rpcPeer(wire, {
+		refused: `${run.name} refused the request.`,
+		heard: () => watch.heard(),
+		onRequest: (id, method, params) => void watch.hold(asked(id, method, params)).catch(() => peer.refuse(id, "That request could not be answered.")),
+		onNotice: (method, params) => {
+			if (method === "session/update") told(params);
+		},
 	});
 	wire.onClose((why) => {
 		const e = new Error(
@@ -326,20 +300,17 @@ export async function runAcpTurn(run: AcpRun, wire: AcpWire): Promise<AgentResul
 					? `${run.name} is not signed in to that model. Pick another model, or sign in from Grill's settings.`
 					: `${run.name} stopped${why ? `: ${clip(why.trim(), 200)}` : "."}`,
 		);
-		for (const p of waiting.values()) p.no(e);
-		waiting.clear();
+		peer.failAll(e);
 	});
 
 	const stop = (): void => {
 		stopped = true;
-		if (sessionId) wire.send(JSON.stringify({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } }));
-		const e = new DOMException("Stopped.", "AbortError");
-		for (const p of waiting.values()) p.no(e);
-		waiting.clear();
+		if (sessionId) peer.notify("session/cancel", { sessionId });
+		peer.failAll(new DOMException("Stopped.", "AbortError"));
 	};
 	run.signal?.addEventListener("abort", stop, { once: true });
 	try {
-		const init = await request<Loose>("initialize", {
+		const init = await peer.request<Loose>("initialize", {
 			protocolVersion: 1,
 			clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
 			clientInfo: { name: "grill", version: "1.0.0" },
@@ -353,7 +324,7 @@ export async function runAcpTurn(run: AcpRun, wire: AcpWire): Promise<AgentResul
 			const how = sessionCaps.resume ? "session/resume" : caps.loadSession ? "session/load" : "";
 			if (how) {
 				try {
-					session = (await request<Loose>(how, { sessionId: run.resume, cwd: run.cwd, mcpServers: run.mcpServers ?? [] })) ?? {};
+					session = (await peer.request<Loose>(how, { sessionId: run.resume, cwd: run.cwd, mcpServers: run.mcpServers ?? [] })) ?? {};
 					sessionId = run.resume;
 				} catch (e) {
 					if ((e as Error).name === "AbortError") throw e;
@@ -363,24 +334,24 @@ export async function runAcpTurn(run: AcpRun, wire: AcpWire): Promise<AgentResul
 		}
 		const fresh = !session;
 		if (!session) {
-			session = (await request<Loose>("session/new", { cwd: run.cwd, mcpServers: run.mcpServers ?? [] })) ?? {};
+			session = (await peer.request<Loose>("session/new", { cwd: run.cwd, mcpServers: run.mcpServers ?? [] })) ?? {};
 			sessionId = str(session.sessionId);
 		}
 		if (!sessionId) throw new Error(`${run.name} did not open a conversation.`);
 		const { models, current } = modelsOf(session);
 		if (models.length) run.onModels?.(models, current);
 		if (run.model && run.model !== current && models.some((m) => m.id === run.model)) {
-			await request("session/set_config_option", { sessionId, configId: "model", value: run.model });
+			await peer.request("session/set_config_option", { sessionId, configId: "model", value: run.model });
 		}
 		// Set either way: a conversation picked up again keeps the mode it was left in.
 		const mode = modeOption(session);
 		const wanted = mode && (run.level === "plan" ? mode.plan : mode.other);
-		if (mode && wanted && (wanted !== mode.current || !fresh)) await request("session/set_config_option", { sessionId, configId: mode.configId, value: wanted });
+		if (mode && wanted && (wanted !== mode.current || !fresh)) await peer.request("session/set_config_option", { sessionId, configId: mode.configId, value: wanted });
 		if (run.signal?.aborted) throw new DOMException("Stopped.", "AbortError");
 		const first = fresh && run.brief ? `<context>\n${run.brief}\n</context>\n\n${run.prompt}` : run.prompt;
 		live = true;
 		watch.limit(IDLE_MS);
-		const done = await request<Loose>("session/prompt", { sessionId, prompt: [{ type: "text", text: first }] });
+		const done = await peer.request<Loose>("session/prompt", { sessionId, prompt: [{ type: "text", text: first }] });
 		if (stopped || (str(done?.stopReason) === "cancelled" && !declined)) throw new DOMException("Stopped.", "AbortError");
 		if (str(done?.stopReason) === "refusal") throw new Error(`${run.name} declined to answer that.`);
 	} finally {
@@ -433,24 +404,9 @@ export async function runAcp(run: AcpRun & AcpProgram): Promise<AgentResult> {
  * opened, read and closed. */
 export async function acpModels(p: AcpProgram, cwd: string): Promise<{ models: AcpModel[]; current: string }> {
 	const wire = openAcp(p, cwd);
-	let nextId = 1;
-	const waiting = new Map<number, (m: Loose) => void>();
-	wire.onLine((line) => {
-		let m: Loose | null = null;
-		try {
-			m = obj(JSON.parse(line));
-		} catch {
-			return;
-		}
-		if (m && typeof m.id === "number" && typeof m.method !== "string") waiting.get(m.id)?.(m);
-	});
-	const request = (method: string, params: unknown): Promise<Loose> =>
-		new Promise((yes, no) => {
-			const id = nextId++;
-			waiting.set(id, (m) => (obj(m.error) ? no(new Error(str(obj(m.error)?.message))) : yes(obj(m.result) ?? {})));
-			wire.onClose((why) => no(new Error(why || "The program stopped.")));
-			wire.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
-		});
+	const peer = rpcPeer(wire, { refused: "" });
+	wire.onClose((why) => peer.failAll(new Error(why || "The program stopped.")));
+	const request = async (method: string, params: unknown): Promise<Loose> => obj(await peer.request(method, params)) ?? {};
 	try {
 		await request("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } });
 		return modelsOf(await request("session/new", { cwd, mcpServers: [] }));

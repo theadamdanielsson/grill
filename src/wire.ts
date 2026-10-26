@@ -198,3 +198,75 @@ export function quietError(name: string, quietMs: number): Error {
 	const minutes = Math.round(quietMs / 60_000);
 	return new Error(`${name} said nothing for ${minutes >= 1 ? `${minutes} minute${minutes === 1 ? "" : "s"}` : `${Math.round(quietMs / 1000)} seconds`}, so Grill stopped waiting.`);
 }
+
+type Message = Record<string, unknown>;
+const asMessage = (v: unknown): Message | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Message) : null);
+
+/** One side of a JSON-RPC 2.0 conversation over a line wire: requests out, and what the
+ * other side sends back, told apart. Codex's app-server and the agents that speak ACP
+ * (opencode) both talk this way. */
+export interface RpcPeer {
+	request<T>(method: string, params: unknown): Promise<T>;
+	notify(method: string, params?: unknown): void;
+	/** Answer a request the other side sent. */
+	answer(id: unknown, result: unknown): void;
+	/** Turn a request the other side sent away. */
+	refuse(id: unknown, message: string): void;
+	/** Fail every request still waiting for its answer. */
+	failAll(e: Error): void;
+}
+
+export function rpcPeer(
+	wire: Pick<LineWire, "send" | "onLine">,
+	o: {
+		/** Said when a request is refused without a reason. */
+		refused: string;
+		/** Any line at all came in. */
+		heard?(): void;
+		/** The other side asked something, and expects an answer. */
+		onRequest?(id: unknown, method: string, params: Message): void;
+		/** The other side said something, and expects nothing back. */
+		onNotice?(method: string, params: Message): void;
+	},
+): RpcPeer {
+	let nextId = 1;
+	const waiting = new Map<number, { yes(v: unknown): void; no(e: Error): void }>();
+	const send = (m: Message): void => wire.send(JSON.stringify({ jsonrpc: "2.0", ...m }));
+	wire.onLine((line) => {
+		o.heard?.();
+		let m: Message | null = null;
+		try {
+			m = asMessage(JSON.parse(line));
+		} catch {
+			return; // not a message: a stray line of log
+		}
+		if (!m) return;
+		if (typeof m.method === "string") {
+			const params = asMessage(m.params) ?? {};
+			if (m.id !== undefined && m.id !== null) o.onRequest?.(m.id, m.method, params);
+			else o.onNotice?.(m.method, params);
+			return;
+		}
+		const pending = typeof m.id === "number" ? waiting.get(m.id) : undefined;
+		if (!pending) return;
+		waiting.delete(m.id as number);
+		const err = asMessage(m.error);
+		if (err) pending.no(new Error((typeof err.message === "string" && err.message) || o.refused));
+		else pending.yes(m.result);
+	});
+	return {
+		request: <T>(method: string, params: unknown) =>
+			new Promise<T>((yes, no) => {
+				const id = nextId++;
+				waiting.set(id, { yes: yes as (v: unknown) => void, no });
+				send({ id, method, params });
+			}),
+		notify: (method, params) => send(params === undefined ? { method } : { method, params }),
+		answer: (id, result) => send({ id, result }),
+		refuse: (id, message) => send({ id, error: { code: -32601, message } }),
+		failAll: (e) => {
+			for (const p of waiting.values()) p.no(e);
+			waiting.clear();
+		},
+	};
+}

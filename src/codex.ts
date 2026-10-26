@@ -16,7 +16,7 @@ import type { ToolSpec } from "./stream";
 import type { ToolRunner } from "./loopback";
 import { isRecordTool, recordToolLine } from "./recordtools";
 import { AgentEvent, AgentLevel, AgentResult, PermissionAnswer, PermissionAsk } from "./agent";
-import { findInstalled, HANDSHAKE_MS, IDLE_MS, idleWatch, need, NOT_STARTED, openLineWire, quietError, type LineWire, SIGNED_OUT } from "./wire";
+import { findInstalled, HANDSHAKE_MS, IDLE_MS, idleWatch, need, NOT_STARTED, openLineWire, quietError, rpcPeer, type LineWire, SIGNED_OUT } from "./wire";
 
 type Loose = Record<string, unknown>;
 const obj = (v: unknown): Loose | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Loose) : null);
@@ -118,8 +118,6 @@ const DECISION: Record<PermissionAnswer, string> = { once: "accept", always: "ac
 /** Run one turn over a wire that is already open. Throws with a sentence fit to show. */
 export async function runCodexTurn(run: CodexRun, wire: CodexWire): Promise<AgentResult> {
 	const began = Date.now();
-	let nextId = 1;
-	const waiting = new Map<number, { yes(v: unknown): void; no(e: Error): void }>();
 	const tools: string[] = [];
 	/** File changes Codex has announced, by item, so an approval request can show them. */
 	const announced = new Map<string, Change[]>();
@@ -140,25 +138,15 @@ export async function runCodexTurn(run: CodexRun, wire: CodexWire): Promise<Agen
 	// question, say) is given up on, not waited for with the pane locked.
 	const watch = idleWatch(HANDSHAKE_MS, (ms) => {
 		const e = quietError("Codex", ms);
-		for (const p of waiting.values()) p.no(e);
-		waiting.clear();
+		peer.failAll(e);
 		failed?.(e);
 	});
-
-	const request = <T>(method: string, params: unknown): Promise<T> =>
-		new Promise<T>((yes, no) => {
-			const id = nextId++;
-			waiting.set(id, { yes, no });
-			wire.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
-		});
-	const answer = (id: unknown, result: unknown): void => wire.send(JSON.stringify({ jsonrpc: "2.0", id, result }));
-	const refuse = (id: unknown, message: string): void => wire.send(JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32601, message } }));
 
 	const asked = async (id: unknown, method: string, params: Loose): Promise<void> => {
 		if (method === "item/commandExecution/requestApproval") {
 			const command = str(params.command);
 			const a = await run.ask({ tool: "Bash", title: "Run a command", removed: [], added: [], detail: command || str(params.reason), always: "Always allow this in this chat" });
-			return answer(id, { decision: DECISION[a] });
+			return peer.answer(id, { decision: DECISION[a] });
 		}
 		if (method === "item/fileChange/requestApproval") {
 			const changes = announced.get(str(params.itemId)) ?? [];
@@ -172,7 +160,7 @@ export async function runCodexTurn(run: CodexRun, wire: CodexWire): Promise<Agen
 				detail: lines.some((l) => l.removed.length || l.added.length) ? "" : str(params.reason),
 				always: "Always allow edits in this chat",
 			});
-			return answer(id, { decision: DECISION[a] });
+			return peer.answer(id, { decision: DECISION[a] });
 		}
 		// One of Grill's own tools: run here, answered in Codex's dynamic tool shape.
 		if (method === "item/tool/call" && run.tools && (params.namespace ?? CODEX_TOOL_NAMESPACE) === CODEX_TOOL_NAMESPACE) {
@@ -184,12 +172,12 @@ export async function runCodexTurn(run: CodexRun, wire: CodexWire): Promise<Agen
 				} catch (e) {
 					r = { content: e instanceof Error ? e.message : String(e), failed: true };
 				}
-				return answer(id, { success: !r.failed, contentItems: [{ type: "inputText", text: r.content }] });
+				return peer.answer(id, { success: !r.failed, contentItems: [{ type: "inputText", text: r.content }] });
 			}
 		}
 		// Anything else it might ask of its host (more permissions, a question, a tool
 		// Grill doesn't offer) is not something this chat can answer.
-		refuse(id, `Grill does not handle ${method}.`);
+		peer.refuse(id, `Grill does not handle ${method}.`);
 	};
 
 	const told = (method: string, params: Loose): void => {
@@ -220,56 +208,38 @@ export async function runCodexTurn(run: CodexRun, wire: CodexWire): Promise<Agen
 		}
 	};
 
-	wire.onLine((line) => {
-		watch.heard();
-		let m: Loose | null = null;
-		try {
-			m = obj(JSON.parse(line));
-		} catch {
-			return; // not a message: a stray line of log
-		}
-		if (!m) return;
-		if (typeof m.method === "string") {
-			const params = obj(m.params) ?? {};
-			if (m.id !== undefined && m.id !== null) void watch.hold(asked(m.id, m.method, params)).catch(() => refuse(m?.id, "That request could not be answered."));
-			else told(m.method, params);
-			return;
-		}
-		const pending = typeof m.id === "number" ? waiting.get(m.id) : undefined;
-		if (!pending) return;
-		waiting.delete(m.id as number);
-		const err = obj(m.error);
-		if (err) pending.no(new Error(str(err.message) || "Codex refused the request."));
-		else pending.yes(m.result);
+	const peer = rpcPeer(wire, {
+		refused: "Codex refused the request.",
+		heard: () => watch.heard(),
+		onRequest: (id, method, params) => void watch.hold(asked(id, method, params)).catch(() => peer.refuse(id, "That request could not be answered.")),
+		onNotice: (method, params) => told(method, params),
 	});
 	wire.onClose((why) => {
 		const e = new Error(why === NOT_STARTED ? NOT_STARTED_SAID : SIGNED_OUT.test(why) ? "Codex is not signed in. Open a terminal, run codex, and sign in there." : `Codex stopped${why ? `: ${clip(why.trim(), 200)}` : "."}`);
-		for (const p of waiting.values()) p.no(e);
-		waiting.clear();
+		peer.failAll(e);
 		failed?.(e);
 	});
 
 	const stop = (): void => {
-		if (threadId) wire.send(JSON.stringify({ jsonrpc: "2.0", id: nextId++, method: "turn/interrupt", params: { threadId, turnId } }));
+		if (threadId) void peer.request("turn/interrupt", { threadId, turnId }).catch(() => undefined);
 		const e = new DOMException("Stopped.", "AbortError");
 		// A request it has not answered yet is not waited on either.
-		for (const p of waiting.values()) p.no(e);
-		waiting.clear();
+		peer.failAll(e);
 		failed?.(e);
 	};
 	run.signal?.addEventListener("abort", stop, { once: true });
 	try {
-		await request("initialize", { clientInfo: { name: "grill", version: "1.0.0" }, capabilities: { experimentalApi: true } });
-		wire.send(JSON.stringify({ jsonrpc: "2.0", method: "initialized" }));
+		await peer.request("initialize", { clientInfo: { name: "grill", version: "1.0.0" }, capabilities: { experimentalApi: true } });
+		peer.notify("initialized");
 		const policy = codexPolicy(run.level);
 		const config = { cwd: run.cwd, approvalPolicy: policy.approvalPolicy, approvalsReviewer: "user", sandbox: policy.sandbox, ...(run.model ? { model: run.model } : {}) };
 		const tools = run.tools ? { dynamicTools: run.tools.specs.map((t) => ({ namespace: CODEX_TOOL_NAMESPACE, name: t.name, description: t.description, inputSchema: t.input })) } : {};
-		const opened = await request<Loose>(threadId ? "thread/resume" : "thread/start", threadId ? { threadId, ...config } : { ...config, ...tools });
+		const opened = await peer.request<Loose>(threadId ? "thread/resume" : "thread/start", threadId ? { threadId, ...config } : { ...config, ...tools });
 		threadId = str(obj(opened?.thread)?.id) || threadId;
 		if (run.signal?.aborted) throw new DOMException("Stopped.", "AbortError");
 		const first = !run.resume && run.brief ? `<context>\n${run.brief}\n</context>\n\n${run.prompt}` : run.prompt;
 		const pictures = (run.images ?? []).map((im) => ({ type: "image", url: `data:${im.mediaType};base64,${im.dataBase64}` }));
-		const started = await request<Loose>("turn/start", { threadId, input: [...pictures, { type: "text", text: first }], ...(run.outputSchema ? { outputSchema: run.outputSchema } : {}), approvalPolicy: policy.approvalPolicy, approvalsReviewer: "user", ...(run.model ? { model: run.model } : {}) });
+		const started = await peer.request<Loose>("turn/start", { threadId, input: [...pictures, { type: "text", text: first }], ...(run.outputSchema ? { outputSchema: run.outputSchema } : {}), approvalPolicy: policy.approvalPolicy, approvalsReviewer: "user", ...(run.model ? { model: run.model } : {}) });
 		turnId = str(obj(started?.turn)?.id) || turnId;
 		watch.limit(IDLE_MS);
 		await done;
