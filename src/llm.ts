@@ -490,6 +490,7 @@ async function runGenerationPass(
 	formatMode: FormatMode,
 	formatCounts: Partial<Record<string, number>>,
 	hints: boolean,
+	testNote: string,
 ): Promise<{ questions: Question[]; defects: Map<number, string> }> {
 	const mixFormats = formatMode !== "write";
 	const varyFormats = formatMode === "mixed";
@@ -556,7 +557,16 @@ async function runGenerationPass(
 		// formatNudge actively steers toward whatever format hasn't appeared yet, which
 		// is exactly wrong for a fixed single format (e.g. "mc only") — every target
 		// already carries that same [format: X] tag, so there's nothing to vary toward.
-		(mixFormats ? formatMixInstructions(formatMode === "mc") + (varyFormats ? formatNudge(formatCounts) : "") : "");
+		(mixFormats ? formatMixInstructions(formatMode === "mc") + (varyFormats ? formatNudge(formatCounts) : "") : "") +
+		// Last, so nothing after it can take it back: what the student asked for mid-test
+		// overrides each concept's aim and format and every style rule above. Only
+		// grounding in the notes and the output shape still bind.
+		(testNote
+			? "\n\nDuring this test the student asked for the following. It applies to every question in this batch and " +
+				"overrides each concept's aim, its format tag and any style or length guidance above. The questions must " +
+				"still be answerable from the notes and in the required output shape.\n" +
+				`<student_request>\n${testNote}\n</student_request>`
+			: "");
 	type RawQ = Omit<Question, "node" | "conceptId"> & { n?: number };
 	const data = (await callJSON(cfg, tutorSystem(persona, hints), { cacheable, rest }, questionsSchema(mixFormats, hints), 8000, images)) as {
 		questions: RawQ[];
@@ -877,6 +887,7 @@ export async function generateQuestions(
 	formatCounts: Partial<Record<string, number>> = {},
 	hints = true,
 	checkKeys = false,
+	testNote = "",
 ): Promise<Question[]> {
 	const first = await runGenerationPass(
 		cfg,
@@ -889,6 +900,7 @@ export async function generateQuestions(
 		formatMode,
 		formatCounts,
 		hints,
+		testNote,
 	);
 	if (checkKeys) await dropBadKeys(cfg, first, targets);
 	if (first.defects.size === 0) return first.questions;
@@ -910,6 +922,7 @@ export async function generateQuestions(
 		formatMode,
 		formatCounts,
 		hints,
+		testNote,
 	);
 	if (checkKeys) await dropBadKeys(cfg, retry, retryTargets);
 	return [...first.questions, ...retry.questions];

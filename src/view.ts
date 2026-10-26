@@ -4540,13 +4540,14 @@ export class SessionView extends ItemView {
 						batchNotesText,
 						batch,
 						batchImages,
-						this.questionInstructions(),
+						this.sessionInstructions,
 						this.linksBlock,
 						this.sessionPersona,
 						this.plugin.data.settings.questionFormats,
 						formatCounts,
 						this.plugin.data.settings.testHints,
 						true,
+						this.sessionContext,
 					);
 					console.debug(`Grill: generateQuestions (${batch.length} target(s)) took ${Date.now() - genStart}ms`);
 					// The session this batch was generated for has since been replaced (a new
@@ -4589,13 +4590,6 @@ export class SessionView extends ItemView {
 	 * caller) chains further calls in the background while the student is still on the
 	 * current card; loadNextBatch's `pending` guard makes that safe even if a previous
 	 * call is still in flight. */
-	/** The student's preferences for question writing, plus anything added with "Add
-	 * context" in this test, which wins where the two disagree. */
-	private questionInstructions(): string {
-		if (!this.sessionContext) return this.sessionInstructions;
-		const added = `For this test only, the student added this. Where it disagrees with anything above, it wins:\n${this.sessionContext}`;
-		return this.sessionInstructions ? `${this.sessionInstructions}\n\n${added}` : added;
-	}
 
 	/** "Add context": the student's note on how questions should be written, for the
 	 * rest of this test only. Waits out any batch already being written (it was written
@@ -4615,7 +4609,7 @@ export class SessionView extends ItemView {
 		const again = requeueForContext(this.questions, this.targets, this.idx, this.planCursor, rewriteCurrent);
 		const rewritingNow = rewriteCurrent && this.questions.length <= this.idx;
 		this.contextRewriting = again - (rewritingNow ? 1 : 0);
-		if (rewritingNow) await this.goToQuestion(this.idx);
+		if (rewritingNow) await this.goToQuestion(this.idx, "Rewriting this question");
 		else this.drawContextSlot();
 		if (epoch !== this.sessionEpoch) return;
 		await this.prefetchAhead().catch(() => undefined);
@@ -4942,7 +4936,7 @@ export class SessionView extends ItemView {
 	}
 
 	/** Move to question `idx`, generating it (and prefetching the next) as needed. */
-	private async goToQuestion(idx: number): Promise<void> {
+	private async goToQuestion(idx: number, waiting = "Writing your next question"): Promise<void> {
 		if (idx >= this.targetCount) {
 			await this.finishSession();
 			return;
@@ -4960,7 +4954,7 @@ export class SessionView extends ItemView {
 			const epoch = this.sessionEpoch;
 			try {
 				await this.withDebouncedLoading(
-					"Writing your next question",
+					waiting,
 					next ? `On ${next.note}: ${next.label}` : "Just a moment.",
 					() => this.loadNextBatch(),
 					() => this.cancelSession(),

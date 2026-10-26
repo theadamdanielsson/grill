@@ -65,3 +65,20 @@ test("a concept on an exam is marked so in the request, and the rules say what t
 	assert.match(sent(body.messages), /\(aim: easy\) \[exam in 17 days\]/);
 	assert.match(sent(body.system), /marked \[exam \.\.\.\], it is on an exam/);
 });
+
+test("a request made with Add context comes last and overrides the aims, apart from the preferences", async () => {
+	let body: any = null;
+	net.handler = async (req) => {
+		body = JSON.parse(req.body as string);
+		const json = { stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify({ questions: [reply(true)] }) }] };
+		return { status: 200, json, text: "", headers: {} } as any;
+	};
+	await generateQuestions(cfg, `NOTE 'Okun':\n${note}`, [{ ...target, targetDifficulty: "hard" }], [], "Write in Swedish.", "", undefined, "write", {}, true, false, "make them shorter");
+	const text = sent(body.messages);
+	const asked = text.indexOf("<student_request>\\nmake them shorter");
+	assert.ok(asked > 0);
+	assert.ok(asked > text.indexOf("(aim: hard)"));
+	assert.ok(asked > text.indexOf("<preferences>\\nWrite in Swedish."));
+	assert.match(text, /overrides each concept's aim/);
+	assert.doesNotMatch(text.slice(text.indexOf("<preferences>"), asked), /make them shorter/);
+});
