@@ -466,6 +466,8 @@ export default class GrillPlugin extends Plugin {
 		this.registerMarkdownCodeBlockProcessor("grill-documents", (_source, el) => renderDocumentsBlock(el, this.store));
 
 		this.app.workspace.onLayoutReady(() => {
+			// Notices show above the plugin browser, which is still open right after Enable.
+			if (!this.data.settings.onboarded) new Notice("Grill is open in a new tab.");
 			this.askToUseModel();
 			// Not at startup itself: nothing about it is urgent.
 			window.setTimeout(() => void this.checkForUpdate(), 15_000);
@@ -531,7 +533,7 @@ export default class GrillPlugin extends Plugin {
 				}
 				// First run: open Grill and ask which folders are its territory.
 				if (!this.data.settings.onboarded) {
-					await this.activateView();
+					await this.activateView("tab");
 					const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view;
 					if (view instanceof SessionView) view.showOnboarding();
 				}
@@ -1721,13 +1723,14 @@ ${body}
 
 	private persistFailed = false;
 
-	async activateView(): Promise<void> {
+	/** First run opens in a tab: a sidebar pane is easy to miss once the plugin browser closes. */
+	async activateView(where: "side" | "tab" = "side"): Promise<void> {
 		const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE);
 		if (existing.length > 0) {
 			await this.app.workspace.revealLeaf(existing[0]);
 			return;
 		}
-		const leaf = this.app.workspace.getRightLeaf(false);
+		const leaf = where === "tab" ? this.app.workspace.getLeaf("tab") : this.app.workspace.getRightLeaf(false);
 		if (!leaf) return;
 		await leaf.setViewState({ type: VIEW_TYPE, active: true });
 		await this.app.workspace.revealLeaf(leaf);
