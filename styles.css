@@ -1996,6 +1996,13 @@ textarea.grill-mgmt-field {
   position: relative;
   overflow: hidden;
   margin-top: 1.2em;
+  /* Measured, so a strip too short to hold the map leaves it out rather than flatten it. */
+  container-type: size;
+}
+@container (max-height: 150px) {
+  .grill-onboard-map svg {
+    display: none;
+  }
 }
 /* Clear of the pane's bottom edge, where Obsidian's status bar sits over the corner. */
 .grill-onboard-map svg {
