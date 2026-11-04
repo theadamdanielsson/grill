@@ -61,6 +61,7 @@ import { listSome, missesLine, mostLinked, noteLine, shortDate, startingNote } f
 import { drawPicks, renderChatHome, renderCreditsRing, type HomeMode, type HomeSuggestion } from "./home";
 import { aboutTheVault, compactAt, learnContext, learnRecord, namesANote, parseLearnNote, parseLearnThread, parseSessionNote, namesInFull, rankNotes, sessionTitle, vaultMap, vaultNotes, vaultStructure, type PastAnswer, type VaultNote } from "./learn";
 import { safeDiagram, safeMarkdown } from "./safemd";
+import { streamDrawer, type StreamDrawer } from "./streamdraw";
 import { activitySummary, AgentEvent, agentBrief, AGENT_LEVELS, claudeCommands, PermissionAnswer, PermissionAsk, runAgent } from "./agent";
 import type { VaultPort } from "./vaulttools";
 import { applyIntensity, type SettingsPort } from "./settingstools";
@@ -627,9 +628,41 @@ export class SessionView extends ItemView {
 			this.contentEl.querySelector(".grill-wrap")?.toggleClass("grill-compact", narrow);
 		};
 		apply(this.contentEl.clientWidth);
+		this.observeStatusBar();
 		if (typeof ResizeObserver === "undefined") return;
-		const ro = new ResizeObserver((entries) => apply(entries[0]?.contentRect.width ?? 0));
+		const ro = new ResizeObserver((entries) => {
+			apply(entries[0]?.contentRect.width ?? 0);
+			this.fitStatusBar();
+		});
 		ro.observe(this.contentEl);
+		this.register(() => ro.disconnect());
+	}
+
+	/** On desktop Obsidian's status bar floats over the bottom right corner of the
+	 * window, on top of the right sidebar. The pane's last row (the chat box's buttons)
+	 * sat under it and took no clicks. How much of the pane it covers goes into
+	 * `--grill-status-gap`, which the pane keeps free at its bottom. A theme that docks
+	 * the bar below the panes covers nothing, so the gap is 0 there. */
+	private fitStatusBar(): void {
+		const bar = activeDocument.querySelector<HTMLElement>(".status-bar");
+		const pane = this.contentEl.getBoundingClientRect();
+		let gap = 0;
+		if (bar && bar.offsetParent !== null) {
+			const b = bar.getBoundingClientRect();
+			const across = b.left < pane.right && b.right > pane.left;
+			if (across && b.top < pane.bottom && b.bottom > pane.top) gap = Math.ceil(pane.bottom - b.top);
+		}
+		this.contentEl.style.setProperty("--grill-status-gap", `${Math.max(0, gap)}px`);
+	}
+
+	private observeStatusBar(): void {
+		this.fitStatusBar();
+		this.registerEvent(this.app.workspace.on("layout-change", () => this.fitStatusBar()));
+		this.registerEvent(this.app.workspace.on("css-change", () => this.fitStatusBar()));
+		const bar = activeDocument.querySelector<HTMLElement>(".status-bar");
+		if (!bar || typeof ResizeObserver === "undefined") return;
+		const ro = new ResizeObserver(() => this.fitStatusBar());
+		ro.observe(bar);
 		this.register(() => ro.disconnect());
 	}
 
@@ -2088,6 +2121,40 @@ export class SessionView extends ItemView {
 	private renderLearn(): void {
 		const L = this.learn;
 		if (!L) return this.renderStart();
+		// The chat is drawn afresh, which put the pane back at its top for a moment and
+		// then jumped to the last turn. Someone at the bottom stays at the bottom, while
+		// the Markdown and pictures finish drawing too; anyone else keeps their place.
+		const pane = this.contentEl;
+		const wasChat = !!pane.querySelector(".grill-learn-turns");
+		const atFoot = !wasChat || pane.scrollHeight - pane.scrollTop - pane.clientHeight < 160;
+		const scrolled = pane.scrollTop;
+		this.drawLearn(L);
+		if (!atFoot) {
+			pane.scrollTop = scrolled;
+			return;
+		}
+		pane.scrollTop = pane.scrollHeight;
+		this.holdFoot();
+	}
+
+	/** Keeps the pane at its bottom for a moment while what was just drawn settles
+	 * (Markdown, pictures and diagrams draw after the chat does), unless the reader
+	 * scrolls away first. */
+	private holdFoot(): void {
+		const pane = this.contentEl;
+		const until = Date.now() + 1500;
+		let last = pane.scrollTop;
+		const step = (): void => {
+			if (Date.now() > until || !pane.querySelector(".grill-learn-turns")) return;
+			if (pane.scrollTop < last - 4) return; // scrolled up: leave them there
+			pane.scrollTop = pane.scrollHeight;
+			last = pane.scrollTop;
+			window.requestAnimationFrame(step);
+		};
+		window.requestAnimationFrame(step);
+	}
+
+	private drawLearn(L: NonNullable<SessionView["learn"]>): void {
 		drawChat(this.root("learn"), L, {
 			app: this.app,
 			md: (markdown, el, sourcePath) => this.md(markdown, el, sourcePath),
@@ -2165,42 +2232,17 @@ export class SessionView extends ItemView {
 		const waiting = turnsEl ? waitingTurn(turnsEl, "Grill", this.agentProgram() || this.modelHasTools() ? "Working..." : "Reading your note...").el : undefined;
 		waiting?.scrollIntoView({ block: "nearest" });
 		this.contentEl.querySelectorAll<HTMLButtonElement | HTMLTextAreaElement>(".grill-learn button, .grill-learn textarea").forEach((b) => (b.disabled = true));
+		let drawer: StreamDrawer | null = null;
 		try {
-			// The reply is drawn as it is written: each time more arrives, what there is
-			// so far replaces the line that said Grill was reading.
+			// The reply is drawn as it is written, without the screen jumping: see
+			// streamdraw.ts.
 			const body = waiting?.querySelector<HTMLElement>(".grill-thread-text") ?? null;
-			let latest = "";
-			let drawn = "";
-			let drawing = false;
-			const draw = async (): Promise<void> => {
-				if (drawing || !body) return;
-				drawing = true;
-				try {
-					while (drawn !== latest && body.isConnected) {
-						const now = latest;
-						const page = createDiv();
-						await MarkdownRenderer.render(this.app, safeMarkdown(now), page, L.note.path, this);
-						if (!body.isConnected) break;
-						// Someone reading the end of the reply keeps the end in view; someone
-						// who scrolled up to read is left where they are.
-						const pane = this.contentEl;
-						const atFoot = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 120;
-						body.removeClass("grill-meta");
-						body.replaceChildren(...Array.from(page.childNodes));
-						if (atFoot) pane.scrollTop = pane.scrollHeight;
-						drawn = now;
-						await new Promise((r) => window.setTimeout(r, 80));
-					}
-				} finally {
-					drawing = false;
-				}
-			};
+			drawer = body
+				? streamDrawer(body, this.contentEl, (markdown, into) => MarkdownRenderer.render(this.app, safeMarkdown(markdown), into, L.note.path, this))
+				: null;
 			this.learnStop = new AbortController();
 			const live = {
-				onText: (soFar: string): void => {
-					latest = soFar;
-					void draw();
-				},
+				onText: (soFar: string): void => drawer?.update(soFar),
 				signal: this.learnStop.signal,
 			};
 			this.pendingOffers = [];
@@ -2212,6 +2254,7 @@ export class SessionView extends ItemView {
 				program && waiting
 					? await this.askAgent(L, program, sent, waiting, live)
 					: await this.askModel(cfg as LLMConfig, L, sent, waiting, live);
+			drawer?.stop();
 			if (this.learn !== L) return;
 			if (this.pendingOffers.length) reply.offers = this.pendingOffers;
 			this.pendingOffers = [];
@@ -2222,8 +2265,8 @@ export class SessionView extends ItemView {
 			if (this.learn !== L) return;
 			L.turns.push(reply);
 			this.renderLearn();
-			this.contentEl.querySelector(".grill-learn-turns")?.lastElementChild?.scrollIntoView({ block: "nearest" });
 		} catch (e) {
+			drawer?.stop();
 			if (this.learn !== L) return;
 			const stopped = (e as Error)?.name === "AbortError";
 			// A turn that had already done things is kept, with a line saying it did not
@@ -2258,7 +2301,13 @@ export class SessionView extends ItemView {
 		waiting.insertBefore(activity, body);
 		const stop = waiting.createEl("button", { cls: "grill-hint-btn grill-agent-stop", text: "Stop", attr: { type: "button" } });
 		stop.onclick = () => this.learnStop?.abort();
-		const keepInView = (el: HTMLElement): void => el.scrollIntoView({ block: "nearest" });
+		// Someone reading the bottom stays at the bottom as lines are added; scrolling the
+		// activity line itself into view pulled a long reply's end out of sight.
+		const pane = this.contentEl;
+		const keepInView = (el: HTMLElement): void => {
+			if (!el.isConnected) return;
+			if (pane.scrollHeight - pane.scrollTop - pane.clientHeight < 160) pane.scrollTop = pane.scrollHeight;
+		};
 		return {
 			onEvent: (e) => {
 				if (e.kind === "text") return live.onText(replyInProgress(e.soFar));
@@ -4737,6 +4786,8 @@ export class SessionView extends ItemView {
 	 * some sessions, this only stops a session with an unusually connected note set
 	 * from turning into mostly bridge questions. */
 	private static readonly BRIDGE_TARGET_CAP = 2;
+	/** How long the link check may hold the start of a test (see appendBridgeTargets). */
+	private static readonly BRIDGE_CHECK_MS = 8000;
 
 	private async appendBridgeTargets(cfg: LLMConfig, names: string[]): Promise<void> {
 		const max = SessionView.BRIDGE_TARGET_CAP;
@@ -4770,7 +4821,19 @@ export class SessionView extends ItemView {
 				}
 			}
 			if (!cands.length) return;
-			const confirmed = await adjudicateBridges(cfg, cands, this.sessionPersona);
+			// The link check is a model call that runs before any question is written, so
+			// a slow reply held the whole test on the loading screen. It gets a time limit:
+			// past it the session starts without link questions and the late reply is
+			// dropped. Those questions are an extra, so going without them costs little.
+			this.renderLoading("Preparing your session", "Looking for links between your notes.");
+			let timer = 0;
+			const late = new Promise<Awaited<ReturnType<typeof adjudicateBridges>>>((resolve) => {
+				timer = window.setTimeout(() => {
+					console.debug(`Grill: link check passed ${SessionView.BRIDGE_CHECK_MS}ms; starting without it`);
+					resolve([]);
+				}, SessionView.BRIDGE_CHECK_MS);
+			});
+			const confirmed = await Promise.race([adjudicateBridges(cfg, cands, this.sessionPersona), late]).finally(() => window.clearTimeout(timer));
 			let added = 0;
 			const now = new Date().toISOString();
 			for (const c of confirmed) {

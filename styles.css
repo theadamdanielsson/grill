@@ -4,7 +4,7 @@
 .grill-wrap {
   max-width: 40em;
   margin: 0 auto;
-  padding: var(--grill-space-sm) 0.75em 1.5em;
+  padding: var(--grill-space-sm) 0.75em calc(1.5em + var(--grill-status-gap, 0px));
 }
 /* The cabinet reads better filling the pane's actual edges than sitting inset inside
    padding — there were actually two layers of it: .grill-wrap's own, AND Obsidian's
@@ -28,7 +28,8 @@
    is more in it than the pane holds, it grows and the pane scrolls as before. */
 .grill-wrap.grill-arcade-mode {
   max-width: none;
-  padding: 0;
+  padding: 0 0 var(--grill-status-gap, 0px);
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   min-height: 100%;
@@ -4093,3 +4094,11 @@ textarea.grill-mgmt-field {
 .grill-exam-folder:hover {
   background: var(--background-modifier-hover);
 }
+
+/* A chat reply while it is written (streamdraw.ts): the paragraph still arriving is
+   plain text, kept as written, line breaks included. */
+.grill-view .grill-stream-tail {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.grill-view .grill-stream-block > :first-child { margin-top: 0; }
