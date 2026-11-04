@@ -228,6 +228,10 @@ const SCAN_LOCK_MS = 5 * 60_000;
 /** Concepts a note must yield to be offered for a test: fewer makes a session of a
  * question or two, or none at all. */
 const TEST_NOTE_CONCEPTS = 3;
+/** Words that are enough on their own: the model writes questions from the note's text,
+ * so a short note of plain paragraphs, which yields few concepts by heading and term,
+ * still makes a test. */
+const TEST_NOTE_WORDS = 50;
 /** Debounce for the mid-session checkpoint save after a grade. */
 /** Learn: how many of the latest session notes are read for past answers on a note, and
  * how many of those answers are sent. */
@@ -905,7 +909,8 @@ export class SessionView extends ItemView {
 			const text = await noteStudyText(this.app, f, cache);
 			await this.plugin.store.savePdfCache(cache);
 			const concepts = extractConcepts(f.basename, text, s.questionFormats);
-			return concepts.length >= TEST_NOTE_CONCEPTS;
+			const words = (text.match(/[\p{L}\p{N}'’-]+/gu) ?? []).length;
+			return concepts.length >= TEST_NOTE_CONCEPTS || words >= TEST_NOTE_WORDS;
 		} catch (e) {
 			// Offered anyway: a session that can't read it says so, where hiding it wouldn't.
 			console.warn(`Grill: couldn't tell whether ${f.path} has enough to test`, e);
