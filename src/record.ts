@@ -75,7 +75,10 @@ export const RESULT_LIMITS = { note: 200, conceptId: 600, label: 200, question: 
 export function parseResult(raw: unknown): InboxResult | null {
 	if (!raw || typeof raw !== "object") return null;
 	const r = raw as Record<string, unknown>;
-	const str = (k: string) => (typeof r[k] === "string" ? (r[k] as string) : "");
+	const str = (k: string) => {
+		const v = r[k];
+		return typeof v === "string" ? v : "";
+	};
 	if (r.v !== RESULT_VERSION || !str("id") || !str("note") || !str("question") || !VERDICTS.has(str("verdict"))) return null;
 	if (!fitName(str("note"), RESULT_LIMITS.note) || (str("conceptId") && !fitName(str("conceptId"), RESULT_LIMITS.conceptId)) || !/^[\w-]{1,100}$/.test(str("id"))) return null;
 	if (Number.isNaN(new Date(str("at")).getTime())) return null;

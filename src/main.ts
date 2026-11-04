@@ -1161,6 +1161,12 @@ export default class GrillPlugin extends Plugin {
 	 * fields, so it also cleans up any already-drifted entry left behind by a rename
 	 * from before this and renameTrackedNote's id re-keying existed. */
 	private async removeTrackedNote(name: string): Promise<void> {
+		// One record edit at a time, as for a rename: an inbox fold or a concept refresh
+		// running alongside would otherwise save its older copy over the deletion.
+		await this.store.editRecord(() => this.pruneTrackedNote(name));
+	}
+
+	private async pruneTrackedNote(name: string): Promise<void> {
 		let touched = false;
 		if (this.mastery[name]) {
 			delete this.mastery[name];
