@@ -1,5 +1,14 @@
 # Changelog
 
+## 8.7.12
+
+- **Chat buttons can be clicked.** The status bar no longer covers the buttons at the
+  bottom of the chat.
+- **Tests start sooner.** Looking for links between your notes now has a time limit, so a
+  slow check no longer holds up the first question.
+- **Replies stream smoothly.** A reply no longer jumps while it is written, and the chat
+  only follows it down if you are reading the bottom.
+
 ## 8.7.11
 
 - **Short notes can be tested.** A note of a few plain paragraphs, with no headings or
