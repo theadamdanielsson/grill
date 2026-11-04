@@ -1,5 +1,14 @@
 # Changelog
 
+## 8.7.11
+
+- **Short notes can be tested.** A note of a few plain paragraphs, with no headings or
+  terms, was turned away as too short to test. It is now offered.
+- **First run fits small windows.** The map behind the first step is left out when there
+  isn't room to draw it.
+- **Deleting a note is safer.** Removing a deleted note from the record now waits its
+  turn, so answers arriving from another agent at the same moment can't bring it back.
+
 ## 8.7.10
 
 - **Code-quality fixes** from the Obsidian plugin review: tighter types, no unused code,
