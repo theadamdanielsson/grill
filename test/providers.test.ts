@@ -20,3 +20,17 @@ test("each provider's capabilities, as the table gives them", () => {
 	const agent = capabilities({ engine: "codex", model: "Codex", agent: async () => ({}), agentImages: true });
 	assert.deepEqual([agent.tools, agent.vision, agent.local, agent.metered], [false, true, false, false]);
 });
+
+import { isUsageLimit } from "../src/engines";
+
+test("isUsageLimit tells a used-up subscription from a fault", () => {
+	assert.equal(isUsageLimit("Claude AI usage limit reached|1762700400"), true);
+	assert.equal(isUsageLimit("You've hit your limit · resets 3pm (Europe/Stockholm)"), true);
+	assert.equal(isUsageLimit("You've hit your usage limit. Upgrade to Pro or try again in 2 hours."), true);
+	assert.equal(isUsageLimit("429 rate_limit_error: Number of requests exceeded"), true);
+	assert.equal(isUsageLimit("Your credit balance is too low to access the Anthropic API."), true);
+	assert.equal(isUsageLimit("insufficient_quota"), true);
+	assert.equal(isUsageLimit("Claude Code stopped with an error."), false);
+	assert.equal(isUsageLimit("It stopped after too many steps. Ask it to go on."), false);
+	assert.equal(isUsageLimit("ENOENT: no such file or directory"), false);
+});

@@ -2,7 +2,7 @@
 
 import { getAllTags, ItemView, loadMermaid, MarkdownRenderer, Menu, Modal, Notice, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type GrillPlugin from "./main";
-import { cloudEnabled, creditsInWords, lowBalance, planInWords, usageInWords } from "./cloud";
+import { cloudEnabled, creditsInWords, isCloudKey, lowBalance, planInWords, usageInWords } from "./cloud";
 import { drawCloudAgreement, drawCloudPitch } from "./cloudcard";
 import { CLOUD_LEAD } from "./cloudcopy";
 import { CLAUDE_MODELS, STARTER_PROMPTS } from "./selection";
@@ -80,7 +80,7 @@ import { codexModelName, codexModels, runCodex } from "./codex";
 import { importedLines, importedNames } from "./imported";
 import { AcpModel, acpModels, runAcp } from "./acp";
 import { canInstall, opencodeProgram } from "./opencode";
-import { engineFor, ENGINE_IDS, ENGINES } from "./engines";
+import { engineFor, ENGINE_IDS, ENGINES, isUsageLimit } from "./engines";
 
 /** Mermaid's drawing, made fit to be shown as an image: well-formed XML, with a size
  * of its own. Null if it isn't a drawing (Mermaid draws its errors as one too).
@@ -966,6 +966,11 @@ export class SessionView extends ItemView {
 	 * already; when buying credits would fix it, the packs are offered then and there. */
 	private tellError(e: unknown, tail = ""): void {
 		const message = (e as Error)?.message ?? "Something went wrong.";
+		const engine = engineFor(this.plugin.data.settings.chatEngine);
+		if (engine && cloudEnabled() && !(e instanceof CloudError) && isUsageLimit(message)) {
+			this.offerCloudForLimit(engine.name, message, tail);
+			return;
+		}
 		if (!(e instanceof CloudError && e.needsCredits)) {
 			new Notice(`Grill: ${message}${tail}`, e instanceof CloudError ? 10000 : 8000);
 			return;
@@ -984,6 +989,40 @@ export class SessionView extends ItemView {
 			}),
 			15000,
 		);
+	}
+
+	/** Claude Code, Codex or opencode has used up its subscription's limit: say so,
+	 * and offer to carry on with Grill Cloud, which has its own credits. */
+	private offerCloudForLimit(name: string, message: string, tail: string): void {
+		const notice = new Notice(
+			createFragment((f) => {
+				f.createSpan({ text: `Grill: ${name} has reached its usage limit (${message.split("|")[0].trim()}).${tail} ` });
+				const go = f.createEl("a", { text: "Finish on Grill Cloud" });
+				go.onclick = (ev) => {
+					ev.preventDefault();
+					notice.hide();
+					void this.switchToCloud(name);
+				};
+			}),
+			20000,
+		);
+	}
+
+	/** Make Grill Cloud the engine, opening an account first if there is none. */
+	private async switchToCloud(from: string): Promise<void> {
+		const s = this.plugin.data.settings;
+		let line = "";
+		if (!isCloudKey(s.apiKeys.grillcloud)) {
+			line = await this.plugin.account.startCloud();
+			if (s.provider !== "grillcloud") {
+				new Notice(`Grill: ${line}`, 10000);
+				return;
+			}
+		} else {
+			await this.plugin.settings.update({ provider: "grillcloud" });
+		}
+		await this.plugin.settings.update({ chatEngine: "model" });
+		new Notice(`Grill: ${line ? line + " " : ""}Grill Cloud is answering now. Ask again to go on. You can switch back to ${from} in settings.`, 12000);
 	}
 
 	/** What the Grill Cloud parts of whichever screen is up should do when the balance,

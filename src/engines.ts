@@ -45,3 +45,19 @@ export const ENGINE_IDS: EngineId[] = ["claudecode", "codex", "opencode"];
 export function engineFor(chatEngine: string): Engine | null {
 	return (ENGINES as Record<string, Engine>)[chatEngine] ?? null;
 }
+
+/** Whether an engine's error says its subscription's usage limit or quota is used
+ * up, as opposed to a fault: Claude Code ("Claude AI usage limit reached", "You've
+ * hit your limit · resets 3pm"), Codex ("You've hit your usage limit"), opencode and
+ * the providers behind it (quota, rate limit, credit balance). */
+export function isUsageLimit(message: string): boolean {
+	return [
+		/usage limit/i,
+		/hit your (?:\w+ )?limit/i,
+		/\b(?:quota|insufficient_quota)\b/i,
+		/rate[ _-]?limit/i,
+		/credit balance is too low/i,
+		/out of (?:extra )?usage/i,
+		/limit (?:will )?resets?\b/i,
+	].some((p) => p.test(message));
+}
