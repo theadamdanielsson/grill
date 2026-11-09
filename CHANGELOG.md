@@ -1,5 +1,19 @@
 # Changelog
 
+## 8.7.13
+
+- **Your first test starts right away.** After setup, Grill opens a test on a suitable
+  note. In a new vault with nothing to test yet, it offers a short sample note.
+- **Better review timing.** Reviews are spaced on the same curve the scheduler uses, so
+  gentler and stricter targets now give the gaps they promise. The advice on the
+  Progress page about these targets also points the right way.
+- **Finish on Grill Cloud.** When Claude Code, Codex or opencode reaches its usage limit,
+  Grill offers to finish on Grill Cloud instead of showing the error.
+- **Cheaper chats on Grill Cloud.** The part of a request that repeats between messages
+  is sent so it can be reused, and free accounts send a smaller first message.
+- **Safer startup.** Editing a note while Grill is starting no longer risks saving over
+  your record.
+
 ## 8.7.12
 
 - **Chat buttons can be clicked.** The status bar no longer covers the buttons at the
