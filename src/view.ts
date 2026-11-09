@@ -1216,7 +1216,7 @@ export class SessionView extends ItemView {
 
 	/** Whether a note is worth offering as a first test (see isStudyNote). */
 	private looksLikeStudyNote(f: TFile): boolean {
-		const fm = this.app.metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined;
+		const fm = this.app.metadataCache.getFileCache(f)?.frontmatter;
 		return isStudyNote(f.path, f.basename, fm, this.templatesFolder());
 	}
 
