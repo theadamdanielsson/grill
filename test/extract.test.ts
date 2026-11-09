@@ -22,3 +22,10 @@ test("a heading over nothing but who was there is not a concept", () => {
 	assert.ok(!got.includes("heading:Q4 planning, 14 Oct"), got.join(", "));
 	assert.ok(got.includes("heading:Decisions"), got.join(", "));
 });
+
+import { SAMPLE_NAME, SAMPLE_TEXT } from "../src/sample";
+
+test("the sample note has enough in it for a first test", () => {
+	const concepts = extractConcepts(SAMPLE_NAME, SAMPLE_TEXT, "mixed");
+	assert.ok(concepts.length >= 5, `only ${concepts.length} concepts: ${concepts.map((c) => c.label).join(", ")}`);
+});

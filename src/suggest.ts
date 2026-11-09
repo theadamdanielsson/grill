@@ -43,6 +43,17 @@ export function noteLine(concepts: ConceptMastery[]): string {
 	return parts.join(", ") + (when ? `. Last tested ${when}` : "");
 }
 
+/** Whether a note is worth suggesting as a first test: not a drawing or a board
+ * (mostly data, not prose), not a template, not a daily note named by its date. */
+export function isStudyNote(path: string, basename: string, frontmatter: Record<string, unknown> | undefined, templatesFolder = ""): boolean {
+	if (frontmatter && ("excalidraw-plugin" in frontmatter || "kanban-plugin" in frontmatter)) return false;
+	if (path.endsWith(".excalidraw.md")) return false;
+	if (/^\d{4}-\d{2}-\d{2}$/.test(basename)) return false;
+	const t = templatesFolder.trim().replace(/\/+$/, "");
+	if (t && (path === t || path.startsWith(`${t}/`))) return false;
+	return true;
+}
+
 /** The note to suggest first to someone new: the one open, or else the one edited
  * most recently. */
 export function startingNote<T extends { stat: { mtime: number } }>(open: T | null, eligible: T[]): T | null {

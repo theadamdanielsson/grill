@@ -484,3 +484,16 @@ test("a note can be looked over without being read", async () => {
 	const none = await runTool({ ...port, outline: undefined }, { id: "2", name: "note_outline", input: { path: "Note" } });
 	assert.equal(none.failed, true);
 });
+
+import { isStudyNote } from "../src/suggest";
+
+test("isStudyNote skips drawings, boards, templates and daily notes", () => {
+	assert.equal(isStudyNote("Econ/Inflation.md", "Inflation", undefined), true);
+	assert.equal(isStudyNote("Drawing 1.excalidraw.md", "Drawing 1.excalidraw", undefined), false);
+	assert.equal(isStudyNote("Board.md", "Board", { "kanban-plugin": "basic" }), false);
+	assert.equal(isStudyNote("Sketch.md", "Sketch", { "excalidraw-plugin": "parsed" }), false);
+	assert.equal(isStudyNote("Daily/2026-11-09.md", "2026-11-09", undefined), false);
+	assert.equal(isStudyNote("2026-11-09 Lecture on rates.md", "2026-11-09 Lecture on rates", undefined), true);
+	assert.equal(isStudyNote("Templates/Lecture.md", "Lecture", undefined, "Templates"), false);
+	assert.equal(isStudyNote("Templates/Lecture.md", "Lecture", undefined, ""), true);
+});

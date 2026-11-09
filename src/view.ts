@@ -57,7 +57,8 @@ import { drawChat, type LearnState } from "./screens/chat";
 import { drawAnswer, drawPrompt } from "./screens/answers";
 import { SessionEntry } from "./store";
 import { renderThreadHistory } from "./thread";
-import { listSome, missesLine, mostLinked, noteLine, shortDate, startingNote } from "./suggest";
+import { isStudyNote, listSome, missesLine, mostLinked, noteLine, shortDate, startingNote } from "./suggest";
+import { SAMPLE_NAME, SAMPLE_TEXT } from "./sample";
 import { drawPicks, renderChatHome, renderCreditsRing, type HomeMode, type HomeSuggestion } from "./home";
 import { aboutTheVault, compactAt, learnContext, learnRecord, namesANote, parseLearnNote, parseLearnThread, parseSessionNote, namesInFull, rankNotes, sessionTitle, vaultMap, vaultNotes, vaultStructure, type PastAnswer, type VaultNote } from "./learn";
 import { safeDiagram, safeMarkdown } from "./safemd";
@@ -768,11 +769,18 @@ export class SessionView extends ItemView {
 		}
 
 		const finish = async (): Promise<void> => {
+			const firstRun = !s.onboarded;
 			if (step === 2) s.includedFolders = [...this.onboardFolders];
 			await this.plugin.settings.update({ dismissedOffers: [...new Set([...s.dismissedOffers, NEW_IN_7])], onboarded: true });
 			this.plugin.refreshStatusBar();
-			this.homeMode = "chat";
+			this.homeMode = firstRun ? "test" : "chat";
 			this.renderStart();
+			if (!firstRun) return;
+			// The first questions are the point of setting up: start them straight away,
+			// on the note most worth it, or on a sample when the vault has nothing yet.
+			const note = await this.firstTestableNote();
+			if (note) this.beginTest([note], false);
+			else await this.startOnSample();
 		};
 		const next = (): void => void (s.onboarded ? this.renderOnboarding(2) : finish());
 
@@ -1165,6 +1173,50 @@ export class SessionView extends ItemView {
 
 	// ------------------------------------------------------------ screens
 
+	/** Whether a note is worth offering as a first test (see isStudyNote). */
+	private looksLikeStudyNote(f: TFile): boolean {
+		const fm = this.app.metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined;
+		return isStudyNote(f.path, f.basename, fm, this.templatesFolder());
+	}
+
+	/** The core Templates plugin's folder, or "" when it is off or unset. */
+	private templatesFolder(): string {
+		const app = this.app as unknown as { internalPlugins?: { getPluginById?: (id: string) => { enabled?: boolean; instance?: { options?: { folder?: unknown } } } | null } };
+		const templates = app.internalPlugins?.getPluginById?.("templates");
+		const folder = templates?.enabled ? templates.instance?.options?.folder : undefined;
+		return typeof folder === "string" ? folder : "";
+	}
+
+	/** The note to start someone new on: the open note if it is a study note with
+	 * enough in it, else the most recently edited one that is. Looks at 20 at most. */
+	private async firstTestableNote(): Promise<TFile | null> {
+		const open = this.app.workspace.getActiveFile();
+		const notes = this.allEligible().filter((f) => this.looksLikeStudyNote(f));
+		const order = [...notes].sort((a, b) => b.stat.mtime - a.stat.mtime);
+		if (open && notes.includes(open)) order.unshift(open);
+		const seen = new Set<string>();
+		for (const f of order) {
+			if (seen.has(f.path)) continue;
+			seen.add(f.path);
+			if (seen.size > 20) break;
+			if (await this.enoughToTest(f)) return f;
+		}
+		return null;
+	}
+
+	/** Start a test on Grill's sample note, writing it to the vault root first. */
+	private async startOnSample(): Promise<void> {
+		const path = `${SAMPLE_NAME}.md`;
+		try {
+			const existing = this.app.vault.getAbstractFileByPath(path);
+			const file = existing instanceof TFile ? existing : await this.app.vault.create(path, SAMPLE_TEXT);
+			if (!existing) new Notice(`Grill: there was no note to test you on yet, so it added "${SAMPLE_NAME}". Delete it whenever you like.`, 10000);
+			this.beginTest([file], false);
+		} catch (e) {
+			new Notice(`Grill: couldn't add the sample note (${(e as Error).message}).`, 8000);
+		}
+	}
+
 	/** All notes eligible for quizzing, ignoring the current session scope. */
 	private allEligible(): TFile[] {
 		return this.app.vault.getMarkdownFiles().filter((f) => !this.plugin.isExcluded(f.path));
@@ -1404,7 +1456,8 @@ export class SessionView extends ItemView {
 		const isNew = !Object.values(concepts).some((cm) => cm.correct + cm.partial + cm.incorrect > 0) && !this.recentSessions().length;
 		if (isNew) {
 			suggestions.length = 0;
-			const note = startingNote(openNote, eligible);
+			const study = eligible.filter((f) => this.looksLikeStudyNote(f));
+			const note = startingNote(openNote && study.includes(openNote) ? openNote : null, study);
 			if (note) {
 				const where = note === openNote ? "The note you have open" : "The note you edited last";
 				suggestions.push({
@@ -1417,6 +1470,14 @@ export class SessionView extends ItemView {
 					label: `Walk me through ${note.basename}`,
 					detail: where,
 					run: () => void this.startLearn(note, "Walk me through the main ideas in this note."),
+				});
+			}
+			// A vault with little in it may have nothing that passes as testable.
+			if (study.length < 3) {
+				suggestions.push({
+					label: "Try it on a sample note",
+					detail: "A short note on how memory works, added to your vault",
+					run: () => void this.startOnSample(),
 				});
 			}
 			if (eligible.length > 1) {
