@@ -650,7 +650,8 @@ export interface TrueRetentionSummary {
 const TRUE_RETENTION_MIN_N = 20;
 
 /** Observed pass rate on real (non-first-exposure) reviews across the whole vault:
- * among each concept's `reviewLog` entries after its first, the share rated
+ * among each concept's `reviewLog` entries after its first (skipping same-day
+ * relearns), the share rated
  * anything but Again. `desiredRetention` (mastery.ts's FSRS setting) is a PROMISE
  * — "you'll recall this about X% of the time at its due date" — and nothing
  * previously checked whether the schedule is actually keeping it on THIS vault's
@@ -665,6 +666,9 @@ function trueRetention(concepts: ConceptMap): TrueRetentionSummary | null {
 		const log = cm.reviewLog;
 		if (!log || log.length < 2) continue;
 		for (let i = 1; i < log.length; i++) {
+			// Same-day relearns after a miss are not reviews at a due date, which is
+			// what the target promises: counting them flatters the rate.
+			if (log[i].elapsedDays < 1) continue;
 			total++;
 			if (log[i].rating !== 1) passed++;
 		}
@@ -695,12 +699,12 @@ export function trueRetentionLine(concepts: ConceptMap, desiredRetentionPct: num
 	if (gap < 0) {
 		return (
 			`True retention: ${observedPct}% across your last ${s.n} reviews, under your ${targetPct}% target. ` +
-			`Worth a look: a gentler Study intensity in Settings brings concepts back sooner.`
+			`Worth a look: a more intense Study intensity in Settings brings concepts back sooner.`
 		);
 	}
 	return (
 		`True retention: ${observedPct}% across your last ${s.n} reviews, above your ${targetPct}% target. ` +
-		`A harder Study intensity would space reviews further apart without losing much.`
+		`A more relaxed Study intensity would space reviews further apart without losing much.`
 	);
 }
 

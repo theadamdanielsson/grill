@@ -18,7 +18,7 @@
  * review, not a value that needs remapping first.
  */
 
-import { dateDiffInDays, fsrs, type FSRSState } from "ts-fsrs";
+import { computeDecayFactor, dateDiffInDays, fsrs, type FSRSState } from "ts-fsrs";
 
 export type Verdict = "correct" | "partial" | "incorrect";
 
@@ -275,8 +275,14 @@ export function toRating(
 	return difficulty === "hard" ? 4 : 3;
 }
 
-function optimalInterval(stability: number, desiredRetention = DESIRED_RETENTION): number {
-	const interval = Math.round(9 * stability * (1 / desiredRetention - 1));
+/** Days until recall falls to `desiredRetention`, on the engine's own forgetting
+ * curve (FSRS-6 decay), the inverse of `retrievability` above. */
+export function optimalInterval(stability: number, desiredRetention = DESIRED_RETENTION): number {
+	const { decay, factor } = computeDecayFactor(engine.parameters.w);
+	let interval = Math.round((stability / factor) * (Math.pow(desiredRetention, 1 / decay) - 1));
+	// A malformed fitted weight set must not break scheduling: fall back to the old
+	// curve, which is exact at 90%.
+	if (!Number.isFinite(interval)) interval = Math.round(9 * stability * (1 / desiredRetention - 1));
 	return Math.max(1, Math.min(interval, MAX_INTERVAL_DAYS));
 }
 
