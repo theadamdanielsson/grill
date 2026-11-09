@@ -108,7 +108,19 @@ export function streamCall(cfg: LLMConfig, p: StreamPrompt, o: StreamOptions = {
 				kind: "chat",
 				url: `${cloud.url.replace(/\/$/, "")}/chat/completions`,
 				headers: { ...json, authorization: `Bearer ${cfg.apiKey}` },
-				body: { model: cfg.model, max_tokens: p.maxTokens, stream: true, messages },
+				// The part that repeats from one message to the next goes as its own block,
+				// so the server can mark it for the provider's cache.
+				body: {
+					model: cfg.model,
+					max_tokens: p.maxTokens,
+					stream: true,
+					messages: p.cacheable
+						? [
+								{ role: "system", content: p.system },
+								{ role: "user", content: [{ type: "text", text: p.cacheable }, { type: "text", text: p.rest }] },
+							]
+						: messages,
+				},
 			};
 		case "gemini":
 			return {

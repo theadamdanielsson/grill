@@ -126,7 +126,10 @@ test("the request asks for a stream of plain text, with the note marked for the 
 	assert.equal(streamCall({ provider: "grillcloud", apiKey: "k", model: "m" }, p), null);
 	Object.assign(cloud, { url: "https://c.test/cloud/" });
 	try {
-		assert.equal(streamCall({ provider: "grillcloud", apiKey: "k", model: "m", cloud: { streams: true, tools: false, search: false, heard: () => undefined } }, p)?.url, "https://c.test/cloud/chat/completions");
+		const g = streamCall({ provider: "grillcloud", apiKey: "k", model: "m", cloud: { streams: true, tools: false, search: false, heard: () => undefined } }, p);
+		assert.equal(g?.url, "https://c.test/cloud/chat/completions");
+		// The note goes as its own block, for the server to mark for the provider's cache.
+		assert.deepEqual((g?.body.messages as unknown[])[1], { role: "user", content: [{ type: "text", text: "NOTE" }, { type: "text", text: "ASK" }] });
 	} finally {
 		Object.assign(cloud, { url: "" });
 	}

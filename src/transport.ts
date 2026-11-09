@@ -144,9 +144,10 @@ const chatTruncated = (json: unknown): boolean =>
 
 /** A user prompt split into a large, repeat-across-calls prefix (e.g. a note's full
  * text, sent again on every batch/grade call within a session) and a small varying
- * suffix (the actual question/instructions). Only the Anthropic path in `buildCall`
- * turns `cacheable` into a real prompt-cache breakpoint; every other provider just
- * concatenates the two, so passing this instead of a plain string is always safe. */
+ * suffix (the actual question/instructions). The Anthropic path in `buildCall` turns
+ * `cacheable` into a real prompt-cache breakpoint and Grill Cloud gets it as its own
+ * block; every other provider just concatenates the two, so passing this instead of a
+ * plain string is always safe. */
 interface SplitUser {
 	cacheable: string;
 	rest: string;
@@ -347,10 +348,13 @@ function buildCall(
 			const text = hosted
 				? flatUser
 				: flatUser + "\n\nRespond ONLY with a json object matching this JSON Schema exactly:\n" + JSON.stringify(schema);
+			// Grill Cloud gets the repeating part (typically the note) as its own block, which
+			// its server marks for the provider's cache.
+			const split = hosted && typeof user !== "string" && user.cacheable;
 			const content: unknown =
-				hosted && images.length
+				hosted && (images.length || split)
 					? [
-							{ type: "text", text },
+							...(split ? [{ type: "text", text: user.cacheable }, { type: "text", text: user.rest }] : [{ type: "text", text }]),
 							...images.map((im) => ({
 								type: "image_url",
 								image_url: { url: `data:${im.mediaType};base64,${im.dataBase64}` },
