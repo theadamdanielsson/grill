@@ -517,6 +517,8 @@ export default class GrillPlugin extends Plugin {
 				// not each time the map is drawn.
 				if (healAggregates(this.concepts, this.mastery)) await this.store.saveMastery(this.mastery).catch((e) => console.error("Grill: couldn't save the repaired note statuses", e));
 				this.recordLoaded = true;
+				for (const f of this.pendingRefresh.values()) this.scheduleConceptRefresh(f);
+				this.pendingRefresh.clear();
 				this.registerInterval(window.setInterval(() => void this.foldInbox(), 120_000));
 				this.refreshStatusBar();
 				this.warnOnDuplicateBasenames();
@@ -1231,7 +1233,16 @@ export default class GrillPlugin extends Plugin {
 	 * on edit, instead of every scoped file, on session start. Best-effort: a
 	 * mid-save read error here just means the next real session re-syncs it, same
 	 * as it always would. */
+	/** Notes edited before the record finished loading: refreshed once it has. */
+	private pendingRefresh = new Map<string, TFile>();
+
 	private async refreshConceptsForFile(file: TFile): Promise<void> {
+		// Before the record is loaded, `this.concepts` is empty: reconciling into it and
+		// saving would write a concepts.json holding only this note.
+		if (!this.recordLoaded) {
+			this.pendingRefresh.set(file.path, file);
+			return;
+		}
 		try {
 			// Same text a session extracts from (markdown + embedded PDFs). Reading the
 			// markdown alone orphaned every PDF-derived concept on each edit. Occlusion
