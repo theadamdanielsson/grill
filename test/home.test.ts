@@ -497,3 +497,12 @@ test("isStudyNote skips drawings, boards, templates and daily notes", () => {
 	assert.equal(isStudyNote("Templates/Lecture.md", "Lecture", undefined, "Templates"), false);
 	assert.equal(isStudyNote("Templates/Lecture.md", "Lecture", undefined, ""), true);
 });
+
+test("a map with a limit keeps the most linked-to notes, in the same fixed order", () => {
+	const note = (name: string, linksIn: number) => ({ name, folder: "", linksIn, status: "new", text: "", out: [], headings: [], tags: [] }) as unknown as Parameters<typeof vaultMap>[0][number];
+	const notes = [note("A", 1), note("B", 9), note("C", 5), note("D", 0)];
+	const map = vaultMap(notes, 40_000, 2);
+	assert.match(map, /^MAP OF THE 2 MOST LINKED-TO NOTES \(of 4\)/);
+	assert.ok(map.indexOf("- B [") < map.indexOf("- C [") && !map.includes("- A [") && !map.includes("- D ["));
+	assert.match(vaultMap(notes), /^MAP OF EVERY NOTE \(4\)/);
+});

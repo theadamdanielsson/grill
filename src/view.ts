@@ -248,6 +248,8 @@ const VAULT_CHARS = 200_000;
  * is kept shorter than one about a note. */
 const WHOLE_VAULT_TURNS = 6;
 const VAULT_CHARS_LOCAL = 24_000;
+/** Notes on the map sent with a chat about one note, on Grill Cloud's free starter. */
+const STARTER_MAP_NOTES = 30;
 /** How many questions the background prefetch tries to keep buffered ahead of the one
  * on screen (see prefetchAhead). A single BATCH's worth (2) isn't enough runway: a
  * couple of quick MC/TF answers can outrun one model round-trip, so goToQuestion's own
@@ -2017,7 +2019,7 @@ export class SessionView extends ItemView {
 		// About the notes as a whole (or a note since removed): the map of the vault, with
 		// the tools to read what it needs.
 		const mapped = note ? [] : await this.vaultMapNotes(eligible);
-		const vault = note ? undefined : { text: this.modelHasTools() ? vaultStructure(mapped) : vaultMap(mapped), reading: "", whole: true };
+		const vault = note ? undefined : { text: this.modelHasTools() ? this.wholeVaultStructure(mapped) : vaultMap(mapped), reading: "", whole: true };
 		await this.startLearn(anchor, undefined, [], vault, { file, turns });
 	}
 
@@ -2164,7 +2166,7 @@ export class SessionView extends ItemView {
 		const notes = await this.vaultMapNotes(eligible);
 		const byName = new Map(eligible.map((f) => [f.basename, f] as const));
 		const found = rankNotes(text, notes, 5, openNote?.basename ?? "").flatMap((n) => byName.get(n.name) ?? []);
-		const map = vaultMap(notes);
+		const map = this.noteChatMap(notes);
 		// Three kinds of question. One that matches notes is answered from those notes,
 		// with the map so the rest of the vault is known about: a few thousand tokens.
 		// One that matches nothing ("explain this") is about the note that is open. Only
@@ -2205,11 +2207,12 @@ export class SessionView extends ItemView {
 		// A model that can read notes itself works from Obsidian's own map of the vault and
 		// reads what it needs, so the conversation can go on as long as one about a note.
 		if (this.modelHasTools()) {
-			await this.startLearn(anchor, text, [], { text: vaultStructure(notes), reading: `Working from a map of your ${notes.length} notes`, whole: true });
+			await this.startLearn(anchor, text, [], { text: this.wholeVaultStructure(notes), reading: `Working from a map of your ${notes.length} notes`, whole: true });
 			return;
 		}
-		// A local model reads far less at once than a hosted one.
-		const budget = cfg && capabilities(cfg).local ? VAULT_CHARS_LOCAL : VAULT_CHARS;
+		// A local model reads far less at once than a hosted one, and the free starter is
+		// kept to the same.
+		const budget = cfg && (capabilities(cfg).local || this.onStarter()) ? VAULT_CHARS_LOCAL : VAULT_CHARS;
 		const full = vaultNotes(notes, budget);
 		await this.startLearn(anchor, text, [], {
 			text: `${map}\n\n${full.text}`,
@@ -2605,6 +2608,22 @@ export class SessionView extends ItemView {
 	}
 
 	/** Whether the model behind Chat can be given the vault tools. */
+	/** On Grill Cloud's free starter, without a plan: what is sent with each message is
+	 * kept small, so the starter credits last for more than a few messages. */
+	private onStarter(): boolean {
+		return this.plugin.llmConfig()?.provider === "grillcloud" && this.plugin.account.cloudPlan === null;
+	}
+
+	/** The map of the vault sent with a chat about one note. */
+	private noteChatMap(notes: VaultNote[]): string {
+		return this.onStarter() ? vaultMap(notes, 40_000, STARTER_MAP_NOTES) : vaultMap(notes);
+	}
+
+	/** The map of the vault for a model that reads notes itself. */
+	private wholeVaultStructure(notes: VaultNote[]): string {
+		return this.onStarter() ? vaultStructure(notes, VAULT_CHARS_LOCAL) : vaultStructure(notes);
+	}
+
 	private modelHasTools(): boolean {
 		const cfg = this.plugin.llmConfig();
 		return !!cfg && capabilities(cfg).tools;

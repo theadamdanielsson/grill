@@ -281,11 +281,15 @@ export function vaultStructure(notes: VaultNote[], cap = 60_000): string {
  * it and how the student is doing on it. Small enough to send with every question, and
  * what lets an answer speak about the vault as a whole or point at a note it wasn't
  * given in full. Always in the same order, so it is read from the provider's cache. */
-export function vaultMap(notes: VaultNote[], cap = 40_000): string {
-	const lines = [...notes]
+export function vaultMap(notes: VaultNote[], cap = 40_000, most = Infinity): string {
+	// With a limit, the notes the rest lean on most are kept, still listed in a fixed order
+	// so the same text is sent each time.
+	const kept = notes.length > most ? [...notes].sort((a, b) => b.linksIn - a.linksIn || a.name.localeCompare(b.name)).slice(0, most) : notes;
+	const lines = [...kept]
 		.sort((a, b) => a.folder.localeCompare(b.folder) || a.name.localeCompare(b.name))
 		.map((n) => `- ${n.name} [${n.folder || "top level"}; linked from ${n.linksIn}; ${n.status}]`);
-	return `MAP OF EVERY NOTE (${notes.length}), as name [folder; how many notes link to it; how the student is doing]:\n${safeSlice(lines.join("\n"), cap)}`;
+	const title = kept.length < notes.length ? `MAP OF THE ${kept.length} MOST LINKED-TO NOTES (of ${notes.length})` : `MAP OF EVERY NOTE (${notes.length})`;
+	return `${title}, as name [folder; how many notes link to it; how the student is doing]:\n${safeSlice(lines.join("\n"), cap)}`;
 }
 
 /** The notes themselves, for a question about the vault as a whole: as many in full as
