@@ -1,7 +1,7 @@
 {
   "name": "grill",
   "version": "8.7.13",
-  "description": "An agentic learning system for Obsidian. Grill keeps state on what you know, note by note. Chat, tests and your other agents all work from it.",
+  "description": "AI tutor for studying your notes. Grill quizzes you with active recall, grades what you write and schedules each concept with spaced repetition. Exams, chat and your other agents all work from one record of what you know.",
   "main": "main.js",
   "scripts": {
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",

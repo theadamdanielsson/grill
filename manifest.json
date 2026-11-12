@@ -3,7 +3,7 @@
 	"name": "Grill",
 	"version": "8.7.13",
 	"minAppVersion": "1.8.0",
-	"description": "An agentic learning system. Grill keeps state on what you know, note by note. Chat, tests and your other agents all work from it.",
+	"description": "AI tutor for studying your notes. Grill quizzes you with active recall, grades what you write and schedules each concept with spaced repetition. Exams, chat and your other agents all work from one record of what you know.",
 	"author": "Adam Danielsson",
 	"authorUrl": "https://github.com/theadamdanielsson",
 	"isDesktopOnly": false,
