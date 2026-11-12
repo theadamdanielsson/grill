@@ -4102,3 +4102,37 @@ textarea.grill-mgmt-field {
   overflow-wrap: anywhere;
 }
 .grill-view .grill-stream-block > :first-child { margin-top: 0; }
+
+/* Flashcards: question, then the answer under a rule, then four ratings. */
+.grill-card-front {
+  font-size: var(--font-ui-large, 1.1em);
+}
+.grill-card-show {
+  width: 100%;
+  min-height: 44px;
+  margin-top: var(--grill-space-sm);
+}
+.grill-card-back {
+  border-top: 1px solid var(--background-modifier-border);
+  padding-top: var(--grill-space-sm);
+  margin-top: var(--grill-space-sm);
+}
+.grill-card-why {
+  margin-top: var(--grill-space-xs);
+}
+.grill-card-ratings {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--grill-space-xs);
+  margin-top: var(--grill-space-sm);
+}
+.grill-card-rate {
+  min-height: 44px;
+}
+.grill-card-keys {
+  margin-top: var(--grill-space-xs);
+  text-align: center;
+}
+.grill-compact .grill-card-ratings {
+  grid-template-columns: repeat(2, 1fr);
+}

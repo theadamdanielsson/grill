@@ -46,6 +46,7 @@ import { dueFiles, listFolders, matchScope, untestedFiles } from "./scope";
 import { PLUGIN_PAGE } from "./update";
 import { CONFIDENCE_LEVELS, calibrationLine, pushCalibration } from "./calibration";
 import { celebrate, playSfx } from "./sfx";
+import { cardAnswer, cardFront, dueCards, verdictForRating } from "./cards";
 import { stopSpeaking, toSpeechText, ttsAvailable } from "./tts";
 import { hearButton, turnFrame, waitingTurn } from "./turn";
 import { drawFeedback } from "./screens/feedback";
@@ -317,7 +318,7 @@ function handoverText(turns: ThreadTurn[]): string {
 }
 
 /** The screens the pane draws. */
-type Screen = "onboarding" | "start" | "chats" | "learn" | "dashboard" | "questions" | "loading" | "question" | "feedback" | "summary";
+type Screen = "onboarding" | "start" | "chats" | "learn" | "dashboard" | "questions" | "loading" | "question" | "feedback" | "summary" | "card";
 
 export class SessionView extends ItemView {
 	plugin: GrillPlugin;
@@ -417,6 +418,8 @@ export class SessionView extends ItemView {
 	 * generation, and practice-only — grading and feedback run, but nothing is written to
 	 * the schedule, stats, or misconception registry. */
 	private replayMode = false;
+	/** A flashcard review (see cards.ts): banked questions, rated by the student, no model call. */
+	private cardsMode = false;
 	/** A draw-from-memory test (see draw.ts): runs like a replay, practice only for now. */
 	private drawSession = false;
 	/** The drawing being graded, sent ahead of the note's own pictures. */
@@ -688,6 +691,24 @@ export class SessionView extends ItemView {
 	 * chip to peek at it), where nothing would otherwise respond to Enter/Space. */
 	private handleSessionKeydown(e: KeyboardEvent): void {
 		if (e.metaKey || e.ctrlKey || e.altKey) return;
+		if (this.screen === "card") {
+			const target = e.target as HTMLElement | null;
+			if (target && (target.tagName === "TEXTAREA" || target.tagName === "INPUT")) return;
+			const root = this.contentEl;
+			const show = root.querySelector<HTMLButtonElement>(".grill-card-show");
+			if (show && (e.key === " " || e.key === "Enter")) {
+				if (document.activeElement === show) return;
+				e.preventDefault();
+				show.click();
+				return;
+			}
+			const rate = /^[1-4]$/.test(e.key) ? root.querySelector<HTMLButtonElement>(`.grill-card-rate[data-rating="${e.key}"]`) : null;
+			if (rate) {
+				e.preventDefault();
+				rate.click();
+			}
+			return;
+		}
 		if (e.key !== "Enter" && e.key !== " ") return;
 		const target = e.target as HTMLElement | null;
 		if (target && (target.tagName === "TEXTAREA" || target.tagName === "INPUT")) return;
@@ -1457,6 +1478,17 @@ export class SessionView extends ItemView {
 				detail: oldest ? `Waiting longest since ${shortDate(oldest)}` : undefined,
 				count: String(dueNow),
 				run: () => begin(dueFiles(eligible, concepts), true),
+			});
+		}
+		if (dueNow > 0) {
+			suggestions.push({
+				label: "Flashcards",
+				detail: "Flip through what is due and rate yourself. No AI, so no wait and no credits",
+				run: () => void this.startCards(),
+				check: async () => {
+					const bank = await this.plugin.store.loadQuestionBank();
+					return dueCards(concepts, bank, isEligible, 1).cards.length ? null : "No questions written yet";
+				},
 			});
 		}
 		const untested = learning ? [] : untestedFiles(eligible, concepts);
@@ -4179,7 +4211,7 @@ export class SessionView extends ItemView {
 		// Grades are on disk before the debrief call, not after it: a slow or failing
 		// debrief model call must never be what stands between the user and their save.
 		await this.flush();
-		if (cfg && s.sessionDebrief && sessionNodes.length > 0) {
+		if (cfg && s.sessionDebrief && !this.cardsMode && sessionNodes.length > 0) {
 			try {
 				const reg = this.registry;
 				const rawTags = this.results
@@ -4235,8 +4267,8 @@ export class SessionView extends ItemView {
 		const note = await this.plugin.store.writeSessionNote(
 			this.results,
 			{
-				provider: cfg ? (cfg.agent ? cfg.engine : cfg.provider) : "local",
-				model: cfg ? cfg.model : "deterministic",
+				provider: this.cardsMode ? "flashcards" : cfg ? (cfg.agent ? cfg.engine : cfg.provider) : "local",
+				model: this.cardsMode ? "none" : cfg ? cfg.model : "deterministic",
 				startedAt: this.sessionStart,
 				dueOnly: this.dueOnly,
 			},
@@ -4424,12 +4456,13 @@ export class SessionView extends ItemView {
 			if (cloudAt.isConnected) this.cloudReceipt(cloudAt, used);
 		})();
 		const btnRow = card.createDiv({ cls: "grill-btn-row grill-start-btn grill-btn-row-fill" });
-		const again = btnRow.createEl("button", { text: "Study again", cls: "mod-cta grill-primary-cta" });
-		again.setAttr("aria-label", "Start a new adaptive session");
-		again.onclick = () => void this.startSession();
+		const cards = this.cardsMode;
+		const again = btnRow.createEl("button", { text: cards ? "More cards" : "Study again", cls: "mod-cta grill-primary-cta" });
+		again.setAttr("aria-label", cards ? "Review the next due cards" : "Start a new adaptive session");
+		again.onclick = () => void (cards ? this.startCards() : this.startSession());
 		// Redo the exact same questions with no generation (grading still per the setting).
 		const redoable = this.questions.slice(0, this.results.length).filter((q) => !q.missingLink);
-		if (redoable.length) {
+		if (redoable.length && !cards) {
 			const redo = btnRow.createEl("button", { text: "Redo these", cls: "grill-secondary-btn" });
 			redo.setAttr("aria-label", "Redo the same questions with no AI generation");
 			redo.onclick = () => void this.startReplay(redoable);
@@ -4573,6 +4606,7 @@ export class SessionView extends ItemView {
 		this.contextRewriting = 0;
 		this.liveState = false;
 		this.replayMode = true;
+		this.cardsMode = false;
 		this.drawSession = draw;
 		this.drawingImage = null;
 		this.sessionScope = null;
@@ -4621,6 +4655,154 @@ export class SessionView extends ItemView {
 			}
 		}
 		this.renderQuestion();
+	}
+
+	/** Flashcards: the due concepts that already have a question, shown one at a time with
+	 * the answer behind a button and rated Again/Hard/Good/Easy. No model call at all, so
+	 * it works with no engine set up and costs nothing on Grill Cloud. The rating goes
+	 * into the same concept schedule a graded answer does (see SessionGrades). */
+	async startCards(): Promise<void> {
+		if (this.scanningEpoch !== null && Date.now() - this.scanningSince < SCAN_LOCK_MS) {
+			new Notice("Grill: still preparing the last session. Give it a moment.");
+			return;
+		}
+		await this.leaveLearn();
+		await this.flush();
+		if (this.dirty && !this.discardIfUnsaveable()) {
+			new Notice(`Grill: your last answers haven't saved yet (${this.lastFlushError}), so flashcards can't start. They're still kept in memory.`, 10000);
+			return;
+		}
+		this.keptAnswer = null;
+		this.plugin.mastery = await this.plugin.store.loadMastery();
+		await this.plugin.record.load("registry");
+		await this.plugin.record.load("concepts");
+		this.questionBank = await this.plugin.store.loadQuestionBank();
+		this.bankLoaded = true;
+		this.bankDirty = false;
+		this.bridgesDirty = false;
+		this.embeddingsDirty = false;
+		this.liveState = true;
+		const eligible = this.allEligible();
+		this.byName = new Map();
+		for (const f of [...eligible].sort((a, b) => a.path.localeCompare(b.path))) {
+			if (!this.byName.has(f.basename)) this.byName.set(f.basename, f);
+		}
+		const { cards, waiting } = dueCards(this.concepts, this.questionBank, (n) => this.byName.has(n), CATCH_UP);
+		if (!cards.length) {
+			new Notice(
+				waiting
+					? `Grill: ${waiting} due, but none has a question written yet. A test writes them, and they come back here as cards after that.`
+					: "Grill: nothing due right now.",
+				8000,
+			);
+			this.renderStart();
+			return;
+		}
+		this.sessionEpoch += 1;
+		this.sessionContext = "";
+		this.contextRewriting = 0;
+		this.replayMode = false;
+		this.cardsMode = true;
+		this.drawSession = false;
+		this.drawingImage = null;
+		this.sessionScope = null;
+		this.dueOnly = true;
+		this.sessionStart = new Date();
+		this.questions = cards.map((c) => c.question);
+		this.targets = [];
+		this.results = [];
+		this.idx = 0;
+		this.pending = null;
+		this.targetCount = this.questions.length;
+		this.progressTotal = this.targetCount;
+		this.planCursor = 0;
+		this.routing.reset();
+		this.pendingConfidence = null;
+		this.examLeftFor = this.examDaysByNote();
+		this.dueDateHistogram = buildDueDateHistogram(Object.values(this.concepts).map((c) => c.dueAt));
+		// A note's status is worked out from all its concepts, so every concept on record
+		// for the notes these cards come from, not just the ones being shown.
+		const notes = new Set(cards.map((c) => c.question.node));
+		this.conceptsByNote = new Map();
+		this.conceptById = new Map();
+		for (const [id, cm] of Object.entries(this.concepts)) {
+			if (!notes.has(cm.note) || cm.orphanedDueAt) continue;
+			const c = { id, note: cm.note, label: cm.label, kind: cm.kind, sourceHash: cm.sourceHash ?? "", context: "" } as unknown as Concept;
+			this.conceptById.set(id, c);
+			const arr = this.conceptsByNote.get(cm.note);
+			if (arr) arr.push(c);
+			else this.conceptsByNote.set(cm.note, [c]);
+		}
+		if (waiting) new Notice(`Grill: ${waiting} more due without a question yet. A test writes them.`, 6000);
+		this.renderCard(false);
+	}
+
+	private renderCard(revealed: boolean): void {
+		const wrap = this.root("card");
+		this.progressBar(wrap);
+		const q = this.questions[this.idx];
+		const path = this.byName.get(q.node)?.path ?? "";
+		const body = wrap.createDiv({ cls: "grill-body grill-card" });
+		const meta = body.createDiv({ cls: "grill-meta-row" });
+		meta.createSpan({ cls: "grill-meta", text: `Card ${this.idx + 1} of ${this.targetCount}` });
+		if (!this.nameLeaksAnswer(q)) meta.createSpan({ cls: "grill-chip", text: q.node });
+		this.renderEndSessionLink(body);
+		this.md(cardFront(q), body.createDiv({ cls: "grill-question grill-card-front" }), path);
+		if (!revealed) {
+			const show = body.createEl("button", { cls: "mod-cta grill-card-show", text: "Show answer" });
+			show.onclick = () => this.renderCard(true);
+			show.focus();
+			body.createDiv({ cls: "grill-meta grill-card-keys", text: "Answer in your head first. Space shows the answer." });
+			return;
+		}
+		const back = body.createDiv({ cls: "grill-card-back" });
+		this.md(cardAnswer(q), back, path);
+		if ((q.type === "mc" || q.type === "multi" || q.type === "match") && q.modelAnswer) {
+			this.md(q.modelAnswer, body.createDiv({ cls: "grill-meta grill-card-why" }), path);
+		}
+		const row = body.createDiv({ cls: "grill-card-ratings" });
+		const labels: Array<[Rating, string]> = [
+			[1, "Again"],
+			[2, "Hard"],
+			[3, "Good"],
+			[4, "Easy"],
+		];
+		for (const [r, label] of labels) {
+			const b = row.createEl("button", { cls: `grill-card-rate grill-card-rate-${r}`, text: label, attr: { "data-rating": String(r), title: `${label} (${r})` } });
+			if (r === 3) b.addClass("mod-cta");
+			b.onclick = () => void this.rateCard(r, label);
+		}
+		body.createDiv({ cls: "grill-meta grill-card-keys", text: "Keys 1 to 4 rate it." });
+	}
+
+	private async rateCard(r: Rating, label: string): Promise<void> {
+		const q = this.questions[this.idx];
+		if (!q || this.results.length > this.idx) return; // a double click
+		const verdict = verdictForRating(r);
+		await this.applyGrade(q, verdict, r, undefined, 0);
+		const kept = q.conceptId ? this.questionBank[q.conceptId]?.find((e) => e.question === q.question) : undefined;
+		if (kept) {
+			kept.timesShown += 1;
+			kept.lastShownAt = new Date().toISOString();
+			this.bankDirty = true;
+		}
+		this.results.push({
+			node: q.node,
+			question: q.question,
+			answer: "",
+			verdict,
+			gaveUp: false,
+			feedback: `Flashcard, rated ${label}.`,
+			modelAnswer: cardAnswer(q),
+			hintsUsed: 0,
+		});
+		this.plugin.refreshStatusBar();
+		if (this.idx + 1 >= this.targetCount) {
+			await this.finishSession();
+			return;
+		}
+		this.idx += 1;
+		this.renderCard(false);
 	}
 
 	/** Notes text + images for exactly this batch's targets, not the whole session's
@@ -5286,6 +5468,7 @@ export class SessionView extends ItemView {
 		this.contextRewriting = 0;
 		this.liveState = false;
 		this.replayMode = false;
+		this.cardsMode = false;
 		this.drawSession = false;
 		this.drawingImage = null;
 		this.renderLoading("Preparing your session", "Choosing which notes to quiz you on.");

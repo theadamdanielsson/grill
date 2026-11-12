@@ -192,6 +192,11 @@ export default class GrillPlugin extends Plugin {
 			callback: () => void this.startDueSession(),
 		});
 		this.addCommand({
+			id: "review-flashcards",
+			name: "Review due flashcards",
+			callback: () => void this.startCards(),
+		});
+		this.addCommand({
 			id: "open-dashboard",
 			name: "Open progress dashboard",
 			callback: () => void this.openDashboard(),
@@ -1372,6 +1377,13 @@ export default class GrillPlugin extends Plugin {
 			return;
 		}
 		await this.startScoped(due, true);
+	}
+
+	/** Flip through the due concepts' questions as flashcards: no model call. */
+	async startCards(): Promise<void> {
+		await this.activateView();
+		const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view;
+		if (view instanceof SessionView) await view.startCards();
 	}
 
 	/** Open the progress dashboard in the Grill panel. */

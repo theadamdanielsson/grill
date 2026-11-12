@@ -41,6 +41,7 @@ The home screen suggests where to go from your record: the questions you last mi
 - **Or a program on your computer:** [Claude Code, Codex or opencode](#with-claude-code-or-codex), with your own sign-in. opencode has free models and needs no account.
 - **Or your own key:** Claude, GPT, Gemini, DeepSeek, any OpenAI-compatible endpoint (OpenRouter, Groq, LM Studio), or a local model through Ollama.
 - **Questions from your own notes:** recall questions written from what you wrote, in free text, multiple choice, true or false, fill-in and matching.
+- **Flashcards with no AI:** the questions already written for what is due come back as cards. Show the answer, rate it Again, Hard, Good or Easy, and the rating goes into the same schedule. No wait, no credits, and no engine needed.
 - **Fair grading:** answers are marked against a rubric written with the question, with partial credit and the expected answer always shown.
 - **Checked answer keys:** each new question is answered separately from its note before you see it, and one whose expected answer the note contradicts is written again.
 - **Draw it from memory:** optional, with the Excalidraw plugin. Grill asks you to draw a diagram from your notes and marks the drawing: the curves, shifts and labels, and what is missing.
