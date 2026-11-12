@@ -1,7 +1,7 @@
 {
 	"id": "grill",
 	"name": "Grill",
-	"version": "8.7.13",
+	"version": "8.7.14",
 	"minAppVersion": "1.8.0",
 	"description": "AI tutor for studying your notes. Grill quizzes you with active recall, grades what you write and schedules each concept with spaced repetition. Exams, chat and your other agents all work from one record of what you know.",
 	"author": "Adam Danielsson",

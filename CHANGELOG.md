@@ -1,12 +1,13 @@
 # Changelog
 
-## Unreleased
+## 8.7.14
 
 - **Flashcards.** Review what is due as cards: the question, then the answer, then
   Again, Hard, Good or Easy. The cards are questions Grill already wrote, so there is no
   model call, no wait and no cost on Grill Cloud, and it works with no engine set up.
   Ratings go into the same schedule as a graded answer. Start it from the home screen or
   the "Review due flashcards" command. Keys: Space shows the answer, 1 to 4 rate it.
+- **Clearer directory listing.** The plugin description now says what Grill does.
 
 ## 8.7.13
 
