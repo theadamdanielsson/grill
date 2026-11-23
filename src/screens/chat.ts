@@ -6,7 +6,9 @@
 import { Notice, type App, type TFile, type WorkspaceLeaf } from "obsidian";
 import { replyTitle } from "../learn";
 import type { StudyOfferButton, ThreadTurn } from "../llm";
+import { attachImagePaste } from "../chatimages";
 import { attachPicker, type PickSource } from "../mention";
+import { lineCounts, lineDiff } from "../worddiff";
 import { safeMarkdown } from "../safemd";
 import { selectionMessage } from "../selection";
 import { turnFrame } from "../turn";
@@ -116,6 +118,7 @@ export function drawChat(wrap: HTMLElement, L: LearnState, host: ChatHost): void
 		attr: { rows: "2", placeholder: L.quote ? "Ask about the selected text... (Enter to send)" : "Ask about this note... (Enter to send)", "aria-label": "Ask about this note" },
 	});
 	attachPicker(input, host.pickSource());
+	attachImagePaste(host.app, input, () => L.note.path);
 	const send = box.createEl("button", { text: "Send", cls: "mod-cta grill-submit-btn" });
 	const go = (): void => {
 		const text = input.value.trim();
@@ -172,6 +175,30 @@ async function chatTurn(turns: HTMLElement, turn: ThreadTurn, L: LearnState, hos
 			link.onclick = () => void host.app.workspace.openLinkText(c.path, "", false);
 			if (c.before === null) row.createSpan({ cls: "grill-meta", text: " (new)" });
 			else if (c.after === null) row.createSpan({ cls: "grill-meta", text: " (removed)" });
+			// What changed in it, line by line, shown when asked for.
+			const n = lineCounts(c.before ?? "", c.after ?? "");
+			if (!n.added && !n.removed) continue;
+			row.createSpan({ cls: "grill-meta grill-reply-count", text: ` +${n.added} -${n.removed}` });
+			const show = row.createEl("button", { cls: "grill-home-link", text: "Show changes", attr: { type: "button", "aria-expanded": "false" } });
+			let diff: HTMLElement | null = null;
+			show.onclick = () => {
+				if (diff) {
+					diff.remove();
+					diff = null;
+				} else {
+					diff = createDiv({ cls: "grill-agent-diff grill-reply-diff" });
+					for (const l of lineDiff(c.before ?? "", c.after ?? "")) {
+						diff.createDiv({
+							cls: l.kind === "removed" ? "grill-agent-removed" : l.kind === "added" ? "grill-agent-added" : l.kind === "gap" ? "grill-reply-gap" : "grill-reply-same",
+							// An empty line still takes a line.
+							text: l.text || " ",
+						});
+					}
+					row.after(diff);
+				}
+				show.setText(diff ? "Hide changes" : "Show changes");
+				show.setAttr("aria-expanded", diff ? "true" : "false");
+			};
 		}
 		if (!turn.undone) {
 			const undo = card.createEl("button", { cls: "grill-hint-btn", text: "Undo", attr: { type: "button" } });

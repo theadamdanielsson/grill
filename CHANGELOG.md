@@ -1,5 +1,21 @@
 # Changelog
 
+## 8.9.0
+
+- **Edit in the note.** Select text, or put the cursor where something is missing, and
+  run "Edit the selection, or write at the cursor". A box opens under the passage. Say
+  what should change and the new wording appears there, word by word against the old:
+  removed words struck through, new ones marked. Accept, reject, or ask for another
+  change. Nothing in the note changes until you accept, and accepting is one step of
+  undo. Rewrite in the right-click menu now works this way too. Bind the command to a
+  hotkey in Obsidian's settings.
+- **Pictures in Chat.** Paste or drop a picture into the chat box. It is saved with your
+  attachments and sent with the message, on any engine that reads pictures.
+- **See what a reply changed.** The list of files under a reply now shows how many lines
+  each one gained and lost, and Show changes opens the lines themselves.
+- **New commands.** "New chat", "Chat about the current note" and the edit command, each
+  ready for a hotkey. "Start session" is now "Open Grill".
+
 ## 8.8.1
 
 - The file picker behind "Turn a photo, scan or PDF into a note" no longer sets a style

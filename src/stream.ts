@@ -11,7 +11,8 @@
  * pane, a provider that is down), it throws `StreamUnavailable` before anything has been
  * written, and the caller asks the old way instead.
  */
-import { anthropicAuth, API_BASE, capabilities, CUT_OFF, isOpenAIReasoning, ollamaUrl, type LLMConfig } from "./providers";
+import { anthropicAuth, API_BASE, capabilities, CUT_OFF, isOpenAIReasoning, ollamaUrl, readsImages, type LLMConfig } from "./providers";
+import type { ImageInput } from "./images";
 import { cloud } from "./cloud";
 
 export type StreamKind = "anthropic" | "chat" | "gemini" | "ollama";
@@ -29,6 +30,8 @@ export interface StreamPrompt {
 	cacheable: string;
 	rest: string;
 	maxTokens: number;
+	/** Pictures the user put in the chat, for a model that reads them. */
+	images?: ImageInput[];
 }
 
 export interface StreamOptions {
@@ -51,15 +54,20 @@ export function streamCall(cfg: LLMConfig, p: StreamPrompt, o: StreamOptions = {
 	// An agent program gives its answer whole (see agentjson.ts).
 	if (cfg.agent) return null;
 	const flat = p.cacheable ? `${p.cacheable}\n\n${p.rest}` : p.rest;
-	const messages = [
+	const images = readsImages(cfg) ? (p.images ?? []) : [];
+	const dataUrl = (i: ImageInput): string => `data:${i.mediaType};base64,${i.dataBase64}`;
+	// The chat shape with pictures: the text in its blocks, then each picture.
+	const withImages = (texts: string[]): unknown[] => [...texts.map((text) => ({ type: "text", text })), ...images.map((i) => ({ type: "image_url", image_url: { url: dataUrl(i) } }))];
+	const messages: Array<{ role: string; content: unknown }> = [
 		{ role: "system", content: p.system },
-		{ role: "user", content: flat },
+		{ role: "user", content: images.length && (cfg.provider === "openai" || cfg.provider === "custom") ? withImages([flat]) : flat },
 	];
 	const json = { "content-type": "application/json" };
 	switch (cfg.provider) {
 		case "anthropic": {
 			const content: unknown[] = [];
 			if (p.cacheable) content.push({ type: "text", text: p.cacheable, cache_control: { type: "ephemeral" } });
+			for (const i of images) content.push({ type: "image", source: { type: "base64", media_type: i.mediaType, data: i.dataBase64 } });
 			content.push({ type: "text", text: p.rest });
 			return {
 				kind: "anthropic",
@@ -114,12 +122,13 @@ export function streamCall(cfg: LLMConfig, p: StreamPrompt, o: StreamOptions = {
 					model: cfg.model,
 					max_tokens: p.maxTokens,
 					stream: true,
-					messages: p.cacheable
-						? [
-								{ role: "system", content: p.system },
-								{ role: "user", content: [{ type: "text", text: p.cacheable }, { type: "text", text: p.rest }] },
-							]
-						: messages,
+					messages:
+						p.cacheable || images.length
+							? [
+									{ role: "system", content: p.system },
+									{ role: "user", content: withImages(p.cacheable ? [p.cacheable, p.rest] : [p.rest]) },
+								]
+							: messages,
 				},
 			};
 		case "gemini":
@@ -129,7 +138,7 @@ export function streamCall(cfg: LLMConfig, p: StreamPrompt, o: StreamOptions = {
 				headers: { ...json, "x-goog-api-key": cfg.apiKey },
 				body: {
 					systemInstruction: { parts: [{ text: p.system }] },
-					contents: [{ role: "user", parts: [{ text: flat }] }],
+					contents: [{ role: "user", parts: [{ text: flat }, ...images.map((i) => ({ inlineData: { mimeType: i.mediaType, data: i.dataBase64 } }))] }],
 					generationConfig: { maxOutputTokens: p.maxTokens },
 				},
 			};
@@ -138,7 +147,13 @@ export function streamCall(cfg: LLMConfig, p: StreamPrompt, o: StreamOptions = {
 				kind: "ollama",
 				url: `${ollamaUrl(cfg.baseUrl)}/api/chat`,
 				headers: json,
-				body: { model: cfg.model, stream: true, think: false, messages, options: { num_predict: p.maxTokens } },
+				body: {
+					model: cfg.model,
+					stream: true,
+					think: false,
+					messages: images.length ? [messages[0], { role: "user", content: flat, images: images.map((i) => i.dataBase64) }] : messages,
+					options: { num_predict: p.maxTokens },
+				},
 			};
 	}
 }

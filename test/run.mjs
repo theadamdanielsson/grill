@@ -24,6 +24,7 @@ await esbuild.build({
 		obsidian: join(here, "obsidian-stub.ts"),
 		"tesseract.js": join(here, "empty-stub.ts"),
 		"@huggingface/transformers": join(here, "empty-stub.ts"),
+		"@codemirror/view": join(here, "cm-stub.ts"),
 	},
 });
 

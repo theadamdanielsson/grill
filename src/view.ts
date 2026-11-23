@@ -31,6 +31,10 @@ import { daysLeft, EXAM_RETENTION, KEEP_NEW_PER_DAY, KEEP_RETENTION, examFor, ex
 import { ConceptMap, ConceptMastery, blockedByDailyCap, conceptTargetDifficulty, conceptTested, CATCH_UP, dueConceptCount, missedConceptIds, spreadBacklog, noteAggregate, pickConcepts, priorityNotes, disperseSiblingDueDates, reconcileConcepts, trueRetentionLine } from "./concepts";
 import { asRecordData, learnerBrief } from "./brief";
 import { collectNoteImages, ImageInput } from "./images";
+import { attachImagePaste, collectTextImages, imagePaths } from "./chatimages";
+
+/** How many pictures from a chat go with a message: the latest ones. */
+const CHAT_IMAGES = 3;
 import { noteStudyText } from "./pdf";
 import { hashStr, safeSlice } from "./text";
 import { buildDueDateHistogram, DueDateHistogram, FreshContentPolicy, interleaveByFolder, NoteMastery, pickCandidates, QDifficulty, Rating, STATUS_WORDS, statusOf } from "./mastery";
@@ -1603,7 +1607,7 @@ export class SessionView extends ItemView {
 			engine: this.engineForHome(),
 			model: this.modelForHome(),
 			prompts: learning ? { open: (at, use) => this.promptsMenu(at, use) } : null,
-			...(learning ? { pick: this.pickSource() } : {}),
+			...(learning ? { pick: this.pickSource(), attach: (input: HTMLTextAreaElement) => attachImagePaste(this.app, input, () => this.app.workspace.getActiveFile()?.path ?? "") } : {}),
 			level: learning && (this.agentProgram() || this.modelHasTools()) ? this.levelForHome() : null,
 			placeholder: learning ? "Ask anything, or say what to do" : "Say what to test, or just press Get grilled",
 			sendLabel: learning ? "Send" : "Get grilled",
@@ -2722,6 +2726,12 @@ export class SessionView extends ItemView {
 		live: { onText(soFar: string): void; signal: AbortSignal },
 	): Promise<ThreadTurn> {
 		const said = await this.compacted(cfg, L);
+		// Pictures put in the chat, the latest first, for a model that reads them.
+		const asked = L.turns.filter((t) => t.role === "student").map((t) => t.text);
+		const images = readsImages(cfg) ? await collectTextImages(this.app, asked, L.note.path, CHAT_IMAGES) : [];
+		if (!images.length && imagePaths(this.app, asked[asked.length - 1] ?? "", L.note.path).length) {
+			new Notice("Grill: this model can't read pictures, so it got the message without them. Grill Cloud, Claude Code, Codex and Anthropic, OpenAI or Gemini keys can.", 10000);
+		}
 		if (waiting && this.modelHasTools()) {
 			const ui = this.turnUi(waiting, live);
 			const done = await learnWithTools(cfg, L.note.basename, L.noteText, L.linkedText, said, text, L.persona, L.instructions, L.record, L.vault, live, {
@@ -2731,17 +2741,17 @@ export class SessionView extends ItemView {
 				ask: ui.ask,
 				allowed: L.allowed,
 				extra: await this.plugin.chatExtras(),
-			});
+			}, images);
 			// Could not be opened as a stream: asked once more, whole, which is the request
 			// that knows how to say what a provider refused and why.
-			if (done === "unopened") return learnFromNotes(cfg, L.note.basename, L.noteText, L.linkedText, said, text, L.persona, L.instructions, L.record, L.vault);
+			if (done === "unopened") return learnFromNotes(cfg, L.note.basename, L.noteText, L.linkedText, said, text, L.persona, L.instructions, L.record, L.vault, undefined, images);
 			if (done) {
 				const { tools, seconds, ...turn } = done;
 				// A reply that used nothing is a reply: no line saying it worked for 3s.
 				return tools.length ? { ...turn, activity: activitySummary(tools, seconds) } : turn;
 			}
 		}
-		return learnFromNotes(cfg, L.note.basename, L.noteText, L.linkedText, said, text, L.persona, L.instructions, L.record, L.vault, live);
+		return learnFromNotes(cfg, L.note.basename, L.noteText, L.linkedText, said, text, L.persona, L.instructions, L.record, L.vault, live, images);
 	}
 
 	/** One turn answered by Claude Code. What it does is listed above the reply as it
@@ -2766,7 +2776,10 @@ export class SessionView extends ItemView {
 		const withRules = `${brief}\n\n${RECORD_RULES}`;
 		// A program new to this chat (the engine was changed in it) is given the chat so far.
 		const before = L.agentSession ? [] : L.turns.slice(0, -1);
-		const prompt = before.length ? `${handoverText(before)}\n\nNow, the user says:\n${text}` : text;
+		// A picture put in the message is a file in the vault, which the program can read.
+		const pictures = imagePaths(this.app, L.turns[L.turns.length - 1]?.text ?? "", L.note.path);
+		const shown = pictures.length ? `${text}\n\n(Pictures in this message, as files in the vault to look at: ${pictures.join(", ")})` : text;
+		const prompt = before.length ? `${handoverText(before)}\n\nNow, the user says:\n${shown}` : shown;
 		const shared = { prompt, cwd: base, program, level: s.agentLevel, resume: L.agentSession, signal: live.signal, onEvent: ui.onEvent, ask: ui.ask };
 		// opencode reaches them over MCP, at a route that lasts as long as this turn.
 		const route = s.chatEngine === "opencode" ? await this.plugin.toolServer().open(RECORD_TOOLS, tools.call).catch(() => null) : null;
@@ -4499,6 +4512,18 @@ export class SessionView extends ItemView {
 		this.sessionScope = files;
 		this.dueOnly = dueOnly;
 		await this.startSession();
+	}
+
+	/** A new chat, from the command list: the one in progress is kept as a note and
+	 * left, and the box is ready to type in. A test in progress is left alone. */
+	async newChat(): Promise<void> {
+		if (this.screen === "learn") await this.endLearn(false);
+		else if (this.screen === "chats" || this.screen === "dashboard" || this.screen === "summary") this.renderStart();
+		else if (this.screen !== "start") {
+			new Notice("Grill: end the test first, then start a chat.", 6000);
+			return;
+		}
+		this.contentEl.querySelector<HTMLTextAreaElement>(".grill-home-input")?.focus();
 	}
 
 	/** Entry point for the selection commands: a Chat about that note, with the message

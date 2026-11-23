@@ -3580,6 +3580,95 @@ textarea.grill-mgmt-field {
 .grill-reply-changes .grill-hint-btn {
   margin-top: 0.4em;
 }
+.grill-reply-change .grill-home-link {
+  margin-left: 0.6em;
+}
+/* What a reply changed in one file, line by line. */
+.grill-reply-diff {
+  gap: 0;
+  margin: 0.3em 0 0.5em;
+  max-height: 22em;
+  overflow-y: auto;
+  font-family: var(--font-monospace);
+  font-size: var(--font-smaller);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+}
+.grill-reply-diff > div {
+  padding: 0.1em var(--grill-space-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.grill-reply-same {
+  color: var(--text-muted);
+}
+.grill-reply-gap {
+  color: var(--text-faint);
+  font-family: var(--font-interface);
+  font-style: italic;
+}
+
+/* Editing a passage in the note itself: the passage marked, and under it a box that
+   asks what should change, then shows the change to accept or reject. */
+.grill-inline-target {
+  background: var(--text-highlight-bg);
+}
+.grill-inline {
+  margin: 0.4em 0 0.6em;
+  padding: 0.5em 0.6em;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+  font-family: var(--font-interface);
+  font-size: var(--font-ui-small);
+  line-height: 1.5;
+  white-space: normal;
+}
+.grill-inline-diff {
+  margin-bottom: 0.5em;
+  max-height: 24em;
+  overflow-y: auto;
+  font-family: var(--font-text);
+  font-size: var(--font-text-size);
+  line-height: var(--line-height-normal);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-normal);
+}
+.grill-inline-removed {
+  background: rgba(255, 90, 31, 0.14);
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+.grill-inline-added {
+  background: rgba(60, 170, 90, 0.2);
+}
+.grill-inline-none,
+.grill-inline-working,
+.grill-inline-asked {
+  color: var(--text-muted);
+}
+.grill-inline-asked {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.grill-inline-failed {
+  margin-bottom: 0.4em;
+  color: var(--text-error);
+}
+.grill-inline-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+}
+.grill-inline-row .grill-inline-input {
+  flex: 1;
+  min-width: 0;
+}
+
 /* Studying a chat reply recommends, ready to start. */
 .grill-reply-offers {
   display: flex;

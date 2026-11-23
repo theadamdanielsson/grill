@@ -22,7 +22,9 @@ The home screen suggests where to go from your record: the questions you last mi
 ## <img src="docs/icons/flame.svg" height="24" alt="" style="display:inline;height:24px;width:auto"> What you get
 
 - **An agentic chat in your vault:** it reads, searches, edits and creates notes over several steps, and shows each step as it happens. Three permission levels decide when it has to ask: Safe, Plan and Auto.
-- **Undo a turn:** a reply that changed notes lists them, and one Undo puts all of them back.
+- **Edit in the note:** select a passage, or put the cursor where something is missing, and say what should change. The new wording appears under it, word by word against the old, and nothing changes until you accept. One command, ready for a hotkey.
+- **See what changed, and undo it:** a reply that changed notes lists them with the lines added and removed, and one Undo puts all of them back.
+- **Pictures in Chat:** paste or drop a picture into the chat box and ask about it.
 - **Photos, scans and PDFs into notes:** pick a photo of handwriting, a slide, a scanned page or a PDF, and Grill writes it out as a Markdown note with the formulas in LaTeX. The note links to the original so you can check it. Run "Turn a photo, scan or PDF into a note", or right-click a picture or PDF in your vault. On a phone the picker opens the camera.
 - **No setup:** [Grill Cloud](#grill-cloud) answers, writes questions and grades with no API key and no account. It works on your phone, reads the images in your notes, and your notes are not trained on. Free to try.
 - **Or a program on your computer:** [Claude Code, Codex or opencode](#with-claude-code-or-codex), with your own sign-in. opencode has free models and needs no account.

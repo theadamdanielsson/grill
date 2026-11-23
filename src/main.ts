@@ -1,4 +1,5 @@
-import { Events, Menu, Notice, Platform, Plugin, TFile, TFolder, WorkspaceLeaf, normalizePath } from "obsidian";
+import { type Editor, Events, Menu, Notice, Platform, Plugin, TFile, TFolder, WorkspaceLeaf, normalizePath } from "obsidian";
+import type { EditorView } from "@codemirror/view";
 import { configureFSRSWeights, MasteryMap } from "./mastery";
 import { notesBase } from "./props";
 import { CalPoint, isCalPoint } from "./calibration";
@@ -31,6 +32,10 @@ import { dueFiles, duplicateBasenames } from "./scope";
 import { canCopy, copyToNote, pickAndCopy } from "./tonote";
 import { KeyStash, secretStore, vaultId } from "./secrets";
 import { NEW_PROMPT, promptMessage, SELECTION_ASKS, SelectionAsk, selectionMessage } from "./selection";
+import { EDIT_MAX, EDIT_RULES, EDIT_SCHEMA, editRequest, editTokens, fitReplacement, REWRITE_ASK } from "./editprompt";
+import { inlineEdit, type InlineEdit } from "./inlineedit";
+import { callJSON } from "./transport";
+import { safeMarkdown } from "./safemd";
 import { GrillStore } from "./store";
 import { GRILL_ICON, registerGrillIcon } from "./icon";
 import { LoopbackToolServer } from "./loopback";
@@ -184,8 +189,46 @@ export default class GrillPlugin extends Plugin {
 		this.addRibbonIcon(GRILL_ICON, "Grill", () => void this.activateView());
 		this.addCommand({
 			id: "start-session",
-			name: "Start session",
+			name: "Open Grill",
 			callback: () => void this.activateView(),
+		});
+		this.addCommand({
+			id: "new-chat",
+			name: "New chat",
+			callback: async () => {
+				await this.activateView();
+				const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view;
+				if (view instanceof SessionView) await view.newChat();
+			},
+		});
+		this.addCommand({
+			id: "chat-current-note",
+			name: "Chat about the current note",
+			checkCallback: (checking) => {
+				const f = this.app.workspace.getActiveFile();
+				if (!f || f.extension !== "md") return false;
+				if (!checking) {
+					void (async () => {
+						await this.activateView();
+						const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view;
+						if (view instanceof SessionView) await view.startChatAbout(f, "", false);
+					})();
+				}
+				return true;
+			},
+		});
+		// Editing in the note itself: a box under the selection, or at the cursor, and
+		// the change shown there to accept or reject (see inlineedit.ts).
+		this.inline = inlineEdit({ rewrite: (a) => this.rewriteInPlace(a) });
+		this.registerEditorExtension(this.inline.extension);
+		this.addCommand({
+			id: "edit-selection",
+			name: "Edit the selection, or write at the cursor",
+			editorCheckCallback: (checking, editor, ctx) => {
+				if (!ctx.file || ctx.file.extension !== "md") return false;
+				if (!checking) this.editInPlace(editor, ctx.file);
+				return true;
+			},
 		});
 		this.addCommand({
 			id: "review-due",
@@ -271,7 +314,10 @@ export default class GrillPlugin extends Plugin {
 				name: ask.command,
 				editorCheckCallback: (checking, editor, ctx) => {
 					if (!ctx.file || ctx.file.extension !== "md" || !editor.getSelection().trim()) return false;
-					if (!checking) void this.chatOnSelection(ask.id, ctx.file, editor.getSelection());
+					if (!checking) {
+						if (ask.id === "rewrite") this.editInPlace(editor, ctx.file, REWRITE_ASK);
+						else void this.chatOnSelection(ask.id, ctx.file, editor.getSelection());
+					}
 					return true;
 				},
 			});
@@ -306,8 +352,9 @@ export default class GrillPlugin extends Plugin {
 				// they can't, the entries go in the menu itself.
 				const entries: Array<{ title: string; run: () => void }> = SELECTION_ASKS.map((ask) => ({
 					title: ask.menu,
-					run: () => void this.chatOnSelection(ask.id, file, editor.getSelection()),
+					run: () => (ask.id === "rewrite" ? this.editInPlace(editor, file, REWRITE_ASK) : void this.chatOnSelection(ask.id, file, editor.getSelection())),
 				}));
+				entries.unshift({ title: "Edit...", run: () => this.editInPlace(editor, file) });
 				if (this.savedPrompts().length) entries.push({ title: "Saved prompt...", run: () => this.pickSavedPrompt(file, editor.getSelection()) });
 				menu.addItem((i) => {
 					i.setSection("grill").setTitle("Grill").setIcon(GRILL_ICON);
@@ -1318,6 +1365,41 @@ export default class GrillPlugin extends Plugin {
 		await this.activateView();
 		const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view;
 		if (view instanceof SessionView) await view.startDrawing(file);
+	}
+
+	private inline!: InlineEdit;
+
+	/** Open the edit box on what is selected in this editor, or at its cursor. With
+	 * `ask`, the instruction is sent without being typed. */
+	editInPlace(editor: Editor, file: TFile, ask?: string): void {
+		const view = (editor as unknown as { cm?: EditorView }).cm;
+		if (!view || typeof view.dispatch !== "function") {
+			new Notice("Grill: open the note in editing view to edit it in place.", 6000);
+			return;
+		}
+		if (editor.getSelection().length > EDIT_MAX) {
+			new Notice("Grill: that is too much to edit in place. Ask in Chat, which can rewrite the whole note.", 8000);
+			return;
+		}
+		if (this.askToUseModel()) return;
+		if (!this.llmConfig()) {
+			new Notice("Grill: editing needs a model. Start Grill Cloud or add a key in settings.", 8000);
+			return;
+		}
+		this.inline.start(view, file.basename, ask);
+	}
+
+	/** The text to put in a passage's place: one request, on whatever answers Chat. */
+	private async rewriteInPlace(a: { note: string; text: string; from: number; to: number; ask: string; earlier?: string }): Promise<string> {
+		const cfg = this.llmConfig();
+		if (!cfg) throw new Error("Editing needs a model. Start Grill Cloud or add a key in settings.");
+		const passage = a.text.slice(a.from, a.to);
+		const instr = await this.store.loadInstructions().catch(() => null);
+		const system = instr?.preferences ? `${EDIT_RULES}\n\nHow this user wants things written:\n${instr.preferences}` : EDIT_RULES;
+		const got = (await callJSON(cfg, system, editRequest(a), EDIT_SCHEMA as unknown as Record<string, unknown>, editTokens(passage), [], "low")) as { replacement?: unknown };
+		if (typeof got?.replacement !== "string") throw new Error("The model gave no text. Try again.");
+		// A model wrote it: made inert before it is part of a note (see safemd.ts).
+		return safeMarkdown(fitReplacement(passage, got.replacement));
 	}
 
 	/** Open Chat on a note with one of the selection asks: sent as it is, or, for a

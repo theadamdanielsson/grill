@@ -59,6 +59,8 @@ export interface HomeData {
 	prompts?: { open(at: HTMLElement, use: (text: string) => void): void } | null;
 	/** What `@` and `/` in the box offer. */
 	pick?: PickSource;
+	/** Lets pictures be pasted or dropped into the box. */
+	attach?(input: HTMLTextAreaElement): void;
 	placeholder: string;
 	sendLabel: string;
 	/** What was typed, trimmed (empty when Send was pressed on an empty box), and
@@ -151,6 +153,7 @@ export function renderChatHome(screen: HTMLElement, d: HomeData): void {
 		attr: { placeholder: d.placeholder, "aria-label": d.mode === "chat" ? "Message" : "What to be tested on" },
 	});
 	if (d.pick) attachPicker(input, d.pick);
+	d.attach?.(input);
 	const bar = box.createDiv({ cls: "grill-home-bar" });
 	const picks = bar.createDiv({ cls: "grill-home-picks" });
 	drawPicks(picks, d, input);

@@ -1,7 +1,7 @@
 {
 	"id": "grill",
 	"name": "Grill",
-	"version": "8.8.1",
+	"version": "8.9.0",
 	"minAppVersion": "1.8.0",
 	"description": "An AI agent for your vault, on desktop and phone. No API key needed, or run it on Claude Code or Codex. It edits notes with undo, turns photos, scans and PDFs into notes, and tests you on what you wrote.",
 	"author": "Adam Danielsson",

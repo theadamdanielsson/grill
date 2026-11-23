@@ -10,7 +10,7 @@ import { runToolChat, TOOL_RULES, ToolChat, VAULT_TOOLS } from "./vaulttools";
 import type { Arc, CanonMisconception, SessionDebrief, TagAssignment } from "./debrief";
 import type { BridgeCandidate, RawBridge } from "./bridges";
 import type { Verdict } from "./mastery";
-import { anthropicAuth, API_BASE, ollamaUrl, type LLMConfig, type ProviderId } from "./providers";
+import { anthropicAuth, API_BASE, ollamaUrl, readsImages, type LLMConfig, type ProviderId } from "./providers";
 import { cleanDiagram, cleanText, formatSatisfies, normalizeForMatch, parseGrade, questionDefect, UnreadableReply, type Explanation, type FormatMode, type Grade, type Question } from "./question";
 import { apiError, callJSON, requestTimeoutMs, timedRequest, unreachable } from "./transport";
 import { DEFAULT_PERSONA } from "./persona";
@@ -1383,13 +1383,14 @@ export async function learnWithTools(
 	vault: string,
 	live: LiveReply,
 	work: Pick<ToolChat, "port" | "level" | "onEvent" | "ask" | "allowed" | "extra">,
+	images: ImageInput[] = [],
 ): Promise<(ThreadTurn & { tools: string[]; seconds: number }) | null | "unopened"> {
 	// An agent program answering for a model has its own tools, run another way.
 	if (cfg.agent) return "unopened";
 	const p = learnPrompt(noteName, noteText, linkedText, thread, ask, persona, instructions, record, vault);
 	const extra = work.extra ?? null;
 	const tools = extra ? [...VAULT_TOOLS, ...extra.specs] : VAULT_TOOLS;
-	const prompt = { system: `${p.system}\n\n${TOOL_RULES}${extra?.rules ? `\n\n${extra.rules}` : ""}`, cacheable: p.cacheable, rest: p.rest, maxTokens: 4000 };
+	const prompt = { system: `${p.system}\n\n${TOOL_RULES}${extra?.rules ? `\n\n${extra.rules}` : ""}`, cacheable: p.cacheable, rest: p.rest, maxTokens: 4000, images };
 	const o = { webSearch: !!extra?.webSearch };
 	if (!toolStreamCall(cfg, prompt, [], tools, o)) return null;
 	let begun = false;
@@ -1513,13 +1514,14 @@ export async function learnFromNotes(
 	record = "",
 	vault = "",
 	live?: LiveReply,
+	images: ImageInput[] = [],
 ): Promise<ThreadTurn> {
 	const { system, cacheable, rest } = learnPrompt(noteName, noteText, linkedText, thread, ask, persona, instructions, record, vault);
 	// Read as it is written where the provider can be asked that way; whole otherwise,
 	// and whole too when a stream could not be opened, before anything was shown.
 	let streamed: string | null = null;
 	if (live && !cfg.agent) {
-		const call = streamCall(cfg, { system, cacheable, rest, maxTokens: 4000 });
+		const call = streamCall(cfg, { system, cacheable, rest, maxTokens: 4000, images });
 		if (call) {
 			try {
 				const got = await streamText(call, {
@@ -1546,6 +1548,7 @@ export async function learnFromNotes(
 					// One field and no more: the reply is the model's own, in the form it chooses.
 					{ type: "object", properties: { reply: { type: "string" } }, required: ["reply"], additionalProperties: false },
 					4000,
+					readsImages(cfg) ? images : [],
 				)) as { reply?: string });
 	// A diagram, when one was asked for, comes inside the reply; it is lifted out to be
 	// drawn the way every other diagram is.
