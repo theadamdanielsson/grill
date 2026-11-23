@@ -1,18 +1,14 @@
-![Grill: an agentic learning system](docs/hero.svg)
+![Grill: an AI agent for your Obsidian vault](docs/hero.svg)
 
-I take a lot of notes to learn new material, and I needed a way to learn them more deeply. Grill is an agentic learning system for Obsidian: it keeps state on what you know, note by note. It tests you on your own notes, grades what you write and schedules each concept with spaced repetition. In turn, every answer goes into a record in your vault, and the chat reads that record before it replies. A new conversation therefore starts from the confusions you keep showing. Claude Code, Codex and other agents can read the same record, test you on it and add what you answer them.
+Grill is an AI agent for your Obsidian vault. It reads, searches and edits your notes, and a reply's changes can be undone. It turns photos, scans and PDFs into notes. It works on your phone, and it starts with no API key, or runs on the Claude Code or Codex you already have.
+
+I take a lot of notes to learn new material, and I needed a way to learn them more deeply. So Grill also tests you on your own notes, grades what you write and schedules each concept with spaced repetition. Every answer goes into a record in your vault, and the chat reads that record before it replies. Claude Code, Codex and other agents can read the same record, test you on it and add what you answer them.
 
 ![A test marks an answer partly right, the Progress screen shows the same confusion recorded in two notes, and a new chat with no note attached names it](docs/state.webp)
 
 [Watch the 1-minute tour, with sound](https://grill.onbridger.com/v/tour.mp4)
 
 Featured in [This Week in Obsidian #44](https://thisweekinobsidian.substack.com/p/this-week-in-obsidian-44).
-
-## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/check-dark.svg"><img src="docs/icons/check.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> How state builds up
-
-1. **Tested.** Grill writes questions from what you wrote and grades what you type back, with partial credit and feedback on what was missing.
-2. **Recorded.** Every answer is kept in your vault. When the same confusion shows up in two notes, Grill names it once and counts it, and the Progress screen lists it under *What you keep getting wrong*.
-3. **Used.** A chat reads the record before it replies, whichever note is open, or none. Asking what you keep getting wrong returns the confusion and the notes it appeared in.
 
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/play-dark.svg"><img src="docs/icons/play.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> How to use it
 
@@ -26,39 +22,42 @@ The home screen suggests where to go from your record: the questions you last mi
 ## <img src="docs/icons/flame.svg" height="24" alt="" style="display:inline;height:24px;width:auto"> What you get
 
 - **An agentic chat in your vault:** it reads, searches, edits and creates notes over several steps, and shows each step as it happens. Three permission levels decide when it has to ask: Safe, Plan and Auto.
-- **Study straight from the chat:** when Chat recommends something, a button under the reply starts it, whether that is the reviews due, a retry of what you missed, or a test on the notes it named. Chat explains; Test is where you are graded.
 - **Undo a turn:** a reply that changed notes lists them, and one Undo puts all of them back.
-- **MCP servers, with sign-in:** Chat on Grill Cloud or your own key uses the tools of the MCP servers you add, written as in Claude Code's `.mcp.json` or imported from it. A server that needs an account is signed in to from the browser, as in Claude Code.
-- **Skills:** Agent Skills from your vault and from the folders Claude Code and `npx skills add` use. The model loads one when a request fits it.
-- **The web:** Chat reads web pages, and searches the web on Grill Cloud and Anthropic keys, citing what it used.
 - **Photos, scans and PDFs into notes:** pick a photo of handwriting, a slide, a scanned page or a PDF, and Grill writes it out as a Markdown note with the formulas in LaTeX. The note links to the original so you can check it. Run "Turn a photo, scan or PDF into a note", or right-click a picture or PDF in your vault. On a phone the picker opens the camera.
-- **Search by meaning:** an optional on-device index finds notes by what they are about, even when the words differ.
-- **Chats you can come back to:** every conversation is kept. The Chats list continues, renames or deletes one, and a long conversation keeps going, its start summed up as Claude Code does.
-- **The whole vault, by its structure:** a question about all your notes is answered from Obsidian's own map of them, its folders, headings, links and tags, and the model reads only the notes it needs.
-- **`@` and `/` in the box:** `@` brings a note into the message and `/` picks a prompt. On Claude Code, your own commands and skills are in the list too.
-- **Your record in other agents:** Claude Code, Codex, Cursor and other agents can see your weak spots, explain at your level, and test you. Their answers count here, and what you are tested on outside the vault shows on the Progress screen.
-- **A record behind every reply:** per-concept scheduling, your past answers and the confusions Grill has named are given to the chat, so an explanation starts from what you got wrong.
 - **No setup:** [Grill Cloud](#grill-cloud) answers, writes questions and grades with no API key and no account. It works on your phone, reads the images in your notes, and your notes are not trained on. Free to try.
 - **Or a program on your computer:** [Claude Code, Codex or opencode](#with-claude-code-or-codex), with your own sign-in. opencode has free models and needs no account.
 - **Or your own key:** Claude, GPT, Gemini, DeepSeek, any OpenAI-compatible endpoint (OpenRouter, Groq, LM Studio), or a local model through Ollama.
+- **MCP servers, with sign-in:** Chat on Grill Cloud or your own key uses the tools of the MCP servers you add, written as in Claude Code's `.mcp.json` or imported from it. A server that needs an account is signed in to from the browser, as in Claude Code.
+- **Skills:** Agent Skills from your vault and from the folders Claude Code and `npx skills add` use. The model loads one when a request fits it.
+- **The web:** Chat reads web pages, and searches the web on Grill Cloud and Anthropic keys, citing what it used.
+- **Search by meaning:** an optional on-device index finds notes by what they are about, even when the words differ.
+- **The whole vault, by its structure:** a question about all your notes is answered from Obsidian's own map of them, its folders, headings, links and tags, and the model reads only the notes it needs.
+- **Chats you can come back to:** every conversation is kept. The Chats list continues, renames or deletes one, and a long conversation keeps going, its start summed up as Claude Code does.
+- **`@` and `/` in the box:** `@` brings a note into the message and `/` picks a prompt. On Claude Code, your own commands and skills are in the list too.
+- **Replies as they are written:** Chat streams its answer, and a reply can be inserted at the cursor or saved as a note.
+- **Finds links you are missing:** spots notes that belong together and offers to add the `[[link]]`.
+- **A theme to match:** [Grill, the theme](https://github.com/theadamdanielsson/grill-theme) puts the rest of Obsidian in the same colours, dark and light.
+
+### Studying your notes
+
+- **Study straight from the chat:** when Chat recommends something, a button under the reply starts it, whether that is the reviews due, a retry of what you missed, or a test on the notes it named. Chat explains; Test is where you are graded.
+- **A record behind every reply:** per-concept scheduling, your past answers and the confusions Grill has named are given to the chat, so an explanation starts from what you got wrong.
 - **Questions from your own notes:** recall questions written from what you wrote, in free text, multiple choice, true or false, fill-in and matching.
-- **Flashcards with no AI:** the questions already written for what is due come back as cards. Show the answer, rate it Again, Hard, Good or Easy, and the rating goes into the same schedule. No wait, no credits, and no engine needed.
 - **Fair grading:** answers are marked against a rubric written with the question, with partial credit and the expected answer always shown.
 - **Checked answer keys:** each new question is answered separately from its note before you see it, and one whose expected answer the note contradicts is written again.
+- **Real spaced repetition:** FSRS scheduling per concept; edit a note and only the changed parts re-open.
+- **Exams:** give the whole vault or chosen folders an exam date, and the schedule works toward it. Reviews come back before the day, new material is paced to be covered in time, and Progress shows how each exam stands.
+- **Flashcards with no AI:** the questions already written for what is due come back as cards. Show the answer, rate it Again, Hard, Good or Easy, and the rating goes into the same schedule. No wait, no credits, and no engine needed.
 - **Draw it from memory:** optional, with the Excalidraw plugin. Grill asks you to draw a diagram from your notes and marks the drawing: the curves, shifts and labels, and what is missing.
+- **Reads embedded PDFs:** a `![[worksheet.pdf]]` embed is read and quizzed on like any other note content.
 - **Ask in the middle of a test:** type a question in the answer box and Grill answers it; the record notes that you needed help.
-- **Replies as they are written:** Chat streams its answer, and a reply can be inserted at the cursor or saved as a note.
-- **Your record in Bases:** a table of every session, and an optional setting that writes each note's status, due date and confusions into its properties, for Bases views and other agents.
-- **A map of what you know:** on the Progress screen, your notes as a graph coloured by how well you know each.
 - **A natural voice:** questions, feedback and explanations read aloud in a natural AI voice on Grill Cloud or an OpenAI key, or in your device's voice anywhere.
-- **Finds links you are missing:** spots notes that belong together and offers to add the `[[link]]`.
 - **Works with the cards you already have:** Spaced Repetition's `==cloze==` and `::`/`?` cards and Anki's `{{c1::…}}` clozes are used as they are.
 - **Your own questions:** a `> [!grill]` callout in any note is asked verbatim.
 - **Every question editable:** the Questions screen lists what was last missed and everything Grill has written, for fixing in place.
-- **Reads embedded PDFs:** a `![[worksheet.pdf]]` embed is read and quizzed on like any other note content.
-- **Real spaced repetition:** FSRS scheduling per concept; edit a note and only the changed parts re-open.
-- **Exams:** give the whole vault or chosen folders an exam date, and the schedule works toward it. Reviews come back before the day, new material is paced to be covered in time, and Progress shows how each exam stands.
-- **A theme to match:** [Grill, the theme](https://github.com/theadamdanielsson/grill-theme) puts the rest of Obsidian in the same colours, dark and light.
+- **Your record in other agents:** Claude Code, Codex, Cursor and other agents can see your weak spots, explain at your level, and test you. Their answers count here, and what you are tested on outside the vault shows on the Progress screen.
+- **Your record in Bases:** a table of every session, and an optional setting that writes each note's status, due date and confusions into its properties, for Bases views and other agents.
+- **A map of what you know:** on the Progress screen, your notes as a graph coloured by how well you know each.
 
 How each of these works is described in **[docs/features.md](docs/features.md)**.
 
@@ -67,6 +66,12 @@ How each of these works is described in **[docs/features.md](docs/features.md)**
 ![A partially correct answer, graded with specific feedback and the expected answer](docs/screenshot-feedback.png)
 
 ![An IS-LM diagram drawn from memory in Excalidraw and marked partially correct: the axes, the curves and the equilibrium are right, and the monetary expansion is missing](docs/screenshot-draw.png)
+
+## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/check-dark.svg"><img src="docs/icons/check.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> How state builds up
+
+1. **Tested.** Grill writes questions from what you wrote and grades what you type back, with partial credit and feedback on what was missing.
+2. **Recorded.** Every answer is kept in your vault. When the same confusion shows up in two notes, Grill names it once and counts it, and the Progress screen lists it under *What you keep getting wrong*.
+3. **Used.** A chat reads the record before it replies, whichever note is open, or none. Asking what you keep getting wrong returns the confusion and the notes it appeared in.
 
 <a name="grill-cloud"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theadamdanielsson/grill/main/docs/icons/cloud-dark.svg"><img src="docs/icons/cloud.svg" height="20" alt="" style="display:inline;height:20px;width:auto"></picture> Grill Cloud

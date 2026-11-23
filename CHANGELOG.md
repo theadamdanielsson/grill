@@ -1,5 +1,12 @@
 # Changelog
 
+## 8.8.1
+
+- The file picker behind "Turn a photo, scan or PDF into a note" no longer sets a style
+  directly, which Obsidian's review of 8.8.0 flagged.
+- The first-run screen and the description now say what Grill does first: an agent for
+  your vault that also tests you.
+
 ## 8.8.0
 
 - **Photos, scans and PDFs into notes.** Pick a photo of handwriting, a slide, a scanned

@@ -811,7 +811,7 @@ export class SessionView extends ItemView {
 			if (own || !cloudEnabled()) {
 				// A key of one's own: the same fields the settings tab writes.
 				screen.createDiv({ cls: "grill-section-label", text: "Your own key or Ollama" });
-				screen.createEl("p", { cls: "grill-meta", text: "AI writes and grades questions from your notes, on a model you pay for or run yourself." });
+				screen.createEl("p", { cls: "grill-meta", text: "Grill chats, edits notes and writes your questions on a model you pay for or run yourself." });
 				this.renderProviderSetup(screen.createDiv({ cls: "grill-onboard-setup" }));
 				const cont = screen.createEl("button", { text: "Continue", cls: "mod-cta grill-start-btn grill-primary-cta" });
 				cont.onclick = async () => {
@@ -834,7 +834,7 @@ export class SessionView extends ItemView {
 					next();
 				};
 			}
-			screen.createDiv({ cls: "grill-section-label", text: program ? "Or use Grill Cloud" : "How should Grill write your questions?" });
+			screen.createDiv({ cls: "grill-section-label", text: program ? "Or use Grill Cloud" : "How should Grill run?" });
 			const panel = screen.createDiv({ cls: "grill-cloud-panel" });
 			const go = this.renderCloudPanel(panel, true);
 			// With a key already here (set up before, or arrived by sync): show what's on

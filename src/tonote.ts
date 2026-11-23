@@ -182,7 +182,7 @@ export function pickFiles(): Promise<File[]> {
 	return new Promise((done) => {
 		const input = createEl("input", { attr: { type: "file", accept: "image/png,image/jpeg,image/webp,image/gif,application/pdf", multiple: "true" } });
 		// On the page, out of sight: some phones ignore a click on an input that is not.
-		input.style.display = "none";
+		input.hidden = true;
 		document.body.appendChild(input);
 		const end = (files: File[]): void => {
 			input.remove();

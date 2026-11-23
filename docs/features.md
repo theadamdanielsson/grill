@@ -52,6 +52,26 @@ The web is reached in two ways. First, Chat can read the page at an address on a
 
 Search by meaning finds notes by what they are about when their words differ from the question's. Once it is turned on, an embedding model of about 130 MB, which reads most languages, is downloaded once, every note is divided into passages at its headings, and the passages are indexed on your computer. The index is kept in `Grill/search-index.json` and is brought up to date a minute after you stop editing. Nothing is sent anywhere. It runs on desktop only, and it stays off until you turn it on.
 
+## Photos, scans and PDFs into notes
+
+Notes on paper, a slide photographed in a lecture, a scanned handout: Grill writes them out as a Markdown note. Run "Turn a photo, scan or PDF into a note" from the command palette and pick the files, or right-click a picture or a PDF in your vault and choose "Turn into a note". Select several files and they become one note, in order. On a phone the picker opens the camera.
+
+The model reads each page as a picture, so handwriting and scans with no text layer work. Formulas come out as LaTeX, tables as Markdown tables, and a diagram gets one line that says what it shows. It copies and does not summarise or translate. A word it is unsure of is followed by `[?]`, and a passage it cannot read is marked `[unreadable]`.
+
+The note is made beside the file it came from and ends with a link to it, so you can check the copy against the original. A file picked from outside the vault is saved where your attachments go first.
+
+Limits: 30 pages at a time, and the model has to read pictures. Grill Cloud, Claude Code and Codex do; opencode does not; with your own key it depends on the model.
+
+## PDFs
+
+A lot of real study material lives in a PDF, not a note: an exercise sheet, a lecture slide deck, a scanned reading. Embed one in a note (`![[worksheet.pdf]]`, not just a plain `[[link]]`; the `!` is what makes it an embed) and Grill pulls its text out and quizzes on it exactly like anything you'd typed yourself, no separate setup. If the PDF is itself a worksheet with its own numbered questions, Grill notices and prefers asking those over inventing new ones, using any worked solution in the PDF as the answer key.
+
+A few limits worth knowing: it reads up to 40 pages per PDF, text only (a scanned page with no real text layer under it, or a password-protected file, is invisible to it; a scan can be [turned into a note](#photos-scans-and-pdfs-into-notes) first), and it's read via Obsidian's own PDF engine, so nothing extra gets installed.
+
+## Studying your notes
+
+The sections from here on cover the study side: the record, tests, scheduling and exams.
+
 ## Your record in other agents
 
 The record can be used outside Obsidian. Settings → Agents → Connect an agent copies a command for Claude Code or Codex that adds grill-mcp, a small program published on npm, as one of the agent's MCP servers, pointed at this vault. Through it, the agent can read the overview, the weak spots and what the record holds on a topic, use the questions Grill has already written, and record each answer it grades. It never writes the record files themselves, since Grill may hold them open. Each answer is written as a file in `Grill/Inbox/`, and Grill adds it to the record while it is open: the concept's schedule moves, the note's counts change, a confusion the answer showed joins the misconceptions, and the agent's session gets a session note marked with the agent's name. Each answer is added once, including when the vault syncs to a second device.
@@ -138,22 +158,6 @@ If the answer is exactly `Vero`, `Falso`, `True`, or `False`, Grill notices and 
 ```
 
 One answer among the choices renders as multiple-choice; list two or more (comma-separated, all of them among `choices:`) and it becomes select-all. An answer that doesn't cleanly match the listed choices just falls back to the ordinary free-text box rather than showing a broken button set.
-
-## PDFs
-
-A lot of real study material lives in a PDF, not a note: an exercise sheet, a lecture slide deck, a scanned reading. Embed one in a note (`![[worksheet.pdf]]`, not just a plain `[[link]]`; the `!` is what makes it an embed) and Grill pulls its text out and quizzes on it exactly like anything you'd typed yourself, no separate setup. If the PDF is itself a worksheet with its own numbered questions, Grill notices and prefers asking those over inventing new ones, using any worked solution in the PDF as the answer key.
-
-A few limits worth knowing: it reads up to 40 pages per PDF, text only (a scanned page with no real text layer under it, or a password-protected file, is invisible to it; a scan can be [turned into a note](#photos-scans-and-pdfs-into-notes) first), and it's read via Obsidian's own PDF engine, so nothing extra gets installed.
-
-## Photos, scans and PDFs into notes
-
-Notes on paper, a slide photographed in a lecture, a scanned handout: Grill writes them out as a Markdown note. Run "Turn a photo, scan or PDF into a note" from the command palette and pick the files, or right-click a picture or a PDF in your vault and choose "Turn into a note". Select several files and they become one note, in order. On a phone the picker opens the camera.
-
-The model reads each page as a picture, so handwriting and scans with no text layer work. Formulas come out as LaTeX, tables as Markdown tables, and a diagram gets one line that says what it shows. It copies and does not summarise or translate. A word it is unsure of is followed by `[?]`, and a passage it cannot read is marked `[unreadable]`.
-
-The note is made beside the file it came from and ends with a link to it, so you can check the copy against the original. A file picked from outside the vault is saved where your attachments go first.
-
-Limits: 30 pages at a time, and the model has to read pictures. Grill Cloud, Claude Code and Codex do; opencode does not; with your own key it depends on the model.
 
 ## Telling it how to quiz you
 
