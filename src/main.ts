@@ -28,6 +28,7 @@ import { noteStudyText } from "./pdf";
 import { terminateOcrWorker } from "./ocr";
 import { countTrainableReviews, MIN_REVIEWS_FOR_OPTIMIZATION, optimizeFSRSWeights } from "./optimizer";
 import { dueFiles, duplicateBasenames } from "./scope";
+import { canCopy, copyToNote, pickAndCopy } from "./tonote";
 import { KeyStash, secretStore, vaultId } from "./secrets";
 import { NEW_PROMPT, promptMessage, SELECTION_ASKS, SelectionAsk, selectionMessage } from "./selection";
 import { GrillStore } from "./store";
@@ -202,6 +203,11 @@ export default class GrillPlugin extends Plugin {
 			callback: () => void this.openDashboard(),
 		});
 		this.addCommand({
+			id: "copy-to-note",
+			name: "Turn a photo, scan or PDF into a note",
+			callback: () => void this.copyToNote(),
+		});
+		this.addCommand({
 			id: "current-note",
 			name: "Study the current note",
 			checkCallback: (checking) => {
@@ -333,6 +339,13 @@ export default class GrillPlugin extends Plugin {
 							.setIcon("pencil")
 							.onClick(() => void this.startDrawing(file)),
 					);
+				} else if (file instanceof TFile && canCopy(file.extension)) {
+					menu.addItem((i) =>
+						i
+							.setTitle("Turn into a note")
+							.setIcon(GRILL_ICON)
+							.onClick(() => void this.copyToNote([file])),
+					);
 				} else if (file instanceof TFolder) {
 					menu.addItem((i) =>
 						i
@@ -361,6 +374,15 @@ export default class GrillPlugin extends Plugin {
 							if (md.path.startsWith(f.path + "/")) notes.set(md.path, md);
 						}
 					}
+				}
+				const pages = files.filter((f): f is TFile => f instanceof TFile && canCopy(f.extension));
+				if (pages.length > 1 && pages.length === files.length) {
+					menu.addItem((i) =>
+						i
+							.setTitle(`Turn these ${pages.length} into one note`)
+							.setIcon(GRILL_ICON)
+							.onClick(() => void this.copyToNote(pages)),
+					);
 				}
 				if (!notes.size) return;
 				menu.addItem((i) =>
@@ -1281,6 +1303,15 @@ export default class GrillPlugin extends Plugin {
 		const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
 		const view = leaf?.view;
 		if (view instanceof SessionView) await view.startScopedSession(files, dueOnly);
+	}
+
+	/** Copy a photo, a scan or a PDF out as a note: these files, or ones picked from
+	 * this device. */
+	async copyToNote(files?: TFile[]): Promise<void> {
+		if (this.askToUseModel()) return;
+		const cfg = this.llmConfig();
+		if (files) await copyToNote(this.app, cfg, files);
+		else await pickAndCopy(this.app, cfg);
 	}
 
 	async startDrawing(file: TFile): Promise<void> {

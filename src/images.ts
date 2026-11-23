@@ -15,8 +15,8 @@ export interface ImageInput {
 	path: string;
 }
 
-const IMG_EXT = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
-const MEDIA: Record<string, string> = {
+export const IMG_EXT = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
+export const MEDIA: Record<string, string> = {
 	png: "image/png",
 	jpg: "image/jpeg",
 	jpeg: "image/jpeg",
@@ -45,7 +45,7 @@ export function loadImage(url: string): Promise<HTMLImageElement> {
 
 /** Downscale to a sane edge length and re-encode, so a 4000px screenshot doesn't
  * cost a fortune in image tokens. Falls back to the raw bytes on any failure. */
-async function encode(bytes: ArrayBuffer, mediaType: string, maxEdge = 1400): Promise<Omit<ImageInput, "path">> {
+export async function encode(bytes: ArrayBuffer, mediaType: string, maxEdge = 1400): Promise<Omit<ImageInput, "path">> {
 	try {
 		const url = URL.createObjectURL(new Blob([bytes], { type: mediaType }));
 		try {

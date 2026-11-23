@@ -31,6 +31,7 @@ The home screen suggests where to go from your record: the questions you last mi
 - **MCP servers, with sign-in:** Chat on Grill Cloud or your own key uses the tools of the MCP servers you add, written as in Claude Code's `.mcp.json` or imported from it. A server that needs an account is signed in to from the browser, as in Claude Code.
 - **Skills:** Agent Skills from your vault and from the folders Claude Code and `npx skills add` use. The model loads one when a request fits it.
 - **The web:** Chat reads web pages, and searches the web on Grill Cloud and Anthropic keys, citing what it used.
+- **Photos, scans and PDFs into notes:** pick a photo of handwriting, a slide, a scanned page or a PDF, and Grill writes it out as a Markdown note with the formulas in LaTeX. The note links to the original so you can check it. Run "Turn a photo, scan or PDF into a note", or right-click a picture or PDF in your vault. On a phone the picker opens the camera.
 - **Search by meaning:** an optional on-device index finds notes by what they are about, even when the words differ.
 - **Chats you can come back to:** every conversation is kept. The Chats list continues, renames or deletes one, and a long conversation keeps going, its start summed up as Claude Code does.
 - **The whole vault, by its structure:** a question about all your notes is answered from Obsidian's own map of them, its folders, headings, links and tags, and the model reads only the notes it needs.

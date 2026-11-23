@@ -1,5 +1,16 @@
 # Changelog
 
+## 8.8.0
+
+- **Photos, scans and PDFs into notes.** Pick a photo of handwriting, a slide, a scanned
+  page or a PDF and Grill writes it out as a Markdown note. Formulas come out as LaTeX,
+  tables as tables, and a drawing gets one line that says what it shows. A word it is
+  unsure of is marked [?]. The note links to the original, so you can check it. Run
+  "Turn a photo, scan or PDF into a note", right-click a picture or PDF in your vault,
+  or use the row on the home screen. On a phone the picker opens the camera. It works on
+  Grill Cloud, Claude Code, Codex and any key whose model reads pictures, up to 30 pages
+  at a time.
+
 ## 8.7.14
 
 - **Flashcards.** Review what is due as cards: the question, then the answer, then

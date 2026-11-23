@@ -1567,6 +1567,14 @@ export class SessionView extends ItemView {
 			}
 		}
 
+		if (learning) {
+			suggestions.push({
+				label: "Turn a photo, scan or PDF into a note",
+				detail: "Handwriting, slides and scanned pages, copied out with their formulas",
+				run: () => void this.plugin.copyToNote().finally(() => this.refreshIfOnStartScreen()),
+			});
+		}
+
 		renderChatHome(screen, {
 			suggestionsLabel: isNew ? "Get started" : undefined,
 			mode: this.homeMode,
