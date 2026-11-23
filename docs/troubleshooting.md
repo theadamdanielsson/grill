@@ -127,6 +127,8 @@ Two separate requirements, either one missing means nothing gets extracted:
    picture of text, or a password-protected PDF, has no extractable text at all, so it's invisible
    to Grill the same way it would be to Cmd/Ctrl-F inside Obsidian's own PDF viewer. If you can't
    search the text in Obsidian's native PDF view, Grill can't read it either.
+   For a scan, right-click the PDF and choose "Turn into a note": the pages are read as pictures
+   and written out as a note you can be tested on.
 
 It also only reads the first 40 pages of any single PDF — a safety cap against someone embedding
 an entire textbook, not something you'll hit on a normal worksheet or article.

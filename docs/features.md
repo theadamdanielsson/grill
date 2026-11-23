@@ -143,7 +143,17 @@ One answer among the choices renders as multiple-choice; list two or more (comma
 
 A lot of real study material lives in a PDF, not a note: an exercise sheet, a lecture slide deck, a scanned reading. Embed one in a note (`![[worksheet.pdf]]`, not just a plain `[[link]]`; the `!` is what makes it an embed) and Grill pulls its text out and quizzes on it exactly like anything you'd typed yourself, no separate setup. If the PDF is itself a worksheet with its own numbered questions, Grill notices and prefers asking those over inventing new ones, using any worked solution in the PDF as the answer key.
 
-A few limits worth knowing: it reads up to 40 pages per PDF, text only (a scanned page with no real text layer under it, or a password-protected file, is invisible to it), and it's read via Obsidian's own PDF engine, so nothing extra gets installed.
+A few limits worth knowing: it reads up to 40 pages per PDF, text only (a scanned page with no real text layer under it, or a password-protected file, is invisible to it; a scan can be [turned into a note](#photos-scans-and-pdfs-into-notes) first), and it's read via Obsidian's own PDF engine, so nothing extra gets installed.
+
+## Photos, scans and PDFs into notes
+
+Notes on paper, a slide photographed in a lecture, a scanned handout: Grill writes them out as a Markdown note. Run "Turn a photo, scan or PDF into a note" from the command palette and pick the files, or right-click a picture or a PDF in your vault and choose "Turn into a note". Select several files and they become one note, in order. On a phone the picker opens the camera.
+
+The model reads each page as a picture, so handwriting and scans with no text layer work. Formulas come out as LaTeX, tables as Markdown tables, and a diagram gets one line that says what it shows. It copies and does not summarise or translate. A word it is unsure of is followed by `[?]`, and a passage it cannot read is marked `[unreadable]`.
+
+The note is made beside the file it came from and ends with a link to it, so you can check the copy against the original. A file picked from outside the vault is saved where your attachments go first.
+
+Limits: 30 pages at a time, and the model has to read pictures. Grill Cloud, Claude Code and Codex do; opencode does not; with your own key it depends on the model.
 
 ## Telling it how to quiz you
 
